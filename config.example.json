@@ -1,0 +1,17 @@
+{
+  "llm_api_key": "",
+  "llm_api_base": "https://api.openai.com/v1",
+  "llm_model": "gpt-4o",
+  "embedding_api_key": "",
+  "embedding_api_base": "https://api.openai.com/v1",
+  "embedding_model": "text-embedding-3-small",
+  "workspace_dir": "~/stocks-assistant",
+  "agent_max_steps": 20,
+  "agent_max_context_tokens": 50000,
+  "agent_max_context_turns": 20,
+  "knowledge_enabled": true,
+  "memory_enabled": true,
+  "scheduler_enabled": true,
+  "mcp_servers": {},
+  "debug": false
+}
