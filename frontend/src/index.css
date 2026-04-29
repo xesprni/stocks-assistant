@@ -1,0 +1,262 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 204 45% 97%;
+    --foreground: 210 22% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 22% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 22% 12%;
+    --primary: 160 84% 33%;
+    --primary-foreground: 160 20% 98%;
+    --secondary: 31 92% 52%;
+    --secondary-foreground: 36 32% 10%;
+    --muted: 204 30% 92%;
+    --muted-foreground: 207 13% 40%;
+    --accent: 190 95% 38%;
+    --accent-foreground: 190 36% 98%;
+    --destructive: 350 76% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 204 24% 82%;
+    --input: 204 24% 82%;
+    --ring: 160 84% 33%;
+    --grid-line: rgba(15, 23, 42, 0.07);
+    --grid-line-soft: rgba(15, 23, 42, 0.05);
+    --shell-primary: rgba(16, 185, 129, 0.14);
+    --shell-secondary: rgba(245, 158, 11, 0.12);
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 210 17% 7%;
+    --foreground: 180 18% 94%;
+    --card: 210 15% 10%;
+    --card-foreground: 180 18% 94%;
+    --popover: 210 15% 9%;
+    --popover-foreground: 180 18% 94%;
+    --primary: 158 68% 48%;
+    --primary-foreground: 160 30% 8%;
+    --secondary: 32 86% 56%;
+    --secondary-foreground: 35 28% 10%;
+    --muted: 210 11% 15%;
+    --muted-foreground: 195 10% 68%;
+    --accent: 188 92% 45%;
+    --accent-foreground: 195 34% 8%;
+    --destructive: 350 78% 58%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 200 16% 21%;
+    --input: 200 16% 21%;
+    --ring: 158 68% 48%;
+    --grid-line: rgba(255, 255, 255, 0.045);
+    --grid-line-soft: rgba(255, 255, 255, 0.035);
+    --shell-primary: rgba(52, 211, 153, 0.12);
+    --shell-secondary: rgba(245, 158, 11, 0.1);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    background: hsl(var(--background));
+  }
+
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+    letter-spacing: 0;
+    font-feature-settings: "ss01", "cv01", "cv11";
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    letter-spacing: 0;
+  }
+}
+
+@layer components {
+  .console-shell {
+    background:
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(var(--grid-line-soft) 1px, transparent 1px),
+      linear-gradient(135deg, var(--shell-primary), transparent 28%),
+      linear-gradient(315deg, var(--shell-secondary), transparent 24%),
+      hsl(var(--background));
+    background-size: 44px 44px, 44px 44px, 100% 100%, 100% 100%, 100% 100%;
+    animation: shell-pan 28s linear infinite;
+  }
+
+  .panel {
+    @apply rounded-lg border bg-card/90 shadow-panel backdrop-blur-xl;
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 220ms ease,
+      transform 220ms ease;
+  }
+
+  .panel-header {
+    @apply border-b border-border/80 px-4 py-3;
+  }
+
+  .panel-body {
+    @apply p-4;
+  }
+
+  .metric-tile {
+    @apply rounded-md border border-border/80 bg-muted/30 px-3 py-2;
+  }
+
+  .ticker-line {
+    @apply relative overflow-hidden;
+  }
+
+  .ticker-line::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 55%;
+    background: linear-gradient(90deg, transparent, rgba(52, 211, 153, 0.2), transparent);
+    animation: scan 5.5s linear infinite;
+  }
+
+  .motion-panel {
+    animation: panel-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .page-enter {
+    animation: page-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .message-bubble {
+    animation: message-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .nav-item {
+    position: relative;
+    overflow: hidden;
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      transform 180ms ease,
+      box-shadow 180ms ease;
+  }
+
+  .nav-item:hover {
+    transform: translateY(-1px);
+  }
+
+  .nav-item svg {
+    transition: transform 180ms ease;
+  }
+
+  .nav-item:hover svg {
+    transform: scale(1.08);
+  }
+
+  .theme-toggle {
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      border-color 180ms ease,
+      transform 180ms ease;
+  }
+
+  .theme-toggle:hover {
+    transform: translateY(-1px);
+  }
+
+  .theme-toggle svg {
+    animation: theme-icon-in 180ms ease both;
+  }
+
+  .pulse-path {
+    stroke-dasharray: 380;
+    stroke-dashoffset: 380;
+    animation: chart-draw 1.15s ease-out 140ms forwards;
+  }
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes theme-icon-in {
+  from {
+    opacity: 0;
+    transform: rotate(-35deg) scale(0.76);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes chart-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes shell-pan {
+  from {
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0;
+  }
+  to {
+    background-position:
+      44px 0,
+      0 44px,
+      0 0,
+      0 0,
+      0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
