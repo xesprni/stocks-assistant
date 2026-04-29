@@ -3,6 +3,7 @@
 通过 MCP 协议连接外部工具服务器，将 MCP 工具动态包装为 BaseTool 实例。
 支持 SSE 和 stdio 两种传输方式。
 """
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
