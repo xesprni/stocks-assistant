@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # 格式: {"server_name": {"transport": "sse", "url": "..."}}
     mcp_servers: Dict[str, Dict[str, Any]] = {}
 
+    # ---- Longbridge OpenAPI 配置 ----
+    # 为空时 Longbridge SDK 会读取 LONGBRIDGE_* 环境变量。
+    longbridge_app_key: str = ""
+    longbridge_app_secret: str = ""
+    longbridge_access_token: str = ""
+    longbridge_http_url: str = ""
+    longbridge_quote_ws_url: str = ""
+
     # ---- 系统提示词 ----
     system_prompt: str = "You are a helpful AI assistant."
 

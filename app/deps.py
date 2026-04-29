@@ -111,3 +111,12 @@ def get_scheduler_service():
 
     service = SchedulerService(task_store=store, execute_callback=execute_callback)
     return service
+
+
+@lru_cache
+def get_watchlist_service():
+    """获取本地自选股服务单例。"""
+    from app.core.watchlist.service import WatchlistService
+
+    settings = get_settings()
+    return WatchlistService(workspace_dir=settings.workspace_dir)

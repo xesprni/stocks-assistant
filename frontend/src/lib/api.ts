@@ -1,4 +1,11 @@
-import type { AppConfig, ChatResponse } from "@/types/app";
+import type {
+  AppConfig,
+  ChatResponse,
+  WatchlistCategory,
+  WatchlistItem,
+  WatchlistListResponse,
+  WatchlistSearchResponse,
+} from "@/types/app";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -42,5 +49,27 @@ export function sendChat(message: string) {
       message,
       clear_history: false,
     }),
+  });
+}
+
+export function listWatchlist(category: WatchlistCategory) {
+  return request<WatchlistListResponse>(`/api/v1/watchlist?category=${category}`);
+}
+
+export function searchWatchlist(query: string, category: WatchlistCategory) {
+  const params = new URLSearchParams({ q: query, category, limit: "10" });
+  return request<WatchlistSearchResponse>(`/api/v1/watchlist/search?${params.toString()}`);
+}
+
+export function addWatchlistItem(item: Omit<WatchlistItem, "id" | "note" | "created_at" | "updated_at">) {
+  return request<WatchlistItem>("/api/v1/watchlist", {
+    method: "POST",
+    body: JSON.stringify({ ...item, note: "" }),
+  });
+}
+
+export function deleteWatchlistItem(id: number) {
+  return request<{ status: string }>(`/api/v1/watchlist/${id}`, {
+    method: "DELETE",
   });
 }

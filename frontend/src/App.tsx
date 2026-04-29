@@ -10,13 +10,16 @@ import {
   Loader2,
   MessageSquareText,
   Moon,
+  Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Sun,
   TerminalSquare,
   Trash2,
@@ -32,11 +35,27 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { checkHealth, loadConfig, saveConfig, sendChat } from "@/lib/api";
+import {
+  addWatchlistItem,
+  checkHealth,
+  deleteWatchlistItem,
+  listWatchlist,
+  loadConfig,
+  saveConfig,
+  searchWatchlist,
+  sendChat,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { AppConfig, ChatMessage, ConfigDraft } from "@/types/app";
+import type {
+  AppConfig,
+  ChatMessage,
+  ConfigDraft,
+  WatchlistCategory,
+  WatchlistItem,
+  WatchlistSearchResult,
+} from "@/types/app";
 
-type Page = "overview" | "chat" | "config";
+type Page = "overview" | "chat" | "watchlist" | "config";
 type Theme = "dark" | "light";
 
 const initialMessage: ChatMessage = {
@@ -55,7 +74,14 @@ const quickPrompts = [
 const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }> = [
   { id: "overview", label: "概览", icon: <Home />, hint: "状态与信号" },
   { id: "chat", label: "对话", icon: <MessageSquareText />, hint: "Agent chat" },
+  { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
   { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
+];
+
+const watchlistCategories: Array<{ id: WatchlistCategory; label: string; hint: string }> = [
+  { id: "US", label: "美股", hint: "US" },
+  { id: "A", label: "A股", hint: "SH/SZ" },
+  { id: "H", label: "H股", hint: "HK" },
 ];
 
 function toDraft(config: AppConfig): ConfigDraft {
@@ -63,6 +89,11 @@ function toDraft(config: AppConfig): ConfigDraft {
     ...config,
     llm_api_key: "",
     embedding_api_key: "",
+    longbridge_app_key: "",
+    longbridge_app_secret: "",
+    longbridge_access_token: "",
+    longbridge_http_url: config.longbridge_http_url ?? "",
+    longbridge_quote_ws_url: config.longbridge_quote_ws_url ?? "",
     mcp_servers_text: JSON.stringify(config.mcp_servers ?? {}, null, 2),
   };
 }
@@ -204,6 +235,8 @@ function App() {
         debug: draft.debug,
         system_prompt: draft.system_prompt,
         mcp_servers: mcpServers,
+        longbridge_http_url: draft.longbridge_http_url ?? "",
+        longbridge_quote_ws_url: draft.longbridge_quote_ws_url ?? "",
       };
 
       if (draft.llm_api_key.trim()) {
@@ -211,6 +244,15 @@ function App() {
       }
       if (draft.embedding_api_key.trim()) {
         payload.embedding_api_key = draft.embedding_api_key.trim();
+      }
+      if (draft.longbridge_app_key.trim()) {
+        payload.longbridge_app_key = draft.longbridge_app_key.trim();
+      }
+      if (draft.longbridge_app_secret.trim()) {
+        payload.longbridge_app_secret = draft.longbridge_app_secret.trim();
+      }
+      if (draft.longbridge_access_token.trim()) {
+        payload.longbridge_access_token = draft.longbridge_access_token.trim();
       }
 
       const next = await saveConfig(payload);
@@ -281,6 +323,8 @@ function App() {
                 setPrompt={setPrompt}
               />
             ) : null}
+
+            {page === "watchlist" ? <WatchlistPage /> : null}
 
             {page === "config" ? (
               <ConfigPage
@@ -623,6 +667,235 @@ function ChatPage({
   );
 }
 
+function WatchlistPage() {
+  const [category, setCategory] = useState<WatchlistCategory>("US");
+  const [items, setItems] = useState<WatchlistItem[]>([]);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<WatchlistSearchResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadItems() {
+      setIsLoading(true);
+      setMessage("");
+      try {
+        const response = await listWatchlist(category);
+        if (mounted) {
+          setItems(response.items);
+        }
+      } catch (caught) {
+        if (mounted) {
+          setMessage(caught instanceof Error ? caught.message : "加载自选列表失败");
+        }
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadItems();
+    return () => {
+      mounted = false;
+    };
+  }, [category]);
+
+  async function handleSearch(event?: { preventDefault: () => void }) {
+    event?.preventDefault();
+    const text = query.trim();
+    if (!text || isSearching) return;
+
+    setIsSearching(true);
+    setMessage("");
+    try {
+      const response = await searchWatchlist(text, category);
+      setResults(response.results);
+      if (response.total === 0) {
+        setMessage("未找到匹配标的，请输入完整代码，例如 AAPL、700、600519。");
+      }
+    } catch (caught) {
+      setResults([]);
+      setMessage(caught instanceof Error ? caught.message : "Longbridge 搜索失败");
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function handleAdd(result: WatchlistSearchResult) {
+    setMessage("");
+    try {
+      const item = await addWatchlistItem(result);
+      if (item.category === category) {
+        setItems((current) => [item, ...current.filter((entry) => entry.symbol !== item.symbol)]);
+      }
+      setResults((current) => current.filter((entry) => entry.symbol !== item.symbol));
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "添加自选失败");
+    }
+  }
+
+  async function handleDelete(item: WatchlistItem) {
+    setMessage("");
+    try {
+      await deleteWatchlistItem(item.id);
+      setItems((current) => current.filter((entry) => entry.id !== item.id));
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "删除自选失败");
+    }
+  }
+
+  const symbolSet = new Set(items.map((item) => item.symbol));
+
+  return (
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Star className="size-5 text-secondary" />
+            <p className="font-semibold">Watchlist</p>
+          </div>
+          <p className="text-xs text-muted-foreground">本地 SQLite 存储，Longbridge SDK 搜索</p>
+        </div>
+
+        <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row xl:items-center">
+          <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
+            {watchlistCategories.map((item) => (
+              <button
+                className={cn(
+                  "h-8 min-w-20 rounded-sm px-3 text-sm font-medium transition-all",
+                  category === item.id
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                key={item.id}
+                onClick={() => {
+                  setCategory(item.id);
+                  setResults([]);
+                  setMessage("");
+                }}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <Badge variant="outline">{items.length} symbols</Badge>
+        </div>
+      </div>
+
+      <div className="grid min-h-0 flex-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden lg:p-4">
+        <div className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
+          <div className="flex flex-col gap-3 border-b border-border/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold">{watchlistCategories.find((item) => item.id === category)?.label}列表</p>
+              <p className="text-xs text-muted-foreground">{watchlistCategories.find((item) => item.id === category)?.hint}</p>
+            </div>
+            {isLoading ? (
+              <Badge variant="muted" className="gap-1.5">
+                <Loader2 className="size-3.5 animate-spin" />
+                Loading
+              </Badge>
+            ) : null}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {items.length > 0 ? (
+              <div className="grid gap-2 2xl:grid-cols-2">
+                {items.map((item) => (
+                  <div
+                    className="message-bubble rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/50"
+                    key={item.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-base font-semibold">{item.symbol}</p>
+                        <p className="truncate text-sm text-muted-foreground">{stockName(item)}</p>
+                      </div>
+                      <Button aria-label="删除自选" size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDelete(item)}>
+                        <Trash2 />
+                      </Button>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <QuoteMetric label="Last" value={item.last_done ?? "-"} />
+                      <QuoteMetric label="Change" value={item.change_value ?? "-"} />
+                      <QuoteMetric label="Rate" value={item.change_rate ?? "-"} tone={rateTone(item.change_rate)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid h-full min-h-56 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
+                <div>
+                  <Star className="mx-auto mb-3 size-8 text-muted-foreground" />
+                  <p className="text-sm font-medium">暂无自选股</p>
+                  <p className="mt-1 text-xs text-muted-foreground">在右侧搜索 Longbridge 标的后添加到当前分类。</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
+          <div className="border-b border-border/80 p-3">
+            <form className="flex gap-2" onSubmit={handleSearch}>
+              <Input
+                placeholder={category === "US" ? "AAPL / TSLA" : category === "H" ? "700 / 00700" : "600519 / 000001"}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <Button className="shrink-0" disabled={isSearching || !query.trim()} type="submit">
+                {isSearching ? <Loader2 className="animate-spin" /> : <Search />}
+                Search
+              </Button>
+            </form>
+            {message ? (
+              <div className="mt-3 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                {message}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="space-y-2">
+              {results.map((result) => {
+                const exists = symbolSet.has(result.symbol);
+                return (
+                  <div className="rounded-md border border-border/80 bg-card/80 p-3" key={result.symbol}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{result.symbol}</p>
+                        <p className="truncate text-xs text-muted-foreground">{stockName(result)}</p>
+                      </div>
+                      <Button size="sm" variant={exists ? "outline" : "default"} disabled={exists} onClick={() => handleAdd(result)}>
+                        <Plus />
+                        {exists ? "Added" : "Add"}
+                      </Button>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <QuoteMetric label="Last" value={result.last_done ?? "-"} />
+                      <QuoteMetric label="Change" value={result.change_value ?? "-"} />
+                      <QuoteMetric label="Rate" value={result.change_rate ?? "-"} tone={rateTone(result.change_rate)} />
+                    </div>
+                  </div>
+                );
+              })}
+              {results.length === 0 ? (
+                <div className="rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+                  输入代码并调用 Longbridge SDK 搜索。
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 function ConfigPage({
   config,
   configState,
@@ -672,9 +945,10 @@ function ConfigPage({
       {draft ? (
         <div className="panel-body min-h-0 flex-1 overflow-y-auto">
           <Tabs defaultValue="model">
-            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
+            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5">
               <TabsTrigger value="model">模型</TabsTrigger>
               <TabsTrigger value="agent">Agent</TabsTrigger>
+              <TabsTrigger value="longbridge">长桥</TabsTrigger>
               <TabsTrigger value="features">能力</TabsTrigger>
               <TabsTrigger value="mcp">MCP</TabsTrigger>
             </TabsList>
@@ -755,6 +1029,51 @@ function ConfigPage({
               </Field>
             </TabsContent>
 
+            <TabsContent value="longbridge" className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-3">
+                <Field label="App Key">
+                  <Input
+                    placeholder={draft.has_longbridge_app_key ? draft.longbridge_app_key_masked : "Longbridge app key"}
+                    type="password"
+                    value={draft.longbridge_app_key}
+                    onChange={(event) => patchDraft({ longbridge_app_key: event.target.value })}
+                  />
+                </Field>
+                <Field label="App Secret">
+                  <Input
+                    placeholder={draft.has_longbridge_app_secret ? draft.longbridge_app_secret_masked : "Longbridge app secret"}
+                    type="password"
+                    value={draft.longbridge_app_secret}
+                    onChange={(event) => patchDraft({ longbridge_app_secret: event.target.value })}
+                  />
+                </Field>
+                <Field label="Access Token">
+                  <Input
+                    placeholder={draft.has_longbridge_access_token ? draft.longbridge_access_token_masked : "Longbridge access token"}
+                    type="password"
+                    value={draft.longbridge_access_token}
+                    onChange={(event) => patchDraft({ longbridge_access_token: event.target.value })}
+                  />
+                </Field>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <Field label="HTTP URL">
+                  <Input
+                    placeholder="默认使用 SDK 配置"
+                    value={draft.longbridge_http_url ?? ""}
+                    onChange={(event) => patchDraft({ longbridge_http_url: event.target.value })}
+                  />
+                </Field>
+                <Field label="Quote WS URL">
+                  <Input
+                    placeholder="默认使用 SDK 配置"
+                    value={draft.longbridge_quote_ws_url ?? ""}
+                    onChange={(event) => patchDraft({ longbridge_quote_ws_url: event.target.value })}
+                  />
+                </Field>
+              </div>
+            </TabsContent>
+
             <TabsContent value="features" className="grid gap-3 md:grid-cols-2">
               <ToggleRow
                 checked={draft.memory_enabled}
@@ -815,6 +1134,34 @@ function StatusTile({ icon, label, value }: { icon: ReactNode; label: string; va
       <p className="truncate text-sm font-semibold">{value}</p>
     </div>
   );
+}
+
+function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "down" | "flat"; value: string }) {
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+      <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          "mt-0.5 truncate font-semibold",
+          tone === "up" && "text-primary",
+          tone === "down" && "text-destructive",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function stockName(item: Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">) {
+  return item.name || item.name_cn || item.name_hk || item.name_en || "-";
+}
+
+function rateTone(value: string | null): "up" | "down" | "flat" {
+  if (!value) return "flat";
+  if (value.startsWith("-")) return "down";
+  if (value !== "-" && value !== "0" && value !== "0.00%") return "up";
+  return "flat";
 }
 
 function CapabilityCard({ active, icon, label }: { active?: boolean; icon: ReactNode; label: string }) {

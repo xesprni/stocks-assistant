@@ -13,5 +13,10 @@
   "memory_enabled": true,
   "scheduler_enabled": true,
   "mcp_servers": {},
+  "longbridge_app_key": "",
+  "longbridge_app_secret": "",
+  "longbridge_access_token": "",
+  "longbridge_http_url": "",
+  "longbridge_quote_ws_url": "",
   "debug": false
 }

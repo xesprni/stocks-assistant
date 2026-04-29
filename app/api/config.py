@@ -45,6 +45,14 @@ def _settings_to_response(settings: Settings) -> AppConfig:
         debug=settings.debug,
         system_prompt=settings.system_prompt,
         mcp_servers=settings.mcp_servers,
+        longbridge_app_key_masked=_mask_secret(settings.longbridge_app_key),
+        has_longbridge_app_key=bool(settings.longbridge_app_key),
+        longbridge_app_secret_masked=_mask_secret(settings.longbridge_app_secret),
+        has_longbridge_app_secret=bool(settings.longbridge_app_secret),
+        longbridge_access_token_masked=_mask_secret(settings.longbridge_access_token),
+        has_longbridge_access_token=bool(settings.longbridge_access_token),
+        longbridge_http_url=settings.longbridge_http_url,
+        longbridge_quote_ws_url=settings.longbridge_quote_ws_url,
     )
 
 

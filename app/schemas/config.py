@@ -35,6 +35,15 @@ class AppConfig(BaseModel):
     system_prompt: str
     mcp_servers: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
+    longbridge_app_key_masked: str = ""
+    has_longbridge_app_key: bool = False
+    longbridge_app_secret_masked: str = ""
+    has_longbridge_app_secret: bool = False
+    longbridge_access_token_masked: str = ""
+    has_longbridge_access_token: bool = False
+    longbridge_http_url: str = ""
+    longbridge_quote_ws_url: str = ""
+
 
 class ConfigUpdate(BaseModel):
     """应用配置更新请求。
@@ -63,3 +72,9 @@ class ConfigUpdate(BaseModel):
 
     system_prompt: Optional[str] = None
     mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None
+
+    longbridge_app_key: Optional[str] = None
+    longbridge_app_secret: Optional[str] = None
+    longbridge_access_token: Optional[str] = None
+    longbridge_http_url: Optional[str] = None
+    longbridge_quote_ws_url: Optional[str] = None
