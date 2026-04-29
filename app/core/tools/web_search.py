@@ -7,6 +7,8 @@
 import os
 from typing import Any, Dict, Optional
 
+import httpx
+
 from app.core.tools.base_tool import BaseTool, ToolResult
 
 import logging

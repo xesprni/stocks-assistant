@@ -4,6 +4,7 @@
 支持从 Agent 上下文自动获取 MemoryManager 实例。
 """
 
+import asyncio
 import concurrent.futures
 from typing import Optional
 

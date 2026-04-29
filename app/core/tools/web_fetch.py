@@ -2,6 +2,7 @@
 
 抓取指定 URL 的网页内容，提取纯文本供 Agent 分析。
 """
+import re
 from typing import Any, Dict
 from urllib.parse import urlparse
 
