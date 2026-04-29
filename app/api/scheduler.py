@@ -4,6 +4,8 @@
 支持三种调度类型：cron 表达式、固定间隔、一次性执行。
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.scheduler import TaskCreateRequest, TaskResponse, TaskListResponse
