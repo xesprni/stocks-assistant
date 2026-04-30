@@ -1,4 +1,8 @@
-"""MCP (Model Context Protocol) tool adapter."""
+"""MCP（Model Context Protocol）工具适配器。
+
+将外部 MCP 服务器提供的工具包装为内部 BaseTool 实例，
+支持 streamable_http、SSE、stdio 三种传输模式及 OAuth 鉴权。
+"""
 
 from __future__ import annotations
 
@@ -23,7 +27,10 @@ logger = logging.getLogger("stocks-assistant.mcp")
 
 
 class MCPToolAdapter(BaseTool):
-    """Wraps an MCP server tool as a BaseTool instance."""
+    """将单个 MCP 服务器工具包装为 BaseTool 实例。
+
+    每个工具对应 MCP 服务器中的一个可调用工具。
+    """
 
     name: str = "mcp_tool"
     description: str = "MCP tool adapter"
@@ -40,12 +47,14 @@ class MCPToolAdapter(BaseTool):
         super().__init__()
         self.server_name = server_name
         self.tool_name = tool_name
+        # 工具名格式： mcp_{server_name}_{tool_name}
         self.name = f"mcp_{server_name}_{tool_name}"
         self.description = tool_description
         self.params = tool_schema.get("inputSchema", {"type": "object", "properties": {}})
         self._manager = manager
 
     def execute(self, params: dict) -> ToolResult:
+        """\u540c\u6b65执行 MCP 工具调用，内部将异步调用托管给 MCPManager。"""
         try:
             result = self._manager.call_tool_sync(self.server_name, self.tool_name, params)
             return ToolResult.success(result)
@@ -54,29 +63,50 @@ class MCPToolAdapter(BaseTool):
 
 
 class MCPManager:
-    """Manages connections to MCP servers and discovers tools."""
+    """管理所有 MCP 服务器连接并内居已发现工具。
+
+    内部在一个独立守护线程上运行一个持久异步事件循环，
+    以实现长连接和工具调用。对外提供同步接口。
+    """
 
     def __init__(self, server_configs: Dict[str, Dict[str, Any]]):
+        # 对配置字典进行归一化处理
         self.server_configs = normalize_mcp_servers(server_configs)
+        # 已发现工具映射：工具全名 -> MCPToolAdapter
         self.tools: Dict[str, MCPToolAdapter] = {}
+        # 已建立的客户端会话：服务器名 -> ClientSession
         self._sessions: Dict[str, Any] = {}
+        # 连接错误信息：服务器名 -> 错误描述
         self._errors: Dict[str, str] = {}
+        # 连接状态：服务器名 -> connecting/connected/disconnected/error/auth_required
         self._states: Dict[str, str] = {}
+        # 各服务器异步连接任务
         self._tasks: Dict[str, asyncio.Task] = {}
+        # 用于优雅关闭连接的停止事件
         self._stop_events: Dict[str, asyncio.Event] = {}
+        # OAuth Client Credentials 令牌缓存：服务器名 -> (token, 过期时间戳)
         self._oauth_tokens: Dict[str, tuple[str, float]] = {}
+        # OAuth Authorization Code 登录令牌：服务器名 -> OAuthToken
         self._oauth_login_tokens: Dict[str, Any] = {}
+        # OAuth 已注册客户端信息
         self._oauth_client_infos: Dict[str, Any] = {}
+        # 待用户打开的 OAuth 授权 URL
         self._oauth_authorization_urls: Dict[str, str] = {}
+        # 等待 OAuth 授权 URL 就绪的 Future
         self._oauth_authorization_ready: Dict[str, asyncio.Future] = {}
+        # 等待 OAuth 回调的 Future
         self._oauth_callback_futures: Dict[str, asyncio.Future] = {}
+        # 后台异步事件循环
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # 运行事件循环的守护线程
         self._thread: Optional[threading.Thread] = None
+        # 保护共享状态的可重入锁
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ loop
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """确保后台事件循环已启动，若未启动则创建守护线程运行之。"""
         if self._loop and self._loop.is_running():
             return self._loop
 
@@ -98,6 +128,7 @@ class MCPManager:
         return self._loop
 
     def _run_sync(self, coro, timeout: Optional[float] = None):
+        """在后台循环中运行异步协程，并同步等待结果（限时可选）。"""
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result(timeout=timeout)
@@ -105,6 +136,7 @@ class MCPManager:
     # ------------------------------------------------------------------ public
 
     def connect_all_sync(self, wait: bool = False, timeout: Optional[float] = None):
+        """同步地对所有已配置的 MCP 服务器发起连接。wait=True 时限时等待连接就绪。"""
         return self._run_sync(self.connect_all(wait=wait, timeout=timeout), timeout=timeout)
 
     def reconnect_sync(
@@ -113,10 +145,12 @@ class MCPManager:
         wait: bool = False,
         timeout: Optional[float] = None,
     ):
+        """更新服务器配置并重新建立所有连接。"""
         self.server_configs = normalize_mcp_servers(server_configs)
         return self.connect_all_sync(wait=wait, timeout=timeout)
 
     def close_sync(self):
+        """同步关闭所有连接并停止后台事件循环。"""
         if not self._loop:
             return
         try:
@@ -128,6 +162,7 @@ class MCPManager:
                 self._loop.call_soon_threadsafe(self._loop.stop)
 
     def get_server_state(self, server_name: str) -> tuple[str, Optional[str], int, Optional[str]]:
+        """返回指定服务器的状态元组：(state, error_msg, tool_count, oauth_url)。"""
         with self._lock:
             prefix = f"mcp_{server_name}_"
             tools_count = sum(1 for name in self.tools if name.startswith(prefix))
@@ -138,9 +173,11 @@ class MCPManager:
             return state, self._errors.get(server_name), tools_count, self._oauth_authorization_urls.get(server_name)
 
     def call_tool_sync(self, server_name: str, tool_name: str, params: dict):
+        """同步调用指定 MCP 服务器的工具并返回结果。"""
         return self._run_sync(self._call_tool(server_name, tool_name, params))
 
     def start_oauth_authorization_sync(self, server_name: str, redirect_uri: str, timeout: float = 20) -> str:
+        """为指定服务器启动 OAuth Authorization Code 授权流程，返回授权 URL。"""
         return self._run_sync(
             self.start_oauth_authorization(server_name, redirect_uri, timeout=timeout),
             timeout=timeout + 5,
@@ -153,12 +190,15 @@ class MCPManager:
         state: Optional[str],
         error: Optional[str] = None,
     ) -> None:
+        """将 OAuth 回调参数注入持待的 Future，完成授权流程。"""
         return self._run_sync(self.complete_oauth_callback(server_name, code, state, error))
 
     async def connect_all(self, wait: bool = False, timeout: Optional[float] = None):
+        """异步关闭并重建所有 MCP 服务器连接。"""
         await self.close()
 
         with self._lock:
+            # 重置所有共享状态
             self.tools = {}
             self._sessions = {}
             self._errors = {}
@@ -181,6 +221,11 @@ class MCPManager:
         wait: bool = False,
         timeout: Optional[float] = None,
     ):
+        """为单个 MCP 服务器创建异步连接任务。
+
+        wait=True 时则限时异步等待连接就绪；
+        否则后台启动一个连接超时监联任务。
+        """
         stop_event = asyncio.Event()
         ready: asyncio.Future = asyncio.get_running_loop().create_future()
         ready.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
@@ -200,9 +245,11 @@ class MCPManager:
                     self._errors[server_name] = f"MCP connection timed out after {connect_timeout:.0f}s"
                 task.cancel()
         else:
+            # 默认异步连接：后台启动超时监联协程
             asyncio.create_task(self._connection_timeout(server_name, ready, task, connect_timeout))
 
     async def start_oauth_authorization(self, server_name: str, redirect_uri: str, timeout: float = 20) -> str:
+        """启动 OAuth Authorization Code 授权流程，返回用户需要访问的授权 URL。"""
         config = self.server_configs.get(server_name)
         if not config:
             raise ValueError(f"MCP server '{server_name}' not found")
@@ -250,6 +297,7 @@ class MCPManager:
         state: Optional[str],
         error: Optional[str] = None,
     ) -> None:
+        """将收到的 OAuth 授权回调参数传递给当前持待的 Future。"""
         future = self._oauth_callback_futures.get(server_name)
         if not future or future.done():
             raise RuntimeError(f"No pending OAuth login for MCP server '{server_name}'")
@@ -264,6 +312,7 @@ class MCPManager:
             self._errors[server_name] = "OAuth callback received; connecting MCP server..."
 
     async def _stop_server(self, server_name: str):
+        """优雅停止指定服务器的连接任务，并清理其相关状态。"""
         stop_event = self._stop_events.pop(server_name, None)
         task = self._tasks.pop(server_name, None)
         if stop_event:
@@ -295,6 +344,7 @@ class MCPManager:
         task: asyncio.Task,
         timeout: float,
     ):
+        """异步连接超时监联：超时后将状态设为 error 并取消任务。"""
         await asyncio.sleep(timeout)
         if ready.done():
             return
@@ -313,6 +363,7 @@ class MCPManager:
         stop_event: asyncio.Event,
         ready: asyncio.Future,
     ):
+        """运行单个服务器连接入口，处理常规成功/失败及连接清理。"""
         try:
             await self._run_server_connection(server_name, config, stop_event, ready)
             if not ready.done():
@@ -342,10 +393,12 @@ class MCPManager:
         stop_event: asyncio.Event,
         ready: asyncio.Future,
     ):
+        """根据传输类型建立具体的 MCP 客户端连接并持续到 stop_event 被设置。"""
         from mcp import ClientSession
 
         transport = normalize_transport(config.get("transport"), config)
         if transport == STANDARD_HTTP_TRANSPORT:
+            # 标准可流式 HTTP 连接
             from mcp.client.streamable_http import streamablehttp_client
 
             headers = await self._build_http_headers(server_name, config)
@@ -362,6 +415,7 @@ class MCPManager:
                         ready.set_result(None)
                     await stop_event.wait()
         elif transport == LEGACY_SSE_TRANSPORT:
+            # 旧式 SSE 连接
             from mcp.client.sse import sse_client
 
             headers = await self._build_http_headers(server_name, config)
@@ -378,6 +432,7 @@ class MCPManager:
                         ready.set_result(None)
                     await stop_event.wait()
         elif transport == STDIO_TRANSPORT:
+            # 本地进程标准输入输出连接
             from mcp.client.stdio import StdioServerParameters, stdio_client
 
             command = config.get("command", "")
@@ -402,14 +457,20 @@ class MCPManager:
             raise ValueError(f"unsupported MCP transport: {transport}")
 
     async def _build_http_headers(self, server_name: str, config: dict) -> dict[str, str]:
+        """构建 HTTP 请求头，若配置了 OAuth Client Credentials 则异步获取 Token 并注入。"""
         headers = build_http_headers(config)
         auth = config.get("auth")
         if isinstance(auth, dict) and auth.get("type") == "oauth_client_credentials":
+            # 动态获取并缓存 Client Credentials Token
             token = await self._get_oauth_client_credentials_token(server_name, auth)
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
     def _build_oauth_authorization_provider(self, server_name: str, config: dict, ready: asyncio.Future):
+        """构建适用于 Authorization Code 流程的 OAuthClientProvider。
+
+        对于已配置其他鉴权类型或尚未提示 OAuth 的服务器返回 None。
+        """
         auth = config.get("auth")
         if isinstance(auth, Mapping):
             auth_type = str(auth.get("type", "")).lower()
@@ -429,24 +490,30 @@ class MCPManager:
 
         class InMemoryTokenStorage(TokenStorage):
             async def get_tokens(storage_self) -> OAuthToken | None:
+                # 从内存读取该服务器的已存储令牌
                 return self._oauth_login_tokens.get(server_name)
 
             async def set_tokens(storage_self, tokens: OAuthToken) -> None:
+                # 将新令牌写入内存缓存
                 self._oauth_login_tokens[server_name] = tokens
 
             async def get_client_info(storage_self) -> OAuthClientInformationFull | None:
+                # 读取已注册的 OAuth 客户端信息
                 return self._oauth_client_infos.get(server_name)
 
             async def set_client_info(storage_self, client_info: OAuthClientInformationFull) -> None:
+                # 保存客户端注册信息
                 self._oauth_client_infos[server_name] = client_info
 
         redirect_uri = auth.get("redirect_uri") or config.get("redirect_uri")
         if not isinstance(redirect_uri, str) or not redirect_uri:
+            # 未配置时使用默认地址
             redirect_uri = self._default_oauth_redirect_uri(server_name)
 
         timeout = float(auth.get("timeout") or config.get("oauth_timeout") or 300)
 
         async def redirect_handler(authorization_url: str) -> None:
+            """收到授权 URL 后更新内部状态并解除 authorization_ready 封锁。"""
             callback_future = self._oauth_callback_futures.get(server_name)
             if not callback_future or callback_future.done():
                 self._oauth_callback_futures[server_name] = asyncio.get_running_loop().create_future()
@@ -461,6 +528,7 @@ class MCPManager:
                 ready.set_result(None)
 
         async def callback_handler() -> tuple[str, str | None]:
+            """等待用户完成授权并将回调参数写入 Future。"""
             future = self._oauth_callback_futures.get(server_name)
             if not future or future.done():
                 future = asyncio.get_running_loop().create_future()
@@ -485,6 +553,7 @@ class MCPManager:
         )
 
     def _default_oauth_redirect_uri(self, server_name: str) -> str:
+        """生成默认的 OAuth 回调地址，根据当前应用端口拼接。"""
         try:
             from app.config import get_settings
 
@@ -495,6 +564,8 @@ class MCPManager:
         return f"http://127.0.0.1:{port}/api/v1/mcp/oauth/callback/{server_name}"
 
     async def _get_oauth_client_credentials_token(self, server_name: str, auth: dict) -> str:
+        """获取 OAuth Client Credentials 令牌，内置 30s 袋陕期缓存。"""
+        # 检查是否有有效缓存
         cached = self._oauth_tokens.get(server_name)
         now = time.time()
         if cached and cached[1] > now + 30:
@@ -513,6 +584,7 @@ class MCPManager:
         import httpx
 
         data: dict[str, str] = {"grant_type": "client_credentials"}
+        # 附加可选的 scope/audience/resource 参数
         for key in ("scope", "audience", "resource"):
             value = auth.get(key)
             if isinstance(value, str) and value:
@@ -521,8 +593,10 @@ class MCPManager:
         token_endpoint_auth_method = str(auth.get("token_endpoint_auth_method", "client_secret_post"))
         request_auth = None
         if token_endpoint_auth_method == "client_secret_basic":
+            # HTTP Basic Auth 方式
             request_auth = (client_id, client_secret or "")
         else:
+            # 请求体传参方式
             data["client_id"] = client_id
             if client_secret:
                 data["client_secret"] = client_secret
@@ -540,12 +614,14 @@ class MCPManager:
         token = payload.get("access_token")
         if not isinstance(token, str) or not token:
             raise RuntimeError("OAuth token response did not include access_token")
+        # 将令牌和过期时间写入缓存
         expires_in = payload.get("expires_in")
         ttl = float(expires_in) if isinstance(expires_in, (int, float)) else 3600
         self._oauth_tokens[server_name] = (token, now + ttl)
         return token
 
     def _format_connect_error(self, exc: Exception) -> str:
+        """将连接异常转换为简洁的错误描述字符串，对常见情况返回可读提示。"""
         if isinstance(exc, BaseExceptionGroup):
             messages = [self._format_connect_error(item) for item in exc.exceptions]
             unique_messages = list(dict.fromkeys(message for message in messages if message))
@@ -567,6 +643,7 @@ class MCPManager:
         return message
 
     async def _discover_tools(self, server_name: str, session):
+        """向 MCP 服务器查询工具列表，将发现的工具包装为 MCPToolAdapter 并更新注册表。"""
         result = await session.list_tools()
         discovered: dict[str, MCPToolAdapter] = {}
         for tool in result.tools:
@@ -581,19 +658,23 @@ class MCPManager:
             logger.info(f"Discovered MCP tool: {adapter.name}")
 
         with self._lock:
+            # 删除该服务器的旧工具，再写入新发现的工具
             for name in [name for name in self.tools if name.startswith(f"mcp_{server_name}_")]:
                 self.tools.pop(name, None)
             self.tools.update(discovered)
 
     async def _call_tool(self, server_name: str, tool_name: str, params: dict):
+        """异步调用指定服务器的工具，解析并返回文本内容或对象数据。"""
         session = self._sessions.get(server_name)
         if not session:
             raise RuntimeError(f"MCP server '{server_name}' is not connected")
         result = await session.call_tool(tool_name, params)
         if hasattr(result, "content"):
+            # 提取所有文本内容
             texts = [c.text for c in result.content if hasattr(c, "text")]
             if texts:
                 return "\n".join(texts)
+            # 醉匹内容字典列表
             return [getattr(c, "model_dump", lambda: str(c))() for c in result.content]
         if hasattr(result, "model_dump"):
             return result.model_dump()
