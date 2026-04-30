@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 from app.core.watchlist.service import LongbridgeUnavailableError
 from app.deps import get_market_service, get_watchlist_service
 from app.schemas.market import (
+    CandlesticksResponse,
+    IntradayResponse,
     MarketDashboardConfig,
     MarketQuotesResponse,
     QuoteItem,
@@ -46,8 +48,31 @@ async def get_stock_quotes(category: Optional[str] = None):
     market_svc = get_market_service()
     watchlist_svc = get_watchlist_service()
     try:
-        items = watchlist_svc.list_items(category=category)  # type: ignore[arg-type]
-        quotes = [QuoteItem(**q) for q in market_svc.get_watchlist_quotes(items)]
+        items = watchlist_svc.list_items(category=category)
+        raw = market_svc.get_watchlist_quotes(items)
+        quotes = [QuoteItem(**q) for q in raw]
     except LongbridgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return MarketQuotesResponse(quotes=quotes, total=len(quotes))
+
+
+@router.get("/candlesticks", response_model=CandlesticksResponse)
+async def get_candlesticks(symbol: str, period: str = "1D", count: int = 200):
+    """拉取指定标的 K 线数据。period: 1D | 1W | 1M。"""
+    service = get_market_service()
+    try:
+        data = service.get_candlesticks(symbol, period, count)
+    except LongbridgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return CandlesticksResponse(**data)
+
+
+@router.get("/intraday", response_model=IntradayResponse)
+async def get_intraday(symbol: str):
+    """拉取今日分时数据。"""
+    service = get_market_service()
+    try:
+        data = service.get_intraday(symbol)
+    except LongbridgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return IntradayResponse(**data)

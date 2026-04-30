@@ -168,3 +168,62 @@ class MarketService:
                 ) from exc
 
         return QuoteContext(config)
+
+    # ---------------------------------------------------------------- candlestick / intraday
+
+    def get_candlesticks(self, symbol: str, period: str, count: int = 200) -> dict:
+        """拉取历史 K 线数据。period: 1D | 1W | 1M。"""
+        try:
+            from longbridge.openapi import AdjustType, Period
+        except ImportError as exc:
+            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+
+        period_map = {
+            "1D": Period.Day,
+            "1W": Period.Week,
+            "1M": Period.Month,
+        }
+        lb_period = period_map.get(period, Period.Day)
+        ctx = self._quote_context()
+        try:
+            raw = ctx.candlesticks(symbol, lb_period, min(count, 1000), AdjustType.ForwardAdjust)
+        except Exception as exc:
+            raise LongbridgeUnavailableError(str(exc)) from exc
+
+        bars = []
+        for c in raw:
+            ts = getattr(c, "timestamp", None)
+            bars.append(
+                {
+                    "timestamp": int(ts.timestamp()) if ts is not None else 0,
+                    "open": _str(getattr(c, "open", None)) or "0",
+                    "high": _str(getattr(c, "high", None)) or "0",
+                    "low": _str(getattr(c, "low", None)) or "0",
+                    "close": _str(getattr(c, "close", None)) or "0",
+                    "volume": _str(getattr(c, "volume", None)) or "0",
+                    "turnover": _str(getattr(c, "turnover", None)) or "0",
+                }
+            )
+        return {"symbol": symbol, "period": period, "bars": bars}
+
+    def get_intraday(self, symbol: str) -> dict:
+        """拉取今日分时数据。"""
+        ctx = self._quote_context()
+        try:
+            raw = ctx.intraday(symbol)
+        except Exception as exc:
+            raise LongbridgeUnavailableError(str(exc)) from exc
+
+        bars = []
+        for line in raw:
+            ts = getattr(line, "timestamp", None)
+            bars.append(
+                {
+                    "timestamp": int(ts.timestamp()) if ts is not None else 0,
+                    "price": _str(getattr(line, "price", None)) or "0",
+                    "volume": _str(getattr(line, "volume", None)) or "0",
+                    "turnover": _str(getattr(line, "turnover", None)) or "0",
+                    "avg_price": _str(getattr(line, "avg_price", None)) or "0",
+                }
+            )
+        return {"symbol": symbol, "bars": bars}

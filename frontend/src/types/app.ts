@@ -117,3 +117,34 @@ export interface MarketQuotesResponse {
   quotes: QuoteItem[];
   total: number;
 }
+
+// ── Technical analysis ───────────────────────────────────────────────────────
+
+export interface CandlestickItem {
+  timestamp: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  turnover: string;
+}
+
+export interface CandlesticksResponse {
+  symbol: string;
+  period: string;
+  bars: CandlestickItem[];
+}
+
+export interface IntradayItem {
+  timestamp: number;
+  price: string;
+  volume: string;
+  turnover: string;
+  avg_price: string;
+}
+
+export interface IntradayResponse {
+  symbol: string;
+  bars: IntradayItem[];
+}

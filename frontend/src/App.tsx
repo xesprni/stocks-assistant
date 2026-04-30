@@ -25,6 +25,7 @@ import {
   Sun,
   TerminalSquare,
   Trash2,
+  TrendingUp,
   WandSparkles,
 } from "lucide-react";
 import {
@@ -47,6 +48,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { MarketDashboard } from "@/components/MarketDashboard";
 import { MarketConfigPage } from "@/components/MarketConfigPage";
+import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { MarketPulse } from "@/components/MarketPulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,7 +81,7 @@ import type {
   WatchlistSearchResult,
 } from "@/types/app";
 
-type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config";
+type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart";
 type Theme = "dark" | "light";
 
 const initialMessage: ChatMessage = {
@@ -99,6 +101,7 @@ const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }
   { id: "overview", label: "概览", icon: <Home />, hint: "状态与信号" },
   { id: "chat", label: "对话", icon: <MessageSquareText />, hint: "Agent chat" },
   { id: "market", label: "行情", icon: <BarChart2 />, hint: "大盘/个股" },
+  { id: "chart", label: "分析", icon: <TrendingUp />, hint: "技术分析" },
   { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
   { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
 ];
@@ -125,6 +128,7 @@ function toDraft(config: AppConfig): ConfigDraft {
 
 function App() {
   const [page, setPage] = useState<Page>("chat");
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = window.localStorage.getItem("stocks-assistant-theme");
     return stored === "light" || stored === "dark" ? stored : "dark";
@@ -363,6 +367,18 @@ function App() {
               <MarketDashboard
                 onOpenConfig={() => setPage("market_config")}
                 refreshInterval={marketConfig.refresh_interval}
+                onSelectStock={(quote) => {
+                  setSelectedSymbol(quote.symbol);
+                  setPage("chart");
+                }}
+              />
+            ) : null}
+
+            {page === "chart" ? (
+              <TechnicalAnalysis
+                symbol={selectedSymbol}
+                onSymbolChange={setSelectedSymbol}
+                onBack={() => setPage("market")}
               />
             ) : null}
 

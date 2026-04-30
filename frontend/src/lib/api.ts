@@ -1,6 +1,8 @@
 import type {
   AppConfig,
+  CandlesticksResponse,
   ChatResponse,
+  IntradayResponse,
   MarketDashboardConfig,
   MarketQuotesResponse,
   WatchlistCategory,
@@ -103,4 +105,13 @@ export function getIndexQuotes() {
 export function getStockQuotes(category?: string) {
   const params = category ? `?category=${category}` : "";
   return request<MarketQuotesResponse>(`/api/v1/market/stock-quotes${params}`);
+}
+
+export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", count = 200) {
+  const params = new URLSearchParams({ symbol, period, count: String(count) });
+  return request<CandlesticksResponse>(`/api/v1/market/candlesticks?${params.toString()}`);
+}
+
+export function getIntraday(symbol: string) {
+  return request<IntradayResponse>(`/api/v1/market/intraday?symbol=${encodeURIComponent(symbol)}`);
 }

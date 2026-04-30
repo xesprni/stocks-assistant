@@ -42,3 +42,40 @@ class MarketQuotesResponse(BaseModel):
 
     quotes: List[QuoteItem]
     total: int
+
+
+class CandlestickItem(BaseModel):
+    """单根 K 线数据。"""
+
+    timestamp: int
+    open: str
+    high: str
+    low: str
+    close: str
+    volume: str
+    turnover: str
+
+
+class CandlesticksResponse(BaseModel):
+    """K 线数据响应。"""
+
+    symbol: str
+    period: str
+    bars: List[CandlestickItem]
+
+
+class IntradayItem(BaseModel):
+    """单条分时数据。"""
+
+    timestamp: int
+    price: str
+    volume: str
+    turnover: str
+    avg_price: str
+
+
+class IntradayResponse(BaseModel):
+    """分时数据响应。"""
+
+    symbol: str
+    bars: List[IntradayItem]

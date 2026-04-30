@@ -124,12 +124,17 @@ function IndexCard({ quote }: { quote: QuoteItem }) {
   );
 }
 
-function StockCard({ quote }: { quote: QuoteItem }) {
+function StockCard({ quote, onSelect }: { quote: QuoteItem; onSelect?: (q: QuoteItem) => void }) {
   const tone = rateTone(quote.change_rate);
   return (
     <div
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={() => onSelect?.(quote)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect?.(quote); }}
       className={cn(
         "flex min-w-0 flex-col gap-2 rounded-md border bg-card/80 p-3 transition-colors hover:border-primary/40",
+        onSelect && "cursor-pointer",
         tone === "up" && "border-emerald-500/25",
         tone === "down" && "border-red-500/25",
         tone === "flat" && "border-border/80",
@@ -268,9 +273,11 @@ function IndexTab({
 function StockTab({
   refreshSignal,
   refreshInterval,
+  onSelectStock,
 }: {
   refreshSignal: number;
   refreshInterval: number;
+  onSelectStock?: (quote: QuoteItem) => void;
 }) {
   const [category, setCategory] = useState<WatchlistCategory | "ALL">("ALL");
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
@@ -335,7 +342,7 @@ function StockTab({
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {quotes.map((q) => (
-            <StockCard key={q.symbol} quote={q} />
+            <StockCard key={q.symbol} quote={q} onSelect={onSelectStock} />
           ))}
         </div>
       )}
@@ -348,9 +355,11 @@ function StockTab({
 export function MarketDashboard({
   onOpenConfig,
   refreshInterval,
+  onSelectStock,
 }: {
   onOpenConfig: () => void;
   refreshInterval: number;
+  onSelectStock?: (quote: QuoteItem) => void;
 }) {
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<string>("");
@@ -437,7 +446,7 @@ export function MarketDashboard({
           </TabsContent>
 
           <TabsContent value="stocks">
-            <StockTab refreshSignal={refreshSignal} refreshInterval={refreshInterval} />
+            <StockTab refreshSignal={refreshSignal} refreshInterval={refreshInterval} onSelectStock={onSelectStock} />
           </TabsContent>
         </Tabs>
       </div>
