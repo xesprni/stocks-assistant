@@ -206,7 +206,7 @@ class MarketService:
             )
         return {"symbol": symbol, "period": period, "bars": bars}
 
-    def get_intraday(self, symbol: str) -> dict:
+    def get_intraday(self, symbol: str, since: Optional[int] = None) -> dict:
         """拉取今日分时数据。"""
         ctx = self._quote_context()
         try:
@@ -226,4 +226,6 @@ class MarketService:
                     "avg_price": _str(getattr(line, "avg_price", None)) or "0",
                 }
             )
+        if since is not None:
+            bars = [bar for bar in bars if int(bar["timestamp"]) >= since]
         return {"symbol": symbol, "bars": bars}

@@ -142,12 +142,97 @@ function parseBars(bars: CandlestickItem[]) {
 }
 
 function parseIntraday(bars: IntradayItem[]) {
-  return bars.map((b) => ({
-    time: b.timestamp as Time,
-    price: parseFloat(b.price),
-    volume: parseFloat(b.volume),
-    avg_price: parseFloat(b.avg_price),
-  }));
+  return bars
+    .map((b) => ({
+      time: b.timestamp as Time,
+      price: parseFloat(b.price),
+      volume: parseFloat(b.volume),
+      avg_price: parseFloat(b.avg_price),
+    }))
+    .sort((a, b) => Number(a.time) - Number(b.time));
+}
+
+type ParsedIntradayBar = ReturnType<typeof parseIntraday>[number];
+
+const DEFAULT_INTRADAY_REFRESH_SECONDS = 5;
+const INTRADAY_REFRESH_STORAGE_KEY = "stocks-assistant.intraday-refresh-seconds";
+
+function clampIntradayRefreshSeconds(value: number) {
+  if (!Number.isFinite(value)) return DEFAULT_INTRADAY_REFRESH_SECONDS;
+  return Math.min(10, Math.max(1, Math.round(value)));
+}
+
+function loadStoredIntradayRefreshSeconds() {
+  try {
+    const stored = localStorage.getItem(INTRADAY_REFRESH_STORAGE_KEY);
+    return stored == null ? DEFAULT_INTRADAY_REFRESH_SECONDS : clampIntradayRefreshSeconds(Number(stored));
+  } catch {
+    return DEFAULT_INTRADAY_REFRESH_SECONDS;
+  }
+}
+
+function sameLocalDate(a: number, b: number) {
+  return new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
+}
+
+function sameIntradayBar(a: ParsedIntradayBar, b: ParsedIntradayBar) {
+  return (
+    Number(a.time) === Number(b.time) &&
+    a.price === b.price &&
+    a.volume === b.volume &&
+    a.avg_price === b.avg_price
+  );
+}
+
+function mergeIntradayBars(current: ParsedIntradayBar[], incoming: ParsedIntradayBar[]) {
+  if (current.length === 0) {
+    return { bars: incoming, changedStart: 0, replace: true };
+  }
+  if (incoming.length === 0) {
+    return { bars: current, changedStart: current.length, replace: false };
+  }
+
+  const firstIncomingTime = Number(incoming[0].time);
+  const currentFirstTime = Number(current[0].time);
+  const currentLastTime = Number(current[current.length - 1].time);
+
+  if (firstIncomingTime < currentFirstTime || !sameLocalDate(firstIncomingTime, currentLastTime)) {
+    return { bars: incoming, changedStart: 0, replace: true };
+  }
+
+  let start = current.findIndex((bar) => Number(bar.time) >= firstIncomingTime);
+  if (start === -1) start = current.length;
+
+  const next = [...current];
+  let changedStart = current.length;
+  let cursor = start;
+
+  for (const bar of incoming) {
+    const barTime = Number(bar.time);
+    while (cursor < next.length && Number(next[cursor].time) < barTime) {
+      cursor++;
+    }
+
+    if (cursor < next.length && Number(next[cursor].time) === barTime) {
+      if (!sameIntradayBar(next[cursor], bar)) {
+        next[cursor] = bar;
+        changedStart = Math.min(changedStart, cursor);
+      }
+      cursor++;
+      continue;
+    }
+
+    next.splice(cursor, 0, bar);
+    changedStart = Math.min(changedStart, cursor);
+    cursor++;
+  }
+
+  const canTailUpdate = changedStart >= current.length - 1;
+  return {
+    bars: next,
+    changedStart,
+    replace: !canTailUpdate,
+  };
 }
 
 // ── Watchlist sidebar ─────────────────────────────────────────────────────────
@@ -700,8 +785,33 @@ function IntradayCharts({
   const signalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const histSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
+  const barsRef = useRef<ParsedIntradayBar[]>([]);
+  const lastTimestampRef = useRef<number | null>(null);
+  const inFlightRef = useRef(false);
+  const requestSeqRef = useRef(0);
+  const symbolRef = useRef(symbol);
+
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [refreshSeconds, setRefreshSeconds] = useState(loadStoredIntradayRefreshSeconds);
+
+  useEffect(() => { symbolRef.current = symbol; }, [symbol]);
+
+  useEffect(() => {
+    return () => {
+      requestSeqRef.current += 1;
+      inFlightRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INTRADAY_REFRESH_STORAGE_KEY, String(refreshSeconds));
+    } catch {
+      // Ignore storage failures; the in-memory setting still works.
+    }
+  }, [refreshSeconds]);
 
   useLayoutEffect(() => {
     if (!containerRef.current) return;
@@ -751,56 +861,156 @@ function IntradayCharts({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const renderBars = useCallback((
+    bars: ParsedIntradayBar[],
+    mode: "replace" | "update",
+    changedStart = 0,
+  ) => {
+    if (!priceSeriesRef.current) return;
+    const T = makeTheme(isDark, upColor, downColor);
+    const closes = bars.map((b) => b.price);
+    const macd = calcMACD(closes);
+
+    if (mode === "replace") {
+      priceSeriesRef.current.setData(bars.map((b) => ({ time: b.time, value: b.price })) as LineData[]);
+      avgSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.avg_price })) as LineData[]);
+      volSeriesRef.current?.setData(
+        bars.map((b) => ({ time: b.time, value: b.volume, color: T.blue + "66" })) as HistogramData[]
+      );
+      macdSeriesRef.current?.setData(
+        bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.macd } : null)
+          .filter((v): v is LineData => v != null)
+      );
+      signalSeriesRef.current?.setData(
+        bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.signal } : null)
+          .filter((v): v is LineData => v != null)
+      );
+      histSeriesRef.current?.setData(
+        bars.map((b, i) => macd[i] ? {
+          time: b.time,
+          value: macd[i]!.histogram,
+          color: macd[i]!.histogram >= 0 ? T.up + "99" : T.down + "99",
+        } : null).filter(v => v !== null) as HistogramData[]
+      );
+      chartRef.current?.timeScale().fitContent();
+      return;
+    }
+
+    for (let i = Math.max(0, changedStart); i < bars.length; i++) {
+      const bar = bars[i];
+      priceSeriesRef.current.update({ time: bar.time, value: bar.price });
+      avgSeriesRef.current?.update({ time: bar.time, value: bar.avg_price });
+      volSeriesRef.current?.update({ time: bar.time, value: bar.volume, color: T.blue + "66" });
+      const macdPoint = macd[i];
+      if (macdPoint) {
+        macdSeriesRef.current?.update({ time: bar.time, value: macdPoint.macd });
+        signalSeriesRef.current?.update({ time: bar.time, value: macdPoint.signal });
+        histSeriesRef.current?.update({
+          time: bar.time,
+          value: macdPoint.histogram,
+          color: macdPoint.histogram >= 0 ? T.up + "99" : T.down + "99",
+        });
+      }
+    }
+  }, [isDark, upColor, downColor]);
+
   useEffect(() => {
     if (chartRef.current) {
       chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark, upColor, downColor)));
+      if (barsRef.current.length > 0) {
+        renderBars(barsRef.current, "replace");
+      }
     }
-  }, [isDark]);
+  }, [isDark, upColor, downColor, renderBars]);
 
-  const load = useCallback(() => {
+  const applyBars = useCallback((incoming: ParsedIntradayBar[], replaceAll: boolean) => {
+    const merged = replaceAll
+      ? { bars: incoming, changedStart: 0, replace: true }
+      : mergeIntradayBars(barsRef.current, incoming);
+
+    barsRef.current = merged.bars;
+    const last = merged.bars[merged.bars.length - 1];
+    lastTimestampRef.current = last ? Number(last.time) : null;
+
+    if (merged.replace || merged.changedStart < merged.bars.length) {
+      renderBars(merged.bars, merged.replace ? "replace" : "update", merged.changedStart);
+    }
+  }, [renderBars]);
+
+  const load = useCallback((mode: "full" | "incremental" = "incremental") => {
     if (!symbol) return;
-    setLoading(true);
-    getIntraday(symbol)
-      .then((res) => {
-        const bars = parseIntraday(res.bars);
-        if (!priceSeriesRef.current) return;
-        const closes = bars.map((b) => b.price);
-        const macd = calcMACD(closes);
+    if (mode === "incremental" && inFlightRef.current) return;
 
-        priceSeriesRef.current.setData(bars.map((b) => ({ time: b.time, value: b.price })) as LineData[]);
-        avgSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.avg_price })) as LineData[]);
-        volSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.volume, color: makeTheme(isDark, upColor, downColor).blue + "66" })) as HistogramData[]);
-        macdSeriesRef.current?.setData(bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.macd } : null).filter((v): v is LineData => v != null));
-        signalSeriesRef.current?.setData(bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.signal } : null).filter((v): v is LineData => v != null));
-        histSeriesRef.current?.setData(
-          bars.map((b, i) => macd[i] ? {
-            time: b.time, value: macd[i]!.histogram,
-            color: macd[i]!.histogram >= 0 ? makeTheme(isDark, upColor, downColor).up + "99" : makeTheme(isDark, upColor, downColor).down + "99",
-          } : null).filter(v => v !== null) as HistogramData[]
-        );
-        chartRef.current?.timeScale().fitContent();
-        setLastUpdated(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    const requestSymbol = symbol;
+    const since = mode === "incremental" ? lastTimestampRef.current : null;
+
+    inFlightRef.current = true;
+    setLoading(true);
+    getIntraday(requestSymbol, since)
+      .then((res) => {
+        if (requestSeqRef.current !== requestId || symbolRef.current !== requestSymbol) return;
+        const bars = parseIntraday(res.bars);
+        applyBars(bars, mode === "full");
+        setLastUpdated(new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }));
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [symbol]);
+      .finally(() => {
+        if (requestSeqRef.current === requestId) {
+          inFlightRef.current = false;
+          setLoading(false);
+        }
+      });
+  }, [applyBars, symbol]);
 
   useEffect(() => {
-    load();
-    const timer = setInterval(load, 60_000);
-    return () => clearInterval(timer);
-  }, [load]);
+    barsRef.current = [];
+    lastTimestampRef.current = null;
+    setLastUpdated("");
+    load("full");
+  }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const timer = window.setInterval(() => load("incremental"), refreshSeconds * 1000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, load, refreshSeconds]);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
       <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-1.5">
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">VOL</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">MACD</span>
+        <label className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={(e) => setAutoRefresh(e.currentTarget.checked)}
+            className="size-3 accent-primary"
+          />
+          自动
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={10}
+          value={refreshSeconds}
+          disabled={!autoRefresh}
+          onChange={(e) => setRefreshSeconds(clampIntradayRefreshSeconds(e.currentTarget.valueAsNumber))}
+          className="h-5 w-11 rounded border border-border bg-background px-1 text-right text-[10px] text-foreground outline-none transition-colors focus:border-primary disabled:opacity-50"
+          aria-label="自动刷新间隔秒数"
+        />
+        <span className="text-[10px] text-muted-foreground">s</span>
         {lastUpdated && (
-          <span className="ml-auto text-[10px] text-muted-foreground">更新 {lastUpdated}</span>
+          <span className="text-[10px] text-muted-foreground">更新 {lastUpdated}</span>
         )}
         <button
-          onClick={load}
+          onClick={() => load("incremental")}
           disabled={loading}
           title="刷新"
           className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"

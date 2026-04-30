@@ -31,6 +31,14 @@ def _build_agent(user_id: Optional[str] = None):
 
     tool_manager = ToolManager(workspace_dir=str(Path(settings.workspace_dir).expanduser()))
     tool_manager.load_builtin_tools(memory_manager=memory_mgr)
+    tools = tool_manager.get_all_tools()
+    if settings.mcp_servers:
+        try:
+            from app.deps import get_mcp_manager
+
+            tools.extend(get_mcp_manager().get_tools())
+        except Exception:
+            pass
 
     model = LLMModel(model=settings.llm_model)
     model.call = llm.call
@@ -41,7 +49,7 @@ def _build_agent(user_id: Optional[str] = None):
     return Agent(
         system_prompt=system_prompt,
         model=model,
-        tools=tool_manager.get_all_tools(),
+        tools=tools,
         max_steps=settings.agent_max_steps,
         max_context_tokens=settings.agent_max_context_tokens,
         max_context_turns=settings.agent_max_context_turns,

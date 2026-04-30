@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MCPToolInfo(BaseModel):
@@ -10,21 +10,22 @@ class MCPToolInfo(BaseModel):
 
     name: str
     description: str = ""
-    parameters: Dict[str, Any] = {}
+    parameters: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MCPServerStatus(BaseModel):
     """MCP 服务器状态。"""
 
     name: str
-    transport: str = "sse"
+    transport: str = "streamable_http"
     url: str = ""
     command: str = ""
-    args: List[str] = []
-    headers: Dict[str, str] = {}
-    status: str = "disconnected"  # connected | error | disconnected
+    args: List[str] = Field(default_factory=list)
+    headers: Dict[str, str] = Field(default_factory=dict)
+    status: str = "disconnected"  # connecting | auth_required | connected | error | disconnected
     error: Optional[str] = None
     tools_count: int = 0
+    oauth_authorization_url: Optional[str] = None
 
 
 class MCPStatusResponse(BaseModel):

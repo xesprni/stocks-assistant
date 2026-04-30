@@ -76,11 +76,12 @@ class OpenAICompatibleProvider(LLMModel):
         将 LLMRequest 转换为 OpenAI Chat Completions API 格式：
         - system 提示词作为第一条 system 消息
         - tools 转换为 function calling 格式
+        - 消息从 Claude 内容块格式转换为 OpenAI 格式
         """
         messages = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
-        messages.extend(request.messages)
+        messages.extend(self._convert_messages_to_openai(request.messages))
 
         payload: Dict[str, Any] = {
             "model": request.model or self.model,
@@ -91,11 +92,89 @@ class OpenAICompatibleProvider(LLMModel):
         if request.max_tokens:
             payload["max_tokens"] = request.max_tokens
         if request.tools:
-            # 转换为 OpenAI function calling 格式
             payload["tools"] = [
                 {"type": "function", "function": t} for t in request.tools
             ]
         return payload
+
+    def _convert_messages_to_openai(self, messages: List[dict]) -> List[dict]:
+        """将 Claude 风格的消息转换为 OpenAI 格式
+
+        转换规则：
+        - content 为字符串：直接使用
+        - content 为列表：
+          - text 块 -> 提取文本
+          - thinking 块 -> 丢弃（OpenAI 不支持）
+          - tool_use 块 -> 转为 assistant.tool_calls
+          - tool_result 块 -> 转为 role:"tool" 消息
+        """
+        openai_messages = []
+
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content")
+
+            if isinstance(content, str):
+                openai_messages.append({"role": role, "content": content})
+                continue
+
+            if not isinstance(content, list):
+                openai_messages.append({"role": role, "content": content})
+                continue
+
+            text_parts = []
+            tool_uses = []
+            tool_results = []
+
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type == "text":
+                    text_parts.append(block.get("text", ""))
+                elif block_type == "tool_use":
+                    tool_uses.append(block)
+                elif block_type == "tool_result":
+                    tool_results.append(block)
+                # thinking 块忽略
+
+            if role == "assistant":
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": "\n".join(text_parts) if text_parts else None,
+                }
+                if tool_uses:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tu.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": tu.get("name", ""),
+                                "arguments": json.dumps(tu.get("input", {}), ensure_ascii=False),
+                            },
+                        }
+                        for tu in tool_uses
+                    ]
+                openai_messages.append(assistant_msg)
+
+            elif role == "user":
+                if tool_results:
+                    for tr in tool_results:
+                        openai_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tr.get("tool_use_id", ""),
+                            "content": tr.get("content", ""),
+                        })
+                if text_parts:
+                    openai_messages.append({
+                        "role": "user",
+                        "content": "\n".join(text_parts),
+                    })
+            else:
+                text = "\n".join(text_parts) if text_parts else ""
+                openai_messages.append({"role": role, "content": text})
+
+        return openai_messages
 
     def _headers(self) -> dict:
         """构建 API 请求头"""

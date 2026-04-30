@@ -68,11 +68,11 @@ async def get_candlesticks(symbol: str, period: str = "1D", count: int = 200):
 
 
 @router.get("/intraday", response_model=IntradayResponse)
-async def get_intraday(symbol: str):
-    """拉取今日分时数据。"""
+async def get_intraday(symbol: str, since: Optional[int] = None):
+    """拉取今日分时数据。since 可用于增量返回指定时间戳后的数据。"""
     service = get_market_service()
     try:
-        data = service.get_intraday(symbol)
+        data = service.get_intraday(symbol, since=since)
     except LongbridgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return IntradayResponse(**data)

@@ -37,24 +37,27 @@ async def lifespan(app: FastAPI):
     if not memory_file.exists():
         memory_file.write_text("")
 
-    # 初始化 MCP 服务器连接（后台异步执行，不阻塞启动）
+    # 初始化 MCP 服务器连接（后台事件循环中维护长连接）
+    mcp_manager = None
     if settings.mcp_servers:
-        import asyncio
         import logging
         from app.deps import get_mcp_manager
 
         mcp_logger = logging.getLogger("stocks-assistant.mcp")
-        manager = get_mcp_manager()
+        mcp_manager = get_mcp_manager()
         # 更新 manager 的配置（可能在运行时被 config API 更新）
-        manager.server_configs = settings.mcp_servers
+        mcp_manager.server_configs = settings.mcp_servers
         try:
-            loop = asyncio.get_event_loop()
-            loop.create_task(manager.connect_all())
-            mcp_logger.info(f"Scheduled MCP connection for {len(settings.mcp_servers)} server(s)")
-        except RuntimeError:
-            mcp_logger.warning("No event loop available for MCP initialization")
+            mcp_manager.connect_all_sync()
+            mcp_logger.info(f"Initialized MCP connection for {len(settings.mcp_servers)} server(s)")
+        except Exception as exc:
+            mcp_logger.warning(f"MCP initialization failed: {exc}")
 
-    yield
+    try:
+        yield
+    finally:
+        if mcp_manager is not None:
+            mcp_manager.close_sync()
 
 
 app = FastAPI(

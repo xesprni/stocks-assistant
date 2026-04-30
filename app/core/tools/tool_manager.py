@@ -43,7 +43,8 @@ class ToolManager:
         from app.core.tools.memory_get import MemoryGetTool
         from app.core.tools.scheduler.tool import SchedulerTool
 
-        builtin = [BashTool, WebSearchTool, WebFetchTool, ReadFileTool, WriteFileTool]
+        # builtin = [BashTool, WebSearchTool, WebFetchTool, ReadFileTool, WriteFileTool]
+        builtin = [BashTool, WebFetchTool, ReadFileTool, WriteFileTool]
 
         if memory_manager:
             builtin.append(MemorySearchTool)

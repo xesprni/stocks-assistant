@@ -130,9 +130,10 @@ export interface MCPServerStatus {
   command: string;
   args: string[];
   headers: Record<string, string>;
-  status: "connected" | "error" | "disconnected";
+  status: "connecting" | "auth_required" | "connected" | "error" | "disconnected";
   error: string | null;
   tools_count: number;
+  oauth_authorization_url: string | null;
 }
 
 export interface MCPStatusResponse {

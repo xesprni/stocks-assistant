@@ -92,4 +92,13 @@ async def update_config(update: ConfigUpdate):
 
     _write_config_file(merged)
     config_module._config_instance = validated
+    if "mcp_servers" in patch:
+        try:
+            from app.deps import get_mcp_manager
+
+            manager = get_mcp_manager()
+            manager.reconnect_sync(validated.mcp_servers)
+        except Exception:
+            # 连接错误会体现在 /mcp/status 中；配置保存不因此失败。
+            pass
     return _settings_to_response(validated)

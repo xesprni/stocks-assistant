@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AppConfig(BaseModel):
@@ -78,3 +78,10 @@ class ConfigUpdate(BaseModel):
     longbridge_access_token: Optional[str] = None
     longbridge_http_url: Optional[str] = None
     longbridge_quote_ws_url: Optional[str] = None
+
+    @field_validator("mcp_servers", mode="before")
+    @classmethod
+    def validate_mcp_servers(cls, value):
+        from app.core.tools.mcp.config import normalize_mcp_servers
+
+        return normalize_mcp_servers(value)

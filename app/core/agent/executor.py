@@ -346,7 +346,7 @@ class AgentStreamExecutor:
                 tools_schema.append({
                     "name": tool.name,
                     "description": tool.description,
-                    "input_schema": tool.params,
+                    "parameters": tool.params,
                 })
 
         request = LLMRequest(

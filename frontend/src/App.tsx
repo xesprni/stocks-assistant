@@ -10,6 +10,7 @@ import {
   CircleDot,
   Cpu,
   Database,
+  ExternalLink,
   Eye,
   GripVertical,
   Home,
@@ -70,10 +71,12 @@ import {
   deleteWatchlistItem,
   getMarketConfig,
   getMcpStatus,
+  getMcpOAuthAuthorizeUrl,
   getMcpTools,
   listSkills,
   listWatchlist,
   loadConfig,
+  reconnectMcpServers,
   reorderWatchlist,
   saveConfig,
   searchWatchlist,
@@ -139,6 +142,29 @@ function toDraft(config: AppConfig): ConfigDraft {
     longbridge_quote_ws_url: config.longbridge_quote_ws_url ?? "",
     mcp_servers_text: JSON.stringify(config.mcp_servers ?? {}, null, 2),
   };
+}
+
+function formatJsonParseError(error: unknown, label = "JSON") {
+  const message = error instanceof Error ? error.message : "格式错误";
+  if (/Unexpected non-whitespace character after JSON/i.test(message)) {
+    return `${label} 格式错误：一个完整 JSON 对象后面还有多余内容。请删除第二段 JSON、注释或 Markdown 代码围栏，只保留一个 JSON 对象。`;
+  }
+  return `${label} 格式错误：${message}`;
+}
+
+function parseJsonObject(text: string, label = "JSON") {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    throw new Error(formatJsonParseError(error, label));
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} 必须是对象`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function App() {
@@ -270,7 +296,7 @@ function App() {
     setError("");
 
     try {
-      const mcpServers = JSON.parse(draft.mcp_servers_text || "{}") as Record<string, Record<string, unknown>>;
+      const mcpServers = parseJsonObject(draft.mcp_servers_text || "{}", "MCP Servers JSON") as Record<string, Record<string, unknown>>;
       const payload: Record<string, unknown> = {
         llm_api_base: draft.llm_api_base,
         llm_model: draft.llm_model,
@@ -1405,6 +1431,19 @@ interface MCPServersPanelProps {
   patchDraft: (patch: Partial<ConfigDraft>) => void;
 }
 
+type MCPTransport = "streamable_http" | "sse" | "stdio";
+
+const emptyMcpAddForm = {
+  name: "",
+  transport: "streamable_http" as MCPTransport,
+  url: "",
+  command: "",
+  args: "",
+  headers: "",
+  authToken: "",
+  env: "",
+};
+
 function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
   const [serverStatuses, setServerStatuses] = useState<MCPServerStatus[]>([]);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
@@ -1414,19 +1453,90 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [showRawJson, setShowRawJson] = useState(false);
   const [addMode, setAddMode] = useState<"form" | "json">("form");
-  const [addForm, setAddForm] = useState({ name: "", transport: "sse" as "sse" | "stdio", url: "", command: "", args: "", headers: "" });
+  const [addForm, setAddForm] = useState(emptyMcpAddForm);
   const [addJson, setAddJson] = useState("");
   const [addError, setAddError] = useState("");
 
   function parseMcpServers(text: string): Record<string, Record<string, unknown>> {
     try {
-      return JSON.parse(text || "{}") as Record<string, Record<string, unknown>>;
+      return parseJsonObject(text || "{}", "MCP Servers JSON") as Record<string, Record<string, unknown>>;
     } catch {
       return {};
     }
   }
 
   const servers = parseMcpServers(draft.mcp_servers_text);
+
+  function normalizeMcpTransport(value: unknown, config: Record<string, unknown>): MCPTransport {
+    if (value == null || value === "") return config.command ? "stdio" : "streamable_http";
+    if (value === "http" || value === "streamable-http" || value === "streamable_http") return "streamable_http";
+    if (value === "sse") return "sse";
+    if (value === "stdio") return "stdio";
+    throw new Error("transport 只支持 streamable_http、sse 或 stdio");
+  }
+
+  function parseStringMap(text: string, label: string) {
+    const trimmed = text.trim();
+    const result: Record<string, string> = {};
+    if (!trimmed) return result;
+    if (trimmed.startsWith("{")) {
+      const parsed = parseJsonObject(trimmed, label);
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value !== "string") throw new Error(`${label}.${key} 必须是字符串`);
+        result[key] = value;
+      }
+      return result;
+    }
+    for (const line of trimmed.split("\n")) {
+      if (!line.trim()) continue;
+      const idx = line.indexOf(":");
+      if (idx <= 0) throw new Error(`${label} 每行格式应为 key: value`);
+      result[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
+    return result;
+  }
+
+  function validateMcpServersConfig(input: unknown) {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      throw new Error('JSON 必须是对象，如 {"server-name": {"transport": "streamable_http", "url": "https://example.com/mcp"}}');
+    }
+    const normalized: Record<string, Record<string, unknown>> = {};
+    for (const [name, rawConfig] of Object.entries(input)) {
+      if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+        throw new Error(`服务器名称 "${name}" 只能包含字母、数字、下划线和连字符`);
+      }
+      if (typeof rawConfig !== "object" || rawConfig === null || Array.isArray(rawConfig)) {
+        throw new Error(`${name} 的配置必须是对象`);
+      }
+      const config = { ...(rawConfig as Record<string, unknown>) };
+      const transport = normalizeMcpTransport(config.transport, config);
+      config.transport = transport;
+      if (transport === "stdio") {
+        if (typeof config.command !== "string" || !config.command.trim()) {
+          throw new Error(`${name} 的 stdio 配置需要 command`);
+        }
+        if (typeof config.args === "string") {
+          config.args = config.args.trim() ? config.args.trim().split(/\s+/) : [];
+        }
+        if (config.args != null && !Array.isArray(config.args)) {
+          throw new Error(`${name} 的 args 必须是字符串数组`);
+        }
+        if (Array.isArray(config.args) && !config.args.every((item) => typeof item === "string")) {
+          throw new Error(`${name} 的 args 必须是字符串数组`);
+        }
+      } else if (typeof config.url !== "string" || !/^https?:\/\/.+/i.test(config.url)) {
+        throw new Error(`${name} 的 ${transport} 配置需要 http(s) URL`);
+      }
+      if (config.headers != null && (typeof config.headers !== "object" || Array.isArray(config.headers))) {
+        throw new Error(`${name} 的 headers 必须是对象`);
+      }
+      if (config.env != null && (typeof config.env !== "object" || Array.isArray(config.env))) {
+        throw new Error(`${name} 的 env 必须是对象`);
+      }
+      normalized[name] = config;
+    }
+    return normalized;
+  }
 
   function loadStatus() {
     setIsLoadingStatus(true);
@@ -1436,11 +1546,30 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
       .finally(() => setIsLoadingStatus(false));
   }
 
+  function reconnectServers() {
+    setIsLoadingStatus(true);
+    reconnectMcpServers()
+      .then((res) => setServerStatuses(res.servers))
+      .catch(() => setServerStatuses([]))
+      .finally(() => setIsLoadingStatus(false));
+  }
+
   useEffect(() => {
     loadStatus();
   }, []);
 
+  useEffect(() => {
+    const hasPendingServer = serverStatuses.some((status) => status.status === "connecting" || status.status === "auth_required");
+    if (!hasPendingServer) return;
+    const timer = window.setInterval(loadStatus, 3000);
+    return () => window.clearInterval(timer);
+  }, [serverStatuses]);
+
   function handleViewTools(serverName: string) {
+    if (!statusMap.has(serverName)) {
+      setAddError(`"${serverName}" 还没有保存到后端。请先点击页面右上角 Save，再点 Reconnect 或 Refresh。`);
+      return;
+    }
     setShowToolsFor(serverName);
     setIsLoadingTools(true);
     setToolsData([]);
@@ -1473,9 +1602,9 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
     }
 
     const config: Record<string, unknown> = { transport: addForm.transport };
-    if (addForm.transport === "sse") {
+    if (addForm.transport === "streamable_http" || addForm.transport === "sse") {
       if (!addForm.url.trim()) {
-        setAddError("SSE 模式需要填写 URL");
+        setAddError("HTTP/SSE 模式需要填写 URL");
         return;
       }
       config.url = addForm.url.trim();
@@ -1490,56 +1619,69 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
       }
     }
 
-    // Parse headers (key:value per line or JSON)
-    if (addForm.headers.trim()) {
-      try {
-        const headerObj: Record<string, string> = {};
-        const trimmed = addForm.headers.trim();
-        if (trimmed.startsWith("{")) {
-          const parsed = JSON.parse(trimmed);
-          for (const [k, v] of Object.entries(parsed)) {
-            if (typeof v === "string") headerObj[k] = v;
-          }
-        } else {
-          for (const line of trimmed.split("\n")) {
-            const idx = line.indexOf(":");
-            if (idx > 0) {
-              headerObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-            }
-          }
-        }
-        if (Object.keys(headerObj).length > 0) {
-          config.headers = headerObj;
-        }
-      } catch {
-        // ignore parse errors for headers
+    try {
+      const headers = parseStringMap(addForm.headers, "Headers");
+      if (Object.keys(headers).length > 0) {
+        config.headers = headers;
+      }
+      const env = parseStringMap(addForm.env, "Env");
+      if (Object.keys(env).length > 0) {
+        config.env = env;
+      }
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : "配置格式错误");
+      return;
+    }
+
+    if (addForm.authToken.trim()) {
+      if (addForm.transport === "stdio") {
+        config.env = {
+          ...((config.env as Record<string, string> | undefined) ?? {}),
+          MCP_AUTH_TOKEN: addForm.authToken.trim(),
+        };
+      } else {
+        config.auth = { type: "bearer", token: addForm.authToken.trim() };
       }
     }
 
-    const updated = { ...servers, [name]: config };
+    let updated: Record<string, Record<string, unknown>>;
+    try {
+      updated = validateMcpServersConfig({ ...servers, [name]: config });
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : "MCP 配置格式错误");
+      return;
+    }
     syncServersToDraft(updated);
-    setAddForm({ name: "", transport: "sse", url: "", command: "", args: "", headers: "" });
+    setAddForm(emptyMcpAddForm);
     setShowAddForm(false);
   }
 
   function handleAddFromJson() {
     setAddError("");
     try {
-      const parsed = JSON.parse(addJson);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        setAddError("JSON 必须是对象，如 {\"server-name\": {\"transport\": \"sse\", \"url\": \"...\"}}");
-        return;
-      }
-      const updated = { ...servers, ...parsed };
+      const parsed = parseJsonObject(addJson, "MCP JSON");
+      const normalized = validateMcpServersConfig(parsed);
+      const updated = validateMcpServersConfig({ ...servers, ...normalized });
       syncServersToDraft(updated);
       setAddJson("");
       setShowAddForm(false);
-    } catch {
-      setAddError("JSON 格式错误，请检查语法");
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : "JSON 格式错误，请检查语法");
     }
   }
 
+  function startOAuthLogin(serverName: string) {
+    window.open(getMcpOAuthAuthorizeUrl(serverName), "_blank", "noopener,noreferrer");
+  }
+
+  function maskConfigValue(key: string, value: string) {
+    if (!/(authorization|token|secret|password|api-?key|key)/i.test(key)) return value;
+    if (value.length <= 8) return "*".repeat(value.length);
+    return `${value.slice(0, 4)}********${value.slice(-4)}`;
+  }
+
   const statusMap = new Map(serverStatuses.map((s) => [s.name, s]));
+  const unsavedServers = Object.keys(servers).filter((name) => !statusMap.has(name));
 
   return (
     <div className="space-y-3">
@@ -1554,12 +1696,22 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
             {isLoadingStatus ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             Refresh
           </Button>
+          <Button variant="outline" size="sm" onClick={reconnectServers} disabled={isLoadingStatus}>
+            <Zap />
+            Reconnect
+          </Button>
           <Button size="sm" onClick={() => { setShowAddForm(true); setAddError(""); }} disabled={showAddForm}>
             <Plus />
             Add
           </Button>
         </div>
       </div>
+
+      {unsavedServers.length > 0 ? (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          {unsavedServers.join(", ")} 尚未保存到后端；点击右上角 Save 后再查看连接状态或工具列表。
+        </div>
+      ) : null}
 
       {/* Add form */}
       {showAddForm ? (
@@ -1610,6 +1762,16 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
                     <button
                       className={cn(
                         "h-8 flex-1 rounded-sm text-xs font-medium transition-all",
+                        addForm.transport === "streamable_http" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
+                      )}
+                      onClick={() => setAddForm((f) => ({ ...f, transport: "streamable_http" }))}
+                      type="button"
+                    >
+                      HTTP
+                    </button>
+                    <button
+                      className={cn(
+                        "h-8 flex-1 rounded-sm text-xs font-medium transition-all",
                         addForm.transport === "sse" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
                       )}
                       onClick={() => setAddForm((f) => ({ ...f, transport: "sse" }))}
@@ -1630,13 +1792,21 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
                   </div>
                 </Field>
               </div>
-              {addForm.transport === "sse" ? (
+              {addForm.transport === "streamable_http" || addForm.transport === "sse" ? (
                 <>
                   <Field label="URL">
                     <Input
-                      placeholder="http://localhost:3001/sse"
+                      placeholder={addForm.transport === "streamable_http" ? "https://example.com/mcp" : "http://localhost:3001/sse"}
                       value={addForm.url}
                       onChange={(e) => setAddForm((f) => ({ ...f, url: e.target.value }))}
+                    />
+                  </Field>
+                  <Field label="Bearer Token（可选）">
+                    <Input
+                      type="password"
+                      placeholder="OAuth access token"
+                      value={addForm.authToken}
+                      onChange={(e) => setAddForm((f) => ({ ...f, authToken: e.target.value }))}
                     />
                   </Field>
                   <Field label="Headers（可选，每行 key: value 或 JSON 对象）">
@@ -1665,18 +1835,35 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
                       onChange={(e) => setAddForm((f) => ({ ...f, args: e.target.value }))}
                     />
                   </Field>
+                  <Field label="Auth Token（写入 MCP_AUTH_TOKEN，可选）">
+                    <Input
+                      type="password"
+                      placeholder="stdio server token"
+                      value={addForm.authToken}
+                      onChange={(e) => setAddForm((f) => ({ ...f, authToken: e.target.value }))}
+                    />
+                  </Field>
+                  <Field label="Env（可选，每行 key: value 或 JSON 对象）">
+                    <Textarea
+                      className="min-h-[60px] font-mono text-xs"
+                      spellCheck={false}
+                      placeholder={"API_KEY: token123\nBASE_URL: https://example.com"}
+                      value={addForm.env}
+                      onChange={(e) => setAddForm((f) => ({ ...f, env: e.target.value }))}
+                    />
+                  </Field>
                 </div>
               )}
             </div>
           ) : (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">
-                粘贴 JSON，格式：{'{'}"server-name": {'{'}"transport": "sse", "url": "..."{'}'}{'}'}
+                粘贴 JSON，格式：{'{'}"server-name": {'{'}"transport": "streamable_http", "url": "https://example.com/mcp"{'}'}{'}'}；stdio 使用 command/args/env。
               </p>
               <Textarea
                 className="min-h-[120px] font-mono text-xs"
                 spellCheck={false}
-                placeholder={'{\n  "my-server": {\n    "transport": "sse",\n    "url": "http://localhost:3001/sse"\n  }\n}'}
+                placeholder={'{\n  "longbridge": {\n    "transport": "streamable_http",\n    "url": "https://openapi.longbridge.com/mcp"\n  },\n  "remote": {\n    "transport": "streamable_http",\n    "url": "https://example.com/mcp",\n    "auth": { "type": "bearer", "token": "..." }\n  },\n  "oauth-client": {\n    "transport": "streamable_http",\n    "url": "https://example.com/mcp",\n    "auth": {\n      "type": "oauth_client_credentials",\n      "token_url": "https://example.com/oauth/token",\n      "client_id": "...",\n      "client_secret": "...",\n      "scope": "search"\n    }\n  },\n  "local": {\n    "transport": "stdio",\n    "command": "npx",\n    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]\n  }\n}'}
                 value={addJson}
                 onChange={(e) => setAddJson(e.target.value)}
               />
@@ -1705,17 +1892,29 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
         <div className="space-y-2">
           {Object.entries(servers).map(([name, config]) => {
             const status = statusMap.get(name);
-            const transport = (config.transport as string) || "sse";
+            const transport = String(config.transport || (config.command ? "stdio" : "streamable_http"));
             const statusColor =
-              status?.status === "connected"
+              !status
+                ? "text-amber-500"
+                : status.status === "connecting"
+                  ? "text-blue-500"
+                : status.status === "auth_required"
+                  ? "text-amber-500"
+                : status.status === "connected"
                 ? "text-green-500"
-                : status?.status === "error"
+                : status.status === "error"
                   ? "text-destructive"
                   : "text-muted-foreground";
             const statusLabel =
-              status?.status === "connected"
+              !status
+                ? "unsaved"
+                : status.status === "connecting"
+                  ? "connecting"
+                : status.status === "auth_required"
+                  ? "login required"
+                : status.status === "connected"
                 ? "connected"
-                : status?.status === "error"
+                : status.status === "error"
                   ? "error"
                   : "disconnected";
 
@@ -1738,24 +1937,47 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
                       ) : null}
                     </div>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {transport === "sse"
+                      {transport === "streamable_http" || transport === "sse"
                         ? (config.url as string) || "未配置 URL"
                         : [config.command, ...(Array.isArray(config.args) ? (config.args as string[]) : [])].join(" ")}
                     </p>
                     {config.headers && typeof config.headers === "object" && Object.keys(config.headers).length > 0 ? (
                       <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">
-                        headers: {Object.entries(config.headers as Record<string, string>).map(([k, v]) => `${k}: ${v}`).join("; ")}
+                        headers: {Object.entries(config.headers as Record<string, string>).map(([k, v]) => `${k}: ${maskConfigValue(k, v)}`).join("; ")}
+                      </p>
+                    ) : null}
+                    {config.auth ? (
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">auth: configured</p>
+                    ) : null}
+                    {config.env && typeof config.env === "object" && Object.keys(config.env).length > 0 ? (
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">
+                        env: {Object.entries(config.env as Record<string, string>).map(([k, v]) => `${k}: ${maskConfigValue(k, v)}`).join("; ")}
                       </p>
                     ) : null}
                     {status?.error ? (
                       <p className="mt-1 truncate text-xs text-destructive">{status.error}</p>
                     ) : null}
+                    {!status ? (
+                      <p className="mt-1 truncate text-xs text-amber-700 dark:text-amber-300">配置只在当前草稿中，尚未写入 config.json。</p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 gap-1.5">
+                    {status?.status === "auth_required" ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => startOAuthLogin(name)}
+                      >
+                        <ExternalLink className="size-3" />
+                        Login
+                      </Button>
+                    ) : null}
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-7 text-xs"
+                      disabled={!status}
                       onClick={() => handleViewTools(name)}
                     >
                       <Eye className="size-3" />

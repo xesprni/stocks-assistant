@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True  # 是否启用定时任务
 
     # ---- MCP 服务器配置 ----
-    # 格式: {"server_name": {"transport": "sse", "url": "..."}}
+    # 格式: {"server_name": {"transport": "streamable_http", "url": "..."}}
     mcp_servers: Dict[str, Dict[str, Any]] = {}
 
     # ---- Longbridge OpenAPI 配置 ----
@@ -76,6 +76,13 @@ class Settings(BaseSettings):
         p = Path(self.workspace_dir).expanduser()
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    @field_validator("mcp_servers", mode="before")
+    @classmethod
+    def validate_mcp_servers(cls, value):
+        from app.core.tools.mcp.config import normalize_mcp_servers
+
+        return normalize_mcp_servers(value)
 
 
 # 全局配置单例

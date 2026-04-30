@@ -115,14 +115,24 @@ export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", coun
   return request<CandlesticksResponse>(`/api/v1/market/candlesticks?${params.toString()}`);
 }
 
-export function getIntraday(symbol: string) {
-  return request<IntradayResponse>(`/api/v1/market/intraday?symbol=${encodeURIComponent(symbol)}`);
+export function getIntraday(symbol: string, since?: number | null) {
+  const params = new URLSearchParams({ symbol });
+  if (since != null) params.set("since", String(since));
+  return request<IntradayResponse>(`/api/v1/market/intraday?${params.toString()}`);
 }
 
 // ── MCP servers ────────────────────────────────────────────────────────────────
 
 export function getMcpStatus() {
   return request<MCPStatusResponse>("/api/v1/mcp/status");
+}
+
+export function reconnectMcpServers() {
+  return request<MCPStatusResponse>("/api/v1/mcp/reconnect", { method: "POST" });
+}
+
+export function getMcpOAuthAuthorizeUrl(serverName: string) {
+  return `${API_BASE}/api/v1/mcp/${encodeURIComponent(serverName)}/oauth/authorize`;
 }
 
 export function getMcpTools(serverName: string) {

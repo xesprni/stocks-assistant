@@ -127,13 +127,39 @@ workspace/               # 运行时工作空间（记忆 / 知识 / 技能）
 ```json
 {
   "mcp_servers": {
-    "my-server": {
+    "longbridge": {
+      "transport": "streamable_http",
+      "url": "https://openapi.longbridge.com/mcp"
+    },
+    "remote-server": {
+      "transport": "streamable_http",
+      "url": "https://example.com/mcp",
+      "auth": {
+        "type": "bearer",
+        "token": "your-oauth-access-token"
+      }
+    },
+    "oauth-client-credentials-server": {
+      "transport": "streamable_http",
+      "url": "https://example.com/mcp",
+      "auth": {
+        "type": "oauth_client_credentials",
+        "token_url": "https://example.com/oauth/token",
+        "client_id": "your-client-id",
+        "client_secret": "your-client-secret",
+        "scope": "search"
+      }
+    },
+    "local-server": {
+      "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
     }
   }
 }
 ```
+
+HTTP MCP servers use the standard Streamable HTTP transport. Servers that advertise OAuth through the MCP protected-resource metadata flow can be configured with only `url`; the UI will show `login required` and a Login button. Legacy SSE is still supported with `"transport": "sse"` for older servers.
 
 ## License
 
