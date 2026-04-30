@@ -185,9 +185,19 @@ class WatchlistService:
         if category:
             query += " WHERE category = ?"
             params = (category,)
-        query += " ORDER BY created_at DESC, id DESC"
+        query += " ORDER BY sort_order ASC, id ASC"
         with self._connect() as conn:
             return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+    def reorder_items(self, ordered_ids: list[int]) -> None:
+        """Update sort_order for each item according to the provided ID sequence."""
+        with self._connect() as conn:
+            for position, item_id in enumerate(ordered_ids):
+                conn.execute(
+                    "UPDATE watchlist_items SET sort_order = ? WHERE id = ?",
+                    (position, item_id),
+                )
+            conn.commit()
 
     def add_item(self, item: WatchlistItemCreate) -> dict[str, Any]:
         now = _now()
@@ -195,17 +205,20 @@ class WatchlistService:
         payload["symbol"] = item.symbol.strip().upper()
         payload["updated_at"] = now
         with self._connect() as conn:
+            # Place new items at the end
+            max_order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) FROM watchlist_items").fetchone()[0]
+            payload["sort_order"] = max_order + 1
             conn.execute(
                 """
                 INSERT INTO watchlist_items (
                     category, symbol, name, name_cn, name_en, name_hk, exchange,
                     currency, last_done, change_value, change_rate, note,
-                    created_at, updated_at
+                    sort_order, created_at, updated_at
                 )
                 VALUES (
                     :category, :symbol, :name, :name_cn, :name_en, :name_hk, :exchange,
                     :currency, :last_done, :change_value, :change_rate, :note,
-                    :updated_at, :updated_at
+                    :sort_order, :updated_at, :updated_at
                 )
                 ON CONFLICT(symbol) DO UPDATE SET
                     category = excluded.category,
@@ -260,10 +273,23 @@ class WatchlistService:
                     change_value TEXT,
                     change_rate TEXT,
                     note TEXT NOT NULL DEFAULT '',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_category ON watchlist_items(category)")
+            # Migrate existing DB: add sort_order column if missing
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(watchlist_items)").fetchall()}
+            if "sort_order" not in cols:
+                conn.execute("ALTER TABLE watchlist_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+                # Assign initial order by id
+                conn.execute(
+                    """
+                    UPDATE watchlist_items SET sort_order = (
+                        SELECT COUNT(*) FROM watchlist_items w2 WHERE w2.id < watchlist_items.id
+                    )
+                    """
+                )
             conn.commit()

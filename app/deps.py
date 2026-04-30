@@ -120,3 +120,12 @@ def get_watchlist_service():
 
     settings = get_settings()
     return WatchlistService(workspace_dir=settings.workspace_dir)
+
+
+@lru_cache
+def get_market_service():
+    """获取行情监控服务单例。"""
+    from app.core.market.service import MarketService
+
+    settings = get_settings()
+    return MarketService(workspace_dir=settings.workspace_dir)

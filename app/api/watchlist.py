@@ -11,6 +11,7 @@ from app.schemas.watchlist import (
     WatchlistItem,
     WatchlistItemCreate,
     WatchlistListResponse,
+    WatchlistReorderRequest,
     WatchlistSearchResponse,
     WatchlistSearchResult,
 )
@@ -55,4 +56,12 @@ async def delete_watchlist_item(item_id: int):
         service.delete_item(item_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Watchlist item not found")
+    return {"status": "ok"}
+
+
+@router.patch("/reorder")
+async def reorder_watchlist(body: WatchlistReorderRequest):
+    """Update sort_order for all items according to the provided ID sequence."""
+    service = get_watchlist_service()
+    service.reorder_items(body.ids)
     return {"status": "ok"}

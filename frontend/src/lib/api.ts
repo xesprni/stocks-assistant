@@ -1,6 +1,8 @@
 import type {
   AppConfig,
   ChatResponse,
+  MarketDashboardConfig,
+  MarketQuotesResponse,
   WatchlistCategory,
   WatchlistItem,
   WatchlistListResponse,
@@ -72,4 +74,33 @@ export function deleteWatchlistItem(id: number) {
   return request<{ status: string }>(`/api/v1/watchlist/${id}`, {
     method: "DELETE",
   });
+}
+
+export function reorderWatchlist(ids: number[]) {
+  return request<{ status: string }>("/api/v1/watchlist/reorder", {
+    method: "PATCH",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+// ── Market dashboard ────────────────────────────────────────────────────────
+
+export function getMarketConfig() {
+  return request<MarketDashboardConfig>("/api/v1/market/config");
+}
+
+export function saveMarketConfig(config: MarketDashboardConfig) {
+  return request<MarketDashboardConfig>("/api/v1/market/config", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+}
+
+export function getIndexQuotes() {
+  return request<MarketQuotesResponse>("/api/v1/market/index-quotes");
+}
+
+export function getStockQuotes(category?: string) {
+  const params = category ? `?category=${category}` : "";
+  return request<MarketQuotesResponse>(`/api/v1/market/stock-quotes${params}`);
 }

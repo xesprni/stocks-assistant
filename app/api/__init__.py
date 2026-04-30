@@ -9,6 +9,7 @@
 - /scheduler - 调度系统（任务 CRUD）
 - /config   - 应用配置管理
 - /watchlist - 本地自选股列表
+- /market   - 行情监控（指数/个股报价、配置）
 """
 
 from fastapi import APIRouter
@@ -21,6 +22,7 @@ from app.api.tools import router as tools_router
 from app.api.scheduler import router as scheduler_router
 from app.api.config import router as config_router
 from app.api.watchlist import router as watchlist_router
+from app.api.market import router as market_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -32,3 +34,4 @@ router.include_router(tools_router, prefix="/tools", tags=["tools"])
 router.include_router(scheduler_router, prefix="/scheduler", tags=["scheduler"])
 router.include_router(config_router, prefix="/config", tags=["config"])
 router.include_router(watchlist_router, prefix="/watchlist", tags=["watchlist"])
+router.include_router(market_router, prefix="/market", tags=["market"])

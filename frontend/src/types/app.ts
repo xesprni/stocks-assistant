@@ -84,3 +84,36 @@ export interface WatchlistSearchResponse {
   results: WatchlistSearchResult[];
   total: number;
 }
+
+// ── Market dashboard ────────────────────────────────────────────────────────
+
+export interface IndexConfig {
+  symbol: string;
+  name: string;
+  enabled: boolean;
+}
+
+export interface MarketDashboardConfig {
+  indices: IndexConfig[];
+  refresh_interval: number;
+}
+
+export interface QuoteItem {
+  symbol: string;
+  name: string;
+  category: string;
+  last_done: string | null;
+  prev_close: string | null;
+  open: string | null;
+  high: string | null;
+  low: string | null;
+  volume: string | null;
+  turnover: string | null;
+  change_value: string | null;
+  change_rate: string | null;
+}
+
+export interface MarketQuotesResponse {
+  quotes: QuoteItem[];
+  total: number;
+}

@@ -72,3 +72,9 @@ class WatchlistSearchResponse(BaseModel):
 
     results: list[WatchlistSearchResult]
     total: int
+
+
+class WatchlistReorderRequest(BaseModel):
+    """Watchlist 排序请求：按新顺序传入 id 列表。"""
+
+    ids: list[int]

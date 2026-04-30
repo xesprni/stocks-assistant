@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
+  BarChart2,
   Bot,
   BrainCircuit,
   Check,
   Cpu,
   Database,
+  GripVertical,
   Home,
   Loader2,
   MessageSquareText,
@@ -25,7 +27,26 @@ import {
   Trash2,
   WandSparkles,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
+import { MarketDashboard } from "@/components/MarketDashboard";
+import { MarketConfigPage } from "@/components/MarketConfigPage";
 import { MarketPulse } from "@/components/MarketPulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,8 +60,10 @@ import {
   addWatchlistItem,
   checkHealth,
   deleteWatchlistItem,
+  getMarketConfig,
   listWatchlist,
   loadConfig,
+  reorderWatchlist,
   saveConfig,
   searchWatchlist,
   sendChat,
@@ -50,12 +73,13 @@ import type {
   AppConfig,
   ChatMessage,
   ConfigDraft,
+  MarketDashboardConfig,
   WatchlistCategory,
   WatchlistItem,
   WatchlistSearchResult,
 } from "@/types/app";
 
-type Page = "overview" | "chat" | "watchlist" | "config";
+type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config";
 type Theme = "dark" | "light";
 
 const initialMessage: ChatMessage = {
@@ -74,6 +98,7 @@ const quickPrompts = [
 const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }> = [
   { id: "overview", label: "概览", icon: <Home />, hint: "状态与信号" },
   { id: "chat", label: "对话", icon: <MessageSquareText />, hint: "Agent chat" },
+  { id: "market", label: "行情", icon: <BarChart2 />, hint: "大盘/个股" },
   { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
   { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
 ];
@@ -112,6 +137,7 @@ function App() {
   const [health, setHealth] = useState<"checking" | "online" | "offline">("checking");
   const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
+  const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -128,7 +154,11 @@ function App() {
     let mounted = true;
 
     async function bootstrap() {
-      const [healthResult, configResult] = await Promise.allSettled([checkHealth(), loadConfig()]);
+      const [healthResult, configResult, marketConfigResult] = await Promise.allSettled([
+        checkHealth(),
+        loadConfig(),
+        getMarketConfig(),
+      ]);
       if (!mounted) return;
 
       setHealth(healthResult.status === "fulfilled" ? "online" : "offline");
@@ -137,6 +167,9 @@ function App() {
         setDraft(toDraft(configResult.value));
       } else {
         setError(configResult.reason instanceof Error ? configResult.reason.message : "配置加载失败");
+      }
+      if (marketConfigResult.status === "fulfilled") {
+        setMarketConfig(marketConfigResult.value);
       }
     }
 
@@ -325,6 +358,23 @@ function App() {
             ) : null}
 
             {page === "watchlist" ? <WatchlistPage /> : null}
+
+            {page === "market" ? (
+              <MarketDashboard
+                onOpenConfig={() => setPage("market_config")}
+                refreshInterval={marketConfig.refresh_interval}
+              />
+            ) : null}
+
+            {page === "market_config" ? (
+              <MarketConfigPage
+                onBack={() => setPage("market")}
+                onSaved={(cfg) => {
+                  setMarketConfig(cfg);
+                  setPage("market");
+                }}
+              />
+            ) : null}
 
             {page === "config" ? (
               <ConfigPage
@@ -667,6 +717,62 @@ function ChatPage({
   );
 }
 
+function SortableWatchlistItem({
+  item,
+  onDelete,
+}: {
+  item: WatchlistItem;
+  onDelete: (item: WatchlistItem) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="message-bubble rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/50"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <button
+          {...attributes}
+          {...listeners}
+          type="button"
+          aria-label="拖拽排序"
+          className="mt-0.5 shrink-0 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+        >
+          <GripVertical className="size-4" />
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-base font-semibold">{item.symbol}</p>
+          <p className="truncate text-sm text-muted-foreground">{stockName(item)}</p>
+        </div>
+        <Button
+          aria-label="删除自选"
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8"
+          onClick={() => onDelete(item)}
+        >
+          <Trash2 />
+        </Button>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+        <QuoteMetric label="Last" value={item.last_done ?? "-"} />
+        <QuoteMetric label="Change" value={item.change_value ?? "-"} />
+        <QuoteMetric label="Rate" value={item.change_rate ?? "-"} tone={rateTone(item.change_rate)} />
+      </div>
+    </div>
+  );
+}
+
 function WatchlistPage() {
   const [category, setCategory] = useState<WatchlistCategory>("US");
   const [items, setItems] = useState<WatchlistItem[]>([]);
@@ -675,6 +781,11 @@ function WatchlistPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [message, setMessage] = useState("");
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -730,9 +841,9 @@ function WatchlistPage() {
     try {
       const item = await addWatchlistItem(result);
       if (item.category === category) {
-        setItems((current) => [item, ...current.filter((entry) => entry.symbol !== item.symbol)]);
+        setItems((current) => [...current.filter((e) => e.symbol !== item.symbol), item]);
       }
-      setResults((current) => current.filter((entry) => entry.symbol !== item.symbol));
+      setResults((current) => current.filter((e) => e.symbol !== item.symbol));
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "添加自选失败");
     }
@@ -742,10 +853,24 @@ function WatchlistPage() {
     setMessage("");
     try {
       await deleteWatchlistItem(item.id);
-      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      setItems((current) => current.filter((e) => e.id !== item.id));
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "删除自选失败");
     }
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setItems((current) => {
+      const oldIndex = current.findIndex((e) => e.id === active.id);
+      const newIndex = current.findIndex((e) => e.id === over.id);
+      const next = arrayMove(current, oldIndex, newIndex);
+      // Persist asynchronously — ignore errors silently
+      reorderWatchlist(next.map((e) => e.id)).catch(() => {});
+      return next;
+    });
   }
 
   const symbolSet = new Set(items.map((item) => item.symbol));
@@ -789,10 +914,14 @@ function WatchlistPage() {
 
       <div className="grid min-h-0 flex-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden lg:p-4">
         <div className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="flex flex-col gap-3 border-b border-border/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center justify-between border-b border-border/80 p-3">
             <div>
-              <p className="text-sm font-semibold">{watchlistCategories.find((item) => item.id === category)?.label}列表</p>
-              <p className="text-xs text-muted-foreground">{watchlistCategories.find((item) => item.id === category)?.hint}</p>
+              <p className="text-sm font-semibold">
+                {watchlistCategories.find((item) => item.id === category)?.label}列表
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {watchlistCategories.find((item) => item.id === category)?.hint} · 拖拽调整顺序
+              </p>
             </div>
             {isLoading ? (
               <Badge variant="muted" className="gap-1.5">
@@ -804,29 +933,19 @@ function WatchlistPage() {
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {items.length > 0 ? (
-              <div className="grid gap-2 2xl:grid-cols-2">
-                {items.map((item) => (
-                  <div
-                    className="message-bubble rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/50"
-                    key={item.id}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-base font-semibold">{item.symbol}</p>
-                        <p className="truncate text-sm text-muted-foreground">{stockName(item)}</p>
-                      </div>
-                      <Button aria-label="删除自选" size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDelete(item)}>
-                        <Trash2 />
-                      </Button>
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                      <QuoteMetric label="Last" value={item.last_done ?? "-"} />
-                      <QuoteMetric label="Change" value={item.change_value ?? "-"} />
-                      <QuoteMetric label="Rate" value={item.change_rate ?? "-"} tone={rateTone(item.change_rate)} />
-                    </div>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+                  <div className="grid gap-2 2xl:grid-cols-2">
+                    {items.map((item) => (
+                      <SortableWatchlistItem key={item.id} item={item} onDelete={handleDelete} />
+                    ))}
                   </div>
-                ))}
-              </div>
+                </SortableContext>
+              </DndContext>
             ) : (
               <div className="grid h-full min-h-56 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
                 <div>
