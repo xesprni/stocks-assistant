@@ -54,12 +54,14 @@ class MCPManager:
         self.server_configs = server_configs
         self.tools: Dict[str, MCPToolAdapter] = {}
         self._sessions: Dict[str, Any] = {}
+        self._errors: Dict[str, str] = {}
 
     async def connect_all(self):
         for server_name, config in self.server_configs.items():
             try:
                 await self._connect_server(server_name, config)
             except Exception as e:
+                self._errors[server_name] = str(e)
                 logger.warning(f"Failed to connect MCP server '{server_name}': {e}")
 
     async def _connect_server(self, server_name: str, config: dict):
@@ -69,7 +71,8 @@ class MCPManager:
             if transport == "sse":
                 from mcp.client.sse import sse_client
                 url = config["url"]
-                async with sse_client(url) as (read, write):
+                headers = config.get("headers")
+                async with sse_client(url, headers=headers) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         await self._discover_tools(server_name, session)

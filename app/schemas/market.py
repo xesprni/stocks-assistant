@@ -17,7 +17,7 @@ class MarketDashboardConfig(BaseModel):
     """行情监控仪表盘配置。"""
 
     indices: List[IndexConfig] = Field(default_factory=list)
-    refresh_interval: int = Field(default=60, ge=10, le=3600)
+    refresh_interval: int = Field(default=60, ge=1, le=3600)
 
 
 class QuoteItem(BaseModel):

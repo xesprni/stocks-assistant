@@ -3,8 +3,11 @@ import type {
   CandlesticksResponse,
   ChatResponse,
   IntradayResponse,
+  MCPServerToolsResponse,
+  MCPStatusResponse,
   MarketDashboardConfig,
   MarketQuotesResponse,
+  SkillListResponse,
   WatchlistCategory,
   WatchlistItem,
   WatchlistListResponse,
@@ -114,4 +117,31 @@ export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", coun
 
 export function getIntraday(symbol: string) {
   return request<IntradayResponse>(`/api/v1/market/intraday?symbol=${encodeURIComponent(symbol)}`);
+}
+
+// ── MCP servers ────────────────────────────────────────────────────────────────
+
+export function getMcpStatus() {
+  return request<MCPStatusResponse>("/api/v1/mcp/status");
+}
+
+export function getMcpTools(serverName: string) {
+  return request<MCPServerToolsResponse>(`/api/v1/mcp/${encodeURIComponent(serverName)}/tools`);
+}
+
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+export function listSkills() {
+  return request<SkillListResponse>("/api/v1/skills");
+}
+
+export function toggleSkill(name: string, enabled: boolean) {
+  return request<{ status: string; name: string; enabled: boolean }>(
+    `/api/v1/skills/${encodeURIComponent(name)}/toggle`,
+    { method: "POST", body: JSON.stringify({ enabled }) },
+  );
+}
+
+export function refreshSkills() {
+  return request<{ status: string; total: number }>("/api/v1/skills/refresh", { method: "POST" });
 }

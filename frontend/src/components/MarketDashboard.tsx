@@ -8,6 +8,7 @@ import {
   Minus,
   RefreshCw,
   Settings2,
+  Target,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -17,7 +18,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getIndexQuotes, getStockQuotes } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useToneClasses } from "@/lib/color-scheme";
+import { calcSupportResistance, type SupportResistanceLevel } from "@/lib/indicators";
 import type { QuoteItem, WatchlistCategory } from "@/types/app";
+import { getCandlesticks } from "@/lib/api";
 
 const stockCategories: Array<{ id: WatchlistCategory | "ALL"; label: string }> = [
   { id: "ALL", label: "全部" },
@@ -35,8 +39,9 @@ function rateTone(rate: string | null): "up" | "down" | "flat" {
 
 function ChangeIndicator({ rate }: { rate: string | null }) {
   const tone = rateTone(rate);
-  if (tone === "up") return <TrendingUp className="size-3.5 text-emerald-500" />;
-  if (tone === "down") return <TrendingDown className="size-3.5 text-red-500" />;
+  const tc = useToneClasses();
+  if (tone === "up") return <TrendingUp className={`size-3.5 ${tc.up}`} />;
+  if (tone === "down") return <TrendingDown className={`size-3.5 ${tc.down}`} />;
   return <Minus className="size-3.5 text-muted-foreground" />;
 }
 
@@ -55,8 +60,8 @@ function IndexCard({ quote }: { quote: QuoteItem }) {
     <div
       className={cn(
         "flex min-w-0 flex-col gap-2 rounded-lg border bg-card/80 p-3 transition-colors hover:border-primary/40",
-        tone === "up" && "border-emerald-500/30",
-        tone === "down" && "border-red-500/30",
+        tone === "up" && "border-[var(--color-up)]/30",
+        tone === "down" && "border-[var(--color-down)]/30",
         tone === "flat" && "border-border/80",
       )}
     >
@@ -72,8 +77,8 @@ function IndexCard({ quote }: { quote: QuoteItem }) {
         <p
           className={cn(
             "text-xl font-bold tabular-nums",
-            tone === "up" && "text-emerald-500",
-            tone === "down" && "text-red-500",
+            tone === "up" && "text-[var(--color-up)]",
+            tone === "down" && "text-[var(--color-down)]",
           )}
         >
           {formatNum(quote.last_done)}
@@ -82,8 +87,8 @@ function IndexCard({ quote }: { quote: QuoteItem }) {
           <p
             className={cn(
               "text-sm font-semibold tabular-nums",
-              tone === "up" && "text-emerald-500",
-              tone === "down" && "text-red-500",
+              tone === "up" && "text-[var(--color-up)]",
+              tone === "down" && "text-[var(--color-down)]",
               tone === "flat" && "text-muted-foreground",
             )}
           >
@@ -92,8 +97,8 @@ function IndexCard({ quote }: { quote: QuoteItem }) {
           <p
             className={cn(
               "text-xs tabular-nums",
-              tone === "up" && "text-emerald-500/80",
-              tone === "down" && "text-red-500/80",
+              tone === "up" && "opacity-80 text-[var(--color-up)]",
+              tone === "down" && "opacity-80 text-[var(--color-down)]",
               tone === "flat" && "text-muted-foreground",
             )}
           >
@@ -124,8 +129,13 @@ function IndexCard({ quote }: { quote: QuoteItem }) {
   );
 }
 
-function StockCard({ quote, onSelect }: { quote: QuoteItem; onSelect?: (q: QuoteItem) => void }) {
+function StockCard({ quote, onSelect, levels }: { quote: QuoteItem; onSelect?: (q: QuoteItem) => void; levels?: SupportResistanceLevel[] }) {
   const tone = rateTone(quote.change_rate);
+  const currentPrice = parseFloat(quote.last_done || "0");
+  // Show nearest support and resistance
+  const nearestSupport = levels?.filter((l) => l.type === "support" && l.price < currentPrice).sort((a, b) => b.price - a.price)[0];
+  const nearestResistance = levels?.filter((l) => l.type === "resistance" && l.price > currentPrice).sort((a, b) => a.price - b.price)[0];
+
   return (
     <div
       role={onSelect ? "button" : undefined}
@@ -135,8 +145,8 @@ function StockCard({ quote, onSelect }: { quote: QuoteItem; onSelect?: (q: Quote
       className={cn(
         "flex min-w-0 flex-col gap-2 rounded-md border bg-card/80 p-3 transition-colors hover:border-primary/40",
         onSelect && "cursor-pointer",
-        tone === "up" && "border-emerald-500/25",
-        tone === "down" && "border-red-500/25",
+        tone === "up" && "border-[var(--color-up)]/25",
+        tone === "down" && "border-[var(--color-down)]/25",
         tone === "flat" && "border-border/80",
       )}
     >
@@ -159,8 +169,8 @@ function StockCard({ quote, onSelect }: { quote: QuoteItem; onSelect?: (q: Quote
         <p
           className={cn(
             "text-base font-bold tabular-nums",
-            tone === "up" && "text-emerald-500",
-            tone === "down" && "text-red-500",
+            tone === "up" && "text-[var(--color-up)]",
+            tone === "down" && "text-[var(--color-down)]",
           )}
         >
           {formatNum(quote.last_done)}
@@ -168,8 +178,8 @@ function StockCard({ quote, onSelect }: { quote: QuoteItem; onSelect?: (q: Quote
         <p
           className={cn(
             "text-sm font-semibold tabular-nums",
-            tone === "up" && "text-emerald-500",
-            tone === "down" && "text-red-500",
+            tone === "up" && "text-[var(--color-up)]",
+            tone === "down" && "text-[var(--color-down)]",
             tone === "flat" && "text-muted-foreground",
           )}
         >
@@ -184,17 +194,39 @@ function StockCard({ quote, onSelect }: { quote: QuoteItem; onSelect?: (q: Quote
         </div>
         <div className="text-center">
           <p className="text-muted-foreground">最高</p>
-          <p className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
-            {formatNum(quote.high)}
-          </p>
+          <p className="font-medium tabular-nums">{formatNum(quote.high)}</p>
         </div>
         <div className="text-right">
           <p className="text-muted-foreground">最低</p>
-          <p className="font-medium tabular-nums text-red-600 dark:text-red-400">
-            {formatNum(quote.low)}
-          </p>
+          <p className="font-medium tabular-nums">{formatNum(quote.low)}</p>
         </div>
       </div>
+
+      {/* Support / Resistance */}
+      {(nearestSupport || nearestResistance) && (
+        <div className="grid grid-cols-2 gap-1 border-t border-border/60 pt-2 text-[11px]">
+          {nearestSupport ? (
+            <div>
+              <p className="text-muted-foreground flex items-center gap-0.5">
+                <Target className="size-2.5" />
+                支撑
+                <span className="text-[9px] opacity-50">S{nearestSupport.strength}</span>
+              </p>
+              <p className="font-medium tabular-nums text-[var(--color-down)]">{nearestSupport.price.toFixed(2)}</p>
+            </div>
+          ) : <div />}
+          {nearestResistance ? (
+            <div className="text-right">
+              <p className="text-muted-foreground flex items-center gap-0.5 justify-end">
+                <span className="text-[9px] opacity-50">R{nearestResistance.strength}</span>
+                阻力
+                <Target className="size-2.5" />
+              </p>
+              <p className="font-medium tabular-nums text-[var(--color-up)]">{nearestResistance.price.toFixed(2)}</p>
+            </div>
+          ) : <div />}
+        </div>
+      )}
     </div>
   );
 }
@@ -281,6 +313,7 @@ function StockTab({
 }) {
   const [category, setCategory] = useState<WatchlistCategory | "ALL">("ALL");
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
+  const [levelsMap, setLevelsMap] = useState<Record<string, SupportResistanceLevel[]>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -290,6 +323,35 @@ function StockTab({
     try {
       const res = await getStockQuotes(category === "ALL" ? undefined : category);
       setQuotes(res.quotes);
+
+      // Fetch candlesticks for each stock and compute support/resistance
+      const entries = await Promise.allSettled(
+        res.quotes.map(async (q) => {
+          try {
+            const candles = await getCandlesticks(q.symbol, "1D", 60);
+            const bars = candles.bars
+              .map((c: { timestamp: number; open: string; high: string; low: string; close: string; volume: string }) => ({
+                time: c.timestamp,
+                open: parseFloat(c.open),
+                high: parseFloat(c.high),
+                low: parseFloat(c.low),
+                close: parseFloat(c.close),
+                volume: parseFloat(c.volume ?? "0"),
+              }))
+              .filter((b: { open: number }) => b.open > 0);
+            return [q.symbol, calcSupportResistance(bars)] as [string, SupportResistanceLevel[]];
+          } catch {
+            return [q.symbol, [] as SupportResistanceLevel[]] as [string, SupportResistanceLevel[]];
+          }
+        }),
+      );
+      const map: Record<string, SupportResistanceLevel[]> = {};
+      for (const r of entries) {
+        if (r.status === "fulfilled") {
+          map[r.value[0]] = r.value[1];
+        }
+      }
+      setLevelsMap(map);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
     } finally {
@@ -342,7 +404,7 @@ function StockTab({
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {quotes.map((q) => (
-            <StockCard key={q.symbol} quote={q} onSelect={onSelectStock} />
+            <StockCard key={q.symbol} quote={q} onSelect={onSelectStock} levels={levelsMap[q.symbol]} />
           ))}
         </div>
       )}
@@ -403,7 +465,7 @@ export function MarketDashboard({
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-            <Activity className="size-3 animate-pulse text-emerald-500" />
+            <Activity className="size-3 animate-pulse text-[var(--color-up)]" />
             {countdown}s 后刷新
           </div>
           <Button

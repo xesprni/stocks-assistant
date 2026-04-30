@@ -1,11 +1,17 @@
 /**
  * TechnicalAnalysis.tsx
  * Built for lightweight-charts v5 (addSeries + pane system).
+ *
+ * Layout:
+ *  - Left sidebar: symbol list
+ *  - Main area: Tab switch (分时 / K线)
+ *  - K-line mode: chart | indicator selector | indicator display | chip distribution
  */
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -28,12 +34,29 @@ import {
 import { BarChart2, RefreshCw, TrendingUp } from "lucide-react";
 import { getCandlesticks, getIntraday, listWatchlist } from "@/lib/api";
 import type { CandlestickItem, IntradayItem, WatchlistItem } from "@/types/app";
-import { calcMA, calcMACD, calcKDJ, calcRSI, calcBollinger, calcCCI, calcWR } from "@/lib/indicators";
+import {
+  calcMA,
+  calcMACD,
+  calcKDJ,
+  calcRSI,
+  calcBollinger,
+  calcCCI,
+  calcWR,
+  calcEMAValues,
+  calcBBIBOLL,
+  calcDMI,
+  calcOSC,
+  calcChipDistribution,
+  type ChipBar,
+} from "@/lib/indicators";
+import { useChartColors } from "@/lib/color-scheme";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Period = "1D" | "1W" | "1M";
-type IndicatorKey = "MACD" | "KDJ" | "RSI" | "CCI" | "WR" | "BOLL";
+type SubIndicatorKey = "MACD" | "KDJ" | "RSI" | "CCI" | "WR" | "DMI" | "OSC";
+type OverlayIndicatorKey = "BOLL" | "BBIBOLL" | "EMA";
+type IndicatorKey = SubIndicatorKey | OverlayIndicatorKey;
 
 interface Props {
   symbol: string;
@@ -43,14 +66,14 @@ interface Props {
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
-function makeTheme(isDark: boolean) {
+function makeTheme(isDark: boolean, upColor: string, downColor: string) {
   return isDark ? {
     bg:     "#131722",
     text:   "#d1d5db",
     grid:   "rgba(255,255,255,0.04)",
     border: "#2a2e39",
-    up:     "#089981",
-    down:   "#f23645",
+    up:     upColor,
+    down:   downColor,
     blue:   "#2962ff",
     orange: "#ff6d00",
     purple: "#9c27b0",
@@ -60,8 +83,8 @@ function makeTheme(isDark: boolean) {
     text:   "#1e222d",
     grid:   "rgba(0,0,0,0.06)",
     border: "#dde1eb",
-    up:     "#089981",
-    down:   "#f23645",
+    up:     upColor,
+    down:   downColor,
     blue:   "#2962ff",
     orange: "#ff6d00",
     purple: "#9c27b0",
@@ -91,7 +114,6 @@ function chartOpts(height: number, T: ChartTheme) {
   return { height, ...chartLayoutOpts(T) };
 }
 
-/** Watch the `dark` class on <html> and re-render when it changes. */
 function useIsDark() {
   const [isDark, setIsDark] = useState(() =>
     document.documentElement.classList.contains("dark")
@@ -150,12 +172,10 @@ function SymbolSideNav({
 
   return (
     <aside className="flex w-40 shrink-0 flex-col overflow-hidden border-r border-border bg-card">
-      {/* Sidebar header */}
       <div className="flex items-center gap-1.5 border-b border-border bg-muted/30 px-3 py-2">
         <TrendingUp size={13} className="text-primary" />
         <span className="text-[11px] font-semibold tracking-wide text-foreground">自选股</span>
       </div>
-      {/* Market tabs */}
       <div className="flex border-b border-border">
         {(["US", "A", "H"] as const).map((c) => (
           <button
@@ -171,7 +191,6 @@ function SymbolSideNav({
           </button>
         ))}
       </div>
-      {/* Symbol list */}
       <div className="flex-1 overflow-y-auto">
         {items.length === 0 ? (
           <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">暂无数据</div>
@@ -208,10 +227,9 @@ function SymbolSideNav({
 // ── K-line chart ──────────────────────────────────────────────────────────────
 
 /**
- * Single IChartApi with v5 pane system:
- *   Pane 0: Candlestick + MA5/10/20 + optional BOLL overlay
- *   Pane 1: Volume histogram (always shown)
- *   Pane 2+: Dynamic indicator panes (MACD / KDJ / RSI)
+ * Pane 0: Candlestick + MA5/10/20 + optional overlay (BOLL / BBIBOLL / EMA)
+ * Pane 1: Volume histogram
+ * Pane 2+: Dynamic indicator panes
  */
 function KLineChart({
   symbol,
@@ -219,13 +237,18 @@ function KLineChart({
   isDark,
   onCrosshairMove,
   registerChart,
+  onParsedBars,
+  onVisibleRangeChange,
 }: {
   symbol: string;
   activeIndicators: Set<IndicatorKey>;
   isDark: boolean;
   onCrosshairMove: (params: MouseEventParams) => void;
   registerChart: (chart: IChartApi | null, primarySeries: ISeriesApi<SeriesType> | null) => void;
+  onParsedBars: (bars: ReturnType<typeof parseBars>) => void;
+  onVisibleRangeChange: (range: { min: number; max: number } | null) => void;
 }) {
+  const { upColor, downColor } = useChartColors();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -235,25 +258,39 @@ function KLineChart({
   const ma10Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
 
-  const indicatorSeriesRef = useRef<Map<IndicatorKey, ISeriesApi<SeriesType>[]>>(new Map());
-  const bollSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
-
-  const parsedRef = useRef<ReturnType<typeof parseBars>>([]);
-
   const [period, setPeriod] = useState<Period>("1D");
   const [loading, setLoading] = useState(false);
 
-  // Build chart once
+  const indicatorSeriesRef = useRef<Map<IndicatorKey, ISeriesApi<SeriesType>[]>>(new Map());
+  const overlaySeriesRef = useRef<ISeriesApi<SeriesType>[]>([]);
+  const symbolRef = useRef(symbol);
+  const periodRef = useRef(period);
+  const isDarkRef = useRef(isDark);
+  const upColorRef = useRef(upColor);
+  const downColorRef = useRef(downColor);
+
+  // Keep refs in sync with props/state
+  useEffect(() => { symbolRef.current = symbol; }, [symbol]);
+  useEffect(() => { periodRef.current = period; }, [period]);
+  useEffect(() => { isDarkRef.current = isDark; }, [isDark]);
+  useEffect(() => { upColorRef.current = upColor; }, [upColor]);
+  useEffect(() => { downColorRef.current = downColor; }, [downColor]);
+
+  const parsedRef = useRef<ReturnType<typeof parseBars>>([]);
+  const dataCountRef = useRef(200);
+  const isLoadingMoreRef = useRef(false);
+  const allDataLoadedRef = useRef(false);
+
   useLayoutEffect(() => {
     if (!containerRef.current) return;
-    const T = makeTheme(isDark);
+    const T = makeTheme(isDark, upColor, downColor);
+    const height = containerRef.current.clientHeight || 400;
     const chart = createChart(containerRef.current, {
-      ...chartOpts(400, T),
+      ...chartOpts(height, T),
       width: containerRef.current.clientWidth,
     });
     chartRef.current = chart;
 
-    // Pane 0: candles
     const candle = chart.addSeries(CandlestickSeries, {
       upColor: T.up,
       downColor: T.down,
@@ -264,7 +301,6 @@ function KLineChart({
     });
     candleRef.current = candle;
 
-    // Pane 0: MA overlays
     ma5Ref.current = chart.addSeries(LineSeries, {
       color: T.orange, lineWidth: 1, priceLineVisible: false,
       lastValueVisible: false, crosshairMarkerVisible: false, title: "MA5",
@@ -278,7 +314,6 @@ function KLineChart({
       lastValueVisible: false, crosshairMarkerVisible: false, title: "MA20",
     });
 
-    // Pane 1: volume
     const vol = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       color: T.blue + "55",
@@ -289,9 +324,78 @@ function KLineChart({
     registerChart(chart, candle);
     chart.subscribeCrosshairMove(onCrosshairMove);
 
+    // Visible price range sync for chip distribution + load more on scroll left
+    const ts = chart.timeScale();
+    ts.subscribeVisibleLogicalRangeChange((logicalRange: { from: number; to: number } | null) => {
+      if (!logicalRange) return;
+      const ts = chart.timeScale();
+
+      // Sync visible price range
+      const vr = ts.getVisibleRange();
+      if (vr && candleRef.current) {
+        const bars = parsedRef.current;
+        if (bars.length === 0) { onVisibleRangeChange(null); }
+        else {
+          const fromT = vr.from as number;
+          const toT = vr.to as number;
+          const visBars = bars.filter((b) => (b.time as number) >= fromT && (b.time as number) <= toT);
+          if (visBars.length === 0) { onVisibleRangeChange(null); }
+          else {
+            let lo = Infinity, hi = -Infinity;
+            for (const b of visBars) { if (b.low < lo) lo = b.low; if (b.high > hi) hi = b.high; }
+            onVisibleRangeChange({ min: lo, max: hi });
+          }
+        }
+      } else {
+        onVisibleRangeChange(null);
+      }
+
+      // Load more when scrolled near left edge
+      if (
+        logicalRange.from < 5 &&
+        !isLoadingMoreRef.current &&
+        !allDataLoadedRef.current &&
+        parsedRef.current.length > 0
+      ) {
+        isLoadingMoreRef.current = true;
+        const currentCount = dataCountRef.current;
+        const nextCount = currentCount + 200;
+        const currentSymbol = symbolRef.current;
+        const currentPeriod = periodRef.current;
+        const T = makeTheme(isDarkRef.current, upColorRef.current, downColorRef.current);
+
+        getCandlesticks(currentSymbol, currentPeriod, nextCount)
+          .then((res) => {
+            const newBars = parseBars(res.bars);
+            if (newBars.length <= currentCount) {
+              allDataLoadedRef.current = true;
+              return;
+            }
+            parsedRef.current = newBars;
+            dataCountRef.current = nextCount;
+            onParsedBars(newBars);
+
+            const closes = newBars.map((b) => b.close);
+            candleRef.current?.setData(newBars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+            volRef.current?.setData(newBars.map((b) => ({
+              time: b.time, value: b.volume,
+              color: b.close >= b.open ? T.up + "55" : T.down + "55",
+            })));
+            ma5Ref.current?.setData(newBars.map((b, i) => { const v = calcMA(closes, 5)[i]; return v != null ? { time: b.time, value: v } : null; }).filter((v): v is LineData => v != null));
+            ma10Ref.current?.setData(newBars.map((b, i) => { const v = calcMA(closes, 10)[i]; return v != null ? { time: b.time, value: v } : null; }).filter((v): v is LineData => v != null));
+            ma20Ref.current?.setData(newBars.map((b, i) => { const v = calcMA(closes, 20)[i]; return v != null ? { time: b.time, value: v } : null; }).filter((v): v is LineData => v != null));
+          })
+          .catch(() => {})
+          .finally(() => { isLoadingMoreRef.current = false; });
+      }
+    });
+
     const ro = new ResizeObserver(() => {
       if (containerRef.current) {
-        chart.applyOptions({ width: containerRef.current.clientWidth });
+        chart.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight,
+        });
       }
     });
     ro.observe(containerRef.current);
@@ -306,23 +410,23 @@ function KLineChart({
       ma10Ref.current = null;
       ma20Ref.current = null;
       indicatorSeriesRef.current.clear();
-      bollSeriesRef.current = [];
+      overlaySeriesRef.current = [];
       registerChart(null, null);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Rebuild indicator panes
+  // Rebuild indicator panes + overlays
   const rebuildIndicators = useCallback(() => {
     const chart = chartRef.current;
     if (!chart || parsedRef.current.length === 0) return;
 
-    const T = makeTheme(isDark);
+    const T = makeTheme(isDark, upColor, downColor);
     const parsed = parsedRef.current;
     const closes = parsed.map((b) => b.close);
     const highs = parsed.map((b) => b.high);
     const lows = parsed.map((b) => b.low);
 
-    // Remove existing indicator series
+    // Remove existing indicator + overlay series
     for (const seriesList of indicatorSeriesRef.current.values()) {
       for (const s of seriesList) {
         try { chart.removeSeries(s); } catch { /* ignore */ }
@@ -330,21 +434,19 @@ function KLineChart({
     }
     indicatorSeriesRef.current.clear();
 
-    // Remove existing BOLL overlays
-    for (const s of bollSeriesRef.current) {
+    for (const s of overlaySeriesRef.current) {
       try { chart.removeSeries(s); } catch { /* ignore */ }
     }
-    bollSeriesRef.current = [];
+    overlaySeriesRef.current = [];
 
     // Remove indicator panes (keep pane 0 and 1)
     while (chart.panes().length > 2) {
       chart.removePane(chart.panes().length - 1);
     }
 
-    // BOLL overlay on pane 0
+    // ── Overlay indicators on pane 0 ──
     if (activeIndicators.has("BOLL")) {
       const boll = calcBollinger(closes);
-      const bollLines: ISeriesApi<"Line">[] = [];
       (["upper", "middle", "lower"] as const).forEach((k, idx) => {
         const colors = [T.yellow, T.text, T.yellow];
         const s = chart.addSeries(LineSeries, {
@@ -360,14 +462,50 @@ function KLineChart({
             .map((b, i) => boll[i] != null ? { time: b.time, value: boll[i]![k] } : null)
             .filter((v): v is LineData => v != null)
         );
-        bollLines.push(s);
+        overlaySeriesRef.current.push(s);
       });
-      bollSeriesRef.current = bollLines;
     }
 
-    // Indicator sub-panes
+    if (activeIndicators.has("BBIBOLL")) {
+      const bbiboll = calcBBIBOLL(closes);
+      (["upper", "middle", "lower"] as const).forEach((k, idx) => {
+        const colors = [T.orange, T.blue, T.orange];
+        const s = chart.addSeries(LineSeries, {
+          color: colors[idx],
+          lineWidth: 1,
+          lineStyle: k === "middle" ? LineStyle.Solid : LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        s.setData(
+          parsed
+            .map((b, i) => bbiboll[i] != null ? { time: b.time, value: bbiboll[i]![k] } : null)
+            .filter((v): v is LineData => v != null)
+        );
+        overlaySeriesRef.current.push(s);
+      });
+    }
+
+    if (activeIndicators.has("EMA")) {
+      const ema12 = calcEMAValues(closes, 12);
+      const ema26 = calcEMAValues(closes, 26);
+      const ema12S = chart.addSeries(LineSeries, {
+        color: T.orange, lineWidth: 1, priceLineVisible: false,
+        lastValueVisible: false, crosshairMarkerVisible: false, title: "EMA12",
+      });
+      const ema26S = chart.addSeries(LineSeries, {
+        color: T.purple, lineWidth: 1, priceLineVisible: false,
+        lastValueVisible: false, crosshairMarkerVisible: false, title: "EMA26",
+      });
+      ema12S.setData(parsed.map((b, i) => ema12[i] != null ? { time: b.time, value: ema12[i]! } : null).filter((v): v is LineData => v != null));
+      ema26S.setData(parsed.map((b, i) => ema26[i] != null ? { time: b.time, value: ema26[i]! } : null).filter((v): v is LineData => v != null));
+      overlaySeriesRef.current.push(ema12S, ema26S);
+    }
+
+    // ── Sub-indicator panes ──
     let paneIdx = 2;
-    for (const key of ["MACD", "KDJ", "RSI", "CCI", "WR"] as IndicatorKey[]) {
+    for (const key of ["MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC"] as SubIndicatorKey[]) {
       if (!activeIndicators.has(key)) continue;
       const seriesList: ISeriesApi<SeriesType>[] = [];
 
@@ -419,34 +557,64 @@ function KLineChart({
         const wrS = chart.addSeries(LineSeries, { color: T.purple, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "WR" }, paneIdx);
         wrS.setData(parsed.map((b, i) => wr[i] != null ? { time: b.time, value: wr[i]! } : null).filter((v): v is LineData => v != null));
         seriesList.push(wrS);
+      } else if (key === "DMI") {
+        const dmi = calcDMI(highs, lows, closes);
+        const pdiS = chart.addSeries(LineSeries, { color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "PDI" }, paneIdx);
+        const mdiS = chart.addSeries(LineSeries, { color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "MDI" }, paneIdx);
+        const adxS = chart.addSeries(LineSeries, { color: T.purple, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "ADX" }, paneIdx);
+        const adxrS = chart.addSeries(LineSeries, { color: T.yellow, lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, title: "ADXR" }, paneIdx);
+        pdiS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.pdi } : null).filter((v): v is LineData => v != null));
+        mdiS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.mdi } : null).filter((v): v is LineData => v != null));
+        adxS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.adx } : null).filter((v): v is LineData => v != null));
+        adxrS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.adxr } : null).filter((v): v is LineData => v != null));
+        seriesList.push(pdiS, mdiS, adxS, adxrS);
+      } else if (key === "OSC") {
+        const osc = calcOSC(closes);
+        const histS = chart.addSeries(HistogramSeries, { priceLineVisible: false }, paneIdx);
+        const difS = chart.addSeries(LineSeries, {
+          color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "DIF",
+        }, paneIdx);
+        const deaS = chart.addSeries(LineSeries, {
+          color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "DEA",
+        }, paneIdx);
+        histS.setData(
+          parsed.map((b, i) => osc[i] ? {
+            time: b.time, value: osc[i]!.osc,
+            color: osc[i]!.osc >= 0 ? T.up + "99" : T.down + "99",
+          } : null).filter(v => v !== null) as HistogramData[]
+        );
+        difS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.dif } : null).filter((v): v is LineData => v != null));
+        deaS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.dea } : null).filter((v): v is LineData => v != null));
+        seriesList.push(histS, difS, deaS);
       }
 
-      chart.panes()[paneIdx]?.setStretchFactor(0.3);
+      chart.panes()[paneIdx]?.setStretchFactor(0.4);
       indicatorSeriesRef.current.set(key, seriesList);
       paneIdx++;
     }
   }, [activeIndicators, isDark]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-run when indicators toggle (data already in parsedRef)
   useEffect(() => {
     rebuildIndicators();
   }, [rebuildIndicators]);
 
-  // Update chart colors when theme changes
   useEffect(() => {
     if (chartRef.current) {
-      chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark)));
+      chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark, upColor, downColor)));
     }
-  }, [isDark]);
+  }, [isDark, upColor, downColor]);
 
-  // Load data on symbol / period change
   useEffect(() => {
     if (!symbol) return;
+    // Reset load-more state on symbol/period change
+    dataCountRef.current = 200;
+    allDataLoadedRef.current = false;
     setLoading(true);
     getCandlesticks(symbol, period)
       .then((res) => {
         const parsed = parseBars(res.bars);
         parsedRef.current = parsed;
+        onParsedBars(parsed);
         const closes = parsed.map((b) => b.close);
 
         candleRef.current?.setData(
@@ -455,7 +623,7 @@ function KLineChart({
         volRef.current?.setData(
           parsed.map((b) => ({
             time: b.time, value: b.volume,
-            color: b.close >= b.open ? makeTheme(isDark).up + "55" : makeTheme(isDark).down + "55",
+            color: b.close >= b.open ? makeTheme(isDark, upColor, downColor).up + "55" : makeTheme(isDark, upColor, downColor).down + "55",
           }))
         );
         const ma5 = calcMA(closes, 5);
@@ -473,10 +641,8 @@ function KLineChart({
   }, [symbol, period]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="flex flex-col bg-background">
-      {/* K-line toolbar */}
-      <div className="flex items-center gap-0.5 border-b border-border bg-card px-3 py-1.5">
-        {/* Period buttons */}
+    <div className="flex flex-1 flex-col bg-background">
+      <div className="flex shrink-0 items-center gap-0.5 border-b border-border bg-card px-3 py-1.5">
         <div className="flex rounded bg-muted p-0.5">
           {(["1D", "1W", "1M"] as Period[]).map((p) => (
             <button
@@ -492,7 +658,6 @@ function KLineChart({
             </button>
           ))}
         </div>
-        {/* MA legend */}
         <div className="ml-3 flex items-center gap-2.5">
           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
             <span className="h-px w-3 bg-orange-500" />MA5
@@ -510,29 +675,21 @@ function KLineChart({
           </span>
         )}
       </div>
-      <div ref={containerRef} className="w-full" />
+      <div ref={containerRef} className="min-h-0 flex-1" />
     </div>
   );
 }
 
 // ── Intraday chart ────────────────────────────────────────────────────────────
 
-/**
- * Single IChartApi with 2 panes:
- *   Pane 0: Price line + avg price line
- *   Pane 1: Volume histogram + MACD lines
- */
 function IntradayCharts({
   symbol,
   isDark,
-  onCrosshairMove,
-  registerChart,
 }: {
   symbol: string;
   isDark: boolean;
-  onCrosshairMove: (params: MouseEventParams) => void;
-  registerChart: (chart: IChartApi | null, primarySeries: ISeriesApi<SeriesType> | null) => void;
 }) {
+  const { upColor, downColor } = useChartColors();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -548,14 +705,13 @@ function IntradayCharts({
 
   useLayoutEffect(() => {
     if (!containerRef.current) return;
-    const T = makeTheme(isDark);
+    const T = makeTheme(isDark, upColor, downColor);
     const chart = createChart(containerRef.current, {
-      ...chartOpts(380, T),
+      ...chartOpts(500, T),
       width: containerRef.current.clientWidth,
     });
     chartRef.current = chart;
 
-    // Pane 0: price + avg
     priceSeriesRef.current = chart.addSeries(LineSeries, {
       color: T.blue, lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
     });
@@ -564,7 +720,6 @@ function IntradayCharts({
       priceLineVisible: false, lastValueVisible: false,
     });
 
-    // Pane 1: volume + MACD
     volSeriesRef.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       color: T.blue + "66",
@@ -577,9 +732,6 @@ function IntradayCharts({
     }, 1);
     histSeriesRef.current = chart.addSeries(HistogramSeries, { priceLineVisible: false }, 1);
     chart.panes()[1]?.setStretchFactor(0.4);
-
-    registerChart(chart, priceSeriesRef.current);
-    chart.subscribeCrosshairMove(onCrosshairMove);
 
     const ro = new ResizeObserver(() => {
       if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth });
@@ -596,14 +748,12 @@ function IntradayCharts({
       macdSeriesRef.current = null;
       signalSeriesRef.current = null;
       histSeriesRef.current = null;
-      registerChart(null, null);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update chart colors when theme changes
   useEffect(() => {
     if (chartRef.current) {
-      chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark)));
+      chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark, upColor, downColor)));
     }
   }, [isDark]);
 
@@ -619,13 +769,13 @@ function IntradayCharts({
 
         priceSeriesRef.current.setData(bars.map((b) => ({ time: b.time, value: b.price })) as LineData[]);
         avgSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.avg_price })) as LineData[]);
-        volSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.volume, color: makeTheme(isDark).blue + "66" })) as HistogramData[]);
+        volSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.volume, color: makeTheme(isDark, upColor, downColor).blue + "66" })) as HistogramData[]);
         macdSeriesRef.current?.setData(bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.macd } : null).filter((v): v is LineData => v != null));
         signalSeriesRef.current?.setData(bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.signal } : null).filter((v): v is LineData => v != null));
         histSeriesRef.current?.setData(
           bars.map((b, i) => macd[i] ? {
             time: b.time, value: macd[i]!.histogram,
-            color: macd[i]!.histogram >= 0 ? makeTheme(isDark).up + "99" : makeTheme(isDark).down + "99",
+            color: macd[i]!.histogram >= 0 ? makeTheme(isDark, upColor, downColor).up + "99" : makeTheme(isDark, upColor, downColor).down + "99",
           } : null).filter(v => v !== null) as HistogramData[]
         );
         chartRef.current?.timeScale().fitContent();
@@ -642,11 +792,8 @@ function IntradayCharts({
   }, [load]);
 
   return (
-    <div className="flex flex-col bg-background">
-      {/* Intraday toolbar */}
+    <div className="flex flex-1 flex-col bg-background">
       <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-1.5">
-        <TrendingUp size={12} className="text-muted-foreground" />
-        <span className="text-[11px] font-medium text-foreground">分时</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">VOL</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">MACD</span>
         {lastUpdated && (
@@ -661,33 +808,158 @@ function IntradayCharts({
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
-      <div ref={containerRef} className="w-full" />
+      <div ref={containerRef} className="w-full flex-1" />
     </div>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Chip Distribution Panel ───────────────────────────────────────────────────
 
-const SUB_INDICATORS: { key: IndicatorKey; label: string; color: string }[] = [
+function ChipDistributionPanel({
+  bars,
+  isDark,
+  visibleRange,
+}: {
+  bars: ReturnType<typeof parseBars>;
+  isDark: boolean;
+  visibleRange: { min: number; max: number } | null;
+}) {
+  const { upColor, downColor } = useChartColors();
+  const result = useMemo(() => {
+    if (bars.length === 0) return { chips: [], profitRatio: 0 };
+    const lastClose = bars[bars.length - 1].close;
+    let step = 0.01;
+    if (lastClose > 100) step = 0.5;
+    if (lastClose > 500) step = 1;
+    if (lastClose > 1000) step = 2;
+    if (lastClose > 5000) step = 5;
+    if (lastClose > 10000) step = 10;
+    return calcChipDistribution(bars, step, 0.95, 50);
+  }, [bars]);
+
+  const lastClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
+
+  // Filter chips to visible range and compute layout
+  const { visibleChips, priceMin, priceMax } = useMemo(() => {
+    const all = result.chips;
+    if (all.length === 0) return { visibleChips: [], priceMin: 0, priceMax: 0 };
+    const lo = visibleRange ? visibleRange.min : Math.min(...all.map((c) => c.price));
+    const hi = visibleRange ? visibleRange.max : Math.max(...all.map((c) => c.price));
+    const margin = (hi - lo) * 0.05;
+    const pMin = lo - margin;
+    const pMax = hi + margin;
+    const filtered = all.filter((c) => c.price >= pMin && c.price <= pMax);
+    return { visibleChips: filtered, priceMin: pMin, priceMax: pMax };
+  }, [result.chips, visibleRange]);
+
+  const maxPercent = visibleChips.length > 0 ? Math.max(...visibleChips.map((c) => c.percent)) : 1;
+  const priceSpan = priceMax - priceMin || 1;
+
+  const profitColor = upColor;
+  const lossColor = downColor;
+
+  return (
+    <div className="flex h-full w-36 shrink-0 flex-col border-l border-border bg-card">
+      <div className="shrink-0 border-b border-border px-2 py-1.5">
+        <div className="text-[11px] font-semibold">筹码分布</div>
+      </div>
+
+      {/* Profit ratio */}
+      <div className="shrink-0 border-b border-border px-2 py-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-muted-foreground">获利比例</span>
+          <span
+            className="text-sm font-bold"
+            style={{ color: result.profitRatio >= 50 ? profitColor : lossColor }}
+          >
+            {result.profitRatio.toFixed(1)}%
+          </span>
+        </div>
+        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${Math.min(100, result.profitRatio)}%`,
+              background: `linear-gradient(90deg, ${profitColor}, ${profitColor}88)`,
+            }}
+          />
+        </div>
+        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+          <span style={{ color: lossColor }}>套牢 {(100 - result.profitRatio).toFixed(0)}%</span>
+          <span style={{ color: profitColor }}>获利 {result.profitRatio.toFixed(0)}%</span>
+        </div>
+      </div>
+
+      {/* Chip bars - positioned to match chart price axis */}
+      <div className="relative flex-1 overflow-hidden">
+        {/* Current price line */}
+        {lastClose >= priceMin && lastClose <= priceMax && (
+          <div
+            className="absolute left-0 right-0 border-t border-dashed border-primary/50"
+            style={{ bottom: `${((lastClose - priceMin) / priceSpan) * 100}%` }}
+          >
+            <span className="absolute -top-2.5 right-1 text-[8px] font-mono text-primary">
+              {lastClose.toFixed(2)}
+            </span>
+          </div>
+        )}
+        {visibleChips.map((chip) => {
+          const widthPct = maxPercent > 0 ? (chip.percent / maxPercent) * 100 : 0;
+          const isProfit = chip.price <= lastClose;
+          // Position from bottom: price maps to bottom%
+          const bottomPct = ((chip.price - priceMin) / priceSpan) * 100;
+          const barHeight = Math.max(2, (100 / visibleChips.length) * 0.8);
+          return (
+            <div
+              key={chip.price.toFixed(4)}
+              className="absolute left-1 right-8 flex items-center"
+              style={{ bottom: `${bottomPct}%`, height: `${barHeight}%` }}
+            >
+              <div
+                className="h-full rounded-sm"
+                style={{
+                  width: `${widthPct}%`,
+                  backgroundColor: isProfit ? profitColor + "88" : lossColor + "88",
+                  minWidth: widthPct > 0 ? 2 : 0,
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Indicator selector + display ──────────────────────────────────────────────
+
+const SUB_INDICATORS: { key: SubIndicatorKey; label: string; color: string }[] = [
   { key: "MACD", label: "MACD", color: "#2962ff" },
   { key: "KDJ",  label: "KDJ",  color: "#ff6d00" },
   { key: "RSI",  label: "RSI",  color: "#9c27b0" },
   { key: "CCI",  label: "CCI",  color: "#00897b" },
   { key: "WR",   label: "WR",   color: "#c62828" },
+  { key: "DMI",  label: "DMI",  color: "#1565c0" },
+  { key: "OSC",  label: "OSC",  color: "#e65100" },
 ];
-const OVERLAY_INDICATORS: { key: IndicatorKey; label: string; color: string }[] = [
-  { key: "BOLL", label: "布林带", color: "#f57f17" },
+const OVERLAY_INDICATORS: { key: OverlayIndicatorKey; label: string; color: string }[] = [
+  { key: "BOLL",    label: "BOLL",    color: "#f57f17" },
+  { key: "BBIBOLL", label: "BBIBOLL", color: "#ff6d00" },
+  { key: "EMA",     label: "EMA",     color: "#9c27b0" },
 ];
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function TechnicalAnalysis({ symbol, onSymbolChange, onBack }: Props) {
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorKey>>(new Set());
+  const [activeTab, setActiveTab] = useState<"kline" | "intraday">("kline");
+  const [parsedBars, setParsedBars] = useState<ReturnType<typeof parseBars>>([]);
+  const [visiblePriceRange, setVisiblePriceRange] = useState<{ min: number; max: number } | null>(null);
 
   const klineChartRef = useRef<IChartApi | null>(null);
   const klinePrimaryRef = useRef<ISeriesApi<SeriesType> | null>(null);
-  const intradayChartRef = useRef<IChartApi | null>(null);
-  const intradayPrimaryRef = useRef<ISeriesApi<SeriesType> | null>(null);
 
   useEffect(() => {
     if (!displayName && symbol) setDisplayName(symbol);
@@ -701,28 +973,6 @@ export default function TechnicalAnalysis({ symbol, onSymbolChange, onBack }: Pr
     []
   );
 
-  const registerIntraday = useCallback(
-    (chart: IChartApi | null, primary: ISeriesApi<SeriesType> | null) => {
-      intradayChartRef.current = chart;
-      intradayPrimaryRef.current = primary;
-    },
-    []
-  );
-
-  const syncToIntraday = useCallback((params: MouseEventParams) => {
-    if (!params.time || !intradayChartRef.current || !intradayPrimaryRef.current) return;
-    try {
-      intradayChartRef.current.setCrosshairPosition(0, params.time, intradayPrimaryRef.current);
-    } catch { /* chart removed */ }
-  }, []);
-
-  const syncToKLine = useCallback((params: MouseEventParams) => {
-    if (!params.time || !klineChartRef.current || !klinePrimaryRef.current) return;
-    try {
-      klineChartRef.current.setCrosshairPosition(0, params.time, klinePrimaryRef.current);
-    } catch { /* chart removed */ }
-  }, []);
-
   function toggleIndicator(key: IndicatorKey) {
     setActiveIndicators((prev) => {
       const next = new Set(prev);
@@ -731,6 +981,10 @@ export default function TechnicalAnalysis({ symbol, onSymbolChange, onBack }: Pr
       return next;
     });
   }
+
+  // Active sub-indicator descriptions for display
+  const activeSubLabels = SUB_INDICATORS.filter((i) => activeIndicators.has(i.key));
+  const activeOverlayLabels = OVERLAY_INDICATORS.filter((i) => activeIndicators.has(i.key));
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
@@ -760,61 +1014,113 @@ export default function TechnicalAnalysis({ symbol, onSymbolChange, onBack }: Pr
           }}
         />
 
-        {/* Charts */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left: K-line + indicator bar */}
-          <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
-            <KLineChart
-              symbol={symbol}
-              activeIndicators={activeIndicators}
-              isDark={isDark}
-              onCrosshairMove={syncToIntraday}
-              registerChart={registerKLine}
-            />
-            {/* ─ Indicator selector bar ─ */}
-            <div className="flex shrink-0 flex-wrap items-center gap-1 border-t border-border bg-muted/40 px-3 py-1.5">
-              <span className="mr-0.5 text-[10px] font-medium text-muted-foreground">副图</span>
-              {SUB_INDICATORS.map(({ key, label, color }) => (
-                <button
-                  key={key}
-                  onClick={() => toggleIndicator(key)}
-                  className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-all ${
-                    activeIndicators.has(key)
-                      ? "border-transparent text-white"
-                      : "border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground"
-                  }`}
-                  style={activeIndicators.has(key) ? { background: color, borderColor: color } : {}}
-                >
-                  {label}
-                </button>
-              ))}
-              <div className="mx-1.5 h-3 w-px bg-border" />
-              <span className="text-[10px] font-medium text-muted-foreground">叠加</span>
-              {OVERLAY_INDICATORS.map(({ key, label, color }) => (
-                <button
-                  key={key}
-                  onClick={() => toggleIndicator(key)}
-                  className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-all ${
-                    activeIndicators.has(key)
-                      ? "border-transparent text-white"
-                      : "border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground"
-                  }`}
-                  style={activeIndicators.has(key) ? { background: color, borderColor: color } : {}}
-                >
-                  {label}
-                </button>
-              ))}
+        {/* Main content */}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Tab switch: 分时 / K线 */}
+          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-1">
+            <div className="flex rounded-md border border-border/80 bg-muted/40 p-0.5">
+              <button
+                onClick={() => setActiveTab("kline")}
+                className={`rounded-sm px-3 py-1 text-[11px] font-medium transition-all ${
+                  activeTab === "kline"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                K线
+              </button>
+              <button
+                onClick={() => setActiveTab("intraday")}
+                className={`rounded-sm px-3 py-1 text-[11px] font-medium transition-all ${
+                  activeTab === "intraday"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                分时
+              </button>
             </div>
           </div>
-          {/* Right: Intraday */}
-          <div className="flex flex-1 flex-col overflow-y-auto">
-            <IntradayCharts
-              symbol={symbol}
-              isDark={isDark}
-              onCrosshairMove={syncToKLine}
-              registerChart={registerIntraday}
-            />
-          </div>
+
+          {activeTab === "kline" ? (
+            <div className="flex flex-1 overflow-hidden">
+              {/* Left: indicator selector + chart */}
+              <div className="flex flex-1 flex-col overflow-hidden">
+                {/* Indicator selector (above chart) */}
+                <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-muted/40 px-3 py-1.5">
+                  <span className="mr-0.5 text-[10px] font-medium text-muted-foreground">副图</span>
+                  {SUB_INDICATORS.map(({ key, label, color }) => (
+                    <button
+                      key={key}
+                      onClick={() => toggleIndicator(key)}
+                      className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-all ${
+                        activeIndicators.has(key)
+                          ? "border-transparent text-white"
+                          : "border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                      }`}
+                      style={activeIndicators.has(key) ? { background: color, borderColor: color } : {}}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <div className="mx-1.5 h-3 w-px bg-border" />
+                  <span className="text-[10px] font-medium text-muted-foreground">叠加</span>
+                  {OVERLAY_INDICATORS.map(({ key, label, color }) => (
+                    <button
+                      key={key}
+                      onClick={() => toggleIndicator(key)}
+                      className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-all ${
+                        activeIndicators.has(key)
+                          ? "border-transparent text-white"
+                          : "border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                      }`}
+                      style={activeIndicators.has(key) ? { background: color, borderColor: color } : {}}
+                    >
+                      {label}
+                    </button>
+                  ))}
+
+                  {/* Active indicator tags inline */}
+                  {(activeSubLabels.length > 0 || activeOverlayLabels.length > 0) && (
+                    <>
+                      <div className="mx-1.5 h-3 w-px bg-border" />
+                      {activeOverlayLabels.map(({ key, label, color }) => (
+                        <span key={key} className="flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px]">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                          <span className="font-medium">{label}</span>
+                        </span>
+                      ))}
+                      {activeSubLabels.map(({ key, label, color }) => (
+                        <span key={key} className="flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px]">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                          <span className="font-medium">{label}</span>
+                        </span>
+                      ))}
+                    </>
+                  )}
+                </div>
+
+                {/* Chart area (flex-1 fills remaining space) */}
+                <KLineChart
+                  symbol={symbol}
+                  activeIndicators={activeIndicators}
+                  isDark={isDark}
+                  onCrosshairMove={() => {}}
+                  registerChart={registerKLine}
+                  onParsedBars={setParsedBars}
+                  onVisibleRangeChange={setVisiblePriceRange}
+                />
+              </div>
+
+              {/* Right: Chip distribution */}
+              {parsedBars.length > 0 && (
+                <ChipDistributionPanel bars={parsedBars} isDark={isDark} visibleRange={visiblePriceRange} />
+              )}
+            </div>
+          ) : (
+            /* Intraday mode */
+            <IntradayCharts symbol={symbol} isDark={isDark} />
+          )}
         </div>
       </div>
     </div>

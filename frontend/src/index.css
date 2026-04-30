@@ -4,6 +4,8 @@
 
 @layer base {
   :root {
+    --color-up: #089981;
+    --color-down: #f23645;
     --background: 204 45% 97%;
     --foreground: 210 22% 12%;
     --card: 0 0% 100%;
@@ -54,6 +56,11 @@
     --grid-line-soft: rgba(255, 255, 255, 0.035);
     --shell-primary: rgba(52, 211, 153, 0.12);
     --shell-secondary: rgba(245, 158, 11, 0.1);
+  }
+
+  [data-color-scheme="cn"] {
+    --color-up: #f23645;
+    --color-down: #089981;
   }
 
   * {

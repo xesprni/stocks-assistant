@@ -23,6 +23,7 @@ from app.api.scheduler import router as scheduler_router
 from app.api.config import router as config_router
 from app.api.watchlist import router as watchlist_router
 from app.api.market import router as market_router
+from app.api.mcp import router as mcp_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -35,3 +36,4 @@ router.include_router(scheduler_router, prefix="/scheduler", tags=["scheduler"])
 router.include_router(config_router, prefix="/config", tags=["config"])
 router.include_router(watchlist_router, prefix="/watchlist", tags=["watchlist"])
 router.include_router(market_router, prefix="/market", tags=["market"])
+router.include_router(mcp_router, prefix="/mcp", tags=["mcp"])

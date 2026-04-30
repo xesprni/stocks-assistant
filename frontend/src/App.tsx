@@ -5,8 +5,12 @@ import {
   Bot,
   BrainCircuit,
   Check,
+  ChevronDown,
+  ChevronUp,
+  CircleDot,
   Cpu,
   Database,
+  Eye,
   GripVertical,
   Home,
   Loader2,
@@ -27,6 +31,8 @@ import {
   Trash2,
   TrendingUp,
   WandSparkles,
+  X,
+  Zap,
 } from "lucide-react";
 import {
   DndContext,
@@ -63,25 +69,33 @@ import {
   checkHealth,
   deleteWatchlistItem,
   getMarketConfig,
+  getMcpStatus,
+  getMcpTools,
+  listSkills,
   listWatchlist,
   loadConfig,
   reorderWatchlist,
   saveConfig,
   searchWatchlist,
+  toggleSkill,
   sendChat,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useColorScheme } from "@/lib/color-scheme";
 import type {
   AppConfig,
   ChatMessage,
   ConfigDraft,
+  MCPServerStatus,
+  MCPToolInfo,
   MarketDashboardConfig,
+  SkillInfo,
   WatchlistCategory,
   WatchlistItem,
   WatchlistSearchResult,
 } from "@/types/app";
 
-type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart";
+type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart" | "skills";
 type Theme = "dark" | "light";
 
 const initialMessage: ChatMessage = {
@@ -104,6 +118,7 @@ const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }
   { id: "chart", label: "分析", icon: <TrendingUp />, hint: "技术分析" },
   { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
   { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
+  { id: "skills", label: "技能", icon: <Zap />, hint: "Agent 技能" },
 ];
 
 const watchlistCategories: Array<{ id: WatchlistCategory; label: string; hint: string }> = [
@@ -391,6 +406,8 @@ function App() {
                 }}
               />
             ) : null}
+
+            {page === "skills" ? <SkillsPage /> : null}
 
             {page === "config" ? (
               <ConfigPage
@@ -1234,17 +1251,11 @@ function ConfigPage({
                 label="Debug"
                 onCheckedChange={(checked) => patchDraft({ debug: checked })}
               />
+              <ColorSchemeRow />
             </TabsContent>
 
             <TabsContent value="mcp" className="space-y-3">
-              <Field label="MCP Servers JSON">
-                <Textarea
-                  className="min-h-[320px] font-mono text-xs lg:min-h-[420px]"
-                  spellCheck={false}
-                  value={draft.mcp_servers_text}
-                  onChange={(event) => patchDraft({ mcp_servers_text: event.target.value })}
-                />
-              </Field>
+              <MCPServersPanel draft={draft} patchDraft={patchDraft} />
             </TabsContent>
           </Tabs>
         </div>
@@ -1339,6 +1350,648 @@ function ToggleRow({
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
+  );
+}
+
+// ── Color Scheme Toggle ─────────────────────────────────────────────────────────
+
+function ColorSchemeRow() {
+  const { scheme, setScheme } = useColorScheme();
+  return (
+    <div className="flex items-center justify-between rounded-md border border-border/80 bg-background/50 px-3 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
+          <TrendingUp className="size-4 text-secondary" />
+        </div>
+        <div className="min-w-0">
+          <span className="truncate text-sm font-medium">涨跌配色</span>
+          <p className="text-[10px] text-muted-foreground">
+            {scheme === "cn" ? "红涨绿跌" : "绿涨红跌"}
+          </p>
+        </div>
+      </div>
+      <div className="flex rounded-md border border-border/80 bg-muted/40 p-0.5">
+        <button
+          className={`rounded-sm px-2.5 py-1 text-[11px] font-medium transition-all ${
+            scheme === "intl"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          onClick={() => setScheme("intl")}
+          type="button"
+        >
+          绿涨红跌
+        </button>
+        <button
+          className={`rounded-sm px-2.5 py-1 text-[11px] font-medium transition-all ${
+            scheme === "cn"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          onClick={() => setScheme("cn")}
+          type="button"
+        >
+          红涨绿跌
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── MCP Servers Management ──────────────────────────────────────────────────────
+
+interface MCPServersPanelProps {
+  draft: ConfigDraft;
+  patchDraft: (patch: Partial<ConfigDraft>) => void;
+}
+
+function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
+  const [serverStatuses, setServerStatuses] = useState<MCPServerStatus[]>([]);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showToolsFor, setShowToolsFor] = useState<string | null>(null);
+  const [toolsData, setToolsData] = useState<MCPToolInfo[]>([]);
+  const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [showRawJson, setShowRawJson] = useState(false);
+  const [addMode, setAddMode] = useState<"form" | "json">("form");
+  const [addForm, setAddForm] = useState({ name: "", transport: "sse" as "sse" | "stdio", url: "", command: "", args: "", headers: "" });
+  const [addJson, setAddJson] = useState("");
+  const [addError, setAddError] = useState("");
+
+  function parseMcpServers(text: string): Record<string, Record<string, unknown>> {
+    try {
+      return JSON.parse(text || "{}") as Record<string, Record<string, unknown>>;
+    } catch {
+      return {};
+    }
+  }
+
+  const servers = parseMcpServers(draft.mcp_servers_text);
+
+  function loadStatus() {
+    setIsLoadingStatus(true);
+    getMcpStatus()
+      .then((res) => setServerStatuses(res.servers))
+      .catch(() => setServerStatuses([]))
+      .finally(() => setIsLoadingStatus(false));
+  }
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  function handleViewTools(serverName: string) {
+    setShowToolsFor(serverName);
+    setIsLoadingTools(true);
+    setToolsData([]);
+    getMcpTools(serverName)
+      .then((res) => setToolsData(res.tools))
+      .catch(() => setToolsData([]))
+      .finally(() => setIsLoadingTools(false));
+  }
+
+  function syncServersToDraft(updated: Record<string, Record<string, unknown>>) {
+    patchDraft({ mcp_servers_text: JSON.stringify(updated, null, 2) });
+  }
+
+  function handleDeleteServer(name: string) {
+    const updated = { ...servers };
+    delete updated[name];
+    syncServersToDraft(updated);
+  }
+
+  function handleAddFromForm() {
+    setAddError("");
+    const name = addForm.name.trim();
+    if (!name) {
+      setAddError("请输入服务器名称");
+      return;
+    }
+    if (servers[name]) {
+      setAddError("该名称已存在");
+      return;
+    }
+
+    const config: Record<string, unknown> = { transport: addForm.transport };
+    if (addForm.transport === "sse") {
+      if (!addForm.url.trim()) {
+        setAddError("SSE 模式需要填写 URL");
+        return;
+      }
+      config.url = addForm.url.trim();
+    } else {
+      if (!addForm.command.trim()) {
+        setAddError("stdio 模式需要填写 command");
+        return;
+      }
+      config.command = addForm.command.trim();
+      if (addForm.args.trim()) {
+        config.args = addForm.args.trim().split(/\s+/);
+      }
+    }
+
+    // Parse headers (key:value per line or JSON)
+    if (addForm.headers.trim()) {
+      try {
+        const headerObj: Record<string, string> = {};
+        const trimmed = addForm.headers.trim();
+        if (trimmed.startsWith("{")) {
+          const parsed = JSON.parse(trimmed);
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string") headerObj[k] = v;
+          }
+        } else {
+          for (const line of trimmed.split("\n")) {
+            const idx = line.indexOf(":");
+            if (idx > 0) {
+              headerObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+            }
+          }
+        }
+        if (Object.keys(headerObj).length > 0) {
+          config.headers = headerObj;
+        }
+      } catch {
+        // ignore parse errors for headers
+      }
+    }
+
+    const updated = { ...servers, [name]: config };
+    syncServersToDraft(updated);
+    setAddForm({ name: "", transport: "sse", url: "", command: "", args: "", headers: "" });
+    setShowAddForm(false);
+  }
+
+  function handleAddFromJson() {
+    setAddError("");
+    try {
+      const parsed = JSON.parse(addJson);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        setAddError("JSON 必须是对象，如 {\"server-name\": {\"transport\": \"sse\", \"url\": \"...\"}}");
+        return;
+      }
+      const updated = { ...servers, ...parsed };
+      syncServersToDraft(updated);
+      setAddJson("");
+      setShowAddForm(false);
+    } catch {
+      setAddError("JSON 格式错误，请检查语法");
+    }
+  }
+
+  const statusMap = new Map(serverStatuses.map((s) => [s.name, s]));
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold">MCP Servers</p>
+          <Badge variant="outline">{Object.keys(servers).length} servers</Badge>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={loadStatus} disabled={isLoadingStatus}>
+            {isLoadingStatus ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Refresh
+          </Button>
+          <Button size="sm" onClick={() => { setShowAddForm(true); setAddError(""); }} disabled={showAddForm}>
+            <Plus />
+            Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Add form */}
+      {showAddForm ? (
+        <div className="rounded-lg border border-primary/40 bg-background/60 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">添加 MCP 服务器</p>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setShowAddForm(false); setAddError(""); }}>
+              <X className="size-4" />
+            </Button>
+          </div>
+
+          {/* Mode toggle */}
+          <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
+            <button
+              className={cn(
+                "h-7 rounded-sm px-3 text-xs font-medium transition-all",
+                addMode === "form" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setAddMode("form")}
+              type="button"
+            >
+              表单模式
+            </button>
+            <button
+              className={cn(
+                "h-7 rounded-sm px-3 text-xs font-medium transition-all",
+                addMode === "json" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setAddMode("json")}
+              type="button"
+            >
+              JSON 模式
+            </button>
+          </div>
+
+          {addMode === "form" ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="服务器名称">
+                  <Input
+                    placeholder="my-server"
+                    value={addForm.name}
+                    onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+                  />
+                </Field>
+                <Field label="传输方式">
+                  <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
+                    <button
+                      className={cn(
+                        "h-8 flex-1 rounded-sm text-xs font-medium transition-all",
+                        addForm.transport === "sse" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
+                      )}
+                      onClick={() => setAddForm((f) => ({ ...f, transport: "sse" }))}
+                      type="button"
+                    >
+                      SSE
+                    </button>
+                    <button
+                      className={cn(
+                        "h-8 flex-1 rounded-sm text-xs font-medium transition-all",
+                        addForm.transport === "stdio" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
+                      )}
+                      onClick={() => setAddForm((f) => ({ ...f, transport: "stdio" }))}
+                      type="button"
+                    >
+                      stdio
+                    </button>
+                  </div>
+                </Field>
+              </div>
+              {addForm.transport === "sse" ? (
+                <>
+                  <Field label="URL">
+                    <Input
+                      placeholder="http://localhost:3001/sse"
+                      value={addForm.url}
+                      onChange={(e) => setAddForm((f) => ({ ...f, url: e.target.value }))}
+                    />
+                  </Field>
+                  <Field label="Headers（可选，每行 key: value 或 JSON 对象）">
+                    <Textarea
+                      className="min-h-[60px] font-mono text-xs"
+                      spellCheck={false}
+                      placeholder={"Authorization: Bearer token123\nX-Custom-Header: value"}
+                      value={addForm.headers}
+                      onChange={(e) => setAddForm((f) => ({ ...f, headers: e.target.value }))}
+                    />
+                  </Field>
+                </>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Command">
+                    <Input
+                      placeholder="npx"
+                      value={addForm.command}
+                      onChange={(e) => setAddForm((f) => ({ ...f, command: e.target.value }))}
+                    />
+                  </Field>
+                  <Field label="Args（空格分隔）">
+                    <Input
+                      placeholder="-y @modelcontextprotocol/server-memory"
+                      value={addForm.args}
+                      onChange={(e) => setAddForm((f) => ({ ...f, args: e.target.value }))}
+                    />
+                  </Field>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                粘贴 JSON，格式：{'{'}"server-name": {'{'}"transport": "sse", "url": "..."{'}'}{'}'}
+              </p>
+              <Textarea
+                className="min-h-[120px] font-mono text-xs"
+                spellCheck={false}
+                placeholder={'{\n  "my-server": {\n    "transport": "sse",\n    "url": "http://localhost:3001/sse"\n  }\n}'}
+                value={addJson}
+                onChange={(e) => setAddJson(e.target.value)}
+              />
+            </div>
+          )}
+
+          {addError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {addError}
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowAddForm(false); setAddError(""); }}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={addMode === "form" ? handleAddFromForm : handleAddFromJson}>
+              <Plus />
+              Add Server
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Server list */}
+      {Object.keys(servers).length > 0 ? (
+        <div className="space-y-2">
+          {Object.entries(servers).map(([name, config]) => {
+            const status = statusMap.get(name);
+            const transport = (config.transport as string) || "sse";
+            const statusColor =
+              status?.status === "connected"
+                ? "text-green-500"
+                : status?.status === "error"
+                  ? "text-destructive"
+                  : "text-muted-foreground";
+            const statusLabel =
+              status?.status === "connected"
+                ? "connected"
+                : status?.status === "error"
+                  ? "error"
+                  : "disconnected";
+
+            return (
+              <div
+                key={name}
+                className="message-bubble rounded-lg border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/50"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <CircleDot className={cn("size-3", statusColor)} />
+                      <span className="truncate text-sm font-semibold">{name}</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {transport}
+                      </Badge>
+                      <span className={cn("text-[11px]", statusColor)}>{statusLabel}</span>
+                      {status?.tools_count ? (
+                        <span className="text-[11px] text-muted-foreground">{status.tools_count} tools</span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {transport === "sse"
+                        ? (config.url as string) || "未配置 URL"
+                        : [config.command, ...(Array.isArray(config.args) ? (config.args as string[]) : [])].join(" ")}
+                    </p>
+                    {config.headers && typeof config.headers === "object" && Object.keys(config.headers).length > 0 ? (
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">
+                        headers: {Object.entries(config.headers as Record<string, string>).map(([k, v]) => `${k}: ${v}`).join("; ")}
+                      </p>
+                    ) : null}
+                    {status?.error ? (
+                      <p className="mt-1 truncate text-xs text-destructive">{status.error}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => handleViewTools(name)}
+                    >
+                      <Eye className="size-3" />
+                      Tools
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDeleteServer(name)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="grid min-h-40 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
+          <div>
+            <Cpu className="mx-auto mb-3 size-8 text-muted-foreground" />
+            <p className="text-sm font-medium">暂无 MCP 服务器</p>
+            <p className="mt-1 text-xs text-muted-foreground">点击上方 Add 按钮添加 MCP 服务器配置。</p>
+          </div>
+        </div>
+      )}
+
+      {/* Tools dialog overlay */}
+      {showToolsFor ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowToolsFor(null)}>
+          <div
+            className="mx-4 max-h-[70vh] w-full max-w-xl overflow-hidden rounded-lg border border-border bg-card shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border/80 p-4">
+              <div>
+                <p className="font-semibold">{showToolsFor} - Tools</p>
+                <p className="text-xs text-muted-foreground">{toolsData.length} tools available</p>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowToolsFor(null)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div className="max-h-[calc(70vh-60px)] overflow-y-auto p-4">
+              {isLoadingTools ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : toolsData.length > 0 ? (
+                <div className="space-y-3">
+                  {toolsData.map((tool) => (
+                    <div key={tool.name} className="rounded-md border border-border/80 bg-background/50 p-3">
+                      <div className="flex items-center gap-2">
+                        <TerminalSquare className="size-3.5 text-primary" />
+                        <span className="text-sm font-semibold">{tool.name}</span>
+                      </div>
+                      {tool.description ? (
+                        <p className="mt-1 text-xs text-muted-foreground">{tool.description}</p>
+                      ) : null}
+                      {Object.keys(tool.parameters?.properties as Record<string, unknown> || {}).length > 0 ? (
+                        <div className="mt-2 space-y-1">
+                          <p className="text-[10px] uppercase text-muted-foreground">Parameters</p>
+                          <div className="grid gap-1">
+                            {Object.entries(
+                              (tool.parameters?.properties as Record<string, Record<string, unknown>>) || {},
+                            ).map(([pName, pSchema]) => (
+                              <div key={pName} className="flex items-center gap-2 text-xs">
+                                <code className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-primary">{pName}</code>
+                                <span className="text-muted-foreground">{(pSchema.type as string) || "any"}</span>
+                                {(tool.parameters?.required as string[])?.includes(pName) ? (
+                                  <Badge variant="danger" className="text-[9px] h-4">
+                                    required
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  未发现工具。服务器可能未连接或尚未注册工具。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Collapsible raw JSON */}
+      <div className="rounded-lg border border-border/80">
+        <button
+          className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+          onClick={() => setShowRawJson((v) => !v)}
+          type="button"
+        >
+          <span className="font-medium">Raw JSON</span>
+          {showRawJson ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+        </button>
+        {showRawJson ? (
+          <div className="border-t border-border/80 p-3">
+            <Textarea
+              className="min-h-[200px] font-mono text-xs"
+              spellCheck={false}
+              value={draft.mcp_servers_text}
+              onChange={(event) => patchDraft({ mcp_servers_text: event.target.value })}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ── Skills Management ──────────────────────────────────────────────────────────
+
+function SkillsPage() {
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [toggling, setToggling] = useState<string | null>(null);
+
+  function loadSkills() {
+    setIsLoading(true);
+    setError("");
+    listSkills()
+      .then((res) => setSkills(res.skills))
+      .catch((e) => setError(e instanceof Error ? e.message : "加载技能列表失败"))
+      .finally(() => setIsLoading(false));
+  }
+
+  useEffect(() => {
+    loadSkills();
+  }, []);
+
+  async function handleToggle(name: string, enabled: boolean) {
+    setToggling(name);
+    try {
+      await toggleSkill(name, !enabled);
+      setSkills((prev) => prev.map((s) => s.name === name ? { ...s, enabled: !enabled } : s));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "切换失败");
+    } finally {
+      setToggling(null);
+    }
+  }
+
+  return (
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Zap className="size-5 text-secondary" />
+            <p className="font-semibold">技能管理</p>
+          </div>
+          <p className="text-xs text-muted-foreground">Markdown 技能定义，Agent 可动态调用</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">{skills.length} skills</Badge>
+          <Button variant="outline" size="sm" onClick={loadSkills} disabled={isLoading}>
+            {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="panel-body min-h-0 flex-1 overflow-y-auto">
+        {error ? (
+          <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : skills.length > 0 ? (
+          <div className="space-y-2">
+            {skills.map((skill) => (
+              <div
+                key={skill.name}
+                className="message-bubble rounded-lg border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/50"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold">{skill.name}</span>
+                      <Badge variant={skill.enabled ? "default" : "muted"}>
+                        {skill.enabled ? "ON" : "OFF"}
+                      </Badge>
+                    </div>
+                    {skill.description ? (
+                      <p className="mt-1 text-xs text-muted-foreground">{skill.description}</p>
+                    ) : null}
+                    {skill.file_path ? (
+                      <p className="mt-1 truncate text-[10px] font-mono text-muted-foreground/60">
+                        {skill.file_path}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button
+                    variant={skill.enabled ? "outline" : "default"}
+                    size="sm"
+                    className="h-7 text-xs shrink-0"
+                    disabled={toggling === skill.name}
+                    onClick={() => handleToggle(skill.name, skill.enabled)}
+                  >
+                    {toggling === skill.name ? (
+                      <Loader2 className="animate-spin" />
+                    ) : skill.enabled ? (
+                      "Disable"
+                    ) : (
+                      "Enable"
+                    )}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid min-h-40 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
+            <div>
+              <Zap className="mx-auto mb-3 size-8 text-muted-foreground" />
+              <p className="text-sm font-medium">暂无技能</p>
+              <p className="mt-1 text-xs text-muted-foreground">在 workspace/skills/ 目录下添加 Markdown 技能文件。</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

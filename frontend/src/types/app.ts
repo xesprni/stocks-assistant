@@ -1,3 +1,6 @@
+export type ColorScheme = "intl" | "cn";
+/** intl: green=up, red=down | cn: red=up, green=down */
+
 export type ChatRole = "assistant" | "user";
 
 export interface ChatMessage {
@@ -118,6 +121,37 @@ export interface MarketQuotesResponse {
   total: number;
 }
 
+// ── MCP servers ────────────────────────────────────────────────────────────────
+
+export interface MCPServerStatus {
+  name: string;
+  transport: string;
+  url: string;
+  command: string;
+  args: string[];
+  headers: Record<string, string>;
+  status: "connected" | "error" | "disconnected";
+  error: string | null;
+  tools_count: number;
+}
+
+export interface MCPStatusResponse {
+  servers: MCPServerStatus[];
+  total: number;
+}
+
+export interface MCPToolInfo {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface MCPServerToolsResponse {
+  server_name: string;
+  tools: MCPToolInfo[];
+  total: number;
+}
+
 // ── Technical analysis ───────────────────────────────────────────────────────
 
 export interface CandlestickItem {
@@ -147,4 +181,18 @@ export interface IntradayItem {
 export interface IntradayResponse {
   symbol: string;
   bars: IntradayItem[];
+}
+
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  enabled: boolean;
+  file_path: string | null;
+}
+
+export interface SkillListResponse {
+  skills: SkillInfo[];
+  total: number;
 }

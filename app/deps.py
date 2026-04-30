@@ -129,3 +129,16 @@ def get_market_service():
 
     settings = get_settings()
     return MarketService(workspace_dir=settings.workspace_dir)
+
+
+@lru_cache
+def get_mcp_manager():
+    """获取 MCP 管理器单例。
+
+    基于 config.json 中的 mcp_servers 配置初始化 MCPManager。
+    实际连接在 lifespan 中异步执行。
+    """
+    from app.core.tools.mcp.mcp_tool import MCPManager
+
+    settings = get_settings()
+    return MCPManager(server_configs=settings.mcp_servers)
