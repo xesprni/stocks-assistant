@@ -656,21 +656,21 @@ function KLineChart({
       } else if (key === "OSC") {
         const osc = calcOSC(closes);
         const histS = chart.addSeries(HistogramSeries, { priceLineVisible: false }, paneIdx);
-        const difS = chart.addSeries(LineSeries, {
-          color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "DIF",
+        const oscS = chart.addSeries(LineSeries, {
+          color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "OSC",
         }, paneIdx);
-        const deaS = chart.addSeries(LineSeries, {
-          color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "DEA",
+        const maoscS = chart.addSeries(LineSeries, {
+          color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "MAOSC",
         }, paneIdx);
         histS.setData(
           parsed.map((b, i) => osc[i] ? {
-            time: b.time, value: osc[i]!.osc,
-            color: osc[i]!.osc >= 0 ? T.up + "99" : T.down + "99",
+            time: b.time, value: osc[i]!.histogram,
+            color: osc[i]!.histogram >= 0 ? T.up + "99" : T.down + "99",
           } : null).filter(v => v !== null) as HistogramData[]
         );
-        difS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.dif } : null).filter((v): v is LineData => v != null));
-        deaS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.dea } : null).filter((v): v is LineData => v != null));
-        seriesList.push(histS, difS, deaS);
+        oscS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.osc } : null).filter((v): v is LineData => v != null));
+        maoscS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.maosc } : null).filter((v): v is LineData => v != null));
+        seriesList.push(histS, oscS, maoscS);
       }
 
       chart.panes()[paneIdx]?.setStretchFactor(0.4);
@@ -816,8 +816,9 @@ function IntradayCharts({
   useLayoutEffect(() => {
     if (!containerRef.current) return;
     const T = makeTheme(isDark, upColor, downColor);
+    const height = containerRef.current.clientHeight || 400;
     const chart = createChart(containerRef.current, {
-      ...chartOpts(500, T),
+      ...chartOpts(height, T),
       width: containerRef.current.clientWidth,
     });
     chartRef.current = chart;
@@ -834,17 +835,24 @@ function IntradayCharts({
       priceFormat: { type: "volume" },
       color: T.blue + "66",
     }, 1);
+    chart.panes()[1]?.setStretchFactor(0.2);
+
     macdSeriesRef.current = chart.addSeries(LineSeries, {
       color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-    }, 1);
+    }, 2);
     signalSeriesRef.current = chart.addSeries(LineSeries, {
       color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-    }, 1);
-    histSeriesRef.current = chart.addSeries(HistogramSeries, { priceLineVisible: false }, 1);
-    chart.panes()[1]?.setStretchFactor(0.4);
+    }, 2);
+    histSeriesRef.current = chart.addSeries(HistogramSeries, { priceLineVisible: false }, 2);
+    chart.panes()[2]?.setStretchFactor(0.25);
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth });
+      if (containerRef.current) {
+        chart.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight,
+        });
+      }
     });
     ro.observe(containerRef.current);
 

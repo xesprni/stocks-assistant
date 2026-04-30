@@ -32,9 +32,9 @@ export interface DMIPoint {
 }
 
 export interface OSCPoint {
-  dif: number;
-  dea: number;
   osc: number;
+  maosc: number;
+  histogram: number;
 }
 
 // ── Moving Averages ───────────────────────────────────────────────────────────
@@ -332,24 +332,33 @@ export function calcDMI(
   return result;
 }
 
-// ── OSC (Oscillator, same as MACD but returns dif/dea/osc naming) ──────────────
+// ── OSC (Oscillator: Close - SMA(N), with MAOSC signal line) ──────────────────
 
 export function calcOSC(
   closes: number[],
-  fastPeriod = 12,
-  slowPeriod = 26,
-  signalPeriod = 9,
+  period = 20,
+  signalPeriod = 6,
 ): (OSCPoint | null)[] {
-  if (closes.length < slowPeriod) return closes.map(() => null);
-  const ema12 = calcEMA(closes, fastPeriod);
-  const ema26 = calcEMA(closes, slowPeriod);
-  const difLine = closes.map((_, i) => ema12[i] - ema26[i]);
-  const deaLine = calcEMA(difLine.slice(slowPeriod - 1), signalPeriod);
-  const result: (OSCPoint | null)[] = closes.map(() => null);
-  for (let i = slowPeriod - 1; i < closes.length; i++) {
-    const dea = deaLine[i - (slowPeriod - 1)];
-    const dif = difLine[i];
-    result[i] = { dif, dea, osc: dif - dea };
+  const n = closes.length;
+  const result: (OSCPoint | null)[] = new Array(n).fill(null);
+  if (n < period + signalPeriod - 1) return result;
+
+  const oscValues = new Array(n);
+  for (let i = period - 1; i < n; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += closes[i - j];
+    oscValues[i] = closes[i] - sum / period;
+  }
+
+  for (let i = period - 1 + signalPeriod - 1; i < n; i++) {
+    let sum = 0;
+    for (let j = 0; j < signalPeriod; j++) sum += oscValues[i - j];
+    const maosc = sum / signalPeriod;
+    result[i] = {
+      osc: oscValues[i],
+      maosc,
+      histogram: oscValues[i] - maosc,
+    };
   }
   return result;
 }
