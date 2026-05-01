@@ -141,4 +141,4 @@ def get_mcp_manager():
     from app.core.tools.mcp.mcp_tool import MCPManager
 
     settings = get_settings()
-    return MCPManager(server_configs=settings.mcp_servers)
+    return MCPManager(server_configs=settings.mcp_servers, workspace_dir=settings.workspace_dir)

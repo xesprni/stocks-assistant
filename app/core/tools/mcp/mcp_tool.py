@@ -22,6 +22,7 @@ from app.core.tools.mcp.config import (
     normalize_mcp_servers,
     normalize_transport,
 )
+from app.core.tools.mcp.token_store import MCPTokenStore
 
 logger = logging.getLogger("stocks-assistant.mcp")
 
@@ -69,9 +70,11 @@ class MCPManager:
     以实现长连接和工具调用。对外提供同步接口。
     """
 
-    def __init__(self, server_configs: Dict[str, Dict[str, Any]]):
+    def __init__(self, server_configs: Dict[str, Dict[str, Any]], workspace_dir: Optional[str] = None):
         # 对配置字典进行归一化处理
         self.server_configs = normalize_mcp_servers(server_configs)
+        # 持久化令牌存储（传入 workspace_dir 时启用）
+        self._token_store = MCPTokenStore(workspace_dir) if workspace_dir else None
         # 已发现工具映射：工具全名 -> MCPToolAdapter
         self.tools: Dict[str, MCPToolAdapter] = {}
         # 已建立的客户端会话：服务器名 -> ClientSession
@@ -102,6 +105,38 @@ class MCPManager:
         self._thread: Optional[threading.Thread] = None
         # 保护共享状态的可重入锁
         self._lock = threading.RLock()
+        # 启动时从磁盘恢复令牌
+        self._restore_tokens()
+
+    def _restore_tokens(self) -> None:
+        """从持久化存储恢复 OAuth 令牌到内存缓存。"""
+        if not self._token_store:
+            return
+        try:
+            for server_name in self.server_configs:
+                # 恢复 Client Credentials 令牌
+                cc = self._token_store.get_client_credentials_token(server_name)
+                if cc:
+                    self._oauth_tokens[server_name] = cc
+
+                # 恢复 Authorization Code 令牌和客户端信息
+                from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+
+                tokens_data = self._token_store.get_tokens(server_name)
+                if tokens_data:
+                    try:
+                        self._oauth_login_tokens[server_name] = OAuthToken(**tokens_data)
+                    except Exception as e:
+                        logger.warning(f"Failed to restore OAuth tokens for '{server_name}': {e}")
+
+                client_info_data = self._token_store.get_client_info(server_name)
+                if client_info_data:
+                    try:
+                        self._oauth_client_infos[server_name] = OAuthClientInformationFull(**client_info_data)
+                    except Exception as e:
+                        logger.warning(f"Failed to restore OAuth client info for '{server_name}': {e}")
+        except Exception as e:
+            logger.warning(f"Failed to restore MCP OAuth tokens: {e}")
 
     # ------------------------------------------------------------------ loop
 
@@ -488,22 +523,22 @@ class MCPManager:
         from mcp.client.auth import OAuthClientProvider, TokenStorage
         from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
-        class InMemoryTokenStorage(TokenStorage):
+        class PersistentTokenStorage(TokenStorage):
             async def get_tokens(storage_self) -> OAuthToken | None:
-                # 从内存读取该服务器的已存储令牌
                 return self._oauth_login_tokens.get(server_name)
 
             async def set_tokens(storage_self, tokens: OAuthToken) -> None:
-                # 将新令牌写入内存缓存
                 self._oauth_login_tokens[server_name] = tokens
+                if self._token_store:
+                    self._token_store.set_tokens(server_name, tokens.model_dump(exclude_none=True))
 
             async def get_client_info(storage_self) -> OAuthClientInformationFull | None:
-                # 读取已注册的 OAuth 客户端信息
                 return self._oauth_client_infos.get(server_name)
 
             async def set_client_info(storage_self, client_info: OAuthClientInformationFull) -> None:
-                # 保存客户端注册信息
                 self._oauth_client_infos[server_name] = client_info
+                if self._token_store:
+                    self._token_store.set_client_info(server_name, client_info.model_dump(exclude_none=True))
 
         redirect_uri = auth.get("redirect_uri") or config.get("redirect_uri")
         if not isinstance(redirect_uri, str) or not redirect_uri:
@@ -545,7 +580,7 @@ class MCPManager:
         return OAuthClientProvider(
             server_url=config["url"],
             client_metadata=metadata,
-            storage=InMemoryTokenStorage(),
+            storage=PersistentTokenStorage(),
             redirect_handler=redirect_handler,
             callback_handler=callback_handler,
             timeout=timeout,
@@ -614,10 +649,12 @@ class MCPManager:
         token = payload.get("access_token")
         if not isinstance(token, str) or not token:
             raise RuntimeError("OAuth token response did not include access_token")
-        # 将令牌和过期时间写入缓存
+        # 将令牌和过期时间写入缓存并持久化
         expires_in = payload.get("expires_in")
         ttl = float(expires_in) if isinstance(expires_in, (int, float)) else 3600
         self._oauth_tokens[server_name] = (token, now + ttl)
+        if self._token_store:
+            self._token_store.set_client_credentials_token(server_name, token, now + ttl)
         return token
 
     def _format_connect_error(self, exc: Exception) -> str:

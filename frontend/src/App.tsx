@@ -17,6 +17,7 @@ import {
   Loader2,
   MessageSquareText,
   Moon,
+  Plug,
   Plus,
   RefreshCw,
   Save,
@@ -98,7 +99,7 @@ import type {
   WatchlistSearchResult,
 } from "@/types/app";
 
-type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart" | "skills";
+type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart" | "skills" | "mcp";
 type Theme = "dark" | "light";
 
 const initialMessage: ChatMessage = {
@@ -120,8 +121,9 @@ const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }
   { id: "market", label: "行情", icon: <BarChart2 />, hint: "大盘/个股" },
   { id: "chart", label: "分析", icon: <TrendingUp />, hint: "技术分析" },
   { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
-  { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
   { id: "skills", label: "技能", icon: <Zap />, hint: "Agent 技能" },
+  { id: "mcp", label: "MCP", icon: <Plug />, hint: "工具服务器" },
+  { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
 ];
 
 const watchlistCategories: Array<{ id: WatchlistCategory; label: string; hint: string }> = [
@@ -434,6 +436,8 @@ function App() {
             ) : null}
 
             {page === "skills" ? <SkillsPage /> : null}
+
+            {page === "mcp" ? <MCPPage /> : null}
 
             {page === "config" ? (
               <ConfigPage
@@ -1123,12 +1127,11 @@ function ConfigPage({
       {draft ? (
         <div className="panel-body min-h-0 flex-1 overflow-y-auto">
           <Tabs defaultValue="model">
-            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5">
+            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
               <TabsTrigger value="model">模型</TabsTrigger>
               <TabsTrigger value="agent">Agent</TabsTrigger>
               <TabsTrigger value="longbridge">长桥</TabsTrigger>
               <TabsTrigger value="features">能力</TabsTrigger>
-              <TabsTrigger value="mcp">MCP</TabsTrigger>
             </TabsList>
 
             <TabsContent value="model" className="space-y-4">
@@ -1279,10 +1282,6 @@ function ConfigPage({
               />
               <ColorSchemeRow />
             </TabsContent>
-
-            <TabsContent value="mcp" className="space-y-3">
-              <MCPServersPanel draft={draft} patchDraft={patchDraft} />
-            </TabsContent>
           </Tabs>
         </div>
       ) : (
@@ -1426,9 +1425,67 @@ function ColorSchemeRow() {
 
 // ── MCP Servers Management ──────────────────────────────────────────────────────
 
+function MCPPage() {
+  const [mcpServersText, setMcpServersText] = useState("{}");
+  const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    loadConfig()
+      .then((cfg) => setMcpServersText(JSON.stringify(cfg.mcp_servers ?? {}, null, 2)))
+      .catch((e) => setError(e instanceof Error ? e.message : "加载 MCP 配置失败"));
+  }, []);
+
+  async function handleSave() {
+    setConfigState("saving");
+    setError("");
+    try {
+      const mcpServers = parseJsonObject(mcpServersText || "{}", "MCP Servers JSON") as Record<string, unknown>;
+      const current = await loadConfig();
+      const next = await saveConfig({ ...current, mcp_servers: mcpServers });
+      setMcpServersText(JSON.stringify(next.mcp_servers ?? {}, null, 2));
+      setConfigState("saved");
+      window.setTimeout(() => setConfigState("idle"), 1400);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败");
+      setConfigState("error");
+    }
+  }
+
+  return (
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Plug className="size-5 text-primary" />
+            <p className="font-semibold">MCP 服务器</p>
+          </div>
+          <p className="text-xs text-muted-foreground">Model Context Protocol 工具服务器管理与连接状态</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" disabled={configState === "saving"} onClick={handleSave}>
+            {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" ? <Check /> : <Save />}
+            {configState === "saving" ? "Saving" : configState === "saved" ? "Saved" : "Save"}
+          </Button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="panel-body min-h-0 flex-1 overflow-y-auto">
+        <MCPServersPanel mcpServersText={mcpServersText} setMcpServersText={setMcpServersText} />
+      </div>
+    </section>
+  );
+}
+
 interface MCPServersPanelProps {
-  draft: ConfigDraft;
-  patchDraft: (patch: Partial<ConfigDraft>) => void;
+  mcpServersText: string;
+  setMcpServersText: (text: string) => void;
 }
 
 type MCPTransport = "streamable_http" | "sse" | "stdio";
@@ -1444,7 +1501,7 @@ const emptyMcpAddForm = {
   env: "",
 };
 
-function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
+function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelProps) {
   const [serverStatuses, setServerStatuses] = useState<MCPServerStatus[]>([]);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -1465,7 +1522,7 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
     }
   }
 
-  const servers = parseMcpServers(draft.mcp_servers_text);
+  const servers = parseMcpServers(mcpServersText);
 
   function normalizeMcpTransport(value: unknown, config: Record<string, unknown>): MCPTransport {
     if (value == null || value === "") return config.command ? "stdio" : "streamable_http";
@@ -1580,7 +1637,7 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
   }
 
   function syncServersToDraft(updated: Record<string, Record<string, unknown>>) {
-    patchDraft({ mcp_servers_text: JSON.stringify(updated, null, 2) });
+    setMcpServersText(JSON.stringify(updated, null, 2));
   }
 
   function handleDeleteServer(name: string) {
@@ -2087,8 +2144,8 @@ function MCPServersPanel({ draft, patchDraft }: MCPServersPanelProps) {
             <Textarea
               className="min-h-[200px] font-mono text-xs"
               spellCheck={false}
-              value={draft.mcp_servers_text}
-              onChange={(event) => patchDraft({ mcp_servers_text: event.target.value })}
+              value={mcpServersText}
+              onChange={(event) => setMcpServersText(event.target.value)}
             />
           </div>
         ) : null}
