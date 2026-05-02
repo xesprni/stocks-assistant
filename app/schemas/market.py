@@ -79,3 +79,14 @@ class IntradayResponse(BaseModel):
 
     symbol: str
     bars: List[IntradayItem]
+
+
+class MarketTemperatureResponse(BaseModel):
+    """市场温度响应。"""
+
+    market: str
+    temperature: Optional[int] = None
+    description: str = ""
+    valuation: Optional[int] = None
+    sentiment: Optional[int] = None
+    updated_at: Optional[int] = None

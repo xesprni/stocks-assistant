@@ -184,6 +184,15 @@ export interface IntradayResponse {
   bars: IntradayItem[];
 }
 
+export interface MarketTemperature {
+  market: string;
+  temperature: number | null;
+  description: string;
+  valuation: number | null;
+  sentiment: number | null;
+  updated_at: number | null;
+}
+
 // ── Skills ────────────────────────────────────────────────────────────────────
 
 export interface SkillInfo {

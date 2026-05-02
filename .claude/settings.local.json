@@ -10,7 +10,10 @@
       "Bash(curl -s http://127.0.0.1:8000/api/v1/skills)",
       "Bash(curl -s http://127.0.0.1:8000/api/v1/skills/refresh -X POST)",
       "Bash(curl -sv http://127.0.0.1:8000/api/v1/skills)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "mcp__web-reader__webReader",
+      "mcp__web-search-prime__web_search_prime",
+      "Bash(python *)"
     ]
   }
 }

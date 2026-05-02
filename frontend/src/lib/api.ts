@@ -6,6 +6,7 @@ import type {
   KnowledgeFileContent,
   KnowledgeGraph,
   KnowledgeTree,
+  MarketTemperature,
   MCPServerToolsResponse,
   MCPStatusResponse,
   MarketDashboardConfig,
@@ -128,6 +129,10 @@ export function getIntraday(symbol: string, since?: number | null) {
   const params = new URLSearchParams({ symbol });
   if (since != null) params.set("since", String(since));
   return request<IntradayResponse>(`/api/v1/market/intraday?${params.toString()}`);
+}
+
+export function getMarketTemperature(market: string = "US") {
+  return request<MarketTemperature>(`/api/v1/market/temperature?market=${market}`);
 }
 
 // ── MCP servers ────────────────────────────────────────────────────────────────

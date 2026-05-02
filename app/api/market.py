@@ -11,6 +11,7 @@ from app.schemas.market import (
     IntradayResponse,
     MarketDashboardConfig,
     MarketQuotesResponse,
+    MarketTemperatureResponse,
     QuoteItem,
 )
 
@@ -76,3 +77,14 @@ async def get_intraday(symbol: str, since: Optional[int] = None):
     except LongbridgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return IntradayResponse(**data)
+
+
+@router.get("/temperature", response_model=MarketTemperatureResponse)
+async def get_market_temperature(market: str = "US"):
+    """获取市场温度数据。market: US / HK / CN"""
+    service = get_market_service()
+    try:
+        data = service.get_market_temperature(market)
+    except LongbridgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return MarketTemperatureResponse(**data)

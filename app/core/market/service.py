@@ -229,3 +229,26 @@ class MarketService:
         if since is not None:
             bars = [bar for bar in bars if int(bar["timestamp"]) >= since]
         return {"symbol": symbol, "bars": bars}
+
+    def get_market_temperature(self, market: str = "US") -> dict:
+        """获取市场温度。market: US / HK / CN"""
+        try:
+            from longbridge.openapi import Market
+        except ImportError as exc:
+            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+
+        market_map = {"US": Market.US, "HK": Market.HK, "CN": Market.CN}
+        lb_market = market_map.get(market, Market.US)
+        ctx = self._quote_context()
+        try:
+            resp = ctx.market_temperature(lb_market)
+        except Exception as exc:
+            raise LongbridgeUnavailableError(str(exc)) from exc
+        return {
+            "market": market,
+            "temperature": getattr(resp, "temperature", None),
+            "description": getattr(resp, "description", ""),
+            "valuation": getattr(resp, "valuation", None),
+            "sentiment": getattr(resp, "sentiment", None),
+            "updated_at": getattr(resp, "updated_at", None),
+        }
