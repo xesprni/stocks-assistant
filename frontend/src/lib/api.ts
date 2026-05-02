@@ -3,10 +3,19 @@ import type {
   CandlesticksResponse,
   ChatResponse,
   IntradayResponse,
+  KnowledgeFileContent,
+  KnowledgeGraph,
+  KnowledgeTree,
   MCPServerToolsResponse,
   MCPStatusResponse,
   MarketDashboardConfig,
   MarketQuotesResponse,
+  MemoryFile,
+  MemoryFileContent,
+  MemorySearchResult,
+  MemoryStatus,
+  SchedulerTask,
+  SchedulerTaskList,
   SkillListResponse,
   WatchlistCategory,
   WatchlistItem,
@@ -154,4 +163,79 @@ export function toggleSkill(name: string, enabled: boolean) {
 
 export function refreshSkills() {
   return request<{ status: string; total: number }>("/api/v1/skills/refresh", { method: "POST" });
+}
+
+// ── Memory ────────────────────────────────────────────────────────────────────
+
+export function searchMemory(query: string, options?: { limit?: number; min_score?: number }) {
+  const params = new URLSearchParams({ q: query });
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.min_score != null) params.set("min_score", String(options.min_score));
+  return request<MemorySearchResult[]>(`/api/v1/memory/search?${params.toString()}`);
+}
+
+export function addMemory(content: string, options?: { scope?: string; source?: string }) {
+  return request<{ status: string }>("/api/v1/memory/add", {
+    method: "POST",
+    body: JSON.stringify({ content, scope: options?.scope ?? "shared", source: options?.source ?? "manual" }),
+  });
+}
+
+export function syncMemory() {
+  return request<{ status: string }>("/api/v1/memory/sync", { method: "POST" });
+}
+
+export function getMemoryStatus() {
+  return request<MemoryStatus>("/api/v1/memory/status");
+}
+
+export function listMemoryFiles() {
+  return request<{ files: MemoryFile[] }>("/api/v1/memory/files");
+}
+
+export function getMemoryFile(path: string) {
+  return request<MemoryFileContent>(`/api/v1/memory/files/${encodeURIComponent(path)}`);
+}
+
+// ── Knowledge ─────────────────────────────────────────────────────────────────
+
+export function getKnowledgeTree() {
+  return request<{ tree: KnowledgeTree }>("/api/v1/knowledge/tree").then((res) => ({
+    root_files: res.tree.root_files ?? [],
+    tree: res.tree.tree ?? [],
+    stats: res.tree.stats ?? { pages: 0, size: 0 },
+    enabled: res.tree.enabled ?? true,
+  }));
+}
+
+export function getKnowledgeFile(path: string) {
+  const params = new URLSearchParams({ path });
+  return request<KnowledgeFileContent>(`/api/v1/knowledge/read?${params.toString()}`);
+}
+
+export function getKnowledgeGraph() {
+  return request<KnowledgeGraph>("/api/v1/knowledge/graph");
+}
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+
+export function listSchedulerTasks() {
+  return request<SchedulerTaskList>("/api/v1/scheduler/tasks");
+}
+
+export function createSchedulerTask(payload: { name: string; prompt: string; schedule: string; enabled?: boolean }) {
+  return request<SchedulerTask>("/api/v1/scheduler/tasks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteSchedulerTask(id: string) {
+  return request<{ status: string }>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function toggleSchedulerTask(id: string) {
+  return request<{ status: string; enabled: boolean }>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}/toggle`, {
+    method: "POST",
+  });
 }

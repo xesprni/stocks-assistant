@@ -4,7 +4,13 @@
       "Bash(uv run *)",
       "Bash(npm run *)",
       "Bash(python3 *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(curl -s http://localhost:5175/)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s http://127.0.0.1:8000/api/v1/skills)",
+      "Bash(curl -s http://127.0.0.1:8000/api/v1/skills/refresh -X POST)",
+      "Bash(curl -sv http://127.0.0.1:8000/api/v1/skills)",
+      "Bash(npm install *)"
     ]
   }
 }

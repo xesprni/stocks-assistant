@@ -197,3 +197,109 @@ export interface SkillListResponse {
   skills: SkillInfo[];
   total: number;
 }
+
+// ── Memory ────────────────────────────────────────────────────────────────────
+
+export interface MemorySearchResult {
+  path: string;
+  start_line: number;
+  end_line: number;
+  score: number;
+  snippet: string;
+  source: string;
+  user_id: string | null;
+}
+
+export interface MemoryStatus {
+  chunks: number;
+  files: number;
+  workspace: string;
+  dirty: boolean;
+  embedding_enabled: boolean;
+  embedding_provider: string;
+  embedding_model: string;
+  search_mode: string;
+}
+
+export interface MemoryFile {
+  path: string;
+  size: number;
+  modified: number;
+}
+
+export interface MemoryFileContent {
+  path: string;
+  content: string;
+  size: number;
+}
+
+// ── Knowledge ─────────────────────────────────────────────────────────────────
+
+export interface KnowledgeFile {
+  name: string;
+  title: string;
+  size: number;
+}
+
+export interface KnowledgeDir {
+  dir: string;
+  files: KnowledgeFile[];
+  children: KnowledgeDir[];
+}
+
+export interface KnowledgeTree {
+  root_files: KnowledgeFile[];
+  tree: KnowledgeDir[];
+  stats: { pages: number; size: number };
+  enabled: boolean;
+}
+
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  category: string;
+}
+
+export interface KnowledgeGraphLink {
+  source: string;
+  target: string;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  links: KnowledgeGraphLink[];
+}
+
+export interface KnowledgeFileContent {
+  content: string;
+  path: string;
+}
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+
+export interface SchedulerTask {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: string;
+  enabled: boolean;
+  last_run: string | null;
+  next_run: string | null;
+  run_count: number;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface SchedulerTaskList {
+  tasks: SchedulerTask[];
+  total: number;
+}
+
+// ── Chat History ──────────────────────────────────────────────────────────────
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+}

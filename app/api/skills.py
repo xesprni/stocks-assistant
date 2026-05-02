@@ -20,7 +20,7 @@ async def list_skills():
             {
                 "name": s.skill.name,
                 "description": s.skill.description,
-                "enabled": s.enabled,
+                "enabled": mgr.is_skill_enabled(s.skill.name),
                 "file_path": s.skill.file_path,
             }
             for s in skills
@@ -33,7 +33,7 @@ async def list_skills():
 async def toggle_skill(name: str, request: SkillToggleRequest):
     mgr = get_skill_manager()
     try:
-        mgr.toggle_skill(name, request.enabled)
+        mgr.set_skill_enabled(name, request.enabled)
         return {"status": "ok", "name": name, "enabled": request.enabled}
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))

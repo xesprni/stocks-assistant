@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   BarChart2,
+  BookOpen,
   Bot,
   BrainCircuit,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CircleDot,
+  Clock,
   Cpu,
   Database,
   ExternalLink,
   Eye,
+  FileText,
   GripVertical,
   Home,
   Loader2,
@@ -67,20 +73,34 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  addMemory,
   addWatchlistItem,
   checkHealth,
+  createSchedulerTask,
+  deleteSchedulerTask,
   deleteWatchlistItem,
+  getKnowledgeFile,
+  getKnowledgeGraph,
+  getKnowledgeTree,
   getMarketConfig,
   getMcpStatus,
   getMcpOAuthAuthorizeUrl,
   getMcpTools,
+  getMemoryFile,
+  getMemoryStatus,
+  listMemoryFiles,
+  listSchedulerTasks,
   listSkills,
   listWatchlist,
   loadConfig,
   reconnectMcpServers,
+  refreshSkills,
   reorderWatchlist,
   saveConfig,
+  searchMemory,
   searchWatchlist,
+  syncMemory,
+  toggleSchedulerTask,
   toggleSkill,
   sendChat,
 } from "@/lib/api";
@@ -90,16 +110,25 @@ import type {
   AppConfig,
   ChatMessage,
   ConfigDraft,
+  Conversation,
+  KnowledgeDir,
+  KnowledgeFile,
+  KnowledgeGraph,
+  KnowledgeTree,
   MCPServerStatus,
   MCPToolInfo,
   MarketDashboardConfig,
+  MemoryFile,
+  MemorySearchResult,
+  MemoryStatus,
+  SchedulerTask,
   SkillInfo,
   WatchlistCategory,
   WatchlistItem,
   WatchlistSearchResult,
 } from "@/types/app";
 
-type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart" | "skills" | "mcp";
+type Page = "overview" | "chat" | "market" | "market_config" | "watchlist" | "config" | "chart" | "skills" | "mcp" | "memory" | "knowledge" | "scheduler";
 type Theme = "dark" | "light";
 
 const initialMessage: ChatMessage = {
@@ -113,6 +142,8 @@ const quickPrompts = [
   "总结今天值得关注的美股科技股信号",
   "帮我制定一份低波动组合观察清单",
   "基于知识库检查最近的交易规则",
+  "使用market-analysis技能分析今天的美股",
+  "使用market-analysis技能分析今天的A股",
 ];
 
 const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }> = [
@@ -122,6 +153,9 @@ const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }
   { id: "chart", label: "分析", icon: <TrendingUp />, hint: "技术分析" },
   { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
   { id: "skills", label: "技能", icon: <Zap />, hint: "Agent 技能" },
+  { id: "memory", label: "记忆", icon: <BrainCircuit />, hint: "长期记忆" },
+  { id: "knowledge", label: "知识库", icon: <BookOpen />, hint: "Markdown 知识" },
+  { id: "scheduler", label: "任务", icon: <Clock />, hint: "Cron/间隔" },
   { id: "mcp", label: "MCP", icon: <Plug />, hint: "工具服务器" },
   { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
 ];
@@ -169,6 +203,125 @@ function parseJsonObject(text: string, label = "JSON") {
   return parsed as Record<string, unknown>;
 }
 
+// ── Chat History (localStorage) ────────────────────────────────────────────
+
+const STORAGE_KEY = "stocks-assistant-conversations";
+const MAX_CONVERSATIONS = 50;
+
+function loadConversations(): Conversation[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as Conversation[];
+  } catch {
+    return [];
+  }
+}
+
+function saveConversations(convs: Conversation[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(convs.slice(0, MAX_CONVERSATIONS)));
+}
+
+function useConversations() {
+  const [conversations, setConversations] = useState<Conversation[]>(() => loadConversations());
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === activeId) ?? null,
+    [conversations, activeId],
+  );
+
+  function createConversation(firstMessage?: ChatMessage): string {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const conv: Conversation = {
+      id,
+      title: "新对话",
+      messages: firstMessage ? [firstMessage] : [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next = [conv, ...conversations].slice(0, MAX_CONVERSATIONS);
+    setConversations(next);
+    saveConversations(next);
+    setActiveId(id);
+    return id;
+  }
+
+  function switchConversation(id: string) {
+    setActiveId(id);
+  }
+
+  function addMessage(convId: string, message: ChatMessage) {
+    setConversations((prev) => {
+      const next = prev.map((c) => {
+        if (c.id !== convId) return c;
+        const messages = [...c.messages, message];
+        const title = c.messages.length === 0 && message.role === "user"
+          ? message.content.slice(0, 30) + (message.content.length > 30 ? "..." : "")
+          : c.title;
+        return { ...c, messages, title, updatedAt: new Date().toISOString() };
+      });
+      saveConversations(next);
+      return next;
+    });
+  }
+
+  function updateMessage(convId: string, messageId: string, patch: Partial<ChatMessage>) {
+    setConversations((prev) => {
+      const next = prev.map((c) => {
+        if (c.id !== convId) return c;
+        return { ...c, messages: c.messages.map((m) => (m.id === messageId ? { ...m, ...patch } : m)) };
+      });
+      saveConversations(next);
+      return next;
+    });
+  }
+
+  function deleteConversation(id: string) {
+    setConversations((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      saveConversations(next);
+      return next;
+    });
+    if (activeId === id) setActiveId(null);
+  }
+
+  function clearMessages(convId: string) {
+    setConversations((prev) => {
+      const next = prev.map((c) => {
+        if (c.id !== convId) return c;
+        return { ...c, messages: [], title: "新对话", updatedAt: new Date().toISOString() };
+      });
+      saveConversations(next);
+      return next;
+    });
+  }
+
+  return {
+    conversations,
+    activeId,
+    activeConversation,
+    createConversation,
+    switchConversation,
+    addMessage,
+    updateMessage,
+    deleteConversation,
+    clearMessages,
+  };
+}
+
+function formatRelativeDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  if (msgDate.getTime() === today.getTime()) return "今天";
+  if (msgDate.getTime() === yesterday.getTime()) return "昨天";
+  return "更早";
+}
+
 function App() {
   const [page, setPage] = useState<Page>("chat");
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
@@ -176,7 +329,6 @@ function App() {
     const stored = window.localStorage.getItem("stocks-assistant-theme");
     return stored === "light" || stored === "dark" ? stored : "dark";
   });
-  const [messages, setMessages] = useState<ChatMessage[]>([initialMessage]);
   const [prompt, setPrompt] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -186,6 +338,10 @@ function App() {
   const [error, setError] = useState("");
   const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const endRef = useRef<HTMLDivElement | null>(null);
+  const chatHistory = useConversations();
+
+  const messages = chatHistory.activeConversation?.messages ?? [initialMessage];
+  const activeConvId = chatHistory.activeId;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -256,36 +412,30 @@ function App() {
     setError("");
     setIsSending(true);
     setPage("chat");
-    setMessages((current) => [...current, userMessage, pendingMessage]);
+
+    let convId = activeConvId;
+    if (!convId) {
+      convId = chatHistory.createConversation(userMessage);
+      chatHistory.addMessage(convId, pendingMessage);
+    } else {
+      chatHistory.addMessage(convId, userMessage);
+      chatHistory.addMessage(convId, pendingMessage);
+    }
 
     try {
       const response = await sendChat(text);
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === pendingMessage.id
-            ? {
-                ...item,
-                content: response.response || "没有返回内容。",
-                pending: false,
-                createdAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-              }
-            : item,
-        ),
-      );
+      chatHistory.updateMessage(convId, pendingMessage.id, {
+        content: response.response || "没有返回内容。",
+        pending: false,
+        createdAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      });
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "对话请求失败";
-      setError(message);
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === pendingMessage.id
-            ? {
-                ...item,
-                content: `请求失败：${message}`,
-                pending: false,
-              }
-            : item,
-        ),
-      );
+      const msg = caught instanceof Error ? caught.message : "对话请求失败";
+      setError(msg);
+      chatHistory.updateMessage(convId, pendingMessage.id, {
+        content: `请求失败：${msg}`,
+        pending: false,
+      });
     } finally {
       setIsSending(false);
     }
@@ -398,13 +548,13 @@ function App() {
                 messages={messages}
                 prompt={prompt}
                 quickPrompts={quickPrompts}
-                setMessages={setMessages}
+                chatHistory={chatHistory}
                 setPage={setPage}
                 setPrompt={setPrompt}
               />
             ) : null}
 
-            {page === "watchlist" ? <WatchlistPage /> : null}
+            {page === "watchlist" ? <WatchlistPage onAnalyzeStock={(symbol) => { setPrompt(`使用stock-analysis技能分析${symbol}股票`); setPage("chat"); }} /> : null}
 
             {page === "market" ? (
               <MarketDashboard
@@ -436,6 +586,12 @@ function App() {
             ) : null}
 
             {page === "skills" ? <SkillsPage /> : null}
+
+            {page === "memory" ? <MemoryPage /> : null}
+
+            {page === "knowledge" ? <KnowledgePage /> : null}
+
+            {page === "scheduler" ? <SchedulerPage /> : null}
 
             {page === "mcp" ? <MCPPage /> : null}
 
@@ -666,7 +822,7 @@ function ChatPage({
   messages,
   prompt,
   quickPrompts,
-  setMessages,
+  chatHistory,
   setPage,
   setPrompt,
 }: {
@@ -676,12 +832,68 @@ function ChatPage({
   messages: ChatMessage[];
   prompt: string;
   quickPrompts: string[];
-  setMessages: (messages: ChatMessage[]) => void;
+  chatHistory: ReturnType<typeof useConversations>;
   setPage: (page: Page) => void;
   setPrompt: (value: string) => void;
 }) {
+  const { conversations, activeId, createConversation, switchConversation, deleteConversation, clearMessages } = chatHistory;
+
+  const grouped = useMemo(() => {
+    const groups: Record<string, Conversation[]> = {};
+    for (const c of conversations) {
+      const label = formatRelativeDate(c.updatedAt);
+      (groups[label] ??= []).push(c);
+    }
+    return groups;
+  }, [conversations]);
+
+  function handleNew() {
+    createConversation();
+  }
+
   return (
-    <div className="page-enter flex h-full min-h-0 flex-1 flex-col gap-3 overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-4 xl:overflow-hidden">
+    <div className="page-enter flex h-full min-h-0 flex-1 gap-3 overflow-hidden xl:grid xl:grid-cols-[220px_minmax(0,1fr)_300px] xl:gap-4">
+      {/* Conversation list */}
+      <aside className="panel motion-panel hidden min-h-0 min-w-0 rounded-md xl:flex xl:h-full xl:flex-col">
+        <div className="panel-header flex items-center justify-between">
+          <p className="text-sm font-semibold">History</p>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleNew}>
+            <Plus className="size-4" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2 space-y-1">
+          {Object.entries(grouped).map(([label, convs]) => (
+            <div key={label}>
+              <p className="px-2 py-1 text-[10px] font-medium uppercase text-muted-foreground">{label}</p>
+              {convs.map((c) => (
+                <div
+                  key={c.id}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors cursor-pointer",
+                    activeId === c.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                  onClick={() => switchConversation(c.id)}
+                >
+                  <MessageSquareText className="size-3.5 shrink-0" />
+                  <span className="flex-1 truncate">{c.title}</span>
+                  <button
+                    type="button"
+                    className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
+                    onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ))}
+          {conversations.length === 0 ? (
+            <div className="px-2 py-4 text-center text-xs text-muted-foreground">暂无对话记录</div>
+          ) : null}
+        </div>
+      </aside>
+
+      {/* Chat area */}
       <section className="panel motion-panel flex min-h-[520px] min-w-0 flex-1 flex-col rounded-md xl:min-h-0">
         <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -691,10 +903,15 @@ function ChatPage({
             </div>
             <p className="text-xs text-muted-foreground">同步对话接口：/api/v1/agent/chat</p>
           </div>
-          <Button aria-label="清空对话" variant="outline" size="sm" onClick={() => setMessages([initialMessage])}>
-            <Trash2 />
-            Clear
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="xl:hidden" onClick={handleNew}>
+              <Plus /> New
+            </Button>
+            <Button aria-label="清空对话" variant="outline" size="sm" onClick={() => { if (activeId) clearMessages(activeId); }}>
+              <Trash2 />
+              Clear
+            </Button>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
@@ -714,7 +931,13 @@ function ChatPage({
                       : "border-border/80 bg-background/60 text-foreground",
                   )}
                 >
-                  <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                  <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:rounded-md prose-pre:bg-muted/40 prose-code:text-primary prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-table:my-2">
+                    {message.role === "assistant" ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                    ) : (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    )}
+                  </div>
                   <div
                     className={cn(
                       "mt-2 text-[11px]",
@@ -752,7 +975,8 @@ function ChatPage({
         </form>
       </section>
 
-      <aside className="panel motion-panel min-h-0 min-w-0 rounded-md xl:flex xl:h-full xl:flex-col">
+      {/* Prompt dock */}
+      <aside className="panel motion-panel min-h-0 min-w-0 rounded-md hidden xl:flex xl:h-full xl:flex-col">
         <div className="panel-header flex items-center justify-between">
           <div>
             <p className="font-semibold">Prompt Dock</p>
@@ -783,9 +1007,11 @@ function ChatPage({
 function SortableWatchlistItem({
   item,
   onDelete,
+  onAnalyze,
 }: {
   item: WatchlistItem;
   onDelete: (item: WatchlistItem) => void;
+  onAnalyze: (symbol: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
@@ -818,6 +1044,15 @@ function SortableWatchlistItem({
           <p className="truncate text-sm text-muted-foreground">{stockName(item)}</p>
         </div>
         <Button
+          aria-label="分析股票"
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8 text-muted-foreground hover:text-primary"
+          onClick={() => onAnalyze(item.symbol)}
+        >
+          <Sparkles />
+        </Button>
+        <Button
           aria-label="删除自选"
           size="icon"
           variant="ghost"
@@ -836,7 +1071,7 @@ function SortableWatchlistItem({
   );
 }
 
-function WatchlistPage() {
+function WatchlistPage({ onAnalyzeStock }: { onAnalyzeStock: (symbol: string) => void }) {
   const [category, setCategory] = useState<WatchlistCategory>("US");
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [query, setQuery] = useState("");
@@ -1004,7 +1239,7 @@ function WatchlistPage() {
                 <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
                   <div className="grid gap-2 2xl:grid-cols-2">
                     {items.map((item) => (
-                      <SortableWatchlistItem key={item.id} item={item} onDelete={handleDelete} />
+                      <SortableWatchlistItem key={item.id} item={item} onDelete={handleDelete} onAnalyze={onAnalyzeStock} />
                     ))}
                   </div>
                 </SortableContext>
@@ -2165,7 +2400,8 @@ function SkillsPage() {
   function loadSkills() {
     setIsLoading(true);
     setError("");
-    listSkills()
+    refreshSkills().catch(() => {})
+      .then(() => listSkills())
       .then((res) => setSkills(res.skills))
       .catch((e) => setError(e instanceof Error ? e.message : "加载技能列表失败"))
       .finally(() => setIsLoading(false));
@@ -2266,6 +2502,641 @@ function SkillsPage() {
               <Zap className="mx-auto mb-3 size-8 text-muted-foreground" />
               <p className="text-sm font-medium">暂无技能</p>
               <p className="mt-1 text-xs text-muted-foreground">在 workspace/skills/ 目录下添加 Markdown 技能文件。</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── Scheduler Page ──────────────────────────────────────────────────────────
+
+const cronTemplates = [
+  { label: "每分钟", value: "* * * * *" },
+  { label: "每5分钟", value: "*/5 * * * *" },
+  { label: "每30分钟", value: "*/30 * * * *" },
+  { label: "每小时", value: "0 * * * *" },
+  { label: "每天 9:00", value: "0 9 * * *" },
+  { label: "工作日 9:00", value: "0 9 * * 1-5" },
+  { label: "每天 18:00", value: "0 18 * * *" },
+  { label: "每天 22:00", value: "0 22 * * *" },
+];
+
+function humanizeSchedule(expr: string): string {
+  const m = cronTemplates.find((t) => t.value === expr);
+  if (m) return m.label;
+  return expr;
+}
+
+function SchedulerPage() {
+  const [tasks, setTasks] = useState<SchedulerTask[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true });
+  const [isCreating, setIsCreating] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  function loadTasks() {
+    setIsLoading(true);
+    setError("");
+    listSchedulerTasks()
+      .then((res) => setTasks(res.tasks))
+      .catch((e) => setError(e instanceof Error ? e.message : "加载失败"))
+      .finally(() => setIsLoading(false));
+  }
+
+  useEffect(() => { loadTasks(); }, []);
+
+  async function handleCreate() {
+    if (!form.name.trim() || !form.prompt.trim() || !form.schedule.trim()) return;
+    setIsCreating(true);
+    setError("");
+    try {
+      await createSchedulerTask({ name: form.name.trim(), prompt: form.prompt.trim(), schedule: form.schedule.trim(), enabled: form.enabled });
+      setShowForm(false);
+      setForm({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true });
+      loadTasks();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建失败");
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function handleToggle(id: string) {
+    setTogglingId(id);
+    try {
+      const res = await toggleSchedulerTask(id);
+      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, enabled: res.enabled } : t)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "切换失败");
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!window.confirm("确定删除该任务？")) return;
+    try {
+      await deleteSchedulerTask(id);
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "删除失败");
+    }
+  }
+
+  return (
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Clock className="size-5 text-secondary" />
+            <p className="font-semibold">定时任务</p>
+          </div>
+          <p className="text-xs text-muted-foreground">Cron / 间隔 / 一次性调度</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">{tasks.length} tasks</Badge>
+          <Button variant="outline" size="sm" onClick={loadTasks} disabled={isLoading}>
+            {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Refresh
+          </Button>
+          <Button size="sm" onClick={() => setShowForm(true)} disabled={showForm}>
+            <Plus />
+            Add Task
+          </Button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+      ) : null}
+
+      <div className="panel-body min-h-0 flex-1 overflow-y-auto">
+        {showForm ? (
+          <div className="mb-3 rounded-lg border border-primary/40 bg-background/60 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">创建定时任务</p>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowForm(false)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="任务名称">
+                <Input placeholder="每日开盘简报" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              </Field>
+              <Field label="Cron 表达式">
+                <Input placeholder="0 9 * * 1-5" value={form.schedule} onChange={(e) => setForm((f) => ({ ...f, schedule: e.target.value }))} />
+              </Field>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {cronTemplates.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-[11px] transition-colors",
+                    form.schedule === t.value ? "border-primary bg-primary/10 text-primary" : "border-border/80 text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => setForm((f) => ({ ...f, schedule: t.value }))}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <Field label="执行提示词">
+              <Textarea
+                className="min-h-[80px]"
+                placeholder="总结今天美股开盘信号，关注 AAPL、MSFT、NVDA 的异动"
+                value={form.prompt}
+                onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))}
+              />
+            </Field>
+            <div className="flex items-center justify-between">
+              <ToggleRow checked={form.enabled} icon={<Clock className="size-4 text-primary" />} label="创建后启用" onCheckedChange={(c) => setForm((f) => ({ ...f, enabled: c }))} />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleCreate} disabled={isCreating || !form.name.trim() || !form.prompt.trim()}>
+                  {isCreating ? <Loader2 className="animate-spin" /> : <Plus />}
+                  Create
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
+        ) : tasks.length > 0 ? (
+          <div className="space-y-2">
+            {tasks.map((task) => (
+              <div key={task.id} className={cn("message-bubble rounded-lg border bg-card/80 p-3 transition-colors hover:border-primary/50", task.enabled ? "border-border/80" : "border-border/40 opacity-70")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className={cn("size-2 rounded-full", task.enabled ? "bg-green-500" : "bg-muted-foreground/40")} />
+                      <span className="truncate text-sm font-semibold">{task.name}</span>
+                      <Badge variant={task.enabled ? "default" : "muted"}>{task.enabled ? "ON" : "OFF"}</Badge>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">{task.prompt}</p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                      <span className="font-mono">{task.schedule}</span>
+                      <span>{humanizeSchedule(task.schedule)}</span>
+                      {task.last_run ? <span>Last: {task.last_run}</span> : null}
+                      {task.run_count > 0 ? <span>Runs: {task.run_count}</span> : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={togglingId === task.id} onClick={() => handleToggle(task.id)}>
+                      {togglingId === task.id ? <Loader2 className="size-3 animate-spin" /> : task.enabled ? "Disable" : "Enable"}
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(task.id)}>
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid min-h-40 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
+            <div>
+              <Clock className="mx-auto mb-3 size-8 text-muted-foreground" />
+              <p className="text-sm font-medium">暂无定时任务</p>
+              <p className="mt-1 text-xs text-muted-foreground">点击 Add Task 创建 Cron 或间隔调度。</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── Memory Page ──────────────────────────────────────────────────────────────
+
+function MemoryPage() {
+  const [status, setStatus] = useState<MemoryStatus | null>(null);
+  const [files, setFiles] = useState<MemoryFile[]>([]);
+  const [results, setResults] = useState<MemorySearchResult[]>([]);
+  const [query, setQuery] = useState("");
+  const [expandedPath, setExpandedPath] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addContent, setAddContent] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    Promise.allSettled([getMemoryStatus(), listMemoryFiles()])
+      .then(([statusRes, filesRes]) => {
+        if (statusRes.status === "fulfilled") setStatus(statusRes.value);
+        if (filesRes.status === "fulfilled") setFiles(filesRes.value.files);
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  function handleSearch() {
+    const text = query.trim();
+    if (!text || isSearching) return;
+    setIsSearching(true);
+    setError("");
+    searchMemory(text, { limit: 20 })
+      .then((res) => setResults(res))
+      .catch((e) => setError(e instanceof Error ? e.message : "搜索失败"))
+      .finally(() => setIsSearching(false));
+  }
+
+  function handleSync() {
+    setIsSyncing(true);
+    syncMemory()
+      .then(() => getMemoryStatus().then(setStatus))
+      .catch((e) => setError(e instanceof Error ? e.message : "同步失败"))
+      .finally(() => setIsSyncing(false));
+  }
+
+  async function handleExpand(path: string) {
+    if (expandedPath === path) {
+      setExpandedPath(null);
+      setFileContent(null);
+      return;
+    }
+    setExpandedPath(path);
+    setFileContent(null);
+    try {
+      const res = await getMemoryFile(path);
+      setFileContent(res.content);
+    } catch {
+      setFileContent("加载失败");
+    }
+  }
+
+  async function handleAdd() {
+    if (!addContent.trim() || isAdding) return;
+    setIsAdding(true);
+    try {
+      await addMemory(addContent.trim());
+      setAddContent("");
+      setShowAddForm(false);
+      listMemoryFiles().then((res) => setFiles(res.files));
+      getMemoryStatus().then(setStatus);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "添加失败");
+    } finally {
+      setIsAdding(false);
+    }
+  }
+
+  return (
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <BrainCircuit className="size-5 text-primary" />
+            <p className="font-semibold">长期记忆</p>
+          </div>
+          <p className="text-xs text-muted-foreground">混合搜索 · 向量 + FTS5 关键词</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={isSyncing}>
+            {isSyncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Sync
+          </Button>
+          <Button size="sm" onClick={() => setShowAddForm(true)} disabled={showAddForm}>
+            <Plus />
+            Add
+          </Button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+      ) : null}
+
+      {status ? (
+        <div className="mx-3 mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatusTile icon={<Database className="size-4 text-primary" />} label="Chunks" value={String(status.chunks)} />
+          <StatusTile icon={<FileText className="size-4 text-accent" />} label="Files" value={String(status.files)} />
+          <StatusTile icon={<RefreshCw className="size-4 text-secondary" />} label="Dirty" value={status.dirty ? "Yes" : "No"} />
+          <StatusTile icon={<Cpu className="size-4 text-primary" />} label="Provider" value={status.embedding_provider || "-"} />
+        </div>
+      ) : null}
+
+      <div className="panel-body min-h-0 flex-1 overflow-y-auto">
+        {showAddForm ? (
+          <div className="mb-3 rounded-lg border border-primary/40 bg-background/60 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">添加记忆</p>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowAddForm(false)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <Field label="记忆内容">
+              <Textarea className="min-h-[100px]" placeholder="输入需要记住的内容..." value={addContent} onChange={(e) => setAddContent(e.target.value)} />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
+              <Button size="sm" onClick={handleAdd} disabled={isAdding || !addContent.trim()}>
+                {isAdding ? <Loader2 className="animate-spin" /> : <Plus />}
+                Add
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <form className="mb-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); handleSearch(); }}>
+          <Input placeholder="搜索记忆..." value={query} onChange={(e) => setQuery(e.target.value)} />
+          <Button type="submit" disabled={isSearching || !query.trim()} className="shrink-0">
+            {isSearching ? <Loader2 className="animate-spin" /> : <Search />}
+            Search
+          </Button>
+        </form>
+
+        {results.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">{results.length} results</p>
+            {results.map((r, i) => (
+              <div key={`${r.path}-${i}`} className="rounded-lg border border-border/80 bg-card/80 p-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="size-3.5 text-primary" />
+                  <span className="truncate text-xs font-medium">{r.path}</span>
+                  <Badge variant="outline" className="text-[10px]">L{r.start_line}-{r.end_line}</Badge>
+                  <span className="text-[11px] text-muted-foreground">score: {r.score.toFixed(3)}</span>
+                </div>
+                <p className="mt-1.5 whitespace-pre-wrap text-xs text-muted-foreground line-clamp-4">{r.snippet}</p>
+              </div>
+            ))}
+          </div>
+        ) : isLoading ? (
+          <div className="flex items-center justify-center py-12"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
+        ) : files.length > 0 ? (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">{files.length} memory files</p>
+            {files.map((f) => (
+              <div key={f.path}>
+                <button
+                  type="button"
+                  className={cn("flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60", expandedPath === f.path && "bg-muted/60")}
+                  onClick={() => handleExpand(f.path)}
+                >
+                  {expandedPath === f.path ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+                  <FileText className="size-3.5 shrink-0 text-primary" />
+                  <span className="flex-1 truncate font-medium">{f.path}</span>
+                  <span className="text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(1)}KB</span>
+                </button>
+                {expandedPath === f.path ? (
+                  <pre className="mx-3 mb-1 max-h-64 overflow-auto rounded-md border border-border/80 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{fileContent ?? "Loading..."}</pre>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid min-h-40 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
+            <div>
+              <BrainCircuit className="mx-auto mb-3 size-8 text-muted-foreground" />
+              <p className="text-sm font-medium">暂无记忆文件</p>
+              <p className="mt-1 text-xs text-muted-foreground">通过对话或手动添加积累记忆。</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── Knowledge Page ───────────────────────────────────────────────────────────
+
+function KnowledgePage() {
+  const [tree, setTree] = useState<KnowledgeTree | null>(null);
+  const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [content, setContent] = useState<string | null>(null);
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+  const [viewMode, setViewMode] = useState<"tree" | "graph">("tree");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    Promise.allSettled([getKnowledgeTree(), getKnowledgeGraph()])
+      .then(([treeRes, graphRes]) => {
+        if (treeRes.status === "fulfilled") {
+          setTree(treeRes.value);
+          const dirs = new Set<string>();
+          treeRes.value.tree.forEach((d) => dirs.add(d.dir));
+          setExpandedDirs(dirs);
+        }
+        if (graphRes.status === "fulfilled") setGraph(graphRes.value);
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  async function handleSelectFile(path: string) {
+    setSelectedPath(path);
+    setContent(null);
+    setIsLoadingContent(true);
+    try {
+      const res = await getKnowledgeFile(path);
+      setContent(res.content);
+    } catch {
+      setContent("加载失败");
+    } finally {
+      setIsLoadingContent(false);
+    }
+  }
+
+  function toggleDir(dir: string) {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(dir)) next.delete(dir); else next.add(dir);
+      return next;
+    });
+  }
+
+  function matchesSearch(name: string, title: string): boolean {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return name.toLowerCase().includes(q) || title.toLowerCase().includes(q);
+  }
+
+  function renderDir(dir: KnowledgeDir, prefix = "") {
+    const key = prefix + dir.dir;
+    const isExpanded = expandedDirs.has(key);
+    const hasMatchingFiles = dir.files.some((f) => matchesSearch(f.name, f.title)) || dir.children.length > 0;
+
+    if (searchQuery.trim() && !hasMatchingFiles) return null;
+
+    return (
+      <div key={key}>
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60"
+          onClick={() => toggleDir(key)}
+        >
+          {isExpanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+          <span className="font-medium">{dir.dir}</span>
+          <Badge variant="muted" className="text-[10px]">{dir.files.length}</Badge>
+        </button>
+        {isExpanded ? (
+          <div className="ml-4">
+            {dir.files.filter((f) => matchesSearch(f.name, f.title)).map((f) => (
+              <button
+                key={f.name}
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60",
+                  selectedPath === `${dir.dir}/${f.name}` && "bg-primary/10 text-primary",
+                )}
+                onClick={() => handleSelectFile(`${dir.dir}/${f.name}`)}
+              >
+                <FileText className="size-3.5 shrink-0" />
+                <span className="flex-1 truncate">{f.title}</span>
+                <span className="text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(1)}KB</span>
+              </button>
+            ))}
+            {dir.children.map((c) => renderDir(c, key + "/"))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const totalNodes = graph?.nodes.length ?? 0;
+  const totalLinks = graph?.links.length ?? 0;
+
+  return (
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <BookOpen className="size-5 text-primary" />
+            <p className="font-semibold">知识库</p>
+          </div>
+          <p className="text-xs text-muted-foreground">Markdown 知识文件 · 目录浏览与搜索</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {tree ? <Badge variant="outline">{tree.stats.pages} pages · {(tree.stats.size / 1024).toFixed(0)}KB</Badge> : null}
+          <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
+            <button
+              className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "tree" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+              onClick={() => setViewMode("tree")} type="button"
+            >
+              文件
+            </button>
+            <button
+              className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "graph" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+              onClick={() => setViewMode("graph")} type="button"
+            >
+              图谱 ({totalNodes})
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+      ) : null}
+
+      <div className="panel-body min-h-0 flex-1 overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
+        ) : viewMode === "graph" ? (
+          <div className="h-full overflow-y-auto p-3">
+            {graph && graph.nodes.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex gap-4 text-xs text-muted-foreground">
+                  <span>{totalNodes} nodes</span>
+                  <span>{totalLinks} links</span>
+                </div>
+                <div className="space-y-1">
+                  {graph.nodes.map((node) => {
+                    const linkedCount = graph.links.filter((l) => l.source === node.id || l.target === node.id).length;
+                    return (
+                      <button
+                        key={node.id}
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md border border-border/80 bg-card/80 px-3 py-2 text-left transition-colors hover:border-primary/50"
+                        onClick={() => handleSelectFile(node.id)}
+                      >
+                        <FileText className="size-3.5 shrink-0 text-primary" />
+                        <span className="flex-1 truncate text-sm font-medium">{node.label}</span>
+                        <Badge variant="muted" className="text-[10px]">{node.category}</Badge>
+                        {linkedCount > 0 ? <span className="text-[10px] text-muted-foreground">{linkedCount} links</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="grid h-full min-h-40 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
+                <div>
+                  <BookOpen className="mx-auto mb-3 size-8 text-muted-foreground" />
+                  <p className="text-sm font-medium">暂无知识图谱</p>
+                  <p className="mt-1 text-xs text-muted-foreground">在 knowledge/ 目录下添加含内部链接的 Markdown 文件。</p>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="grid h-full gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+            <div className="flex min-h-0 flex-col overflow-y-auto rounded-lg border border-border/80 bg-background/45 p-2">
+              <div className="mb-2">
+                <Input placeholder="搜索文件..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="h-8 text-xs" />
+              </div>
+              {tree && (tree.root_files.length > 0 || tree.tree.length > 0) ? (
+                <div className="flex-1 space-y-0.5">
+                  {tree.root_files.filter((f) => matchesSearch(f.name, f.title)).map((f) => (
+                    <button
+                      key={f.name}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60",
+                        selectedPath === f.name && "bg-primary/10 text-primary",
+                      )}
+                      onClick={() => handleSelectFile(f.name)}
+                    >
+                      <FileText className="size-3.5 shrink-0" />
+                      <span className="flex-1 truncate">{f.title}</span>
+                    </button>
+                  ))}
+                  {tree.tree.map((d) => renderDir(d))}
+                </div>
+              ) : (
+                <div className="flex-1 grid place-items-center px-3 text-center">
+                  <div>
+                    <BookOpen className="mx-auto mb-2 size-6 text-muted-foreground" />
+                    <p className="text-xs text-muted-foreground">暂无知识文件</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/80 bg-background/45">
+              {selectedPath ? (
+                <div className="p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <FileText className="size-4 text-primary" />
+                    <span className="text-sm font-semibold">{selectedPath}</span>
+                  </div>
+                  {isLoadingContent ? (
+                    <div className="flex items-center justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+                  ) : (
+                    <pre className="whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{content ?? ""}</pre>
+                  )}
+                </div>
+              ) : (
+                <div className="grid h-full place-items-center px-4 text-center">
+                  <div>
+                    <BookOpen className="mx-auto mb-3 size-8 text-muted-foreground" />
+                    <p className="text-sm font-medium">选择文件查看内容</p>
+                    <p className="mt-1 text-xs text-muted-foreground">点击左侧文件树中的文件。</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

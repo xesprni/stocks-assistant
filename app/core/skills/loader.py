@@ -44,7 +44,7 @@ class SkillLoader:
                 sub = self._load_recursive(full, source, include_root_files=False)
                 skills.extend(sub.skills)
                 diagnostics.extend(sub.diagnostics)
-            elif os.path.isfile(full) and include_root_files and entry.endswith('.md') and entry.upper() != 'README.MD':
+            elif os.path.isfile(full) and entry.endswith('.md') and entry.upper() != 'README.MD':
                 result = self._load_from_file(full, source)
                 skills.extend(result.skills)
                 diagnostics.extend(result.diagnostics)
