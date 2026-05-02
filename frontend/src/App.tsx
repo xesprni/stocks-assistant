@@ -699,7 +699,7 @@ function DesktopNav({
           <p className="text-sm font-semibold">Navigation</p>
           <p className="text-xs text-muted-foreground">页面切换</p>
         </div>
-        <nav className="space-y-1 p-2" aria-label="桌面导航">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" aria-label="桌面导航">
           {navItems.map((item) => (
             <button
               className={cn(
@@ -721,7 +721,7 @@ function DesktopNav({
           ))}
         </nav>
         <Separator />
-        <div className="mt-auto space-y-3 p-3">
+        <div className="shrink-0 space-y-3 p-3">
           <div className="metric-tile">
             <p className="text-[11px] text-muted-foreground">API</p>
             <p className="text-sm font-semibold">{health === "online" ? "ONLINE" : health === "checking" ? "CHECKING" : "OFFLINE"}</p>
@@ -752,7 +752,7 @@ function OverviewPage({
   onPrompt: (value: string) => void;
 }) {
   return (
-    <div className="page-enter grid h-full min-h-0 flex-1 gap-3 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-4 xl:overflow-hidden">
+    <div className="page-enter grid h-full min-h-0 flex-1 gap-3 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-4 lg:overflow-hidden">
       <section className="panel motion-panel flex min-h-0 min-w-0 flex-col rounded-md">
         <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -802,12 +802,12 @@ function OverviewPage({
         </div>
       </section>
 
-      <section className="panel motion-panel min-h-0 min-w-0 rounded-md xl:flex xl:h-full xl:flex-col">
+      <section className="panel motion-panel min-h-0 min-w-0 flex flex-col rounded-md">
         <div className="panel-header">
           <p className="font-semibold">Signal Deck</p>
           <p className="text-xs text-muted-foreground">市场状态预览</p>
         </div>
-        <div className="panel-body xl:min-h-0 xl:flex-1">
+        <div className="panel-body min-h-0 flex-1">
           <MarketPulse />
         </div>
       </section>
@@ -852,9 +852,9 @@ function ChatPage({
   }
 
   return (
-    <div className="page-enter flex h-full min-h-0 flex-1 gap-3 overflow-hidden xl:grid xl:grid-cols-[220px_minmax(0,1fr)_300px] xl:gap-4">
+    <div className="page-enter grid h-full min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[200px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_300px] xl:gap-4">
       {/* Conversation list */}
-      <aside className="panel motion-panel hidden min-h-0 min-w-0 rounded-md xl:flex xl:h-full xl:flex-col">
+      <aside className="panel motion-panel hidden min-h-0 min-w-0 rounded-md lg:flex lg:h-full lg:flex-col">
         <div className="panel-header flex items-center justify-between">
           <p className="text-sm font-semibold">History</p>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleNew}>
@@ -894,7 +894,7 @@ function ChatPage({
       </aside>
 
       {/* Chat area */}
-      <section className="panel motion-panel flex min-h-[520px] min-w-0 flex-1 flex-col rounded-md xl:min-h-0">
+      <section className="panel motion-panel flex min-h-0 min-w-0 flex-1 flex-col rounded-md">
         <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -976,7 +976,7 @@ function ChatPage({
       </section>
 
       {/* Prompt dock */}
-      <aside className="panel motion-panel min-h-0 min-w-0 rounded-md hidden xl:flex xl:h-full xl:flex-col">
+      <aside className="panel motion-panel min-h-0 min-w-0 hidden rounded-md xl:flex xl:h-full xl:flex-col">
         <div className="panel-header flex items-center justify-between">
           <div>
             <p className="font-semibold">Prompt Dock</p>
@@ -984,7 +984,7 @@ function ChatPage({
           </div>
           <WandSparkles className="size-5 text-secondary" />
         </div>
-        <div className="panel-body space-y-2 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+        <div className="panel-body min-h-0 flex-1 space-y-2 overflow-y-auto">
           {quickPrompts.map((item) => (
             <button
               className="w-full rounded-md border border-border/80 bg-background/50 px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"

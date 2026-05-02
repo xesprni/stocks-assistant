@@ -67,12 +67,19 @@
     @apply border-border;
   }
 
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
   html {
     background: hsl(var(--background));
   }
 
   body {
-    @apply min-h-screen bg-background text-foreground antialiased;
+    @apply bg-background text-foreground antialiased;
+    overflow: hidden;
     letter-spacing: 0;
     font-feature-settings: "ss01", "cv01", "cv11";
   }
