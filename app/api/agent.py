@@ -62,6 +62,13 @@ def _build_agent(user_id: Optional[str] = None):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     agent = _build_agent(request.user_id)
+    # 将前端传入的对话历史注入 Agent 的消息列表
+    if request.history:
+        for msg in request.history:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                agent.messages.append({"role": role, "content": [{"type": "text", "text": content}]})
     try:
         response = agent.run_stream(
             user_message=request.message,
@@ -76,6 +83,13 @@ async def chat(request: ChatRequest):
 @router.post("/stream")
 async def stream_chat(request: ChatRequest):
     agent = _build_agent(request.user_id)
+    # 将前端传入的对话历史注入 Agent 的消息列表
+    if request.history:
+        for msg in request.history:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                agent.messages.append({"role": role, "content": [{"type": "text", "text": content}]})
 
     def event_generator():
         events = []

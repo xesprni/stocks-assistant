@@ -42,6 +42,24 @@ def _build_server_statuses() -> list[MCPServerStatus]:
         if manager:
             server_status, error_msg, tools_count, oauth_authorization_url = manager.get_server_state(name)
 
+        # 检查服务器是否需要/使用 OAuth 授权码流程
+        # 1. 配置中显式声明了 OAuth auth type
+        # 2. 运行时通过 MCP 协议层发现了 OAuth（connected 且有 token）
+        # 3. 当前正处于 auth_required 状态
+        auth = cfg.get("auth")
+        oauth_enabled = False
+        if isinstance(auth, dict):
+            auth_type = str(auth.get("type", "")).lower()
+            oauth_enabled = auth_type in {"oauth", "oauth2", "authorization_code", "oauth_browser", "oauth_authorization_code"}
+        if not oauth_enabled and manager:
+            # 协议层发现的 OAuth：检查是否有持久化 token 或当前需要授权
+            if manager._token_store and manager._token_store.get_tokens(name):
+                oauth_enabled = True
+            elif manager._token_store and manager._token_store.get_client_info(name):
+                oauth_enabled = True
+            elif server_status == "auth_required":
+                oauth_enabled = True
+
         statuses.append(
             MCPServerStatus(
                 name=name,
@@ -54,6 +72,7 @@ def _build_server_statuses() -> list[MCPServerStatus]:
                 error=error_msg,
                 tools_count=tools_count,
                 oauth_authorization_url=oauth_authorization_url,
+                oauth_enabled=oauth_enabled,
             )
         )
 
@@ -143,6 +162,27 @@ async def reconnect_mcp_servers():
         raise HTTPException(status_code=500, detail=f"MCP reconnect failed: {exc}") from exc
     servers = _build_server_statuses()
     return MCPStatusResponse(servers=servers, total=len(servers))
+
+
+@router.delete("/{server_name}/oauth")
+async def delete_mcp_oauth(server_name: str):
+    """删除指定 MCP 服务器的 OAuth 令牌和客户端信息。"""
+    settings = get_settings()
+    if server_name not in settings.mcp_servers:
+        raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
+
+    try:
+        from app.deps import get_mcp_manager
+        manager = get_mcp_manager()
+        # 停止服务器连接
+        await run_in_threadpool(manager._run_sync, manager._stop_server(server_name))
+        # 清除持久化的 OAuth token
+        if manager._token_store:
+            manager._token_store.clear(server_name)
+    except Exception:
+        pass
+
+    return {"status": "ok", "message": f"OAuth tokens for '{server_name}' cleared"}
 
 
 @router.get("/{server_name}/tools", response_model=MCPServerToolsResponse)

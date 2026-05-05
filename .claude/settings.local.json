@@ -13,7 +13,8 @@
       "Bash(npm install *)",
       "mcp__web-reader__webReader",
       "mcp__web-search-prime__web_search_prime",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(xxd /Users/miracle/workspace/project/github/stocks-assistant/frontend/src/App.tsx)"
     ]
   }
 }

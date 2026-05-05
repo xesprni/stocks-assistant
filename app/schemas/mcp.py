@@ -26,6 +26,7 @@ class MCPServerStatus(BaseModel):
     error: Optional[str] = None
     tools_count: int = 0
     oauth_authorization_url: Optional[str] = None
+    oauth_enabled: bool = False  # 配置中是否需要 OAuth 授权码流程
 
 
 class MCPStatusResponse(BaseModel):

@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = None  # 用户 ID
     clear_history: bool = False  # 是否清空历史记录
     skill_filter: Optional[List[str]] = None  # 技能过滤列表
+    history: Optional[List[Dict[str, str]]] = None  # 前端传入的对话历史 [{"role": "user"/"assistant", "content": "..."}]
 
 
 class ChatResponse(BaseModel):

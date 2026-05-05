@@ -134,6 +134,7 @@ export interface MCPServerStatus {
   error: string | null;
   tools_count: number;
   oauth_authorization_url: string | null;
+  oauth_enabled: boolean;
 }
 
 export interface MCPStatusResponse {

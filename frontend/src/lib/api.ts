@@ -59,12 +59,13 @@ export function saveConfig(payload: Record<string, unknown>) {
   });
 }
 
-export function sendChat(message: string) {
+export function sendChat(message: string, history?: Array<{ role: string; content: string }>) {
   return request<ChatResponse>("/api/v1/agent/chat", {
     method: "POST",
     body: JSON.stringify({
       message,
       clear_history: false,
+      history: history ?? [],
     }),
   });
 }
@@ -147,6 +148,12 @@ export function reconnectMcpServers() {
 
 export function getMcpOAuthAuthorizeUrl(serverName: string) {
   return `${API_BASE}/api/v1/mcp/${encodeURIComponent(serverName)}/oauth/authorize`;
+}
+
+export function deleteMcpOAuth(serverName: string) {
+  return request<{ status: string }>(`/api/v1/mcp/${encodeURIComponent(serverName)}/oauth`, {
+    method: "DELETE",
+  });
 }
 
 export function getMcpTools(serverName: string) {

@@ -13,6 +13,7 @@ import {
   ChevronUp,
   CircleDot,
   Clock,
+  Copy,
   Cpu,
   Database,
   ExternalLink,
@@ -93,6 +94,7 @@ import {
   listSkills,
   listWatchlist,
   loadConfig,
+  deleteMcpOAuth,
   reconnectMcpServers,
   refreshSkills,
   reorderWatchlist,
@@ -298,6 +300,17 @@ function useConversations() {
     });
   }
 
+  function updateTitle(convId: string, title: string) {
+    setConversations((prev) => {
+      const next = prev.map((c) => {
+        if (c.id !== convId) return c;
+        return { ...c, title, updatedAt: new Date().toISOString() };
+      });
+      saveConversations(next);
+      return next;
+    });
+  }
+
   return {
     conversations,
     activeId,
@@ -306,9 +319,39 @@ function useConversations() {
     switchConversation,
     addMessage,
     updateMessage,
+    updateTitle,
     deleteConversation,
     clearMessages,
   };
+}
+
+function CopyButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API not available
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "shrink-0 rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-foreground",
+        className,
+      )}
+      onClick={handleCopy}
+      title={copied ? "已复制" : "复制"}
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </button>
+  );
 }
 
 function formatRelativeDate(iso: string): string {
@@ -414,6 +457,7 @@ function App() {
     setPage("chat");
 
     let convId = activeConvId;
+    const isNewConv = !convId;
     if (!convId) {
       convId = chatHistory.createConversation(userMessage);
       chatHistory.addMessage(convId, pendingMessage);
@@ -422,13 +466,24 @@ function App() {
       chatHistory.addMessage(convId, pendingMessage);
     }
 
+    // 收集已有历史消息（不含当前 userMessage 和 pendingMessage）
+    const currentConv = chatHistory.conversations.find((c) => c.id === convId);
+    const history = (currentConv?.messages ?? [])
+      .filter((m) => m.id !== userMessage.id && m.id !== pendingMessage.id && !m.pending)
+      .map((m) => ({ role: m.role, content: m.content }));
+
     try {
-      const response = await sendChat(text);
+      const response = await sendChat(text, history);
       chatHistory.updateMessage(convId, pendingMessage.id, {
         content: response.response || "没有返回内容。",
         pending: false,
         createdAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
       });
+
+      // 第一次提问后自动生成标题
+      if (isNewConv) {
+        generateTitle(convId, text, response.response);
+      }
     } catch (caught) {
       const msg = caught instanceof Error ? caught.message : "对话请求失败";
       setError(msg);
@@ -438,6 +493,19 @@ function App() {
       });
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function generateTitle(convId: string, userMessage: string, assistantResponse: string) {
+    try {
+      const titlePrompt = `根据以下对话内容，生成一个简短的标题（不超过20个字，不要加引号）。\n\n用户：${userMessage.slice(0, 500)}\n助手：${assistantResponse.slice(0, 500)}`;
+      const res = await sendChat(titlePrompt, []);
+      const title = res.response?.trim().replace(/^["'「」『』]|["'「」『』]$/g, "").slice(0, 30);
+      if (title) {
+        chatHistory.updateTitle(convId, title);
+      }
+    } catch {
+      // 标题生成失败不影响主流程，保持默认标题
     }
   }
 
@@ -917,7 +985,7 @@ function ChatPage({
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
           <div className="space-y-4">
             {messages.map((message) => (
-              <div className={cn("flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
+              <div className={cn("group flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
                 {message.role === "assistant" ? (
                   <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
                     {message.pending ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
@@ -940,11 +1008,15 @@ function ChatPage({
                   </div>
                   <div
                     className={cn(
-                      "mt-2 text-[11px]",
+                      "mt-2 flex items-center gap-1.5",
                       message.role === "user" ? "text-primary-foreground/70" : "text-muted-foreground",
                     )}
                   >
-                    {message.createdAt}
+                    <span className="text-[11px]">{message.createdAt}</span>
+                    <CopyButton
+                      text={message.content}
+                      className="opacity-0 transition-opacity group-hover:opacity-100"
+                    />
                   </div>
                 </div>
               </div>
@@ -1662,7 +1734,6 @@ function ColorSchemeRow() {
 
 function MCPPage() {
   const [mcpServersText, setMcpServersText] = useState("{}");
-  const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1671,19 +1742,14 @@ function MCPPage() {
       .catch((e) => setError(e instanceof Error ? e.message : "加载 MCP 配置失败"));
   }, []);
 
-  async function handleSave() {
-    setConfigState("saving");
+  async function handleServersChange(updated: Record<string, Record<string, unknown>>) {
     setError("");
     try {
-      const mcpServers = parseJsonObject(mcpServersText || "{}", "MCP Servers JSON") as Record<string, unknown>;
       const current = await loadConfig();
-      const next = await saveConfig({ ...current, mcp_servers: mcpServers });
+      const next = await saveConfig({ ...current, mcp_servers: updated });
       setMcpServersText(JSON.stringify(next.mcp_servers ?? {}, null, 2));
-      setConfigState("saved");
-      window.setTimeout(() => setConfigState("idle"), 1400);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
-      setConfigState("error");
     }
   }
 
@@ -1697,12 +1763,6 @@ function MCPPage() {
           </div>
           <p className="text-xs text-muted-foreground">Model Context Protocol 工具服务器管理与连接状态</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={configState === "saving"} onClick={handleSave}>
-            {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" ? <Check /> : <Save />}
-            {configState === "saving" ? "Saving" : configState === "saved" ? "Saved" : "Save"}
-          </Button>
-        </div>
       </div>
 
       {error ? (
@@ -1712,7 +1772,7 @@ function MCPPage() {
       ) : null}
 
       <div className="panel-body min-h-0 flex-1 overflow-y-auto">
-        <MCPServersPanel mcpServersText={mcpServersText} setMcpServersText={setMcpServersText} />
+        <MCPServersPanel mcpServersText={mcpServersText} setMcpServersText={setMcpServersText} onServersChange={handleServersChange} />
       </div>
     </section>
   );
@@ -1721,6 +1781,7 @@ function MCPPage() {
 interface MCPServersPanelProps {
   mcpServersText: string;
   setMcpServersText: (text: string) => void;
+  onServersChange?: (servers: Record<string, Record<string, unknown>>) => void;
 }
 
 type MCPTransport = "streamable_http" | "sse" | "stdio";
@@ -1736,7 +1797,7 @@ const emptyMcpAddForm = {
   env: "",
 };
 
-function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelProps) {
+function MCPServersPanel({ mcpServersText, setMcpServersText, onServersChange }: MCPServersPanelProps) {
   const [serverStatuses, setServerStatuses] = useState<MCPServerStatus[]>([]);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -1858,10 +1919,6 @@ function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelP
   }, [serverStatuses]);
 
   function handleViewTools(serverName: string) {
-    if (!statusMap.has(serverName)) {
-      setAddError(`"${serverName}" 还没有保存到后端。请先点击页面右上角 Save，再点 Reconnect 或 Refresh。`);
-      return;
-    }
     setShowToolsFor(serverName);
     setIsLoadingTools(true);
     setToolsData([]);
@@ -1873,12 +1930,14 @@ function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelP
 
   function syncServersToDraft(updated: Record<string, Record<string, unknown>>) {
     setMcpServersText(JSON.stringify(updated, null, 2));
+    onServersChange?.(updated);
   }
 
   function handleDeleteServer(name: string) {
     const updated = { ...servers };
     delete updated[name];
     syncServersToDraft(updated);
+    deleteMcpOAuth(name).catch(() => {});
   }
 
   function handleAddFromForm() {
@@ -1973,7 +2032,6 @@ function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelP
   }
 
   const statusMap = new Map(serverStatuses.map((s) => [s.name, s]));
-  const unsavedServers = Object.keys(servers).filter((name) => !statusMap.has(name));
 
   return (
     <div className="space-y-3">
@@ -1998,12 +2056,6 @@ function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelP
           </Button>
         </div>
       </div>
-
-      {unsavedServers.length > 0 ? (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          {unsavedServers.join(", ")} 尚未保存到后端；点击右上角 Save 后再查看连接状态或工具列表。
-        </div>
-      ) : null}
 
       {/* Add form */}
       {showAddForm ? (
@@ -2264,6 +2316,16 @@ function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelP
                         <ExternalLink className="size-3" />
                         Login
                       </Button>
+                    ) : status?.oauth_enabled ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => startOAuthLogin(name)}
+                      >
+                        <ExternalLink className="size-3" />
+                        Re-login
+                      </Button>
                     ) : null}
                     <Button
                       variant="outline"
@@ -2381,6 +2443,12 @@ function MCPServersPanel({ mcpServersText, setMcpServersText }: MCPServersPanelP
               spellCheck={false}
               value={mcpServersText}
               onChange={(event) => setMcpServersText(event.target.value)}
+              onBlur={() => {
+                try {
+                  const parsed = validateMcpServersConfig(parseJsonObject(mcpServersText || "{}", "MCP Servers JSON"));
+                  onServersChange?.(parsed);
+                } catch { /* invalid JSON, ignore */ }
+              }}
             />
           </div>
         ) : null}
