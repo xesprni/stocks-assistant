@@ -5,9 +5,11 @@
 """
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from app.config import get_settings
 from app.core.logging import setup_logging
@@ -24,7 +26,7 @@ async def lifespan(app: FastAPI):
     - 确保 MEMORY.md 文件存在
     """
     settings = get_settings()
-    setup_logging()
+    setup_logging(debug=settings.debug)
 
     # 确保工作空间子目录存在
     workspace = Path(settings.workspace_dir).expanduser()
@@ -69,6 +71,28 @@ app = FastAPI(
 
 # 注册所有 API 路由
 app.include_router(router)
+
+
+@app.middleware("http")
+async def log_api_requests(request: Request, call_next):
+    """Log API request completion with status and latency."""
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    start = time.perf_counter()
+    logger = logging.getLogger("stocks-assistant.http")
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.exception("HTTP %s %s failed after %.1fms", request.method, path, elapsed_ms)
+        raise
+
+    if path != "/api/v1/health":
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info("HTTP %s %s -> %s %.1fms", request.method, path, response.status_code, elapsed_ms)
+    return response
 
 
 @app.get("/api/v1/health")

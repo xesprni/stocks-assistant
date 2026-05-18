@@ -760,13 +760,14 @@ class MCPManager:
                 manager=self,
             )
             discovered[adapter.name] = adapter
-            logger.info(f"Discovered MCP tool: {adapter.name}")
+            logger.debug(f"Discovered MCP tool: {adapter.name}")
 
         with self._lock:
             # 删除该服务器的旧工具，再写入新发现的工具
             for name in [name for name in self.tools if name.startswith(f"mcp_{server_name}_")]:
                 self.tools.pop(name, None)
             self.tools.update(discovered)
+        logger.info(f"Discovered {len(discovered)} MCP tool(s) from '{server_name}'")
 
     async def _call_tool(self, server_name: str, tool_name: str, params: dict):
         """异步调用指定服务器的工具，解析并返回文本内容或对象数据。"""
