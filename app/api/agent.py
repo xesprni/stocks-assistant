@@ -38,7 +38,7 @@ def _build_agent(user_id: Optional[str] = None):
     settings = get_settings()
     llm = get_llm_provider()
     skill_mgr = get_skill_manager()
-    memory_mgr = get_memory_manager()
+    memory_mgr = get_memory_manager() if settings.memory_enabled else None
 
     from app.core.tools.tool_manager import ToolManager
     from pathlib import Path

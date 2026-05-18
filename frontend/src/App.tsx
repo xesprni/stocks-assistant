@@ -20,11 +20,14 @@ import {
   Eye,
   FileText,
   GripVertical,
+  History,
   Home,
   Loader2,
   MessageSquareText,
   Moon,
+  Pencil,
   Plug,
+  Play,
   Plus,
   RefreshCw,
   Save,
@@ -102,6 +105,7 @@ import {
   listChatSessionPage,
   listChatSessions,
   listMemoryFiles,
+  listSchedulerTaskRuns,
   listSchedulerTasks,
   listSkills,
   listWatchlist,
@@ -113,11 +117,14 @@ import {
   saveKnowledgeUrl,
   searchMemory,
   searchWatchlist,
+  sendTelegramTestMessage,
   streamChat,
   syncMemory,
+  runSchedulerTaskNow,
   toggleSchedulerTask,
   toggleSkill,
   updateChatSessionTitle,
+  updateSchedulerTask,
   uploadKnowledgeFile,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -140,6 +147,7 @@ import type {
   MemorySearchResult,
   MemoryStatus,
   SchedulerTask,
+  SchedulerTaskRun,
   SkillInfo,
   AgentTraceEvent,
   TraceSessionResponse,
@@ -2136,6 +2144,24 @@ function ConfigPage({
   patchDraft: (patch: Partial<ConfigDraft>) => void;
   setDraft: (draft: ConfigDraft) => void;
 }) {
+  const [telegramTestMessage, setTelegramTestMessage] = useState("Stocks Assistant Telegram 测试消息");
+  const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [telegramTestResult, setTelegramTestResult] = useState("");
+
+  async function handleTelegramTest() {
+    if (!telegramTestMessage.trim()) return;
+    setTelegramTestState("sending");
+    setTelegramTestResult("");
+    try {
+      const res = await sendTelegramTestMessage({ message: telegramTestMessage.trim() });
+      setTelegramTestState("sent");
+      setTelegramTestResult(`${res.detail || "测试消息已发送"}${res.chunks > 1 ? `（${res.chunks} 段）` : ""}`);
+    } catch (caught) {
+      setTelegramTestState("error");
+      setTelegramTestResult(caught instanceof Error ? caught.message : "Telegram 测试发送失败");
+    }
+  }
+
   return (
     <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
       <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2335,6 +2361,38 @@ function ConfigPage({
                   />
                 </Field>
               </div>
+              <div className="rounded-md border border-border/80 bg-muted/15 p-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                  <Field label="测试消息" className="flex-1">
+                    <Textarea
+                      className="min-h-[72px]"
+                      value={telegramTestMessage}
+                      onChange={(event) => {
+                        setTelegramTestMessage(event.target.value);
+                        setTelegramTestState("idle");
+                        setTelegramTestResult("");
+                      }}
+                    />
+                  </Field>
+                  <Button
+                    size="sm"
+                    className="lg:mb-0.5"
+                    disabled={telegramTestState === "sending" || !telegramTestMessage.trim()}
+                    onClick={handleTelegramTest}
+                  >
+                    {telegramTestState === "sending" ? <Loader2 className="animate-spin" /> : <Send />}
+                    Send Test
+                  </Button>
+                </div>
+                <div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
+                  <span>测试使用已保存配置；修改 Token、Chat ID 或开关后请先 Save。</span>
+                  {telegramTestResult ? (
+                    <span className={telegramTestState === "error" ? "text-destructive" : "text-emerald-600 dark:text-emerald-300"}>
+                      {telegramTestResult}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             </TabsContent>
 
             <TabsContent value="features" className="grid gap-3 md:grid-cols-2">
@@ -2463,9 +2521,9 @@ function CapabilityCard({ active, icon, label }: { active?: boolean; icon: React
   );
 }
 
-function Field({ children, label }: { children: ReactNode; label: string }) {
+function Field({ children, className, label }: { children: ReactNode; className?: string; label: string }) {
   return (
-    <div className="min-w-0 space-y-2">
+    <div className={cn("min-w-0 space-y-2", className)}>
       <Label>{label}</Label>
       {children}
     </div>
@@ -3406,14 +3464,41 @@ function humanizeSchedule(expr: string): string {
   return expr;
 }
 
+type SchedulerFormState = {
+  name: string;
+  prompt: string;
+  schedule: string;
+  enabled: boolean;
+  notifyTelegram: boolean;
+};
+
+function defaultSchedulerForm(telegramEnabled: boolean): SchedulerFormState {
+  return { name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled };
+}
+
+function schedulerTaskToForm(task: SchedulerTask): SchedulerFormState {
+  return {
+    name: task.name,
+    prompt: task.prompt,
+    schedule: task.schedule,
+    enabled: task.enabled,
+    notifyTelegram: Boolean(task.metadata?.notify_telegram),
+  };
+}
+
 function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
   const [tasks, setTasks] = useState<SchedulerTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled });
-  const [isCreating, setIsCreating] = useState(false);
+  const [form, setForm] = useState<SchedulerFormState>(() => defaultSchedulerForm(telegramEnabled));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [isSavingTask, setIsSavingTask] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [runsTaskId, setRunsTaskId] = useState<string | null>(null);
+  const [runs, setRuns] = useState<SchedulerTaskRun[]>([]);
+  const [isLoadingRuns, setIsLoadingRuns] = useState(false);
 
   function loadTasks() {
     setIsLoading(true);
@@ -3426,25 +3511,85 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
 
   useEffect(() => { loadTasks(); }, []);
 
-  async function handleCreate() {
+  function resetForm() {
+    setEditingId(null);
+    setForm(defaultSchedulerForm(telegramEnabled));
+    setShowForm(false);
+  }
+
+  async function handleSaveTask() {
     if (!form.name.trim() || !form.prompt.trim() || !form.schedule.trim()) return;
-    setIsCreating(true);
+    setIsSavingTask(true);
     setError("");
     try {
-      await createSchedulerTask({
+      const payload = {
         name: form.name.trim(),
         prompt: form.prompt.trim(),
         schedule: form.schedule.trim(),
         enabled: form.enabled,
         notify_telegram: form.notifyTelegram,
-      });
-      setShowForm(false);
-      setForm({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled });
+      };
+      if (editingId) {
+        await updateSchedulerTask(editingId, payload);
+      } else {
+        await createSchedulerTask(payload);
+      }
+      resetForm();
       loadTasks();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "创建失败");
+      setError(e instanceof Error ? e.message : (editingId ? "更新失败" : "创建失败"));
     } finally {
-      setIsCreating(false);
+      setIsSavingTask(false);
+    }
+  }
+
+  function handleEdit(task: SchedulerTask) {
+    setEditingId(task.id);
+    setForm(schedulerTaskToForm(task));
+    setShowForm(true);
+    setError("");
+  }
+
+  async function loadRuns(taskId: string) {
+    setRunsTaskId(taskId);
+    setIsLoadingRuns(true);
+    setError("");
+    try {
+      const res = await listSchedulerTaskRuns(taskId);
+      setRuns(res.runs);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载执行记录失败");
+      setRuns([]);
+    } finally {
+      setIsLoadingRuns(false);
+    }
+  }
+
+  async function handleRunNow(task: SchedulerTask) {
+    setRunningId(task.id);
+    setError("");
+    try {
+      const run = await runSchedulerTaskNow(task.id);
+      setTasks((prev) =>
+        prev.map((item) =>
+          item.id === task.id
+            ? {
+                ...item,
+                last_run: run.started_at,
+                run_count: item.run_count + 1,
+                last_error: run.error ?? null,
+              }
+            : item,
+        ),
+      );
+      if (runsTaskId === task.id) {
+        setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
+      }
+      loadTasks();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "手动执行失败");
+    } finally {
+      setRunningId(null);
     }
   }
 
@@ -3453,6 +3598,9 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
     try {
       const res = await toggleSchedulerTask(id);
       setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, enabled: res.enabled } : t)));
+      if (editingId === id) {
+        setForm((current) => ({ ...current, enabled: res.enabled }));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "切换失败");
     } finally {
@@ -3465,6 +3613,13 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
     try {
       await deleteSchedulerTask(id);
       setTasks((prev) => prev.filter((t) => t.id !== id));
+      if (editingId === id) {
+        resetForm();
+      }
+      if (runsTaskId === id) {
+        setRunsTaskId(null);
+        setRuns([]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "删除失败");
     }
@@ -3489,7 +3644,8 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
           <Button
             size="sm"
             onClick={() => {
-              setForm((current) => ({ ...current, notifyTelegram: telegramEnabled }));
+              setEditingId(null);
+              setForm(defaultSchedulerForm(telegramEnabled));
               setShowForm(true);
             }}
             disabled={showForm}
@@ -3508,8 +3664,8 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
         {showForm ? (
           <div className="mb-3 rounded-lg border border-primary/40 bg-background/60 p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-medium">创建定时任务</p>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowForm(false)}>
+              <p className="text-sm font-medium">{editingId ? "编辑定时任务" : "创建定时任务"}</p>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={resetForm}>
                 <X className="size-4" />
               </Button>
             </div>
@@ -3546,17 +3702,17 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
             </Field>
             <div className="flex items-center justify-between">
               <div className="grid gap-2">
-                <ToggleRow checked={form.enabled} icon={<Clock className="size-4 text-primary" />} label="创建后启用" onCheckedChange={(c) => setForm((f) => ({ ...f, enabled: c }))} />
+                <ToggleRow checked={form.enabled} icon={<Clock className="size-4 text-primary" />} label={editingId ? "启用任务" : "创建后启用"} onCheckedChange={(c) => setForm((f) => ({ ...f, enabled: c }))} />
                 <ToggleRow checked={form.notifyTelegram} icon={<Send className="size-4 text-primary" />} label="执行后发送 Telegram" onCheckedChange={(c) => setForm((f) => ({ ...f, notifyTelegram: c }))} />
                 {!telegramEnabled && form.notifyTelegram ? (
                   <p className="text-xs text-amber-600 dark:text-amber-300">需要先在配置页启用 Telegram 并保存 Bot Token / Chat ID。</p>
                 ) : null}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
-                <Button size="sm" onClick={handleCreate} disabled={isCreating || !form.name.trim() || !form.prompt.trim()}>
-                  {isCreating ? <Loader2 className="animate-spin" /> : <Plus />}
-                  Create
+                <Button variant="outline" size="sm" onClick={resetForm}>Cancel</Button>
+                <Button size="sm" onClick={handleSaveTask} disabled={isSavingTask || !form.name.trim() || !form.prompt.trim()}>
+                  {isSavingTask ? <Loader2 className="animate-spin" /> : editingId ? <Save /> : <Plus />}
+                  {editingId ? "Save" : "Create"}
                 </Button>
               </div>
             </div>
@@ -3587,6 +3743,17 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
                     </div>
                   </div>
                   <div className="flex shrink-0 gap-1.5">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={runningId === task.id} onClick={() => handleRunNow(task)}>
+                      {runningId === task.id ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
+                      Run
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => (runsTaskId === task.id ? setRunsTaskId(null) : loadRuns(task.id))}>
+                      <History className="size-3" />
+                      History
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => handleEdit(task)}>
+                      <Pencil className="size-3.5" />
+                    </Button>
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={togglingId === task.id} onClick={() => handleToggle(task.id)}>
                       {togglingId === task.id ? <Loader2 className="size-3 animate-spin" /> : task.enabled ? "Disable" : "Enable"}
                     </Button>
@@ -3595,6 +3762,46 @@ function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
                     </Button>
                   </div>
                 </div>
+                {runsTaskId === task.id ? (
+                  <div className="mt-3 border-t border-border/70 pt-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-xs font-medium text-muted-foreground">执行记录</p>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => loadRuns(task.id)} disabled={isLoadingRuns}>
+                        {isLoadingRuns ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+                        Refresh
+                      </Button>
+                    </div>
+                    {isLoadingRuns ? (
+                      <div className="flex items-center justify-center py-5">
+                        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : runs.length > 0 ? (
+                      <div className="space-y-2">
+                        {runs.map((run) => (
+                          <div key={run.id} className="border-t border-border/60 py-2 first:border-t-0">
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <Badge variant={run.status === "success" ? "default" : "danger"}>{run.status}</Badge>
+                              <span>{run.trigger === "manual" ? "manual" : "schedule"}</span>
+                              <span>{run.started_at}</span>
+                              <span>{run.duration_ms}ms</span>
+                            </div>
+                            {run.error ? (
+                              <p className="mt-1 line-clamp-2 text-xs text-destructive">{run.error}</p>
+                            ) : run.output_preview ? (
+                              <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">{run.output_preview}</p>
+                            ) : (
+                              <p className="mt-1 text-xs text-muted-foreground">无输出</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-dashed border-border/70 bg-muted/15 px-3 py-5 text-center text-xs text-muted-foreground">
+                        暂无执行记录
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

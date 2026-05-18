@@ -28,7 +28,10 @@ import type {
   MemoryStatus,
   SchedulerTask,
   SchedulerTaskList,
+  SchedulerTaskRun,
+  SchedulerTaskRunList,
   SkillListResponse,
+  TelegramTestResponse,
   TraceSessionResponse,
   WatchlistCategory,
   WatchlistItem,
@@ -67,6 +70,13 @@ export function loadConfig() {
 export function saveConfig(payload: Record<string, unknown>) {
   return request<AppConfig>("/api/v1/config", {
     method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function sendTelegramTestMessage(payload: { message: string }) {
+  return request<TelegramTestResponse>("/api/v1/config/telegram/test", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
@@ -447,6 +457,32 @@ export function createSchedulerTask(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function updateSchedulerTask(
+  id: string,
+  payload: {
+    name?: string;
+    prompt?: string;
+    schedule?: string;
+    enabled?: boolean;
+    notify_telegram?: boolean;
+  },
+) {
+  return request<SchedulerTask>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function runSchedulerTaskNow(id: string) {
+  return request<SchedulerTaskRun>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+  });
+}
+
+export function listSchedulerTaskRuns(id: string, limit = 30) {
+  return request<SchedulerTaskRunList>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}/runs?limit=${limit}`);
 }
 
 export function deleteSchedulerTask(id: string) {

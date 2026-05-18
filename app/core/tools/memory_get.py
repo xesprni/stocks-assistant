@@ -11,11 +11,17 @@ from app.core.tools.base_tool import BaseTool, ToolResult
 
 class MemoryGetTool(BaseTool):
     name: str = "memory_get"
-    description: str = "Read content from memory or knowledge files."
+    description: str = (
+        "Read cited content from memory or knowledge files. "
+        "Use after memory_search when a result snippet is relevant but insufficient, especially to inspect the exact cited line range."
+    )
     params: dict = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Relative path (e.g. 'MEMORY.md', 'memory/2026-01-01.md')"},
+            "path": {
+                "type": "string",
+                "description": "Relative path returned by memory_search, e.g. 'MEMORY.md' or 'memory/2026-01-01.md'",
+            },
             "start_line": {"type": "integer", "description": "Start line (default: 1)", "default": 1},
             "num_lines": {"type": "integer", "description": "Number of lines to read"},
         },

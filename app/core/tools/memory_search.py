@@ -19,11 +19,18 @@ _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 class MemorySearchTool(BaseTool):
     name: str = "memory_search"
-    description: str = "Search agent's long-term memory using semantic and keyword search."
+    description: str = (
+        "Search the user's long-term memory using semantic and keyword search. "
+        "Use proactively before answering when the request may depend on prior preferences, holdings, watchlists, "
+        "risk tolerance, recurring workflows, saved facts, or follow-up context."
+    )
     params: dict = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Search query"},
+            "query": {
+                "type": "string",
+                "description": "Targeted search query describing the user-specific fact, preference, prior decision, or context needed",
+            },
             "max_results": {"type": "integer", "description": "Max results (default: 10)", "default": 10},
             "min_score": {"type": "number", "description": "Min score 0-1 (default: 0.1)", "default": 0.1},
         },

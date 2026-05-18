@@ -1,5 +1,6 @@
 """应用配置管理 API。"""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict
@@ -9,7 +10,8 @@ from pydantic import ValidationError
 
 import app.config as config_module
 from app.config import Settings, get_settings
-from app.schemas.config import AppConfig, ConfigUpdate
+from app.core.notifications.telegram import TelegramConfigError, TelegramSender
+from app.schemas.config import AppConfig, ConfigUpdate, TelegramTestRequest, TelegramTestResponse
 
 router = APIRouter()
 
@@ -103,6 +105,18 @@ async def update_config(update: ConfigUpdate):
     _write_config_file(merged)
     config_module._config_instance = None
     settings = get_settings()
+    if "scheduler_enabled" in patch:
+        try:
+            from app.deps import get_scheduler_service
+
+            scheduler = get_scheduler_service()
+            if settings.scheduler_enabled:
+                await scheduler.start()
+            else:
+                await scheduler.stop()
+        except Exception:
+            # 调度器状态可在任务页体现；配置保存不因此失败。
+            pass
     if "mcp_servers" in patch:
         try:
             from app.deps import get_mcp_manager
@@ -113,3 +127,23 @@ async def update_config(update: ConfigUpdate):
             # 连接错误会体现在 /mcp/status 中；配置保存不因此失败。
             pass
     return _settings_to_response(settings)
+
+
+@router.post("/telegram/test", response_model=TelegramTestResponse)
+async def test_telegram(request: TelegramTestRequest):
+    """使用已保存的 Telegram 配置发送测试消息。"""
+    sender = TelegramSender.from_settings(get_settings())
+    if not sender.enabled:
+        raise HTTPException(status_code=400, detail="Telegram 通知未启用")
+    if not sender.bot_token or not sender.chat_id:
+        raise HTTPException(status_code=400, detail="Telegram Bot Token 或 Chat ID 未配置")
+
+    message = request.message.strip() or "Stocks Assistant Telegram test message."
+    try:
+        result = await asyncio.to_thread(sender.send_message, message)
+    except TelegramConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return TelegramTestResponse(ok=True, chunks=int(result.get("chunks", 0) or 0), detail="测试消息已发送")

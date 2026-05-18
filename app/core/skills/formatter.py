@@ -1,10 +1,9 @@
 """技能提示词格式化器
 
-将可用技能列表格式化为 XML 格式的提示词片段，
+将可用技能索引格式化为 XML 格式的提示词片段，
 拼接到系统提示词末尾供 LLM 使用。
 
-当有 skill_filter 时只注入指定技能的完整内容，
-否则注入所有已启用技能的完整内容。
+默认只披露 skill 名称、描述和位置；完整内容通过 read_skill 工具按需读取。
 """
 
 from typing import Dict, List
@@ -12,7 +11,7 @@ from typing import Dict, List
 from app.core.skills.types import Skill, SkillEntry
 
 
-def format_skills_for_prompt(skills: List[Skill], include_content: bool = True) -> str:
+def format_skills_for_prompt(skills: List[Skill], include_content: bool = False) -> str:
     visible = [s for s in skills if not s.disable_model_invocation]
     if not visible:
         return ""
@@ -30,12 +29,16 @@ def format_skills_for_prompt(skills: List[Skill], include_content: bool = True) 
         lines.append("  </skill>")
     lines.append("</available_skills>")
     lines.append("")
-    lines.append("When the user's request matches a skill, follow that skill's instructions directly. Do NOT use read_file or bash to re-read the skill file — all instructions are already provided above.")
+    lines.append(
+        "When the user's request matches a skill, call the read_skill tool with the exact skill name before following it. "
+        "The list above is only an index; do not infer detailed procedures from descriptions alone. "
+        "Use read_skill instead of read_file or bash to load skill instructions."
+    )
     return "\n".join(lines)
 
 
 def format_skill_entries_for_prompt(entries: List[SkillEntry]) -> str:
-    return format_skills_for_prompt([e.skill for e in entries], include_content=True)
+    return format_skills_for_prompt([e.skill for e in entries], include_content=False)
 
 
 def format_unavailable_skills_for_prompt(

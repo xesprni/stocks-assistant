@@ -106,3 +106,17 @@ class ConfigUpdate(BaseModel):
         from app.core.tools.mcp.config import normalize_mcp_servers
 
         return normalize_mcp_servers(value)
+
+
+class TelegramTestRequest(BaseModel):
+    """Telegram 测试消息请求。"""
+
+    message: str = Field(default="Stocks Assistant Telegram test message.", max_length=4096)
+
+
+class TelegramTestResponse(BaseModel):
+    """Telegram 测试消息响应。"""
+
+    ok: bool
+    chunks: int = 0
+    detail: str = ""

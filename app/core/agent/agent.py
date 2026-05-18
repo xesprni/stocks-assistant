@@ -52,6 +52,7 @@ class Agent:
         self.memory_manager = memory_manager  # 记忆管理器
         self.workspace_dir = workspace_dir  # 工作空间目录
         self.enable_skills = enable_skills  # 是否启用技能
+        self.active_skill_filter = None  # 当前请求允许读取的技能集合
 
         # 技能管理器（从 Markdown 文件加载技能定义）
         self.skill_manager = None
@@ -79,9 +80,27 @@ class Agent:
             logger.warning(f"Failed to build skills prompt: {e}")
             return ""
 
+    def get_memory_prompt(self) -> str:
+        """获取长期记忆检索策略提示词。"""
+        if not self.memory_manager:
+            return ""
+        return """<long_term_memory_policy>
+Long-term memory is available through the memory_search and memory_get tools.
+
+Use memory_search proactively before answering when the request may depend on prior context, including:
+- the user's preferences, holdings, watchlists, risk tolerance, recurring workflows, saved configurations, or prior decisions;
+- follow-up wording such as "continue", "last time", "之前", "上次", "我的", "按老规则", or similar references;
+- tasks where personalization or continuity would materially improve the answer.
+
+Use targeted queries based on the current request. If search results are relevant but snippets are insufficient, use memory_get to read the cited file and line range. Do not claim to remember private facts unless they are present in the current conversation or retrieved from memory in this turn. If no relevant memory is found, continue normally without over-explaining the miss.
+</long_term_memory_policy>"""
+
     def get_full_system_prompt(self, skill_filter=None) -> str:
         """构建完整的系统提示词（基础提示词 + 技能提示词）"""
         parts = [self.system_prompt]
+        memory_prompt = self.get_memory_prompt()
+        if memory_prompt:
+            parts.append(memory_prompt)
         skills_prompt = self.get_skills_prompt(skill_filter=skill_filter)
         if skills_prompt:
             parts.append(skills_prompt)
@@ -231,6 +250,9 @@ class Agent:
             messages_copy = self.messages.copy()
             original_length = len(self.messages)
 
+        previous_skill_filter = self.active_skill_filter
+        self.active_skill_filter = set(skill_filter) if skill_filter else None
+
         # 创建流式执行器
         executor = AgentStreamExecutor(
             agent=self,
@@ -251,6 +273,8 @@ class Agent:
                 with self.messages_lock:
                     self.messages.clear()
             raise
+        finally:
+            self.active_skill_filter = previous_skill_filter
 
         # 将执行器的消息列表同步回 Agent（可能已被裁剪）
         with self.messages_lock:

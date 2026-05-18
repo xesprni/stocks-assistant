@@ -7,7 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_settings
-from app.core.tools.mcp.config import mask_mcp_server_config, normalize_transport
+from app.core.tools.mcp.config import LEGACY_SSE_TRANSPORT, STANDARD_HTTP_TRANSPORT, mask_mcp_server_config, normalize_transport
 from app.schemas.mcp import MCPServerStatus, MCPStatusResponse, MCPServerToolsResponse, MCPToolInfo
 
 router = APIRouter()
@@ -59,6 +59,12 @@ def _build_server_statuses() -> list[MCPServerStatus]:
                 oauth_enabled = True
             elif server_status == "auth_required":
                 oauth_enabled = True
+            elif transport in {STANDARD_HTTP_TRANSPORT, LEGACY_SSE_TRANSPORT}:
+                error_lower = str(error_msg or "").lower()
+                oauth_enabled = any(
+                    marker in error_lower
+                    for marker in ("oauth", "authorization", "unauthorized", "login", "token")
+                )
 
         statuses.append(
             MCPServerStatus(
@@ -174,11 +180,7 @@ async def delete_mcp_oauth(server_name: str):
     try:
         from app.deps import get_mcp_manager
         manager = get_mcp_manager()
-        # 停止服务器连接
-        await run_in_threadpool(manager._run_sync, manager._stop_server(server_name))
-        # 清除持久化的 OAuth token
-        if manager._token_store:
-            manager._token_store.clear(server_name)
+        await run_in_threadpool(manager.clear_oauth_credentials_sync, server_name)
     except Exception:
         pass
 

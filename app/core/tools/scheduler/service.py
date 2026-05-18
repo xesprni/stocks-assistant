@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from croniter import croniter
 
-from app.core.tools.scheduler.store import TaskStore
+from app.core.tools.scheduler.store import RunStore, TaskStore
 
 import logging
 
@@ -21,8 +21,9 @@ logger = logging.getLogger("stocks-assistant.scheduler")
 
 
 class SchedulerService:
-    def __init__(self, task_store: TaskStore, execute_callback: Callable):
+    def __init__(self, task_store: TaskStore, execute_callback: Callable, run_store: Optional[RunStore] = None):
         self.task_store = task_store
+        self.run_store = run_store
         self.execute_callback = execute_callback
         self.running = False
         self._task: Optional[asyncio.Task] = None
@@ -63,20 +64,40 @@ class SchedulerService:
                 logger.error(f"Error processing task {task.get('id')}: {e}")
 
     async def _execute_due_task(self, task: dict, now: datetime):
-        task_id = task["id"]
-        try:
-            await asyncio.to_thread(self.execute_callback, task)
-            self._complete_task(task, now, error=None)
-        except Exception as exc:
-            logger.error(f"Scheduled task failed {task_id}: {exc}")
-            self._complete_task(task, now, error=str(exc))
+        await self._execute_task(task, now, trigger="schedule", update_schedule=True)
 
-    def _complete_task(self, task: dict, now: datetime, error: Optional[str]):
+    async def execute_task_now(self, task_id: str) -> dict:
+        task = self.task_store.get_task(task_id)
+        if not task:
+            raise ValueError("Task not found")
+        return await self._execute_task(task, datetime.now(), trigger="manual", update_schedule=False)
+
+    async def _execute_task(self, task: dict, now: datetime, trigger: str, update_schedule: bool) -> dict:
+        task_id = task["id"]
+        started = datetime.now()
+        result: Optional[str] = None
+        error: Optional[str] = None
+        try:
+            output = await asyncio.to_thread(self.execute_callback, task)
+            result = str(output or "")
+        except Exception as exc:
+            error = str(exc)
+            logger.error(f"Scheduled task failed {task_id}: {exc}")
+        ended = datetime.now()
+        record = self._record_run(task, trigger, started, ended, result, error)
+        self._complete_task(task, now, error=error, update_schedule=update_schedule)
+        return record
+
+    def _complete_task(self, task: dict, now: datetime, error: Optional[str], update_schedule: bool = True):
         updates = {
             "last_run_at": now.isoformat(),
             "run_count": int(task.get("run_count", 0) or 0) + 1,
             "last_error": error,
         }
+        if not update_schedule:
+            self.task_store.update_task(task["id"], updates)
+            return
+
         next_run = self._calculate_next(task, now)
         if next_run:
             updates["next_run_at"] = next_run.isoformat()
@@ -86,6 +107,31 @@ class SchedulerService:
         else:
             updates["enabled"] = False
             self.task_store.update_task(task["id"], updates)
+
+    def _record_run(
+        self,
+        task: dict,
+        trigger: str,
+        started: datetime,
+        ended: datetime,
+        result: Optional[str],
+        error: Optional[str],
+    ) -> dict:
+        output = (result or "").strip()
+        record = {
+            "task_id": task.get("id", ""),
+            "task_name": task.get("name", ""),
+            "trigger": trigger,
+            "status": "error" if error else "success",
+            "started_at": started.isoformat(),
+            "ended_at": ended.isoformat(),
+            "duration_ms": int((ended - started).total_seconds() * 1000),
+            "output_preview": output[:2000],
+            "error": error,
+        }
+        if self.run_store:
+            return self.run_store.add_run(record)
+        return {"id": "", **record}
 
     def _is_due(self, task: dict, now: datetime) -> bool:
         next_str = task.get("next_run_at")

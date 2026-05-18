@@ -39,6 +39,14 @@ async def lifespan(app: FastAPI):
     if not memory_file.exists():
         memory_file.write_text("")
 
+    # 启动定时任务调度器
+    scheduler_service = None
+    if settings.scheduler_enabled:
+        from app.deps import get_scheduler_service
+
+        scheduler_service = get_scheduler_service()
+        await scheduler_service.start()
+
     # 初始化 MCP 服务器连接（只调度后台任务，不阻塞服务启动）
     mcp_manager = None
     if settings.mcp_servers:
@@ -58,6 +66,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if scheduler_service is not None:
+            await scheduler_service.stop()
         if mcp_manager is not None:
             mcp_manager.close_sync()
 

@@ -15,6 +15,16 @@ class TaskCreateRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None  # 额外元数据
 
 
+class TaskUpdateRequest(BaseModel):
+    """更新定时任务请求"""
+    name: Optional[str] = None  # 任务名称
+    prompt: Optional[str] = None  # 任务提示词
+    schedule: Optional[str] = None  # 调度表达式（cron/间隔/"once"）
+    enabled: Optional[bool] = None  # 是否启用
+    notify_telegram: Optional[bool] = None  # 执行完成后是否发送 Telegram 消息
+    metadata: Optional[Dict[str, Any]] = None  # 额外元数据
+
+
 class TaskResponse(BaseModel):
     """定时任务响应"""
     id: str  # 任务 ID
@@ -33,3 +43,23 @@ class TaskListResponse(BaseModel):
     """定时任务列表响应"""
     tasks: List[TaskResponse]  # 任务列表
     total: int  # 总数
+
+
+class TaskRunResponse(BaseModel):
+    """定时任务执行记录响应"""
+    id: str
+    task_id: str
+    task_name: str = ""
+    trigger: str = "schedule"
+    status: str
+    started_at: str
+    ended_at: Optional[str] = None
+    duration_ms: int = 0
+    output_preview: str = ""
+    error: Optional[str] = None
+
+
+class TaskRunListResponse(BaseModel):
+    """定时任务执行记录列表响应"""
+    runs: List[TaskRunResponse]
+    total: int

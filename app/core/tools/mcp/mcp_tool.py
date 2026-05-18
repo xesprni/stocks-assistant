@@ -278,6 +278,10 @@ class MCPManager:
         """将 OAuth 回调参数注入持待的 Future，完成授权流程。"""
         return self._run_sync(self.complete_oauth_callback(server_name, code, state, error))
 
+    def clear_oauth_credentials_sync(self, server_name: str) -> None:
+        """停止指定服务器并清除 OAuth 相关缓存和持久化数据。"""
+        return self._run_sync(self.clear_oauth_credentials(server_name))
+
     async def connect_all(self, wait: bool = False, timeout: Optional[float] = None):
         """异步关闭并重建所有 MCP 服务器连接。"""
         await self.close()
@@ -349,6 +353,7 @@ class MCPManager:
             raise ValueError("OAuth authorization is only supported for HTTP MCP servers")
 
         await self._stop_server(server_name)
+        self._clear_oauth_credentials(server_name)
 
         loop = asyncio.get_running_loop()
         authorization_ready = loop.create_future()
@@ -400,6 +405,28 @@ class MCPManager:
         with self._lock:
             self._states[server_name] = "connecting"
             self._errors[server_name] = "OAuth callback received; connecting MCP server..."
+
+    async def clear_oauth_credentials(self, server_name: str) -> None:
+        """停止服务器连接，并清除内存与磁盘中的 OAuth 登录信息。"""
+        await self._stop_server(server_name)
+        self._clear_oauth_credentials(server_name)
+
+    def _clear_oauth_credentials(self, server_name: str) -> None:
+        """清除指定服务器的 OAuth 内存缓存与持久化数据。"""
+        with self._lock:
+            self._oauth_tokens.pop(server_name, None)
+            self._oauth_login_tokens.pop(server_name, None)
+            self._oauth_client_infos.pop(server_name, None)
+            self._oauth_authorization_urls.pop(server_name, None)
+            ready = self._oauth_authorization_ready.pop(server_name, None)
+            if ready and not ready.done():
+                ready.cancel()
+            callback = self._oauth_callback_futures.pop(server_name, None)
+            if callback and not callback.done():
+                callback.cancel()
+            self._errors.pop(server_name, None)
+        if self._token_store:
+            self._token_store.clear(server_name)
 
     async def _stop_server(self, server_name: str):
         """优雅停止指定服务器的连接任务，并清理其相关状态。"""

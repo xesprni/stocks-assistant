@@ -38,6 +38,7 @@ class ToolManager:
         from app.core.tools.web_search import WebSearchTool
         from app.core.tools.web_fetch import WebFetchTool
         from app.core.tools.read_file import ReadFileTool
+        from app.core.tools.read_skill import ReadSkillTool
         from app.core.tools.write_file import WriteFileTool
         from app.core.tools.financial_reports import GetFinancialReportsTool
         from app.core.tools.memory_search import MemorySearchTool
@@ -45,7 +46,7 @@ class ToolManager:
         from app.core.tools.scheduler.tool import SchedulerTool
 
         # builtin = [BashTool, WebSearchTool, WebFetchTool, ReadFileTool, WriteFileTool]
-        builtin = [BashTool, WebFetchTool, ReadFileTool, WriteFileTool, GetFinancialReportsTool]
+        builtin = [BashTool, WebFetchTool, ReadFileTool, ReadSkillTool, WriteFileTool, GetFinancialReportsTool]
 
         if memory_manager:
             builtin.append(MemorySearchTool)

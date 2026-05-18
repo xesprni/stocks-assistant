@@ -83,7 +83,7 @@ def get_tool_manager():
     from app.core.tools.tool_manager import ToolManager
 
     settings = get_settings()
-    memory_mgr = get_memory_manager()
+    memory_mgr = get_memory_manager() if settings.memory_enabled else None
     manager = ToolManager(workspace_dir=str(Path(settings.workspace_dir).expanduser()))
     manager.load_builtin_tools(memory_manager=memory_mgr)
     return manager
@@ -97,11 +97,12 @@ def get_scheduler_service():
     任务持久化到 scheduler/tasks.json。
     """
     from app.core.tools.scheduler.service import SchedulerService
-    from app.core.tools.scheduler.store import TaskStore
+    from app.core.tools.scheduler.store import RunStore, TaskStore
 
     settings = get_settings()
     workspace = Path(settings.workspace_dir).expanduser()
     store = TaskStore(str(workspace / "scheduler" / "tasks.json"))
+    run_store = RunStore(str(workspace / "scheduler" / "runs.json"))
 
     def execute_callback(task: dict):
         import logging
@@ -133,7 +134,7 @@ def get_scheduler_service():
 
         return result
 
-    service = SchedulerService(task_store=store, execute_callback=execute_callback)
+    service = SchedulerService(task_store=store, run_store=run_store, execute_callback=execute_callback)
     return service
 
 

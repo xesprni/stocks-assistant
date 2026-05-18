@@ -7,12 +7,49 @@
 from datetime import datetime
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas.scheduler import TaskCreateRequest, TaskResponse, TaskListResponse
+from app.schemas.scheduler import (
+    TaskCreateRequest,
+    TaskListResponse,
+    TaskResponse,
+    TaskRunListResponse,
+    TaskRunResponse,
+    TaskUpdateRequest,
+)
 from app.deps import get_scheduler_service
 
 router = APIRouter()
+
+
+def _task_to_response(task: dict) -> TaskResponse:
+    return TaskResponse(
+        id=task.get("id", ""),
+        name=task.get("name", ""),
+        prompt=task.get("prompt", ""),
+        schedule=task.get("schedule", {}).get("expression", str(task.get("schedule", {}))),
+        enabled=task.get("enabled", True),
+        last_run=task.get("last_run_at"),
+        next_run=task.get("next_run_at"),
+        run_count=task.get("run_count", 0),
+        last_error=task.get("last_error"),
+        metadata=task.get("metadata"),
+    )
+
+
+def _run_to_response(run: dict) -> TaskRunResponse:
+    return TaskRunResponse(
+        id=run.get("id", ""),
+        task_id=run.get("task_id", ""),
+        task_name=run.get("task_name", ""),
+        trigger=run.get("trigger", "schedule"),
+        status=run.get("status", ""),
+        started_at=run.get("started_at", ""),
+        ended_at=run.get("ended_at"),
+        duration_ms=int(run.get("duration_ms", 0) or 0),
+        output_preview=run.get("output_preview", ""),
+        error=run.get("error"),
+    )
 
 
 @router.get("/tasks", response_model=TaskListResponse)
@@ -20,21 +57,7 @@ async def list_tasks():
     service = get_scheduler_service()
     tasks = service.task_store.list_tasks()
     return TaskListResponse(
-        tasks=[
-            TaskResponse(
-                id=t.get("id", ""),
-                name=t.get("name", ""),
-                prompt=t.get("prompt", ""),
-                schedule=t.get("schedule", {}).get("expression", str(t.get("schedule", {}))),
-                enabled=t.get("enabled", True),
-                last_run=t.get("last_run_at"),
-                next_run=t.get("next_run_at"),
-                run_count=t.get("run_count", 0),
-                last_error=t.get("last_error"),
-                metadata=t.get("metadata"),
-            )
-            for t in tasks
-        ],
+        tasks=[_task_to_response(t) for t in tasks],
         total=len(tasks),
     )
 
@@ -66,12 +89,7 @@ async def create_task(request: TaskCreateRequest):
 
     try:
         service.task_store.add_task(task)
-        return TaskResponse(
-            id=task_id, name=request.name, prompt=request.prompt,
-            schedule=request.schedule, enabled=request.enabled,
-            next_run=task.get("next_run_at"),
-            run_count=0, metadata=metadata,
-        )
+        return _task_to_response(task)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -82,18 +100,79 @@ async def get_task(task_id: str):
     task = service.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return TaskResponse(
-        id=task.get("id", ""),
-        name=task.get("name", ""),
-        prompt=task.get("prompt", ""),
-        schedule=task.get("schedule", {}).get("expression", str(task.get("schedule", {}))),
-        enabled=task.get("enabled", True),
-        last_run=task.get("last_run_at"),
-        next_run=task.get("next_run_at"),
-        run_count=task.get("run_count", 0),
-        last_error=task.get("last_error"),
-        metadata=task.get("metadata"),
-    )
+    return _task_to_response(task)
+
+
+@router.put("/tasks/{task_id}", response_model=TaskResponse)
+async def update_task(task_id: str, request: TaskUpdateRequest):
+    service = get_scheduler_service()
+    task = service.task_store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    updates = {}
+    if request.name is not None:
+        updates["name"] = request.name
+    if request.prompt is not None:
+        updates["prompt"] = request.prompt
+    if request.schedule is not None:
+        updates["schedule"] = _parse_schedule(request.schedule)
+    if request.enabled is not None:
+        updates["enabled"] = request.enabled
+
+    if request.metadata is not None or request.notify_telegram is not None:
+        metadata = dict(task.get("metadata") or {})
+        if request.metadata is not None:
+            metadata.update(request.metadata)
+        if request.notify_telegram is not None:
+            metadata["notify_telegram"] = request.notify_telegram
+        updates["metadata"] = metadata
+
+    if "schedule" in updates or "enabled" in updates:
+        next_task = {**task, **updates}
+        next_run = service._calculate_next(next_task, datetime.now())
+        updates["next_run_at"] = next_run.isoformat() if next_run else None
+
+    try:
+        service.task_store.update_task(task_id, updates)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    updated = service.task_store.get_task(task_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return _task_to_response(updated)
+
+
+@router.post("/tasks/{task_id}/run", response_model=TaskRunResponse)
+async def run_task_now(task_id: str):
+    service = get_scheduler_service()
+    try:
+        run = await service.execute_task_now(task_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _run_to_response(run)
+
+
+@router.get("/tasks/{task_id}/runs", response_model=TaskRunListResponse)
+async def list_task_runs(task_id: str, limit: int = Query(default=50, ge=1, le=200)):
+    service = get_scheduler_service()
+    task = service.task_store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    runs = service.run_store.list_runs(task_id=task_id, limit=limit) if service.run_store else []
+    return TaskRunListResponse(runs=[_run_to_response(run) for run in runs], total=len(runs))
+
+
+@router.get("/runs", response_model=TaskRunListResponse)
+async def list_runs(limit: int = Query(default=50, ge=1, le=200)):
+    service = get_scheduler_service()
+    runs = service.run_store.list_runs(limit=limit) if service.run_store else []
+    return TaskRunListResponse(runs=[_run_to_response(run) for run in runs], total=len(runs))
 
 
 @router.delete("/tasks/{task_id}")

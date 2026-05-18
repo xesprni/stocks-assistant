@@ -426,6 +426,30 @@ export interface SchedulerTaskList {
   total: number;
 }
 
+export interface SchedulerTaskRun {
+  id: string;
+  task_id: string;
+  task_name: string;
+  trigger: "schedule" | "manual" | string;
+  status: "success" | "error" | string;
+  started_at: string;
+  ended_at: string | null;
+  duration_ms: number;
+  output_preview: string;
+  error?: string | null;
+}
+
+export interface SchedulerTaskRunList {
+  runs: SchedulerTaskRun[];
+  total: number;
+}
+
+export interface TelegramTestResponse {
+  ok: boolean;
+  chunks: number;
+  detail: string;
+}
+
 // ── Chat History ──────────────────────────────────────────────────────────────
 
 export interface ChatSessionMessage {
