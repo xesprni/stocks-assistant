@@ -165,6 +165,7 @@ const initialMessage: ChatMessage = {
   content: "控制台已就绪。可以直接询问行情、策略、知识库内容，或让 Agent 调用工具完成分析任务。",
   createdAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
 };
+const initialMessages = [initialMessage];
 
 const quickPrompts = [
   "总结今天值得关注的美股科技股信号",
@@ -267,10 +268,15 @@ function makeTrace(label: string, status: ChatTraceEvent["status"], detail?: str
   return { id, label, status, detail, createdAt: chatTime() };
 }
 
+function isChatScrolledToBottom(element: HTMLDivElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_AUTO_SCROLL_THRESHOLD;
+}
+
 // ── Chat History ───────────────────────────────────────────────────────────
 
 const ACTIVE_SESSION_KEY = "stocks-assistant-active-session";
 const MAX_CONVERSATIONS = 50;
+const CHAT_AUTO_SCROLL_THRESHOLD = 96;
 
 function titleFromMessage(message?: ChatMessage): string {
   const title = message?.content.trim().replace(/\s+/g, " ") ?? "";
@@ -497,17 +503,44 @@ function App() {
   const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
   const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollChatRef = useRef(true);
   const chatHistory = useConversations();
 
   const messages = chatHistory.activeConversation?.messages.length
     ? chatHistory.activeConversation.messages
-    : [initialMessage];
+    : initialMessages;
   const activeConvId = chatHistory.activeId;
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (page !== "chat" || !shouldAutoScrollChatRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (!shouldAutoScrollChatRef.current) return;
+      const element = chatScrollRef.current;
+      if (element) {
+        element.scrollTop = element.scrollHeight;
+      } else {
+        endRef.current?.scrollIntoView({ block: "end" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [messages, page]);
+
+  useEffect(() => {
+    shouldAutoScrollChatRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      const element = chatScrollRef.current;
+      if (element) element.scrollTop = element.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeConvId]);
+
+  function handleChatScroll() {
+    const element = chatScrollRef.current;
+    if (!element) return;
+    shouldAutoScrollChatRef.current = isChatScrolledToBottom(element);
+  }
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -555,6 +588,7 @@ function App() {
     const text = value.trim();
     if (!text || isSending) return;
 
+    shouldAutoScrollChatRef.current = true;
     const createdAt = chatTime();
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -845,8 +879,10 @@ function App() {
 
             {page === "chat" ? (
               <ChatPage
+                chatScrollRef={chatScrollRef}
                 endRef={endRef}
                 handleSend={handleSend}
+                handleChatScroll={handleChatScroll}
                 isSending={isSending}
                 messages={messages}
                 prompt={prompt}
@@ -1160,8 +1196,10 @@ function ChatTraceList({ trace }: { trace?: ChatTraceEvent[] }) {
 }
 
 function ChatPage({
+  chatScrollRef,
   endRef,
   handleSend,
+  handleChatScroll,
   isSending,
   messages,
   prompt,
@@ -1170,8 +1208,10 @@ function ChatPage({
   setPage,
   setPrompt,
 }: {
+  chatScrollRef: React.RefObject<HTMLDivElement | null>;
   endRef: React.RefObject<HTMLDivElement | null>;
   handleSend: (event?: { preventDefault: () => void }, value?: string) => void;
+  handleChatScroll: () => void;
   isSending: boolean;
   messages: ChatMessage[];
   prompt: string;
@@ -1260,7 +1300,11 @@ function ChatPage({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4"
+          onScroll={handleChatScroll}
+          ref={chatScrollRef}
+        >
           <div className="space-y-4">
             {messages.map((message) => (
               <div className={cn("group flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
