@@ -63,6 +63,10 @@ class TelegramSender:
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.post(url, json=payload)
+            if self.parse_mode and response.status_code >= 400 and _should_retry_without_parse_mode(response):
+                fallback_payload = dict(payload)
+                fallback_payload.pop("parse_mode", None)
+                response = client.post(url, json=fallback_payload)
 
         if response.status_code >= 400:
             detail = _telegram_error_detail(response)
@@ -97,3 +101,12 @@ def _telegram_error_detail(response: httpx.Response) -> str:
         return response.text[:500]
     detail = data.get("description") if isinstance(data, dict) else None
     return str(detail or data)[:500]
+
+
+def _should_retry_without_parse_mode(response: httpx.Response) -> bool:
+    detail = _telegram_error_detail(response).lower()
+    return response.status_code == 400 and (
+        "can't parse entities" in detail
+        or "can't find end of the entity" in detail
+        or "entity" in detail and "parse" in detail
+    )
