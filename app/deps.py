@@ -166,7 +166,7 @@ def _run_scheduled_agent(prompt: str) -> str:
 
 def _format_scheduled_telegram_message(task: dict, body: str) -> str:
     name = str(task.get("name") or task.get("id") or "Scheduled task")
-    return f"Scheduled task: {name}\n\n{body}".strip()
+    return f"# 定时任务：{name}\n\n{body}".strip()
 
 
 @lru_cache

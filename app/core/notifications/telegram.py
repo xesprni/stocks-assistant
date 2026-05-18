@@ -148,7 +148,7 @@ def _markdown_to_telegram_html(text: str) -> str:
     def flush_table() -> None:
         nonlocal table_lines
         if table_lines:
-            output.append(f"<pre>{html.escape(chr(10).join(table_lines), quote=False)}</pre>")
+            output.extend(_markdown_table_to_html_lines(table_lines))
             table_lines = []
 
     for line in lines:
@@ -179,6 +179,11 @@ def _markdown_to_telegram_html(text: str) -> str:
         heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if heading:
             output.append(f"<b>{_format_inline_markdown(heading.group(2))}</b>")
+            continue
+
+        numbered_heading = re.match(r"^(\d+(?:\.\d+)*)\.\s+(.+)$", stripped)
+        if numbered_heading:
+            output.append(f"<b>{html.escape(numbered_heading.group(1), quote=False)}. {_format_inline_markdown(numbered_heading.group(2))}</b>")
             continue
 
         quote = re.match(r"^>\s?(.*)$", stripped)
@@ -229,6 +234,61 @@ def _format_inline_without_code(text: str) -> str:
 def _looks_like_markdown_table_line(line: str) -> bool:
     stripped = line.strip()
     return stripped.count("|") >= 2 and ("---" in stripped or stripped.startswith("|") or stripped.endswith("|"))
+
+
+def _markdown_table_to_html_lines(lines: list[str]) -> list[str]:
+    rows = [_parse_markdown_table_row(line) for line in lines]
+    rows = [row for row in rows if row and not _is_markdown_table_separator(row)]
+    if not rows:
+        return []
+
+    header = rows[0]
+    body = rows[1:]
+    if not body:
+        return [html.escape(" | ".join(_markdown_inline_to_plain(cell) for cell in header), quote=False)]
+
+    rendered: list[str] = []
+    for row in body:
+        padded = row + [""] * max(0, len(header) - len(row))
+        title = _markdown_inline_to_plain(padded[0]) if padded else ""
+        details = []
+        for index, value in enumerate(padded[1:], 1):
+            plain_value = _markdown_inline_to_plain(value)
+            if not plain_value:
+                continue
+            label = _markdown_inline_to_plain(header[index]) if index < len(header) else ""
+            details.append(f"{label} {plain_value}".strip())
+
+        if title and details:
+            rendered.append(f"• <b>{html.escape(title, quote=False)}</b>: {html.escape(' · '.join(details), quote=False)}")
+        elif title:
+            rendered.append(f"• {html.escape(title, quote=False)}")
+        elif details:
+            rendered.append(f"• {html.escape(' · '.join(details), quote=False)}")
+    return rendered
+
+
+def _parse_markdown_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _is_markdown_table_separator(row: list[str]) -> bool:
+    return bool(row) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in row)
+
+
+def _markdown_inline_to_plain(text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"\1", text)
+    text = re.sub(r"\*\*([^*\n]+?)\*\*", r"\1", text)
+    text = re.sub(r"__([^_\n]+?)__", r"\1", text)
+    text = re.sub(r"~~([^~\n]+?)~~", r"\1", text)
+    text = re.sub(r"`([^`\n]+?)`", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"\1", text)
+    return " ".join(text.split())
 
 
 def _markdown_to_plain_text(text: str) -> str:
