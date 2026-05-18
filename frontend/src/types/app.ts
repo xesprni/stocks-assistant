@@ -42,6 +42,12 @@ export interface AppConfig {
   scheduler_enabled: boolean;
   tracing_enabled: boolean;
   debug: boolean;
+  telegram_enabled: boolean;
+  telegram_bot_token_masked?: string;
+  has_telegram_bot_token?: boolean;
+  telegram_chat_id?: string;
+  telegram_api_base?: string;
+  telegram_parse_mode?: string;
   system_prompt: string;
   mcp_servers: Record<string, Record<string, unknown>>;
   longbridge_app_key_masked?: string;
@@ -57,6 +63,7 @@ export interface AppConfig {
 export interface ConfigDraft extends AppConfig {
   llm_api_key: string;
   embedding_api_key: string;
+  telegram_bot_token: string;
   longbridge_app_key: string;
   longbridge_app_secret: string;
   longbridge_access_token: string;
@@ -399,6 +406,7 @@ export interface SchedulerTask {
   last_run: string | null;
   next_run: string | null;
   run_count: number;
+  last_error?: string | null;
   metadata: Record<string, unknown> | null;
 }
 

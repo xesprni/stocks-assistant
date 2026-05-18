@@ -58,17 +58,34 @@ class SchedulerService:
             try:
                 if self._is_due(task, now):
                     logger.info(f"Executing task: {task['id']} - {task['name']}")
-                    await asyncio.to_thread(self.execute_callback, task)
-                    next_run = self._calculate_next(task, now)
-                    if next_run:
-                        self.task_store.update_task(task["id"], {
-                            "next_run_at": next_run.isoformat(),
-                            "last_run_at": now.isoformat(),
-                        })
-                    else:
-                        self.task_store.delete_task(task["id"])
+                    await self._execute_due_task(task, now)
             except Exception as e:
                 logger.error(f"Error processing task {task.get('id')}: {e}")
+
+    async def _execute_due_task(self, task: dict, now: datetime):
+        task_id = task["id"]
+        try:
+            await asyncio.to_thread(self.execute_callback, task)
+            self._complete_task(task, now, error=None)
+        except Exception as exc:
+            logger.error(f"Scheduled task failed {task_id}: {exc}")
+            self._complete_task(task, now, error=str(exc))
+
+    def _complete_task(self, task: dict, now: datetime, error: Optional[str]):
+        updates = {
+            "last_run_at": now.isoformat(),
+            "run_count": int(task.get("run_count", 0) or 0) + 1,
+            "last_error": error,
+        }
+        next_run = self._calculate_next(task, now)
+        if next_run:
+            updates["next_run_at"] = next_run.isoformat()
+            self.task_store.update_task(task["id"], updates)
+        elif (task.get("schedule") or {}).get("type") == "once" and not error:
+            self.task_store.delete_task(task["id"])
+        else:
+            updates["enabled"] = False
+            self.task_store.update_task(task["id"], updates)
 
     def _is_due(self, task: dict, now: datetime) -> bool:
         next_str = task.get("next_run_at")

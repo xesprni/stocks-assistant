@@ -103,14 +103,69 @@ def get_scheduler_service():
     workspace = Path(settings.workspace_dir).expanduser()
     store = TaskStore(str(workspace / "scheduler" / "tasks.json"))
 
-    # 定时任务执行回调（当前仅记录日志，可扩展为调用 Agent）
     def execute_callback(task: dict):
         import logging
+        from app.core.notifications import TelegramSender
+
         logger = logging.getLogger("stocks-assistant.scheduler")
-        logger.info(f"Executing scheduled task: {task.get('name', task.get('id'))}")
+        logger.info("Executing scheduled task: %s", task.get("name", task.get("id")))
+
+        action = task.get("action") or {}
+        action_type = action.get("type")
+        metadata = task.get("metadata") or {}
+        prompt = task.get("prompt") or action.get("content") or ""
+
+        if action_type == "send_message":
+            result = str(action.get("content") or prompt)
+        elif prompt:
+            result = _run_scheduled_agent(prompt)
+        else:
+            result = f"Scheduled task executed: {task.get('name', task.get('id'))}"
+
+        notify_telegram = metadata.get("notify_telegram")
+        if notify_telegram is None:
+            notify_telegram = action_type in {"send_message", "agent_task"}
+
+        if notify_telegram:
+            telegram = TelegramSender.from_settings(get_settings())
+            message = _format_scheduled_telegram_message(task, result)
+            telegram.send_message(message)
+
+        return result
 
     service = SchedulerService(task_store=store, execute_callback=execute_callback)
     return service
+
+
+def _run_scheduled_agent(prompt: str) -> str:
+    """Run a scheduled prompt through a fresh stateless Agent."""
+    from app.config import DEFAULT_SYSTEM_PROMPT
+    from app.core.agent.agent import Agent
+    from app.core.agent.models import LLMModel
+
+    settings = get_settings()
+    llm = get_llm_provider()
+    model = LLMModel(model=settings.llm_model)
+    model.call = llm.call
+    model.call_stream = llm.call_stream
+
+    agent = Agent(
+        system_prompt=settings.system_prompt or DEFAULT_SYSTEM_PROMPT,
+        model=model,
+        tools=get_tool_manager().get_all_tools(),
+        max_steps=settings.agent_max_steps,
+        max_context_tokens=settings.agent_max_context_tokens,
+        max_context_turns=settings.agent_max_context_turns,
+        memory_manager=get_memory_manager(),
+        workspace_dir=settings.workspace_dir,
+        skill_manager=get_skill_manager(),
+    )
+    return agent.run_stream(user_message=prompt, clear_history=True)
+
+
+def _format_scheduled_telegram_message(task: dict, body: str) -> str:
+    name = str(task.get("name") or task.get("id") or "Scheduled task")
+    return f"Scheduled task: {name}\n\n{body}".strip()
 
 
 @lru_cache

@@ -402,7 +402,13 @@ export function listSchedulerTasks() {
   return request<SchedulerTaskList>("/api/v1/scheduler/tasks");
 }
 
-export function createSchedulerTask(payload: { name: string; prompt: string; schedule: string; enabled?: boolean }) {
+export function createSchedulerTask(payload: {
+  name: string;
+  prompt: string;
+  schedule: string;
+  enabled?: boolean;
+  notify_telegram?: boolean;
+}) {
   return request<SchedulerTask>("/api/v1/scheduler/tasks", {
     method: "POST",
     body: JSON.stringify(payload),

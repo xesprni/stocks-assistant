@@ -5,6 +5,7 @@
 """
 
 from datetime import datetime
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -29,6 +30,7 @@ async def list_tasks():
                 last_run=t.get("last_run_at"),
                 next_run=t.get("next_run_at"),
                 run_count=t.get("run_count", 0),
+                last_error=t.get("last_error"),
                 metadata=t.get("metadata"),
             )
             for t in tasks
@@ -44,6 +46,8 @@ async def create_task(request: TaskCreateRequest):
 
     schedule = _parse_schedule(request.schedule)
     now = datetime.now().isoformat()
+    metadata = request.metadata or {}
+    metadata["notify_telegram"] = request.notify_telegram
 
     task = {
         "id": task_id,
@@ -54,15 +58,19 @@ async def create_task(request: TaskCreateRequest):
         "created_at": now,
         "updated_at": now,
         "run_count": 0,
-        "metadata": request.metadata or {},
+        "metadata": metadata,
     }
+    next_run = service._calculate_next(task, datetime.now())
+    if next_run:
+        task["next_run_at"] = next_run.isoformat()
 
     try:
         service.task_store.add_task(task)
         return TaskResponse(
             id=task_id, name=request.name, prompt=request.prompt,
             schedule=request.schedule, enabled=request.enabled,
-            run_count=0, metadata=request.metadata,
+            next_run=task.get("next_run_at"),
+            run_count=0, metadata=metadata,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -83,6 +91,7 @@ async def get_task(task_id: str):
         last_run=task.get("last_run_at"),
         next_run=task.get("next_run_at"),
         run_count=task.get("run_count", 0),
+        last_error=task.get("last_error"),
         metadata=task.get("metadata"),
     )
 

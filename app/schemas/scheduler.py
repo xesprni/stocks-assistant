@@ -11,6 +11,7 @@ class TaskCreateRequest(BaseModel):
     prompt: str  # 任务提示词
     schedule: str  # 调度表达式（cron/间隔/"once"）
     enabled: bool = True  # 是否启用
+    notify_telegram: bool = False  # 执行完成后是否发送 Telegram 消息
     metadata: Optional[Dict[str, Any]] = None  # 额外元数据
 
 
@@ -24,6 +25,7 @@ class TaskResponse(BaseModel):
     last_run: Optional[str] = None  # 上次执行时间
     next_run: Optional[str] = None  # 下次执行时间
     run_count: int = 0  # 已执行次数
+    last_error: Optional[str] = None  # 上次执行错误
     metadata: Optional[Dict[str, Any]] = None  # 额外元数据
 
 

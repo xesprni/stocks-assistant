@@ -33,6 +33,13 @@ class AppConfig(BaseModel):
     tracing_enabled: bool = False
     debug: bool
 
+    telegram_enabled: bool = False
+    telegram_bot_token_masked: str = ""
+    has_telegram_bot_token: bool = False
+    telegram_chat_id: str = ""
+    telegram_api_base: str = "https://api.telegram.org"
+    telegram_parse_mode: str = ""
+
     system_prompt: str
     mcp_servers: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
@@ -71,6 +78,12 @@ class ConfigUpdate(BaseModel):
     scheduler_enabled: Optional[bool] = None
     tracing_enabled: Optional[bool] = None
     debug: Optional[bool] = None
+
+    telegram_enabled: Optional[bool] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    telegram_api_base: Optional[str] = None
+    telegram_parse_mode: Optional[str] = None
 
     system_prompt: Optional[str] = None
     mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None

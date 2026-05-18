@@ -188,6 +188,10 @@ function toDraft(config: AppConfig): ConfigDraft {
     ...config,
     llm_api_key: "",
     embedding_api_key: "",
+    telegram_bot_token: "",
+    telegram_chat_id: config.telegram_chat_id ?? "",
+    telegram_api_base: config.telegram_api_base ?? "https://api.telegram.org",
+    telegram_parse_mode: config.telegram_parse_mode ?? "",
     longbridge_app_key: "",
     longbridge_app_secret: "",
     longbridge_access_token: "",
@@ -738,6 +742,10 @@ function App() {
         memory_enabled: draft.memory_enabled,
         scheduler_enabled: draft.scheduler_enabled,
         tracing_enabled: draft.tracing_enabled,
+        telegram_enabled: draft.telegram_enabled,
+        telegram_chat_id: draft.telegram_chat_id ?? "",
+        telegram_api_base: draft.telegram_api_base ?? "https://api.telegram.org",
+        telegram_parse_mode: draft.telegram_parse_mode ?? "",
         debug: draft.debug,
         system_prompt: draft.system_prompt,
         mcp_servers: mcpServers,
@@ -750,6 +758,9 @@ function App() {
       }
       if (draft.embedding_api_key.trim()) {
         payload.embedding_api_key = draft.embedding_api_key.trim();
+      }
+      if (draft.telegram_bot_token.trim()) {
+        payload.telegram_bot_token = draft.telegram_bot_token.trim();
       }
       if (draft.longbridge_app_key.trim()) {
         payload.longbridge_app_key = draft.longbridge_app_key.trim();
@@ -877,7 +888,7 @@ function App() {
 
             {page === "knowledge" ? <KnowledgePage /> : null}
 
-            {page === "scheduler" ? <SchedulerPage /> : null}
+            {page === "scheduler" ? <SchedulerPage telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
 
             {page === "mcp" ? <MCPPage /> : null}
 
@@ -2149,10 +2160,11 @@ function ConfigPage({
       {draft ? (
         <div className="panel-body min-h-0 flex-1 overflow-y-auto">
           <Tabs defaultValue="model">
-            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
+            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5">
               <TabsTrigger value="model">模型</TabsTrigger>
               <TabsTrigger value="agent">Agent</TabsTrigger>
               <TabsTrigger value="longbridge">长桥</TabsTrigger>
+              <TabsTrigger value="telegram">Telegram</TabsTrigger>
               <TabsTrigger value="features">能力</TabsTrigger>
             </TabsList>
 
@@ -2272,6 +2284,46 @@ function ConfigPage({
                     placeholder="默认使用 SDK 配置"
                     value={draft.longbridge_quote_ws_url ?? ""}
                     onChange={(event) => patchDraft({ longbridge_quote_ws_url: event.target.value })}
+                  />
+                </Field>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="telegram" className="space-y-4">
+              <ToggleRow
+                checked={draft.telegram_enabled}
+                icon={<Send className="size-4 text-primary" />}
+                label="启用 Telegram 通知"
+                onCheckedChange={(checked) => patchDraft({ telegram_enabled: checked })}
+              />
+              <div className="grid gap-3 lg:grid-cols-2">
+                <Field label="Bot Token">
+                  <Input
+                    placeholder={draft.has_telegram_bot_token ? draft.telegram_bot_token_masked : "123456:ABC..."}
+                    type="password"
+                    value={draft.telegram_bot_token}
+                    onChange={(event) => patchDraft({ telegram_bot_token: event.target.value })}
+                  />
+                </Field>
+                <Field label="Chat ID">
+                  <Input
+                    placeholder="@channel 或 chat_id"
+                    value={draft.telegram_chat_id ?? ""}
+                    onChange={(event) => patchDraft({ telegram_chat_id: event.target.value })}
+                  />
+                </Field>
+                <Field label="API Base">
+                  <Input
+                    placeholder="https://api.telegram.org"
+                    value={draft.telegram_api_base ?? ""}
+                    onChange={(event) => patchDraft({ telegram_api_base: event.target.value })}
+                  />
+                </Field>
+                <Field label="Parse Mode">
+                  <Input
+                    placeholder="留空、HTML 或 MarkdownV2"
+                    value={draft.telegram_parse_mode ?? ""}
+                    onChange={(event) => patchDraft({ telegram_parse_mode: event.target.value })}
                   />
                 </Field>
               </div>
@@ -3318,12 +3370,12 @@ function humanizeSchedule(expr: string): string {
   return expr;
 }
 
-function SchedulerPage() {
+function SchedulerPage({ telegramEnabled }: { telegramEnabled: boolean }) {
   const [tasks, setTasks] = useState<SchedulerTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true });
+  const [form, setForm] = useState({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled });
   const [isCreating, setIsCreating] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -3343,9 +3395,15 @@ function SchedulerPage() {
     setIsCreating(true);
     setError("");
     try {
-      await createSchedulerTask({ name: form.name.trim(), prompt: form.prompt.trim(), schedule: form.schedule.trim(), enabled: form.enabled });
+      await createSchedulerTask({
+        name: form.name.trim(),
+        prompt: form.prompt.trim(),
+        schedule: form.schedule.trim(),
+        enabled: form.enabled,
+        notify_telegram: form.notifyTelegram,
+      });
       setShowForm(false);
-      setForm({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true });
+      setForm({ name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled });
       loadTasks();
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建失败");
@@ -3392,7 +3450,14 @@ function SchedulerPage() {
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             Refresh
           </Button>
-          <Button size="sm" onClick={() => setShowForm(true)} disabled={showForm}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setForm((current) => ({ ...current, notifyTelegram: telegramEnabled }));
+              setShowForm(true);
+            }}
+            disabled={showForm}
+          >
             <Plus />
             Add Task
           </Button>
@@ -3444,7 +3509,13 @@ function SchedulerPage() {
               />
             </Field>
             <div className="flex items-center justify-between">
-              <ToggleRow checked={form.enabled} icon={<Clock className="size-4 text-primary" />} label="创建后启用" onCheckedChange={(c) => setForm((f) => ({ ...f, enabled: c }))} />
+              <div className="grid gap-2">
+                <ToggleRow checked={form.enabled} icon={<Clock className="size-4 text-primary" />} label="创建后启用" onCheckedChange={(c) => setForm((f) => ({ ...f, enabled: c }))} />
+                <ToggleRow checked={form.notifyTelegram} icon={<Send className="size-4 text-primary" />} label="执行后发送 Telegram" onCheckedChange={(c) => setForm((f) => ({ ...f, notifyTelegram: c }))} />
+                {!telegramEnabled && form.notifyTelegram ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-300">需要先在配置页启用 Telegram 并保存 Bot Token / Chat ID。</p>
+                ) : null}
+              </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
                 <Button size="sm" onClick={handleCreate} disabled={isCreating || !form.name.trim() || !form.prompt.trim()}>
@@ -3468,8 +3539,10 @@ function SchedulerPage() {
                       <span className={cn("size-2 rounded-full", task.enabled ? "bg-green-500" : "bg-muted-foreground/40")} />
                       <span className="truncate text-sm font-semibold">{task.name}</span>
                       <Badge variant={task.enabled ? "default" : "muted"}>{task.enabled ? "ON" : "OFF"}</Badge>
+                      {task.metadata?.notify_telegram ? <Badge variant="outline">Telegram</Badge> : null}
                     </div>
                     <p className="mt-1 truncate text-xs text-muted-foreground">{task.prompt}</p>
+                    {task.last_error ? <p className="mt-1 line-clamp-2 text-xs text-destructive">{task.last_error}</p> : null}
                     <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                       <span className="font-mono">{task.schedule}</span>
                       <span>{humanizeSchedule(task.schedule)}</span>
