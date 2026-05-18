@@ -139,6 +139,38 @@ class MemoryStorage:
         self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
         self.conn.commit()
 
+    def delete_file_metadata(self, path: str) -> int:
+        """Delete indexed file metadata for a path."""
+        cursor = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
+        self.conn.commit()
+        return cursor.rowcount
+
+    def delete_indexed_file(self, path: str) -> Dict[str, int]:
+        """Delete both chunks and file metadata for a path."""
+        chunk_cursor = self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
+        file_cursor = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
+        self.conn.commit()
+        return {"deleted_chunks": chunk_cursor.rowcount, "deleted_index_files": file_cursor.rowcount}
+
+    def list_indexed_files(self, source: Optional[str] = None) -> List[dict]:
+        """List files tracked in the memory index."""
+        if source:
+            rows = self.conn.execute(
+                "SELECT path, source, size, mtime FROM files WHERE source = ? ORDER BY path",
+                (source,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT path, source, size, mtime FROM files ORDER BY path"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_chunks_by_path(self, path: str) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM chunks WHERE path = ? ORDER BY start_line ASC",
+            (path,),
+        ).fetchall()
+
     def get_file_hash(self, path: str) -> Optional[str]:
         """获取已存储的文件内容哈希（用于增量同步）"""
         row = self.conn.execute("SELECT hash FROM files WHERE path = ?", (path,)).fetchone()

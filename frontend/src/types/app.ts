@@ -39,6 +39,9 @@ export interface AppConfig {
   agent_max_context_turns: number;
   knowledge_enabled: boolean;
   memory_enabled: boolean;
+  memory_auto_curate_enabled: boolean;
+  memory_curator_min_importance: number;
+  memory_curator_min_confidence: number;
   scheduler_enabled: boolean;
   tracing_enabled: boolean;
   debug: boolean;
@@ -345,6 +348,7 @@ export interface MemoryFile {
   path: string;
   size: number;
   modified: number;
+  indexed_only?: boolean;
 }
 
 export interface MemoryFileContent {
@@ -393,6 +397,13 @@ export interface KnowledgeGraph {
 export interface KnowledgeFileContent {
   content: string;
   path: string;
+}
+
+export interface KnowledgeSaveResponse {
+  status: string;
+  path: string;
+  size: number;
+  source?: string | null;
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@ import {
   TerminalSquare,
   Trash2,
   TrendingUp,
+  Upload,
   WandSparkles,
   X,
   Zap,
@@ -82,6 +83,8 @@ import {
   createChatSession,
   createSchedulerTask,
   deleteChatSession,
+  deleteMemoryFile,
+  deleteMemoryIndex,
   deleteSchedulerTask,
   deleteWatchlistItem,
   deleteMcpOAuth,
@@ -107,6 +110,7 @@ import {
   refreshSkills,
   reorderWatchlist,
   saveConfig,
+  saveKnowledgeUrl,
   searchMemory,
   searchWatchlist,
   streamChat,
@@ -114,6 +118,7 @@ import {
   toggleSchedulerTask,
   toggleSkill,
   updateChatSessionTitle,
+  uploadKnowledgeFile,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useColorScheme } from "@/lib/color-scheme";
@@ -740,6 +745,9 @@ function App() {
         agent_max_context_turns: Number(draft.agent_max_context_turns),
         knowledge_enabled: draft.knowledge_enabled,
         memory_enabled: draft.memory_enabled,
+        memory_auto_curate_enabled: draft.memory_auto_curate_enabled,
+        memory_curator_min_importance: Number(draft.memory_curator_min_importance),
+        memory_curator_min_confidence: Number(draft.memory_curator_min_confidence),
         scheduler_enabled: draft.scheduler_enabled,
         tracing_enabled: draft.tracing_enabled,
         telegram_enabled: draft.telegram_enabled,
@@ -2337,6 +2345,34 @@ function ConfigPage({
                 onCheckedChange={(checked) => patchDraft({ memory_enabled: checked })}
               />
               <ToggleRow
+                checked={draft.memory_auto_curate_enabled}
+                icon={<WandSparkles className="size-4 text-primary" />}
+                label="自动筛选关键记忆"
+                onCheckedChange={(checked) => patchDraft({ memory_auto_curate_enabled: checked })}
+              />
+              <div className="grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3 md:col-span-2 md:grid-cols-2">
+                <Field label="记忆重要性阈值">
+                  <Input
+                    max={1}
+                    min={0}
+                    step={0.05}
+                    type="number"
+                    value={draft.memory_curator_min_importance}
+                    onChange={(event) => patchDraft({ memory_curator_min_importance: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label="记忆置信度阈值">
+                  <Input
+                    max={1}
+                    min={0}
+                    step={0.05}
+                    type="number"
+                    value={draft.memory_curator_min_confidence}
+                    onChange={(event) => patchDraft({ memory_curator_min_confidence: Number(event.target.value) })}
+                  />
+                </Field>
+              </div>
+              <ToggleRow
                 checked={draft.knowledge_enabled}
                 icon={<Database className="size-4 text-accent" />}
                 label="知识库"
@@ -3591,6 +3627,7 @@ function MemoryPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [addContent, setAddContent] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -3650,6 +3687,37 @@ function MemoryPage() {
       setError(e instanceof Error ? e.message : "添加失败");
     } finally {
       setIsAdding(false);
+    }
+  }
+
+  async function refreshMemory() {
+    const [filesRes, statusRes] = await Promise.all([listMemoryFiles(), getMemoryStatus()]);
+    setFiles(filesRes.files);
+    setStatus(statusRes);
+  }
+
+  async function handleDeleteMemoryFile(file: MemoryFile) {
+    const message = file.indexed_only
+      ? "确定删除该索引记忆？这会从长期记忆搜索中移除。"
+      : "确定删除该记忆文件及其索引？";
+    if (!window.confirm(message)) return;
+    setDeletingPath(file.path);
+    setError("");
+    try {
+      if (file.indexed_only) {
+        await deleteMemoryIndex(file.path);
+      } else {
+        await deleteMemoryFile(file.path);
+      }
+      if (expandedPath === file.path) {
+        setExpandedPath(null);
+        setFileContent(null);
+      }
+      await refreshMemory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "删除失败");
+    } finally {
+      setDeletingPath(null);
     }
   }
 
@@ -3740,16 +3808,30 @@ function MemoryPage() {
             <p className="text-xs text-muted-foreground">{files.length} memory files</p>
             {files.map((f) => (
               <div key={f.path}>
-                <button
-                  type="button"
-                  className={cn("flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60", expandedPath === f.path && "bg-muted/60")}
-                  onClick={() => handleExpand(f.path)}
-                >
-                  {expandedPath === f.path ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
-                  <FileText className="size-3.5 shrink-0 text-primary" />
-                  <span className="flex-1 truncate font-medium">{f.path}</span>
-                  <span className="text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(1)}KB</span>
-                </button>
+                <div className={cn("flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60", expandedPath === f.path && "bg-muted/60")}>
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    onClick={() => handleExpand(f.path)}
+                  >
+                    {expandedPath === f.path ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+                    <FileText className="size-3.5 shrink-0 text-primary" />
+                    <span className="flex-1 truncate font-medium">{f.path}</span>
+                    {f.indexed_only ? <Badge variant="outline" className="text-[10px]">Indexed</Badge> : null}
+                    <span className="text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(1)}KB</span>
+                  </button>
+                  <Button
+                    aria-label="删除记忆"
+                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    disabled={deletingPath === f.path}
+                    onClick={() => handleDeleteMemoryFile(f)}
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                  >
+                    {deletingPath === f.path ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                  </Button>
+                </div>
                 {expandedPath === f.path ? (
                   <pre className="mx-3 mb-1 max-h-64 overflow-auto rounded-md border border-border/80 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{fileContent ?? "Loading..."}</pre>
                 ) : null}
@@ -3782,20 +3864,43 @@ function KnowledgePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [urlToSave, setUrlToSave] = useState("");
+  const [targetDir, setTargetDir] = useState("");
+  const [isSavingKnowledge, setIsSavingKnowledge] = useState(false);
+  const [savingKnowledgeAction, setSavingKnowledgeAction] = useState<"upload" | "url" | null>(null);
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function refreshKnowledge() {
+    setIsLoading(true);
+    setError("");
+    const [treeRes, graphRes] = await Promise.allSettled([getKnowledgeTree(), getKnowledgeGraph()]);
+    if (treeRes.status === "fulfilled") {
+      setTree(treeRes.value);
+      const dirs = new Set<string>();
+      const collectDirs = (items: KnowledgeDir[], prefix = "") => {
+        items.forEach((d) => {
+          const key = `${prefix}${d.dir}`;
+          dirs.add(key);
+          collectDirs(d.children, `${key}/`);
+        });
+      };
+      collectDirs(treeRes.value.tree);
+      setExpandedDirs(dirs);
+    } else {
+      setError(treeRes.reason instanceof Error ? treeRes.reason.message : "知识库加载失败");
+    }
+    if (graphRes.status === "fulfilled") {
+      setGraph(graphRes.value);
+    }
+    setIsLoading(false);
+  }
 
   useEffect(() => {
-    Promise.allSettled([getKnowledgeTree(), getKnowledgeGraph()])
-      .then(([treeRes, graphRes]) => {
-        if (treeRes.status === "fulfilled") {
-          setTree(treeRes.value);
-          const dirs = new Set<string>();
-          treeRes.value.tree.forEach((d) => dirs.add(d.dir));
-          setExpandedDirs(dirs);
-        }
-        if (graphRes.status === "fulfilled") setGraph(graphRes.value);
-      })
-      .finally(() => setIsLoading(false));
+    void refreshKnowledge();
   }, []);
 
   async function handleSelectFile(path: string) {
@@ -3818,6 +3923,49 @@ function KnowledgePage() {
       if (next.has(dir)) next.delete(dir); else next.add(dir);
       return next;
     });
+  }
+
+  async function handleUploadKnowledge() {
+    if (!uploadFile) return;
+    setIsSavingKnowledge(true);
+    setSavingKnowledgeAction("upload");
+    setError("");
+    setNotice("");
+    try {
+      const res = await uploadKnowledgeFile(uploadFile, targetDir.trim() || undefined);
+      setNotice(`已保存到 ${res.path}`);
+      setUploadFile(null);
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+      setViewMode("tree");
+      await refreshKnowledge();
+      await handleSelectFile(res.path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "上传失败");
+    } finally {
+      setIsSavingKnowledge(false);
+      setSavingKnowledgeAction(null);
+    }
+  }
+
+  async function handleSaveUrl() {
+    if (!urlToSave.trim()) return;
+    setIsSavingKnowledge(true);
+    setSavingKnowledgeAction("url");
+    setError("");
+    setNotice("");
+    try {
+      const res = await saveKnowledgeUrl({ url: urlToSave.trim(), directory: targetDir.trim() || undefined });
+      setNotice(`已保存到 ${res.path}`);
+      setUrlToSave("");
+      setViewMode("tree");
+      await refreshKnowledge();
+      await handleSelectFile(res.path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "URL 保存失败");
+    } finally {
+      setIsSavingKnowledge(false);
+      setSavingKnowledgeAction(null);
+    }
   }
 
   function matchesSearch(name: string, title: string): boolean {
@@ -3846,21 +3994,24 @@ function KnowledgePage() {
         </button>
         {isExpanded ? (
           <div className="ml-4">
-            {dir.files.filter((f) => matchesSearch(f.name, f.title)).map((f) => (
-              <button
-                key={f.name}
-                type="button"
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60",
-                  selectedPath === `${dir.dir}/${f.name}` && "bg-primary/10 text-primary",
-                )}
-                onClick={() => handleSelectFile(`${dir.dir}/${f.name}`)}
-              >
-                <FileText className="size-3.5 shrink-0" />
-                <span className="flex-1 truncate">{f.title}</span>
-                <span className="text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(1)}KB</span>
-              </button>
-            ))}
+            {dir.files.filter((f) => matchesSearch(f.name, f.title)).map((f) => {
+              const filePath = `${key}/${f.name}`;
+              return (
+                <button
+                  key={f.name}
+                  type="button"
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60",
+                    selectedPath === filePath && "bg-primary/10 text-primary",
+                  )}
+                  onClick={() => handleSelectFile(filePath)}
+                >
+                  <FileText className="size-3.5 shrink-0" />
+                  <span className="flex-1 truncate">{f.title}</span>
+                  <span className="text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(1)}KB</span>
+                </button>
+              );
+            })}
             {dir.children.map((c) => renderDir(c, key + "/"))}
           </div>
         ) : null}
@@ -3883,6 +4034,10 @@ function KnowledgePage() {
         </div>
         <div className="flex items-center gap-2">
           {tree ? <Badge variant="outline">{tree.stats.pages} pages · {(tree.stats.size / 1024).toFixed(0)}KB</Badge> : null}
+          <Button size="sm" onClick={() => setShowImportPanel(true)} disabled={showImportPanel}>
+            <Plus />
+            Add
+          </Button>
           <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
             <button
               className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "tree" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
@@ -3902,6 +4057,81 @@ function KnowledgePage() {
 
       {error ? (
         <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+      ) : null}
+
+      {notice ? (
+        <div className="mx-3 mt-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{notice}</div>
+      ) : null}
+
+      {showImportPanel ? (
+        <div className="mx-3 mt-2 rounded-lg border border-border/80 bg-background/60 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">添加知识文件</p>
+              <p className="text-xs text-muted-foreground">上传本地文本文件，或读取 URL 内容保存为 Markdown。</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setShowImportPanel(false)}
+              type="button"
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <Field label="保存目录">
+              <Input
+                placeholder="可选，例如 research/2026"
+                value={targetDir}
+                onChange={(e) => setTargetDir(e.target.value)}
+              />
+            </Field>
+            <Field label="上传文件">
+              <div className="flex gap-2">
+                <Input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept=".md,.markdown,.txt,.csv,.json,.log,.html,.htm,text/*"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                />
+                <Button
+                  className="shrink-0"
+                  disabled={isSavingKnowledge || !uploadFile}
+                  onClick={handleUploadKnowledge}
+                  type="button"
+                >
+                  {savingKnowledgeAction === "upload" ? <Loader2 className="animate-spin" /> : <Upload />}
+                  Upload
+                </Button>
+              </div>
+            </Field>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Input
+              placeholder="https://example.com/article.md 或网页 URL"
+              value={urlToSave}
+              onChange={(e) => setUrlToSave(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleSaveUrl();
+                }
+              }}
+            />
+            <Button
+              className="shrink-0"
+              disabled={isSavingKnowledge || !urlToSave.trim()}
+              onClick={handleSaveUrl}
+              type="button"
+              variant="outline"
+            >
+              {savingKnowledgeAction === "url" ? <Loader2 className="animate-spin" /> : <ExternalLink />}
+              Save URL
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       <div className="panel-body min-h-0 flex-1 overflow-hidden">

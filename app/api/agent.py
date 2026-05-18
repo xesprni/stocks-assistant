@@ -177,6 +177,44 @@ def _finish_trace(
         error=error,
     )
 
+
+def _schedule_memory_curate(
+    session_id: str,
+    user_message: str,
+    assistant_response: str,
+    user_message_id: Optional[str] = None,
+    assistant_message_id: Optional[str] = None,
+) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.memory_enabled or not settings.memory_auto_curate_enabled:
+        return
+
+    def run_curator():
+        try:
+            from app.core.memory.curator import MemoryCurator
+
+            curator = MemoryCurator(
+                llm_provider=get_llm_provider(),
+                memory_manager=get_memory_manager(),
+                model=settings.llm_model,
+                min_importance=settings.memory_curator_min_importance,
+                min_confidence=settings.memory_curator_min_confidence,
+            )
+            curator.curate_exchange(
+                session_id=session_id,
+                user_message=user_message,
+                assistant_response=assistant_response,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
+        except Exception as exc:
+            logger.warning("Memory curator failed for session %s: %s", session_id, exc)
+
+    threading.Thread(target=run_curator, daemon=True, name="memory-curator").start()
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     recorder = None
@@ -197,6 +235,13 @@ async def chat(request: ChatRequest):
             user_message_id=user_message_id,
             assistant_message_id=message_id,
             final_response=response,
+        )
+        _schedule_memory_curate(
+            session_id=session_id,
+            user_message=request.message,
+            assistant_response=response,
+            user_message_id=user_message_id,
+            assistant_message_id=message_id,
         )
         return ChatResponse(response=response, session_id=session_id, message_id=message_id)
     except HTTPException:
@@ -260,6 +305,13 @@ async def stream_chat(request: ChatRequest):
                     user_message_id=user_message_id,
                     assistant_message_id=message_id,
                     final_response=response,
+                )
+                _schedule_memory_curate(
+                    session_id=session_id,
+                    user_message=request.message,
+                    assistant_response=response,
+                    user_message_id=user_message_id,
+                    assistant_message_id=message_id,
                 )
                 event_queue.put({
                     "type": "agent_end",

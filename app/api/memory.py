@@ -67,20 +67,60 @@ async def list_memory_files():
     from pathlib import Path
     from app.config import get_settings
 
+    mgr = get_memory_manager()
     settings = get_settings()
     workspace = Path(settings.workspace_dir).expanduser()
     memory_dir = workspace / "memory"
 
-    if not memory_dir.exists():
-        return {"files": []}
+    files_by_path = {}
+    root_memory = workspace / "MEMORY.md"
+    disk_files = [root_memory] if root_memory.exists() else []
+    if memory_dir.exists():
+        disk_files.extend(memory_dir.rglob("*.md"))
 
-    files = []
-    for f in memory_dir.rglob("*.md"):
+    for f in disk_files:
         rel = str(f.relative_to(workspace))
         stat = f.stat()
-        files.append({"path": rel, "size": stat.st_size, "modified": stat.st_mtime})
+        files_by_path[rel] = {"path": rel, "size": stat.st_size, "modified": stat.st_mtime}
 
+    try:
+        rows = mgr.storage.list_indexed_files(source="memory")
+        for row in rows:
+            files_by_path.setdefault(
+                row["path"],
+                {
+                    "path": row["path"],
+                    "size": row["size"],
+                    "modified": row["mtime"],
+                    "indexed_only": True,
+                },
+            )
+    except Exception:
+        pass
+
+    files = sorted(files_by_path.values(), key=lambda item: item.get("modified", 0), reverse=True)
     return {"files": files}
+
+
+@router.delete("/files/{name:path}")
+async def delete_memory_file(name: str):
+    mgr = get_memory_manager()
+    try:
+        result = mgr.delete_memory_path(name, delete_file=True)
+        return {"status": "ok", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
+
+
+@router.delete("/index/{name:path}")
+async def delete_memory_index(name: str):
+    mgr = get_memory_manager()
+    result = mgr.storage.delete_indexed_file(name)
+    if result["deleted_chunks"] == 0 and result["deleted_index_files"] == 0:
+        raise HTTPException(status_code=404, detail="Indexed memory not found")
+    return {"status": "ok", "deleted_file": False, **result}
 
 
 @router.get("/files/{name:path}")
@@ -96,7 +136,12 @@ async def get_memory_file(name: str):
         raise HTTPException(status_code=403, detail="Path outside workspace")
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        mgr = get_memory_manager()
+        rows = mgr.storage.get_chunks_by_path(name)
+        if not rows:
+            raise HTTPException(status_code=404, detail="File not found")
+        content = "\n\n".join(row["text"] for row in rows)
+        return {"path": name, "content": content, "size": len(content), "indexed_only": True}
 
     content = file_path.read_text(encoding="utf-8")
     return {"path": name, "content": content, "size": len(content)}

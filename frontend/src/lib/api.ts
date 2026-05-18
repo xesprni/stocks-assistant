@@ -15,6 +15,7 @@ import type {
   IntradayResponse,
   KnowledgeFileContent,
   KnowledgeGraph,
+  KnowledgeSaveResponse,
   KnowledgeTree,
   MarketTemperature,
   MCPServerToolsResponse,
@@ -376,6 +377,20 @@ export function getMemoryFile(path: string) {
   return request<MemoryFileContent>(`/api/v1/memory/files/${encodeURIComponent(path)}`);
 }
 
+export function deleteMemoryFile(path: string) {
+  return request<{ status: string; deleted_file: boolean; deleted_chunks: number }>(
+    `/api/v1/memory/files/${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function deleteMemoryIndex(path: string) {
+  return request<{ status: string; deleted_file: boolean; deleted_chunks: number }>(
+    `/api/v1/memory/index/${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+}
+
 // ── Knowledge ─────────────────────────────────────────────────────────────────
 
 export function getKnowledgeTree() {
@@ -394,6 +409,25 @@ export function getKnowledgeFile(path: string) {
 
 export function getKnowledgeGraph() {
   return request<KnowledgeGraph>("/api/v1/knowledge/graph");
+}
+
+export function saveKnowledgeFile(payload: { filename: string; content: string; directory?: string }) {
+  return request<KnowledgeSaveResponse>("/api/v1/knowledge/files", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadKnowledgeFile(file: File, directory?: string) {
+  const content = await file.text();
+  return saveKnowledgeFile({ filename: file.name, content, directory });
+}
+
+export function saveKnowledgeUrl(payload: { url: string; filename?: string; directory?: string }) {
+  return request<KnowledgeSaveResponse>("/api/v1/knowledge/url", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────

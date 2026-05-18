@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # ---- 功能开关 ----
     knowledge_enabled: bool = True  # 是否启用知识库
     memory_enabled: bool = True  # 是否启用长期记忆
+    memory_auto_curate_enabled: bool = True  # 是否从对话中自动筛选长期记忆
+    memory_curator_min_importance: float = 0.7  # 自动记忆重要性阈值
+    memory_curator_min_confidence: float = 0.7  # 自动记忆置信度阈值
     scheduler_enabled: bool = True  # 是否启用定时任务
     tracing_enabled: bool = False  # 是否启用 Agent 调用追踪
 

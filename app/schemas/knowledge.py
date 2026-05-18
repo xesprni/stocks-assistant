@@ -25,6 +25,28 @@ class KnowledgeFileResponse(BaseModel):
     size: int  # 文件大小
 
 
+class KnowledgeFileSaveRequest(BaseModel):
+    """保存本地上传文本文件到知识库"""
+    filename: str
+    content: str
+    directory: Optional[str] = None
+
+
+class KnowledgeUrlSaveRequest(BaseModel):
+    """读取指定 URL 内容并保存到知识库"""
+    url: str
+    filename: Optional[str] = None
+    directory: Optional[str] = None
+
+
+class KnowledgeSaveResponse(BaseModel):
+    """知识文件保存响应"""
+    status: str
+    path: str
+    size: int
+    source: Optional[str] = None
+
+
 class KnowledgeGraphNode(BaseModel):
     """知识图谱节点"""
     id: str  # 节点 ID（文件相对路径）

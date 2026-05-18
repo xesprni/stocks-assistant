@@ -151,7 +151,16 @@ class MemoryManager:
             else:
                 path = f"memory/shared/memory_{content_hash}.md"
 
-        chunks = self.chunker.chunk_text(content)
+        workspace_dir = self.config.get_workspace()
+        file_path = (workspace_dir / path).resolve()
+        if not str(file_path).startswith(str(workspace_dir.resolve())):
+            raise ValueError("Memory path outside workspace")
+        stored_content = content if content.endswith("\n") else f"{content}\n"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(stored_content, encoding="utf-8")
+        rel_path = str(file_path.relative_to(workspace_dir))
+
+        chunks = self.chunker.chunk_text(stored_content)
         texts = [chunk.text for chunk in chunks]
         if self.embedding_provider:
             embeddings = self.embedding_provider.embed_batch(texts)
@@ -160,20 +169,21 @@ class MemoryManager:
 
         memory_chunks = []
         for chunk, embedding in zip(chunks, embeddings):
-            chunk_id = self._generate_chunk_id(path, chunk.start_line, chunk.end_line)
+            chunk_id = self._generate_chunk_id(rel_path, chunk.start_line, chunk.end_line)
             chunk_hash = MemoryStorage.compute_hash(chunk.text)
             memory_chunks.append(MemoryChunk(
                 id=chunk_id, user_id=user_id, scope=scope, source=source,
-                path=path, start_line=chunk.start_line, end_line=chunk.end_line,
+                path=rel_path, start_line=chunk.start_line, end_line=chunk.end_line,
                 text=chunk.text, embedding=embedding, hash=chunk_hash, metadata=metadata,
             ))
 
         self.storage.save_chunks_batch(memory_chunks)
 
-        file_hash = MemoryStorage.compute_hash(content)
+        stat = file_path.stat()
+        file_hash = MemoryStorage.compute_hash(stored_content)
         self.storage.update_file_metadata(
-            path=path, source=source, file_hash=file_hash,
-            mtime=int(datetime.now().timestamp()), size=len(content),
+            path=rel_path, source=source, file_hash=file_hash,
+            mtime=int(stat.st_mtime), size=stat.st_size,
         )
 
     async def sync(self, force: bool = False):
@@ -297,6 +307,26 @@ class MemoryManager:
 
     def mark_dirty(self):
         self._dirty = True
+
+    def delete_memory_path(self, path: str, delete_file: bool = True) -> Dict[str, Any]:
+        """Delete a memory path from the index and optionally from disk."""
+        workspace_dir = self.config.get_workspace().resolve()
+        file_path = (workspace_dir / path).resolve()
+        if not str(file_path).startswith(str(workspace_dir)):
+            raise ValueError("Memory path outside workspace")
+
+        deleted_file = False
+        if delete_file and file_path.exists():
+            if file_path.is_dir():
+                raise ValueError("Cannot delete a directory as a memory file")
+            if file_path.suffix.lower() != ".md":
+                raise ValueError("Only markdown memory files can be deleted")
+            file_path.unlink()
+            deleted_file = True
+
+        deleted_index = self.storage.delete_indexed_file(path)
+        self._dirty = False
+        return {"deleted_file": deleted_file, **deleted_index}
 
     def close(self):
         self.storage.close()

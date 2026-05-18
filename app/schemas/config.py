@@ -29,6 +29,9 @@ class AppConfig(BaseModel):
 
     knowledge_enabled: bool
     memory_enabled: bool
+    memory_auto_curate_enabled: bool = True
+    memory_curator_min_importance: float = 0.7
+    memory_curator_min_confidence: float = 0.7
     scheduler_enabled: bool
     tracing_enabled: bool = False
     debug: bool
@@ -75,6 +78,9 @@ class ConfigUpdate(BaseModel):
 
     knowledge_enabled: Optional[bool] = None
     memory_enabled: Optional[bool] = None
+    memory_auto_curate_enabled: Optional[bool] = None
+    memory_curator_min_importance: Optional[float] = None
+    memory_curator_min_confidence: Optional[float] = None
     scheduler_enabled: Optional[bool] = None
     tracing_enabled: Optional[bool] = None
     debug: Optional[bool] = None
