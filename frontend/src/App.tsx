@@ -2355,7 +2355,7 @@ function ConfigPage({
                 </Field>
                 <Field label="Parse Mode">
                   <Input
-                    placeholder="留空、HTML 或 MarkdownV2"
+                    placeholder="留空自动渲染，plain 为纯文本"
                     value={draft.telegram_parse_mode ?? ""}
                     onChange={(event) => patchDraft({ telegram_parse_mode: event.target.value })}
                   />

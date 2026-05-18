@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""  # Telegram Bot Token
     telegram_chat_id: str = ""  # 默认发送目标 chat_id
     telegram_api_base: str = "https://api.telegram.org"  # Telegram Bot API 地址
-    telegram_parse_mode: str = ""  # 可选：MarkdownV2、HTML；为空则纯文本
+    telegram_parse_mode: str = ""  # 可选：留空/auto 将 Markdown 转 HTML；plain 纯文本
 
     # ---- MCP 服务器配置 ----
     # 格式: {"server_name": {"transport": "streamable_http", "url": "..."}}

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import html
+import re
 from typing import Any
 
 import httpx
 
 
 TELEGRAM_MESSAGE_LIMIT = 4096
+TELEGRAM_FORMATTED_SOURCE_LIMIT = 3000
+TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT = 1800
 
 
 class TelegramConfigError(RuntimeError):
@@ -46,11 +50,31 @@ class TelegramSender:
         if not self.bot_token or not self.chat_id:
             raise TelegramConfigError("Telegram bot token or chat id is missing")
 
-        chunks = _chunk_message(text.strip() or "(empty)")
-        responses = [self._send_chunk(chunk) for chunk in chunks]
+        text = text.strip() or "(empty)"
+        render_html = _should_render_markdown_as_html(self.parse_mode)
+        limit = TELEGRAM_FORMATTED_SOURCE_LIMIT if render_html else TELEGRAM_MESSAGE_LIMIT
+        chunks = _chunk_message(text, limit=limit)
+
+        responses = []
+        for chunk in chunks:
+            if render_html:
+                rendered = _markdown_to_telegram_html(chunk)
+                if len(rendered) > TELEGRAM_MESSAGE_LIMIT:
+                    for sub_chunk in _chunk_message(chunk, limit=TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT):
+                        responses.append(
+                            self._send_chunk(
+                                _markdown_to_telegram_html(sub_chunk),
+                                parse_mode="HTML",
+                                fallback_text=_markdown_to_plain_text(sub_chunk),
+                            )
+                        )
+                else:
+                    responses.append(self._send_chunk(rendered, parse_mode="HTML", fallback_text=_markdown_to_plain_text(chunk)))
+            else:
+                responses.append(self._send_chunk(chunk, parse_mode=_telegram_parse_mode(self.parse_mode)))
         return {"ok": True, "chunks": len(responses), "responses": responses}
 
-    def _send_chunk(self, text: str) -> dict[str, Any]:
+    def _send_chunk(self, text: str, parse_mode: str = "", fallback_text: str | None = None) -> dict[str, Any]:
         api_base = self.api_base.rstrip("/")
         url = f"{api_base}/bot{self.bot_token}/sendMessage"
         payload: dict[str, Any] = {
@@ -58,14 +82,16 @@ class TelegramSender:
             "text": text,
             "disable_web_page_preview": True,
         }
-        if self.parse_mode:
-            payload["parse_mode"] = self.parse_mode
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.post(url, json=payload)
-            if self.parse_mode and response.status_code >= 400 and _should_retry_without_parse_mode(response):
+            if parse_mode and response.status_code >= 400 and _should_retry_without_parse_mode(response):
                 fallback_payload = dict(payload)
                 fallback_payload.pop("parse_mode", None)
+                if fallback_text is not None:
+                    fallback_payload["text"] = fallback_text
                 response = client.post(url, json=fallback_payload)
 
         if response.status_code >= 400:
@@ -78,20 +104,143 @@ class TelegramSender:
         return data
 
 
-def _chunk_message(text: str) -> list[str]:
-    if len(text) <= TELEGRAM_MESSAGE_LIMIT:
+def _chunk_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
+    if len(text) <= limit:
         return [text]
 
     chunks: list[str] = []
     remaining = text
     while remaining:
-        chunk = remaining[:TELEGRAM_MESSAGE_LIMIT]
+        chunk = remaining[:limit]
         split_at = max(chunk.rfind("\n"), chunk.rfind(" "))
-        if split_at > TELEGRAM_MESSAGE_LIMIT * 0.6:
+        if split_at > limit * 0.6:
             chunk = remaining[:split_at]
         chunks.append(chunk)
         remaining = remaining[len(chunk):].lstrip()
     return chunks
+
+
+def _should_render_markdown_as_html(parse_mode: str) -> bool:
+    mode = (parse_mode or "").strip().lower()
+    return mode in {"", "auto", "html", "markdown", "markdownv2"}
+
+
+def _telegram_parse_mode(parse_mode: str) -> str:
+    mode = (parse_mode or "").strip()
+    if mode.lower() in {"", "auto", "plain", "none", "text"}:
+        return ""
+    return mode
+
+
+def _markdown_to_telegram_html(text: str) -> str:
+    lines = text.splitlines()
+    output: list[str] = []
+    code_lines: list[str] = []
+    table_lines: list[str] = []
+    in_code = False
+
+    def flush_code() -> None:
+        nonlocal code_lines
+        if code_lines:
+            output.append(f"<pre>{html.escape(chr(10).join(code_lines), quote=False)}</pre>")
+            code_lines = []
+
+    def flush_table() -> None:
+        nonlocal table_lines
+        if table_lines:
+            output.append(f"<pre>{html.escape(chr(10).join(table_lines), quote=False)}</pre>")
+            table_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_table()
+            if in_code:
+                flush_code()
+            in_code = not in_code
+            continue
+
+        if in_code:
+            code_lines.append(line)
+            continue
+
+        if _looks_like_markdown_table_line(line):
+            table_lines.append(line)
+            continue
+
+        flush_table()
+        if not stripped:
+            output.append("")
+            continue
+        if re.fullmatch(r"[-*_]{3,}", stripped):
+            output.append("────────")
+            continue
+
+        heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading:
+            output.append(f"<b>{_format_inline_markdown(heading.group(2))}</b>")
+            continue
+
+        quote = re.match(r"^>\s?(.*)$", stripped)
+        if quote:
+            output.append(f"<blockquote>{_format_inline_markdown(quote.group(1))}</blockquote>")
+            continue
+
+        output.append(_format_inline_markdown(line))
+
+    if in_code:
+        flush_code()
+    flush_table()
+    return "\n".join(output).strip() or html.escape(text.strip() or "(empty)", quote=False)
+
+
+def _format_inline_markdown(text: str) -> str:
+    parts = re.split(r"(`[^`]*`)", text)
+    rendered: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part.startswith("`") and part.endswith("`"):
+            rendered.append(f"<code>{html.escape(part[1:-1], quote=False)}</code>")
+        else:
+            rendered.append(_format_inline_without_code(part))
+    return "".join(rendered)
+
+
+def _format_inline_without_code(text: str) -> str:
+    placeholders: list[str] = []
+
+    def link_repl(match: re.Match[str]) -> str:
+        label = html.escape(match.group(1), quote=False)
+        url = html.escape(match.group(2), quote=True)
+        placeholders.append(f'<a href="{url}">{label}</a>')
+        return f"@@TG_LINK_{len(placeholders) - 1}@@"
+
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", link_repl, text)
+    escaped = html.escape(text, quote=False)
+    escaped = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"__([^_\n]+?)__", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"~~([^~\n]+?)~~", r"<s>\1</s>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"<i>\1</i>", escaped)
+
+    for index, value in enumerate(placeholders):
+        escaped = escaped.replace(f"@@TG_LINK_{index}@@", value)
+    return escaped
+
+
+def _looks_like_markdown_table_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.count("|") >= 2 and ("---" in stripped or stripped.startswith("|") or stripped.endswith("|"))
+
+
+def _markdown_to_plain_text(text: str) -> str:
+    text = re.sub(r"```(?:\w+)?\n?", "", text)
+    text = text.replace("```", "")
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*([^*\n]+?)\*\*", r"\1", text)
+    text = re.sub(r"__([^_\n]+?)__", r"\1", text)
+    text = re.sub(r"~~([^~\n]+?)~~", r"\1", text)
+    text = re.sub(r"`([^`\n]+?)`", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"\1 (\2)", text)
+    return text.strip() or "(empty)"
 
 
 def _telegram_error_detail(response: httpx.Response) -> str:
