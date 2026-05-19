@@ -279,6 +279,11 @@ async def stream_chat(request: ChatRequest):
                     })
                 return
 
+            if event_type == "subagent_event":
+                child_type = str((event.get("data") or {}).get("child_event_type") or "")
+                if child_type in {"reasoning_update", "llm_call_start", "llm_call_end", "llm_call_error"}:
+                    return
+
             # The executor emits agent_end before the message is persisted.
             # Send the public terminal event after persistence so the client
             # receives session_id and message_id together with the final text.

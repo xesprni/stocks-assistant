@@ -40,6 +40,7 @@ class Agent:
         workspace_dir: Optional[str] = None,
         skill_manager=None,
         enable_skills: bool = True,
+        multi_agent_depth: int = 0,
     ):
         self.system_prompt = system_prompt  # 系统提示词
         self.model: LLMModel = model  # LLM 模型实例
@@ -53,6 +54,7 @@ class Agent:
         self.workspace_dir = workspace_dir  # 工作空间目录
         self.enable_skills = enable_skills  # 是否启用技能
         self.active_skill_filter = None  # 当前请求允许读取的技能集合
+        self.multi_agent_depth = multi_agent_depth  # 多 Agent 委派深度
 
         # 技能管理器（从 Markdown 文件加载技能定义）
         self.skill_manager = None
@@ -92,8 +94,39 @@ Use memory_search proactively before answering when the request may depend on pr
 - follow-up wording such as "continue", "last time", "之前", "上次", "我的", "按老规则", or similar references;
 - tasks where personalization or continuity would materially improve the answer.
 
-Use targeted queries based on the current request. If search results are relevant but snippets are insufficient, use memory_get to read the cited file and line range. Do not claim to remember private facts unless they are present in the current conversation or retrieved from memory in this turn. If no relevant memory is found, continue normally without over-explaining the miss.
-</long_term_memory_policy>"""
+    Use targeted queries based on the current request. If search results are relevant but snippets are insufficient, use memory_get to read the cited file and line range. Do not claim to remember private facts unless they are present in the current conversation or retrieved from memory in this turn. If no relevant memory is found, continue normally without over-explaining the miss.
+    </long_term_memory_policy>"""
+
+    def get_multi_agent_prompt(self) -> str:
+        """获取多 Agent 委派策略提示词。"""
+        if self.multi_agent_depth > 0:
+            return ""
+        try:
+            from app.config import get_settings
+
+            settings = get_settings()
+        except Exception:
+            return ""
+        if not getattr(settings, "multi_agent_enabled", False):
+            return ""
+
+        roles = getattr(settings, "multi_agent_roles", {}) or {}
+        role_lines = []
+        for name, role in roles.items():
+            description = role.get("description", "") if isinstance(role, dict) else ""
+            tools = role.get("tool_allowlist", []) if isinstance(role, dict) else []
+            tools_text = ", ".join(str(tool) for tool in tools) if isinstance(tools, list) and tools else "(none)"
+            role_lines.append(f"- {name}: {description} Tools: {tools_text}")
+
+        roles_text = "\n".join(role_lines) if role_lines else "- No sub-agent roles configured."
+        return f"""<multi_agent_delegation_policy>
+You can use the delegate_agent tool for complex tasks that benefit from independent research, parallel analysis, or critique.
+
+Use delegation when the request has separable workstreams, such as fundamentals vs. technicals vs. risks. Do not delegate simple factual or single-step questions.
+Sub-agents are isolated workers: they return findings to you, and you remain responsible for the final answer. Ask sub-agents for concise, evidence-grounded briefs.
+Available sub-agent roles:
+{roles_text}
+</multi_agent_delegation_policy>"""
 
     def get_full_system_prompt(self, skill_filter=None) -> str:
         """构建完整的系统提示词（基础提示词 + 技能提示词）"""
@@ -101,6 +134,9 @@ Use targeted queries based on the current request. If search results are relevan
         memory_prompt = self.get_memory_prompt()
         if memory_prompt:
             parts.append(memory_prompt)
+        multi_agent_prompt = self.get_multi_agent_prompt()
+        if multi_agent_prompt:
+            parts.append(multi_agent_prompt)
         skills_prompt = self.get_skills_prompt(skill_filter=skill_filter)
         if skills_prompt:
             parts.append(skills_prompt)

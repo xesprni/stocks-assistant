@@ -9,6 +9,7 @@
 - **知识库** — 基于文件的知识管理，支持目录树浏览和内容索引
 - **技能系统** — Markdown 格式技能文件，运行时动态加载与切换
 - **工具系统** — 内置多种工具（Web 搜索、文件读写、Bash、记忆检索等），支持 MCP 协议扩展
+- **多 Agent 编排** — 主 Agent 可通过 `delegate_agent` 并行委派研究、分析和风险审查子任务
 - **任务调度** — 基于 Cron 表达式的定时任务管理
 
 ## 内置工具
@@ -23,6 +24,7 @@
 | `memory_search` | 语义搜索记忆 |
 | `memory_get` | 获取记忆内容 |
 | `get_financial_reports` | 通过 Longbridge SDK 查询利润表、资产负债表、现金流量表 |
+| `delegate_agent` | 批量委派智能体执行独立研究/分析任务 |
 
 ## 快速开始
 
@@ -71,6 +73,37 @@ cp config.example.json config.json
 export APP_LLM_API_KEY=your-api-key
 export APP_LLM_MODEL=gpt-4o
 ```
+
+### 多 Agent 编排
+
+默认启用 `delegate_agent` 工具。主 Agent 会在复杂任务中把可分离的工作流委派给配置好的智能体角色，例如基本面、技术面和风险审查并行分析后再汇总：
+
+```json
+{
+  "multi_agent_enabled": true,
+  "multi_agent_max_parallel_agents": 3,
+  "multi_agent_default_max_steps": 8,
+  "multi_agent_max_depth": 1,
+  "multi_agent_dangerous_tools": ["bash", "write_file", "scheduler"],
+  "multi_agent_roles": {
+    "researcher": {
+      "description": "Gather facts and source context.",
+      "system_prompt": "You are a focused research sub-agent. Return a concise evidence-grounded brief.",
+      "tool_allowlist": ["web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"],
+      "max_steps": 8,
+      "allow_dangerous_tools": false
+    }
+  }
+}
+```
+
+示例提问：
+
+```text
+请并行委派基本面、技术面、风险审查三个子任务分析 AAPL.US，然后给我一个综合观点。
+```
+
+智能体的过程会通过 SSE `subagent_*` 事件显示在聊天进度和 Agent Tracing 中；主聊天正文只保留主 Agent 的最终汇总。
 
 ### 启动服务
 

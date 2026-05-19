@@ -622,9 +622,14 @@ class AgentStreamExecutor:
 
             tool.model = self.model
             tool.context = self.agent
+            tool.event_emitter = self._emit_event
+            tool.current_tool_call = {"id": tool_id, "name": tool_name}
 
             start_time = time.time()
-            result: ToolResult = tool.execute_tool(arguments)
+            try:
+                result: ToolResult = tool.execute_tool(arguments)
+            finally:
+                tool.current_tool_call = None
             execution_time = time.time() - start_time
 
             result_dict = {

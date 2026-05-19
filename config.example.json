@@ -6,9 +6,52 @@
   "embedding_api_base": "https://api.openai.com/v1",
   "embedding_model": "text-embedding-3-small",
   "workspace_dir": "~/stocks-assistant",
+  "app_language": "zh",
   "agent_max_steps": 20,
   "agent_max_context_tokens": 50000,
   "agent_max_context_turns": 20,
+  "multi_agent_enabled": true,
+  "multi_agent_max_parallel_agents": 3,
+  "multi_agent_default_max_steps": 8,
+  "multi_agent_max_depth": 1,
+  "multi_agent_dangerous_tools": ["bash", "write_file", "scheduler"],
+  "multi_agent_roles": {
+    "researcher": {
+      "description": "Gather facts, source context, and relevant background before analysis.",
+      "system_prompt": "You are a focused research sub-agent for Stocks Assistant. Gather verifiable facts, cite tool outputs when available, distinguish confirmed information from inference, and return a concise research brief for the orchestrating agent.",
+      "tool_allowlist": ["web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"],
+      "max_steps": 8,
+      "allow_dangerous_tools": false
+    },
+    "fundamental_analyst": {
+      "description": "Analyze company fundamentals, reports, profitability, balance sheet, and valuation drivers.",
+      "system_prompt": "You are a fundamentals analysis sub-agent. Focus on financial statements, business quality, growth, profitability, cash flow, leverage, valuation context, and material risks.",
+      "tool_allowlist": ["web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"],
+      "max_steps": 8,
+      "allow_dangerous_tools": false
+    },
+    "technical_analyst": {
+      "description": "Analyze price action, trend, momentum, support/resistance, and market structure.",
+      "system_prompt": "You are a technical analysis sub-agent. Focus on trend, momentum, levels, volume context, and invalidation points.",
+      "tool_allowlist": ["web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"],
+      "max_steps": 8,
+      "allow_dangerous_tools": false
+    },
+    "risk_critic": {
+      "description": "Challenge assumptions, identify downside scenarios, blind spots, and missing evidence.",
+      "system_prompt": "You are a risk critic sub-agent. Challenge the thesis and identify missing evidence, downside scenarios, data quality issues, and invalidation conditions.",
+      "tool_allowlist": ["web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"],
+      "max_steps": 6,
+      "allow_dangerous_tools": false
+    },
+    "summarizer": {
+      "description": "Condense sub-agent findings into a concise synthesis for the orchestrating agent.",
+      "system_prompt": "You are a synthesis sub-agent. Condense provided findings into concise, non-redundant points.",
+      "tool_allowlist": ["read_skill", "memory_search", "memory_get"],
+      "max_steps": 5,
+      "allow_dangerous_tools": false
+    }
+  },
   "knowledge_enabled": true,
   "memory_enabled": true,
   "memory_auto_curate_enabled": true,

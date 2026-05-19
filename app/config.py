@@ -7,6 +7,7 @@
 4. 默认值
 """
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type
 
@@ -30,6 +31,72 @@ Your goal is to help users understand markets more clearly, not to make final in
 Always remind users that your analysis is for research and educational purposes only and does not constitute personalized investment advice."""
 
 
+DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
+    "web_fetch",
+    "read_file",
+    "read_skill",
+    "memory_search",
+    "memory_get",
+    "get_financial_reports",
+]
+
+
+DEFAULT_MULTI_AGENT_ROLES: Dict[str, Dict[str, Any]] = {
+    "researcher": {
+        "description": "Gather facts, source context, and relevant background before analysis.",
+        "system_prompt": (
+            "You are a focused research sub-agent for Stocks Assistant. Gather verifiable facts, "
+            "cite tool outputs when available, distinguish confirmed information from inference, "
+            "and return a concise research brief for the orchestrating agent."
+        ),
+        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
+        "max_steps": 8,
+        "allow_dangerous_tools": False,
+    },
+    "fundamental_analyst": {
+        "description": "Analyze company fundamentals, reports, profitability, balance sheet, and valuation drivers.",
+        "system_prompt": (
+            "You are a fundamentals analysis sub-agent. Focus on financial statements, business quality, "
+            "growth, profitability, cash flow, leverage, valuation context, and material risks. "
+            "Return a structured brief with facts, assumptions, and watch items."
+        ),
+        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
+        "max_steps": 8,
+        "allow_dangerous_tools": False,
+    },
+    "technical_analyst": {
+        "description": "Analyze price action, trend, momentum, support/resistance, and market structure.",
+        "system_prompt": (
+            "You are a technical analysis sub-agent. Focus on trend, momentum, levels, volume context, "
+            "and invalidation points. Be explicit about timeframe assumptions and avoid certainty."
+        ),
+        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
+        "max_steps": 8,
+        "allow_dangerous_tools": False,
+    },
+    "risk_critic": {
+        "description": "Challenge assumptions, identify downside scenarios, blind spots, and missing evidence.",
+        "system_prompt": (
+            "You are a risk critic sub-agent. Challenge the thesis, identify missing evidence, downside "
+            "scenarios, concentration risks, data quality issues, and conditions that would invalidate the view."
+        ),
+        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
+        "max_steps": 6,
+        "allow_dangerous_tools": False,
+    },
+    "summarizer": {
+        "description": "Condense sub-agent findings into a concise synthesis for the orchestrating agent.",
+        "system_prompt": (
+            "You are a synthesis sub-agent. Condense provided findings into concise, non-redundant points, "
+            "separating facts, inferences, risks, and suggested next checks."
+        ),
+        "tool_allowlist": ["read_skill", "memory_search", "memory_get"],
+        "max_steps": 5,
+        "allow_dangerous_tools": False,
+    },
+}
+
+
 class Settings(BaseSettings):
     """应用全局配置
 
@@ -49,11 +116,22 @@ class Settings(BaseSettings):
 
     # ---- 工作空间 ----
     workspace_dir: str = "~/stocks-assistant"  # 工作空间根目录
+    app_language: str = "zh"  # UI 语言：zh / en
 
     # ---- Agent 智能体配置 ----
     agent_max_steps: int = 20  # 单次对话最大工具调用轮数
     agent_max_context_tokens: int = 50000  # 上下文窗口最大 token 数
     agent_max_context_turns: int = 20  # 上下文最大对话轮数
+    multi_agent_enabled: bool = True  # 是否启用多 Agent 委派工具
+    multi_agent_max_parallel_agents: int = 3  # 单次委派最多并行智能体数
+    multi_agent_default_max_steps: int = 8  # 智能体默认最大执行步数
+    multi_agent_max_depth: int = 1  # V1 固定为 1，避免递归委派
+    multi_agent_dangerous_tools: list[str] = Field(
+        default_factory=lambda: ["bash", "write_file", "scheduler"],
+    )
+    multi_agent_roles: Dict[str, Dict[str, Any]] = Field(
+        default_factory=lambda: deepcopy(DEFAULT_MULTI_AGENT_ROLES),
+    )
 
     # ---- 功能开关 ----
     knowledge_enabled: bool = True  # 是否启用知识库
@@ -132,6 +210,16 @@ class Settings(BaseSettings):
         from app.core.tools.mcp.config import normalize_mcp_servers
 
         return normalize_mcp_servers(value)
+
+    @field_validator("app_language", mode="before")
+    @classmethod
+    def validate_app_language(cls, value):
+        normalized = str(value or "zh").strip().lower()
+        if normalized in {"zh", "zh-cn", "cn", "chinese"}:
+            return "zh"
+        if normalized in {"en", "en-us", "english"}:
+            return "en"
+        return "zh"
 
 
 # 全局配置单例

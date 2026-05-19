@@ -23,9 +23,16 @@ class AppConfig(BaseModel):
     has_embedding_api_key: bool = False
 
     workspace_dir: str
+    app_language: str = "zh"
     agent_max_steps: int
     agent_max_context_tokens: int
     agent_max_context_turns: int
+    multi_agent_enabled: bool = True
+    multi_agent_max_parallel_agents: int = 3
+    multi_agent_default_max_steps: int = 8
+    multi_agent_max_depth: int = 1
+    multi_agent_dangerous_tools: list[str] = Field(default_factory=list)
+    multi_agent_roles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     knowledge_enabled: bool
     memory_enabled: bool
@@ -72,9 +79,16 @@ class ConfigUpdate(BaseModel):
     embedding_provider: Optional[str] = None
 
     workspace_dir: Optional[str] = None
+    app_language: Optional[str] = None
     agent_max_steps: Optional[int] = None
     agent_max_context_tokens: Optional[int] = None
     agent_max_context_turns: Optional[int] = None
+    multi_agent_enabled: Optional[bool] = None
+    multi_agent_max_parallel_agents: Optional[int] = None
+    multi_agent_default_max_steps: Optional[int] = None
+    multi_agent_max_depth: Optional[int] = None
+    multi_agent_dangerous_tools: Optional[list[str]] = None
+    multi_agent_roles: Optional[Dict[str, Dict[str, Any]]] = None
 
     knowledge_enabled: Optional[bool] = None
     memory_enabled: Optional[bool] = None

@@ -41,12 +41,21 @@ class ToolManager:
         from app.core.tools.read_skill import ReadSkillTool
         from app.core.tools.write_file import WriteFileTool
         from app.core.tools.financial_reports import GetFinancialReportsTool
+        from app.core.tools.delegate_agent import DelegateAgentTool
         from app.core.tools.memory_search import MemorySearchTool
         from app.core.tools.memory_get import MemoryGetTool
         from app.core.tools.scheduler.tool import SchedulerTool
 
         # builtin = [BashTool, WebSearchTool, WebFetchTool, ReadFileTool, WriteFileTool]
-        builtin = [BashTool, WebFetchTool, ReadFileTool, ReadSkillTool, WriteFileTool, GetFinancialReportsTool]
+        builtin = [
+            BashTool,
+            WebFetchTool,
+            ReadFileTool,
+            ReadSkillTool,
+            WriteFileTool,
+            GetFinancialReportsTool,
+            DelegateAgentTool,
+        ]
 
         if memory_manager:
             builtin.append(MemorySearchTool)
@@ -54,7 +63,7 @@ class ToolManager:
 
         for cls in builtin:
             try:
-                inst = cls()
+                inst = self._instantiate_tool(cls)
                 self.tool_classes[inst.name] = cls
                 logger.debug(f"Loaded tool: {inst.name}")
             except Exception as e:
@@ -80,7 +89,7 @@ class ToolManager:
                     cls = getattr(module, attr_name)
                     if isinstance(cls, type) and issubclass(cls, BaseTool) and cls is not BaseTool:
                         try:
-                            inst = cls()
+                            inst = self._instantiate_tool(cls)
                             self.tool_classes[inst.name] = cls
                         except Exception as e:
                             logger.warning(f"Failed to load tool from {py_file}: {e}")
@@ -90,7 +99,7 @@ class ToolManager:
         tools = []
         for name, cls in self.tool_classes.items():
             try:
-                inst = cls()
+                inst = self._instantiate_tool(cls)
                 if name in self.tool_configs:
                     inst.config = self.tool_configs[name]
                 tools.append(inst)
@@ -101,7 +110,7 @@ class ToolManager:
     def create_tool(self, name: str) -> Optional[BaseTool]:
         tool_class = self.tool_classes.get(name)
         if tool_class:
-            inst = tool_class()
+            inst = self._instantiate_tool(tool_class)
             if name in self.tool_configs:
                 inst.config = self.tool_configs[name]
             return inst
@@ -113,14 +122,14 @@ class ToolManager:
     def list_tools(self) -> dict:
         result = {}
         for name, tool_class in self.tool_classes.items():
-            inst = tool_class()
+            inst = self._instantiate_tool(tool_class)
             result[name] = {"description": inst.description, "parameters": inst.get_json_schema()}
         return result
 
     def get_tool_schemas_for_llm(self) -> list:
         schemas = []
         for name in self.tool_classes:
-            inst = self.tool_classes[name]()
+            inst = self._instantiate_tool(self.tool_classes[name])
             schemas.append({
                 "type": "function",
                 "function": {
@@ -130,3 +139,11 @@ class ToolManager:
                 },
             })
         return schemas
+
+    def _instantiate_tool(self, tool_class: type) -> BaseTool:
+        class_name = getattr(tool_class, "__name__", "")
+        if class_name in {"ReadFileTool", "WriteFileTool"}:
+            return tool_class(workspace_dir=self.workspace_dir or ".")
+        if class_name == "BashTool" and self.workspace_dir:
+            return tool_class(config={"cwd": self.workspace_dir})
+        return tool_class()

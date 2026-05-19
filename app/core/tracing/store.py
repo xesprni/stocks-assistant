@@ -448,6 +448,13 @@ class TraceRecorder:
         self.tool_events: dict[str, dict[str, Any]] = {}
         self.message_buffer: list[str] = []
         self.message_delta_count = 0
+        self.subagent_batches: dict[str, dict[str, Any]] = {}
+        self.subagent_tasks: dict[tuple[str, str], dict[str, Any]] = {}
+        self.subagent_turns: dict[tuple[str, str, int], str] = {}
+        self.subagent_tools: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.subagent_llm_events: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.subagent_message_buffers: dict[tuple[str, str], list[str]] = {}
+        self.subagent_message_counts: dict[tuple[str, str], int] = {}
 
     @classmethod
     def start(cls, store: TraceStore, session_id: str, user_message: str) -> "TraceRecorder":
@@ -504,6 +511,7 @@ class TraceRecorder:
     ) -> None:
         try:
             self._flush_message_delta()
+            self._flush_all_subagent_message_deltas()
             self.store.finish_run(
                 run_id=self.run_id,
                 root_event_id=self.root_event_id,
@@ -708,6 +716,83 @@ class TraceRecorder:
             )
             return
 
+        if event_type == "subagent_batch_start":
+            batch_id = str(data.get("batch_id") or _new_id())
+            parent_tool_call_id = str(data.get("parent_tool_call_id") or "")
+            parent_id = self.current_turn_id or self.root_event_id
+            tool_info = self.tool_events.get(parent_tool_call_id)
+            if tool_info:
+                parent_id = tool_info["event_id"]
+            event_id = self.store.add_event(
+                self.run_id,
+                node_type="subagent_batch",
+                title="Sub-agent batch",
+                status="running",
+                payload=data,
+                parent_id=parent_id,
+                started_at=timestamp,
+                summary=f"{data.get('task_count', 0)} sub-agent task(s)",
+            )
+            self.subagent_batches[batch_id] = {"event_id": event_id, "started_at": timestamp}
+            return
+
+        if event_type == "subagent_batch_end":
+            batch_id = str(data.get("batch_id") or "")
+            info = self.subagent_batches.pop(batch_id, None)
+            if info:
+                status = "done" if data.get("status") == "success" else "error"
+                duration = data.get("duration_ms")
+                self.store.update_event(
+                    info["event_id"],
+                    status=status,
+                    payload=data,
+                    ended_at=timestamp,
+                    duration_ms=duration if isinstance(duration, (int, float)) else _duration_ms(info.get("started_at"), timestamp),
+                    summary=f"Sub-agent batch: {data.get('status') or status}",
+                )
+            return
+
+        if event_type == "subagent_start":
+            batch_id = str(data.get("batch_id") or "")
+            task_id = str(data.get("task_id") or _new_id())
+            role = str(data.get("role") or "subagent")
+            batch_info = self.subagent_batches.get(batch_id)
+            parent_id = (batch_info or {}).get("event_id") or self.current_turn_id or self.root_event_id
+            event_id = self.store.add_event(
+                self.run_id,
+                node_type="subagent",
+                title=f"Sub-agent: {role}",
+                status="running",
+                payload=data,
+                parent_id=parent_id,
+                started_at=timestamp,
+                summary=_preview(str(data.get("task") or "")),
+            )
+            self.subagent_tasks[(batch_id, task_id)] = {"event_id": event_id, "started_at": timestamp, "role": role}
+            return
+
+        if event_type == "subagent_end":
+            batch_id = str(data.get("batch_id") or "")
+            task_id = str(data.get("task_id") or "")
+            self._flush_subagent_message_delta(batch_id, task_id)
+            info = self.subagent_tasks.pop((batch_id, task_id), None)
+            if info:
+                status = "done" if data.get("status") == "success" else "error"
+                duration = data.get("duration_ms")
+                self.store.update_event(
+                    info["event_id"],
+                    status=status,
+                    payload=data,
+                    ended_at=timestamp,
+                    duration_ms=duration if isinstance(duration, (int, float)) else _duration_ms(info.get("started_at"), timestamp),
+                    summary=_preview(str(data.get("final_response") or data.get("error") or "Sub-agent finished")),
+                )
+            return
+
+        if event_type == "subagent_event":
+            self._handle_subagent_event(data, timestamp)
+            return
+
         if event_type == "error":
             self.store.add_event(
                 self.run_id,
@@ -721,6 +806,202 @@ class TraceRecorder:
                 duration_ms=0,
                 summary=str(data.get("error") or "Agent error"),
             )
+
+    def _handle_subagent_event(self, data: dict[str, Any], timestamp: Optional[float]) -> None:
+        batch_id = str(data.get("batch_id") or "")
+        task_id = str(data.get("task_id") or "")
+        role = str(data.get("role") or "subagent")
+        child_type = str(data.get("child_event_type") or "")
+        child_data = data.get("child_data") if isinstance(data.get("child_data"), dict) else {}
+        child_timestamp = data.get("child_timestamp") or timestamp
+        subagent_parent = self._subagent_parent_id(batch_id, task_id)
+
+        if child_type == "turn_start":
+            turn = child_data.get("turn")
+            title = f"{role} turn {turn}" if turn else f"{role} turn"
+            event_id = self.store.add_event(
+                self.run_id,
+                node_type="subagent_turn",
+                title=title,
+                status="running",
+                payload=data,
+                parent_id=subagent_parent,
+                started_at=child_timestamp,
+                summary=title,
+            )
+            if isinstance(turn, int):
+                self.subagent_turns[(batch_id, task_id, turn)] = event_id
+            return
+
+        if child_type == "turn_end":
+            turn = child_data.get("turn")
+            event_id = self.subagent_turns.get((batch_id, task_id, turn)) if isinstance(turn, int) else None
+            if event_id:
+                self.store.update_event(
+                    event_id,
+                    status="done" if not child_data.get("error") else "error",
+                    payload=data,
+                    ended_at=child_timestamp,
+                    summary=f"{role} turn {turn} done",
+                )
+            return
+
+        if child_type == "llm_call_start":
+            call_id = str(child_data.get("llm_call_id") or _new_id())
+            event_id = self.store.add_event(
+                self.run_id,
+                node_type="subagent_llm_call",
+                title=f"{role} LLM call",
+                status="running",
+                payload=data,
+                parent_id=self._subagent_active_turn_id(batch_id, task_id) or subagent_parent,
+                started_at=child_timestamp,
+                summary=f"{child_data.get('message_count', 0)} messages",
+            )
+            self.subagent_llm_events[(batch_id, task_id, call_id)] = {
+                "event_id": event_id,
+                "started_at": child_timestamp,
+            }
+            return
+
+        if child_type in {"llm_call_end", "llm_call_error"}:
+            self._flush_subagent_message_delta(batch_id, task_id)
+            call_id = str(child_data.get("llm_call_id") or "")
+            info = self.subagent_llm_events.pop((batch_id, task_id, call_id), None)
+            if info:
+                is_error = child_type == "llm_call_error"
+                duration = child_data.get("duration_ms")
+                response_payload = child_data.get("response") if isinstance(child_data.get("response"), dict) else {}
+                self.store.update_event(
+                    info["event_id"],
+                    status="error" if is_error else "done",
+                    payload=data,
+                    ended_at=child_timestamp,
+                    duration_ms=duration if isinstance(duration, (int, float)) else _duration_ms(info.get("started_at"), child_timestamp),
+                    summary=str(child_data.get("error") or self._llm_summary(response_payload)),
+                )
+            return
+
+        if child_type == "message_update":
+            delta = child_data.get("delta")
+            if isinstance(delta, str):
+                key = (batch_id, task_id)
+                self.subagent_message_buffers.setdefault(key, []).append(delta)
+                self.subagent_message_counts[key] = self.subagent_message_counts.get(key, 0) + 1
+            return
+
+        if child_type == "message_end":
+            self._flush_subagent_message_delta(batch_id, task_id)
+            return
+
+        if child_type == "tool_execution_start":
+            tool_call_id = str(child_data.get("tool_call_id") or _new_id())
+            tool_name = str(child_data.get("tool_name") or "tool")
+            event_id = self.store.add_event(
+                self.run_id,
+                node_type="subagent_tool_call",
+                title=f"{role} tool: {tool_name}",
+                status="running",
+                payload=data,
+                parent_id=self._subagent_active_turn_id(batch_id, task_id) or subagent_parent,
+                started_at=child_timestamp,
+                summary=tool_name,
+            )
+            self.subagent_tools[(batch_id, task_id, tool_call_id)] = {
+                "event_id": event_id,
+                "started_at": child_timestamp,
+                "tool_name": tool_name,
+            }
+            return
+
+        if child_type == "tool_execution_end":
+            tool_call_id = str(child_data.get("tool_call_id") or "")
+            info = self.subagent_tools.pop((batch_id, task_id, tool_call_id), None)
+            tool_name = str(child_data.get("tool_name") or (info or {}).get("tool_name") or "tool")
+            status = "done" if child_data.get("status") == "success" else "error"
+            duration = child_data.get("execution_time")
+            duration_ms = duration * 1000 if isinstance(duration, (int, float)) else None
+            parent_id = (info or {}).get("event_id") or self._subagent_active_turn_id(batch_id, task_id) or subagent_parent
+            if info:
+                self.store.update_event(
+                    info["event_id"],
+                    status=status,
+                    payload=data,
+                    ended_at=child_timestamp,
+                    duration_ms=duration_ms,
+                    summary=f"{tool_name}: {child_data.get('status') or status}",
+                )
+            self.store.add_event(
+                self.run_id,
+                node_type="subagent_tool_result",
+                title=f"{role} tool result: {tool_name}",
+                status=status,
+                payload=data,
+                parent_id=parent_id,
+                started_at=child_timestamp,
+                ended_at=child_timestamp,
+                duration_ms=0,
+                summary=f"{tool_name}: {child_data.get('status') or status}",
+            )
+            return
+
+        if child_type == "error":
+            self.store.add_event(
+                self.run_id,
+                node_type="subagent_error",
+                title=f"{role} error",
+                status="error",
+                payload=data,
+                parent_id=subagent_parent,
+                started_at=child_timestamp,
+                ended_at=child_timestamp,
+                duration_ms=0,
+                summary=str(child_data.get("error") or "Sub-agent error"),
+            )
+
+    def _subagent_parent_id(self, batch_id: str, task_id: str) -> str:
+        task_info = self.subagent_tasks.get((batch_id, task_id))
+        if task_info:
+            return task_info["event_id"]
+        batch_info = self.subagent_batches.get(batch_id)
+        if batch_info:
+            return batch_info["event_id"]
+        return self.current_turn_id or self.root_event_id
+
+    def _subagent_active_turn_id(self, batch_id: str, task_id: str) -> Optional[str]:
+        for b_id, t_id, _turn in reversed(self.subagent_turns.keys()):
+            if b_id == batch_id and t_id == task_id:
+                return self.subagent_turns[(b_id, t_id, _turn)]
+        return None
+
+    def _flush_subagent_message_delta(self, batch_id: str, task_id: str) -> None:
+        key = (batch_id, task_id)
+        buffer = self.subagent_message_buffers.get(key)
+        if not buffer:
+            return
+        content = "".join(buffer)
+        count = self.subagent_message_counts.get(key, 0)
+        self.store.add_event(
+            self.run_id,
+            node_type="subagent_message_delta",
+            title="Sub-agent message stream",
+            status="done",
+            payload={
+                "batch_id": batch_id,
+                "task_id": task_id,
+                "content": content,
+                "delta_count": count,
+                "content_length": len(content),
+            },
+            parent_id=self._subagent_active_turn_id(batch_id, task_id) or self._subagent_parent_id(batch_id, task_id),
+            summary=_preview(content),
+        )
+        self.subagent_message_buffers[key] = []
+        self.subagent_message_counts[key] = 0
+
+    def _flush_all_subagent_message_deltas(self) -> None:
+        for batch_id, task_id in list(self.subagent_message_buffers.keys()):
+            self._flush_subagent_message_delta(batch_id, task_id)
 
     def _flush_message_delta(self, parent_id: Optional[str] = None) -> None:
         if not self.message_buffer:

@@ -105,6 +105,7 @@ import {
   listChatSessionPage,
   listChatSessions,
   listMemoryFiles,
+  listTools,
   listSchedulerTaskRuns,
   listSchedulerTasks,
   listSkills,
@@ -149,47 +150,435 @@ import type {
   SchedulerTask,
   SchedulerTaskRun,
   SkillInfo,
+  SubAgentRoleConfig,
   AgentTraceEvent,
+  ToolInfo,
   TraceSessionResponse,
   WatchlistCategory,
   WatchlistItem,
   WatchlistSearchResult,
 } from "@/types/app";
 
-type Page = "overview" | "chat" | "tracing" | "market" | "market_config" | "watchlist" | "config" | "chart" | "fundamentals" | "skills" | "mcp" | "memory" | "knowledge" | "scheduler";
+type Page = "overview" | "chat" | "tracing" | "market" | "market_config" | "watchlist" | "config" | "chart" | "fundamentals" | "skills" | "subagents" | "mcp" | "memory" | "knowledge" | "scheduler";
 type Theme = "dark" | "light";
+type AppLanguage = "zh" | "en";
 
-const initialMessage: ChatMessage = {
-  id: "welcome",
-  role: "assistant",
-  content: "控制台已就绪。可以直接询问行情、策略、知识库内容，或让 Agent 调用工具完成分析任务。",
-  createdAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+const i18n = {
+  zh: {
+    initialMessage: "控制台已就绪。可以直接询问行情、策略、知识库内容，或让 Agent 调用工具完成分析任务。",
+    quickPrompts: [
+      "总结今天值得关注的美股科技股信号",
+      "帮我制定一份低波动组合观察清单",
+      "基于知识库检查最近的交易规则",
+      "使用market-analysis技能分析今天的美股",
+      "使用market-analysis技能分析今天的A股",
+    ],
+    nav: {
+      overview: ["概览", "状态与信号"],
+      chat: ["对话", "Agent chat"],
+      market: ["行情", "大盘/个股"],
+      watchlist: ["自选", "美/A/H股"],
+      tracing: ["追踪", "调用链"],
+      skills: ["技能", "Agent 技能"],
+      subagents: ["智能体", "角色编排"],
+      chart: ["分析", "技术分析"],
+      fundamentals: ["财报", "利润/资产/现金流"],
+      memory: ["记忆", "长期记忆"],
+      knowledge: ["知识库", "Markdown 知识"],
+      scheduler: ["任务", "Cron/间隔"],
+      mcp: ["MCP", "工具服务器"],
+      config: ["配置", "运行时参数"],
+    },
+    groups: {
+      pinned: "Pinned",
+      agents: "Agents",
+      market: "Market",
+      workspace: "Workspace",
+      automation: "Automation",
+      system: "System",
+    },
+    shell: {
+      navigation: "Navigation",
+      pageSwitch: "页面切换",
+      api: "API",
+      model: "Model",
+      capabilities: "Capabilities",
+      notConfigured: "未配置",
+    },
+    overview: {
+      title: "Workspace Overview",
+      subtitle: "模型、能力和工作区状态",
+      config: "Config",
+      llmModel: "LLM Model",
+      workspace: "Workspace",
+      contextTurns: "Context Turns",
+      capabilities: "Capabilities",
+      memory: "长期记忆",
+      knowledge: "知识库",
+      scheduler: "定时任务",
+      tracing: "调用追踪",
+      quickPrompts: "Quick Prompts",
+    },
+    chat: {
+      connecting: "正在连接流式响应...",
+      streamReady: "流式会话已建立",
+      analyzing: "正在分析请求...",
+      modelAnalyzing: "模型正在分析请求...",
+      subBatchStart: "智能体批次启动",
+      subBatchDone: "智能体批次完成",
+      subBatchResult: "智能体结果已返回，继续汇总...",
+      subBatchPartial: "部分智能体失败，继续汇总...",
+      subStart: "开始",
+      subDone: "完成",
+      subRunning: "子任务继续处理中...",
+      subToolReturned: "工具结果已返回",
+      subGenerating: "正在生成子结果...",
+      subGenerated: "子结果生成完成",
+      turn: "第 {turn} 轮分析",
+      startAnalysis: "开始分析",
+      messageStart: "模型开始生成回复...",
+      generating: "正在生成回复...",
+      callTool: "调用工具",
+      toolDone: "工具 {tool} 完成",
+      toolDoneContinue: "工具执行完成，继续分析...",
+      toolFailedContinue: "工具执行失败，正在调整回复...",
+      toolResultsReturned: "工具结果已返回，继续推理...",
+      finishing: "正在收尾...",
+      complete: "完成",
+      empty: "没有返回内容。",
+      requestFailed: "请求失败：{message}",
+      subTasks: "{count} 个任务",
+    },
+    config: {
+      title: "配置管理",
+      subtitle: "保存到 config.json，立即刷新运行时配置",
+      reload: "重载配置",
+      save: "Save",
+      saving: "Saving",
+      saved: "Saved",
+      modelTab: "模型",
+      agentTab: "Agent",
+      longbridgeTab: "Longbridge",
+      mcpTab: "MCP",
+      telegramTab: "Telegram",
+      featuresTab: "能力",
+      language: "语言",
+      chinese: "中文",
+      english: "English",
+      workspace: "Workspace",
+      maxSteps: "Max Steps",
+      contextTokens: "Context Tokens",
+      contextTurns: "Context Turns",
+      multiAgent: "多智能体委派",
+      parallelLimit: "并行上限",
+      subAgentSteps: "智能体 Steps",
+      maxDepth: "最大深度",
+      systemPrompt: "System Prompt",
+      loading: "正在加载配置...",
+      saveFailed: "配置保存失败",
+    },
+    subagents: {
+      title: "智能体管理",
+      subtitle: "配置 delegate_agent 可委派的角色、提示词和工具权限",
+      config: "配置",
+      loading: "正在加载配置...",
+      enabledState: "Enabled",
+      disabledState: "Disabled",
+      enabled: "启用多智能体",
+      parallelLimit: "并行上限",
+      defaultSteps: "默认 Steps",
+      maxDepth: "最大深度",
+      roles: "角色列表",
+      roleCount: "{count} 个智能体",
+      add: "新增",
+      newMessage: "正在创建新的智能体，填写后点击保存。",
+      duplicateMessage: "已复制为新智能体，点击保存后生效。",
+      savedMessage: "智能体配置已保存。",
+      deletedMessage: "智能体已删除。",
+      editTitle: "编辑智能体",
+      addTitle: "新增智能体",
+      renameHint: "保存后将从 {name} 重命名",
+      formHint: "配置角色、工具权限和子任务提示词",
+      duplicate: "复制",
+      delete: "删除",
+      save: "保存",
+      deleteConfirm: "删除智能体 \"{name}\"？",
+      agentId: "智能体 ID",
+      description: "说明",
+      descriptionPlaceholder: "用于收集事实和背景信息",
+      maxSteps: "Max Steps",
+      allowDangerous: "允许危险工具",
+      systemPrompt: "System Prompt",
+      promptPlaceholder: "告诉这个智能体它的职责、输出格式和边界。",
+      tools: "工具权限",
+      loadingTools: "正在加载工具...",
+      toolsAvailable: "{count} 个工具可选",
+      selected: "已选择",
+      noDescription: "无描述",
+      missingName: "请输入智能体 ID",
+      badName: "智能体 ID 只能包含字母、数字、下划线和连字符",
+      missingDescription: "请输入说明",
+      missingPrompt: "请输入 System Prompt",
+      blockedDelegate: "智能体不能使用 delegate_agent 工具",
+      dangerousBlocked: "未开启危险工具时，工具列表不能包含 bash/write_file/scheduler",
+      saveFailed: "保存失败",
+      deleteFailed: "删除失败",
+      customDescription: "自定义智能体",
+      customPrompt: "You are a focused sub-agent. Complete the assigned task and return a concise, evidence-grounded brief.",
+    },
+  },
+  en: {
+    initialMessage: "Console is ready. Ask about markets, strategies, knowledge base content, or let the Agent use tools to complete analysis tasks.",
+    quickPrompts: [
+      "Summarize notable US tech stock signals today",
+      "Help me build a low-volatility watchlist",
+      "Check recent trading rules from the knowledge base",
+      "Use the market-analysis skill to analyze today's US market",
+      "Use the market-analysis skill to analyze today's A-share market",
+    ],
+    nav: {
+      overview: ["Overview", "Status and signals"],
+      chat: ["Chat", "Agent chat"],
+      market: ["Market", "Indices/stocks"],
+      watchlist: ["Watchlist", "US/A/H shares"],
+      tracing: ["Tracing", "Execution tree"],
+      skills: ["Skills", "Agent skills"],
+      subagents: ["SubAgents", "Role orchestration"],
+      chart: ["Analysis", "Technical analysis"],
+      fundamentals: ["Financials", "Reports/statements"],
+      memory: ["Memory", "Long-term memory"],
+      knowledge: ["Knowledge", "Markdown knowledge"],
+      scheduler: ["Tasks", "Cron/interval"],
+      mcp: ["MCP", "Tool servers"],
+      config: ["Config", "Runtime settings"],
+    },
+    groups: {
+      pinned: "Pinned",
+      agents: "Agents",
+      market: "Market",
+      workspace: "Workspace",
+      automation: "Automation",
+      system: "System",
+    },
+    shell: {
+      navigation: "Navigation",
+      pageSwitch: "Page switch",
+      api: "API",
+      model: "Model",
+      capabilities: "Capabilities",
+      notConfigured: "Not configured",
+    },
+    overview: {
+      title: "Workspace Overview",
+      subtitle: "Model, capabilities, and workspace status",
+      config: "Config",
+      llmModel: "LLM Model",
+      workspace: "Workspace",
+      contextTurns: "Context Turns",
+      capabilities: "Capabilities",
+      memory: "Memory",
+      knowledge: "Knowledge",
+      scheduler: "Scheduler",
+      tracing: "Tracing",
+      quickPrompts: "Quick Prompts",
+    },
+    chat: {
+      connecting: "Connecting to streaming response...",
+      streamReady: "Streaming session established",
+      analyzing: "Analyzing request...",
+      modelAnalyzing: "Model is analyzing the request...",
+      subBatchStart: "SubAgent batch started",
+      subBatchDone: "SubAgent batch finished",
+      subBatchResult: "SubAgent results returned, synthesizing...",
+      subBatchPartial: "Some SubAgents failed, continuing synthesis...",
+      subStart: "started",
+      subDone: "finished",
+      subRunning: "Subtask still running...",
+      subToolReturned: "Tool result returned",
+      subGenerating: "Generating child result...",
+      subGenerated: "Child result generated",
+      turn: "Turn {turn}",
+      startAnalysis: "Start analysis",
+      messageStart: "Model started generating...",
+      generating: "Generating response...",
+      callTool: "Calling tool",
+      toolDone: "Tool {tool} finished",
+      toolDoneContinue: "Tool finished, continuing analysis...",
+      toolFailedContinue: "Tool failed, adjusting response...",
+      toolResultsReturned: "Tool results returned, continuing reasoning...",
+      finishing: "Finishing...",
+      complete: "Done",
+      empty: "No content returned.",
+      requestFailed: "Request failed: {message}",
+      subTasks: "{count} tasks",
+    },
+    config: {
+      title: "Configuration",
+      subtitle: "Saved to config.json and applied immediately",
+      reload: "Reload config",
+      save: "Save",
+      saving: "Saving",
+      saved: "Saved",
+      modelTab: "Model",
+      agentTab: "Agent",
+      longbridgeTab: "Longbridge",
+      mcpTab: "MCP",
+      telegramTab: "Telegram",
+      featuresTab: "Features",
+      language: "Language",
+      chinese: "中文",
+      english: "English",
+      workspace: "Workspace",
+      maxSteps: "Max Steps",
+      contextTokens: "Context Tokens",
+      contextTurns: "Context Turns",
+      multiAgent: "Multi-Agent Delegation",
+      parallelLimit: "Parallel Limit",
+      subAgentSteps: "SubAgent Steps",
+      maxDepth: "Max Depth",
+      systemPrompt: "System Prompt",
+      loading: "Loading configuration...",
+      saveFailed: "Failed to save configuration",
+    },
+    subagents: {
+      title: "SubAgent Management",
+      subtitle: "Configure roles, prompts, and tool permissions available to delegate_agent",
+      config: "Config",
+      loading: "Loading configuration...",
+      enabledState: "Enabled",
+      disabledState: "Disabled",
+      enabled: "Enable Multi-Agent",
+      parallelLimit: "Parallel Limit",
+      defaultSteps: "Default Steps",
+      maxDepth: "Max Depth",
+      roles: "Roles",
+      roleCount: "{count} SubAgents",
+      add: "Add",
+      newMessage: "Creating a new SubAgent. Fill the form and save.",
+      duplicateMessage: "Copied as a new SubAgent. Save to apply.",
+      savedMessage: "SubAgent configuration saved.",
+      deletedMessage: "SubAgent deleted.",
+      editTitle: "Edit SubAgent",
+      addTitle: "New SubAgent",
+      renameHint: "Will rename from {name} after save",
+      formHint: "Configure role, tool permissions, and child-task prompt",
+      duplicate: "Duplicate",
+      delete: "Delete",
+      save: "Save",
+      deleteConfirm: "Delete SubAgent \"{name}\"?",
+      agentId: "Agent ID",
+      description: "Description",
+      descriptionPlaceholder: "Used for collecting facts and background information",
+      maxSteps: "Max Steps",
+      allowDangerous: "Allow Dangerous Tools",
+      systemPrompt: "System Prompt",
+      promptPlaceholder: "Tell this SubAgent its responsibility, output format, and boundaries.",
+      tools: "Tool Permissions",
+      loadingTools: "Loading tools...",
+      toolsAvailable: "{count} tools available",
+      selected: "selected",
+      noDescription: "No description",
+      missingName: "Enter a SubAgent ID",
+      badName: "SubAgent ID can only contain letters, numbers, underscores, and hyphens",
+      missingDescription: "Enter a description",
+      missingPrompt: "Enter a System Prompt",
+      blockedDelegate: "SubAgents cannot use the delegate_agent tool",
+      dangerousBlocked: "When dangerous tools are disabled, tool list cannot include bash/write_file/scheduler",
+      saveFailed: "Save failed",
+      deleteFailed: "Delete failed",
+      customDescription: "Custom SubAgent",
+      customPrompt: "You are a focused sub-agent. Complete the assigned task and return a concise, evidence-grounded brief.",
+    },
+  },
 };
-const initialMessages = [initialMessage];
 
-const quickPrompts = [
-  "总结今天值得关注的美股科技股信号",
-  "帮我制定一份低波动组合观察清单",
-  "基于知识库检查最近的交易规则",
-  "使用market-analysis技能分析今天的美股",
-  "使用market-analysis技能分析今天的A股",
-];
+function normalizeLanguage(value: unknown): AppLanguage {
+  return value === "en" ? "en" : "zh";
+}
 
-const navItems: Array<{ id: Page; label: string; icon: ReactNode; hint: string }> = [
-  { id: "overview", label: "概览", icon: <Home />, hint: "状态与信号" },
-  { id: "chat", label: "对话", icon: <MessageSquareText />, hint: "Agent chat" },
-  { id: "tracing", label: "追踪", icon: <Cpu />, hint: "调用链" },
-  { id: "market", label: "行情", icon: <BarChart2 />, hint: "大盘/个股" },
-  { id: "chart", label: "分析", icon: <TrendingUp />, hint: "技术分析" },
-  { id: "fundamentals", label: "财报", icon: <FileText />, hint: "利润/资产/现金流" },
-  { id: "watchlist", label: "自选", icon: <Star />, hint: "美/A/H股" },
-  { id: "skills", label: "技能", icon: <Zap />, hint: "Agent 技能" },
-  { id: "memory", label: "记忆", icon: <BrainCircuit />, hint: "长期记忆" },
-  { id: "knowledge", label: "知识库", icon: <BookOpen />, hint: "Markdown 知识" },
-  { id: "scheduler", label: "任务", icon: <Clock />, hint: "Cron/间隔" },
-  { id: "mcp", label: "MCP", icon: <Plug />, hint: "工具服务器" },
-  { id: "config", label: "配置", icon: <Settings2 />, hint: "运行时参数" },
-];
+function localeFor(language: AppLanguage) {
+  return language === "en" ? "en-US" : "zh-CN";
+}
+
+function formatTemplate(text: string, values: Record<string, string | number>) {
+  return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
+}
+
+function createInitialMessages(language: AppLanguage): ChatMessage[] {
+  return [{
+    id: "welcome",
+    role: "assistant",
+    content: i18n[language].initialMessage,
+    createdAt: new Date().toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit" }),
+  }];
+}
+
+type NavItem = { id: Page; label: string; icon: ReactNode; hint: string };
+type NavGroup = { id: string; label: string; items: NavItem[] };
+
+function navItem(language: AppLanguage, id: Page, icon: ReactNode): NavItem {
+  const [label, hint] = i18n[language].nav[id as keyof typeof i18n.zh.nav];
+  return { id, label, icon, hint };
+}
+
+function getPinnedNavItems(language: AppLanguage): NavItem[] {
+  return [
+    navItem(language, "overview", <Home />),
+    navItem(language, "chat", <MessageSquareText />),
+    navItem(language, "market", <BarChart2 />),
+    navItem(language, "watchlist", <Star />),
+  ];
+}
+
+function getNavGroups(language: AppLanguage): NavGroup[] {
+  const groups = i18n[language].groups;
+  return [
+  {
+    id: "agents",
+    label: groups.agents,
+    items: [
+      navItem(language, "tracing", <Cpu />),
+      navItem(language, "skills", <Zap />),
+      navItem(language, "subagents", <Bot />),
+    ],
+  },
+  {
+    id: "market-tools",
+    label: groups.market,
+    items: [
+      navItem(language, "chart", <TrendingUp />),
+      navItem(language, "fundamentals", <FileText />),
+    ],
+  },
+  {
+    id: "workspace",
+    label: groups.workspace,
+    items: [
+      navItem(language, "memory", <BrainCircuit />),
+      navItem(language, "knowledge", <BookOpen />),
+    ],
+  },
+  {
+    id: "automation",
+    label: groups.automation,
+    items: [
+      navItem(language, "scheduler", <Clock />),
+      navItem(language, "mcp", <Plug />),
+    ],
+  },
+  {
+    id: "system",
+    label: groups.system,
+    items: [
+      navItem(language, "config", <Settings2 />),
+    ],
+  },
+  ];
+}
+
+function getNavItems(language: AppLanguage) {
+  return [...getPinnedNavItems(language), ...getNavGroups(language).flatMap((group) => group.items)];
+}
 
 const watchlistCategories: Array<{ id: WatchlistCategory; label: string; hint: string }> = [
   { id: "US", label: "美股", hint: "US" },
@@ -238,8 +627,8 @@ function parseJsonObject(text: string, label = "JSON") {
   return parsed as Record<string, unknown>;
 }
 
-function chatTime() {
-  return new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+function chatTime(language: AppLanguage = "zh") {
+  return new Date().toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit" });
 }
 
 function getStreamText(data: Record<string, unknown> | undefined, key: string) {
@@ -250,6 +639,20 @@ function getStreamText(data: Record<string, unknown> | undefined, key: string) {
 function getStreamNumber(data: Record<string, unknown> | undefined, key: string) {
   const value = data?.[key];
   return typeof value === "number" ? value : null;
+}
+
+function getStreamObject(data: Record<string, unknown> | undefined, key: string) {
+  const value = data?.[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function compactStreamText(value: string, maxLength = 96) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
+}
+
+function formatDurationDetail(ms: number | null) {
+  return ms == null ? undefined : `${(ms / 1000).toFixed(2)}s`;
 }
 
 function summarizeToolArguments(value: unknown) {
@@ -507,10 +910,13 @@ function App() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
   const chatHistory = useConversations();
+  const language = normalizeLanguage(draft?.app_language ?? config?.app_language);
+  const ui = i18n[language];
+  const quickPrompts = ui.quickPrompts;
 
   const messages = chatHistory.activeConversation?.messages.length
     ? chatHistory.activeConversation.messages
-    : initialMessages;
+    : createInitialMessages(language);
   const activeConvId = chatHistory.activeId;
 
   useEffect(() => {
@@ -564,7 +970,7 @@ function App() {
         setConfig(configResult.value);
         setDraft(toDraft(configResult.value));
       } else {
-        setError(configResult.reason instanceof Error ? configResult.reason.message : "配置加载失败");
+        setError(configResult.reason instanceof Error ? configResult.reason.message : (language === "en" ? "Failed to load configuration" : "配置加载失败"));
       }
       if (marketConfigResult.status === "fulfilled") {
         setMarketConfig(marketConfigResult.value);
@@ -577,7 +983,7 @@ function App() {
     };
   }, []);
 
-  const modelName = config?.llm_model ?? "未配置";
+  const modelName = config?.llm_model ?? ui.shell.notConfigured;
   const enabledCount = useMemo(() => {
     if (!config) return 0;
     return [config.memory_enabled, config.knowledge_enabled, config.scheduler_enabled, config.tracing_enabled].filter(Boolean).length;
@@ -589,7 +995,7 @@ function App() {
     if (!text || isSending) return;
 
     shouldAutoScrollChatRef.current = true;
-    const createdAt = chatTime();
+    const createdAt = chatTime(language);
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -599,11 +1005,11 @@ function App() {
     const pendingMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
-      content: "正在连接流式响应...",
+      content: ui.chat.connecting,
       createdAt,
       pending: true,
-      status: "正在连接流式响应...",
-      trace: [makeTrace("建立流式会话", "running")],
+      status: ui.chat.connecting,
+      trace: [makeTrace(ui.chat.connecting, "running")],
     };
 
     setPrompt("");
@@ -624,7 +1030,7 @@ function App() {
 
       let assistantMessageId = pendingMessage.id;
       let streamedContent = "";
-      let currentStatus = "正在连接流式响应...";
+      let currentStatus = ui.chat.connecting;
       let trace = pendingMessage.trace ?? [];
       let sawAgentEnd = false;
 
@@ -646,7 +1052,7 @@ function App() {
       };
 
       const addTrace = (item: ChatTraceEvent) => {
-        trace = [...trace, item].slice(-10);
+        trace = [...trace, item].slice(-30);
         currentStatus = item.label;
         commitStreamState();
       };
@@ -660,37 +1066,134 @@ function App() {
         const data = streamEvent.data;
 
         if (streamEvent.type === "error") {
-          throw new Error(getStreamText(data, "error") || "对话请求失败");
+          throw new Error(getStreamText(data, "error") || (language === "en" ? "Chat request failed" : "对话请求失败"));
         }
 
         if (streamEvent.type === "agent_start") {
-          updateTrace(trace[0]?.id ?? "", { status: "done", label: "流式会话已建立" });
-          currentStatus = "正在分析请求...";
+          updateTrace(trace[0]?.id ?? "", { status: "done", label: ui.chat.streamReady });
+          currentStatus = ui.chat.analyzing;
           commitStreamState();
           return;
         }
 
         if (streamEvent.type === "status_update") {
-          currentStatus = getStreamText(data, "message") || "模型正在分析请求...";
+          currentStatus = getStreamText(data, "message") || ui.chat.modelAnalyzing;
           commitStreamState();
           return;
         }
 
+        if (streamEvent.type === "subagent_batch_start") {
+          const batchId = getStreamText(data, "batch_id") || crypto.randomUUID();
+          const taskCount = getStreamNumber(data, "task_count");
+          const roles = Array.isArray(data?.roles) ? data.roles.map(String).join(", ") : "";
+          addTrace(makeTrace(ui.chat.subBatchStart, "running", `${formatTemplate(ui.chat.subTasks, { count: taskCount ?? 0 })}${roles ? ` · ${roles}` : ""}`, batchId));
+          return;
+        }
+
+        if (streamEvent.type === "subagent_batch_end") {
+          const batchId = getStreamText(data, "batch_id");
+          const status = getStreamText(data, "status") === "success" ? "done" : "error";
+          const detail = formatDurationDetail(getStreamNumber(data, "duration_ms"));
+          if (batchId) {
+            updateTrace(batchId, { label: ui.chat.subBatchDone, status, detail });
+          } else {
+            addTrace(makeTrace(ui.chat.subBatchDone, status, detail));
+          }
+          currentStatus = status === "done" ? ui.chat.subBatchResult : ui.chat.subBatchPartial;
+          commitStreamState();
+          return;
+        }
+
+        if (streamEvent.type === "subagent_start") {
+          const batchId = getStreamText(data, "batch_id") || "batch";
+          const taskId = getStreamText(data, "task_id") || crypto.randomUUID();
+          const role = getStreamText(data, "role") || "subagent";
+          const task = getStreamText(data, "task");
+          addTrace(makeTrace(`${role} ${ui.chat.subStart}`, "running", compactStreamText(task), `sub:${batchId}:${taskId}`));
+          return;
+        }
+
+        if (streamEvent.type === "subagent_end") {
+          const batchId = getStreamText(data, "batch_id") || "batch";
+          const taskId = getStreamText(data, "task_id") || "";
+          const role = getStreamText(data, "role") || "subagent";
+          const status = getStreamText(data, "status") === "success" ? "done" : "error";
+          const errorText = getStreamText(data, "error");
+          const detail = errorText || formatDurationDetail(getStreamNumber(data, "duration_ms"));
+          updateTrace(`sub:${batchId}:${taskId}`, { label: `${role} ${ui.chat.subDone}`, status, detail });
+          currentStatus = status === "done" ? `${role} ${ui.chat.subBatchResult}` : `${role} ${language === "en" ? "failed" : "执行失败"}`;
+          commitStreamState();
+          return;
+        }
+
+        if (streamEvent.type === "subagent_event") {
+          const batchId = getStreamText(data, "batch_id") || "batch";
+          const taskId = getStreamText(data, "task_id") || "task";
+          const role = getStreamText(data, "role") || "subagent";
+          const childType = getStreamText(data, "child_event_type");
+          const childData = getStreamObject(data, "child_data");
+
+          if (childType === "turn_start") {
+            const turn = getStreamNumber(childData, "turn");
+            addTrace(makeTrace(`${role} ${formatTemplate(ui.chat.turn, { turn: turn ?? "?" })}`, "running", undefined, `sub:${batchId}:${taskId}:turn:${turn ?? crypto.randomUUID()}`));
+            return;
+          }
+
+          if (childType === "turn_end") {
+            const turn = getStreamNumber(childData, "turn");
+            if (turn != null) updateTrace(`sub:${batchId}:${taskId}:turn:${turn}`, { status: "done", label: `${role} ${formatTemplate(ui.chat.turn, { turn })} ${ui.chat.subDone}` });
+            currentStatus = `${role} ${ui.chat.subRunning}`;
+            commitStreamState();
+            return;
+          }
+
+          if (childType === "tool_execution_start") {
+            const toolCallId = getStreamText(childData, "tool_call_id") || crypto.randomUUID();
+            const toolName = getStreamText(childData, "tool_name") || "tool";
+            addTrace(makeTrace(`${role} ${ui.chat.callTool} ${toolName}`, "running", summarizeToolArguments(childData?.arguments), `sub:${batchId}:${taskId}:tool:${toolCallId}`));
+            return;
+          }
+
+          if (childType === "tool_execution_end") {
+            const toolCallId = getStreamText(childData, "tool_call_id");
+            const toolName = getStreamText(childData, "tool_name") || "tool";
+            const status = getStreamText(childData, "status") === "success" ? "done" : "error";
+            const seconds = getStreamNumber(childData, "execution_time");
+            const detail = seconds == null ? undefined : `${seconds.toFixed(2)}s`;
+            if (toolCallId) updateTrace(`sub:${batchId}:${taskId}:tool:${toolCallId}`, { label: `${role} ${formatTemplate(ui.chat.toolDone, { tool: toolName })}`, status, detail });
+            currentStatus = `${role} ${ui.chat.subToolReturned}`;
+            commitStreamState();
+            return;
+          }
+
+          if (childType === "message_update") {
+            currentStatus = `${role} ${ui.chat.subGenerating}`;
+            commitStreamState();
+            return;
+          }
+
+          if (childType === "message_end") {
+            currentStatus = `${role} ${ui.chat.subGenerated}`;
+            commitStreamState();
+            return;
+          }
+        }
+
         if (streamEvent.type === "turn_start") {
           const turn = getStreamNumber(data, "turn");
-          addTrace(makeTrace(turn ? `第 ${turn} 轮分析` : "开始分析", "running"));
+          addTrace(makeTrace(turn ? formatTemplate(ui.chat.turn, { turn }) : ui.chat.startAnalysis, "running"));
           return;
         }
 
         if (streamEvent.type === "message_start") {
-          currentStatus = "模型开始生成回复...";
+          currentStatus = ui.chat.messageStart;
           commitStreamState();
           return;
         }
 
         if (streamEvent.type === "message_update") {
           streamedContent += getStreamText(data, "delta");
-          currentStatus = "正在生成回复...";
+          currentStatus = ui.chat.generating;
           commitStreamState();
           return;
         }
@@ -698,7 +1201,7 @@ function App() {
         if (streamEvent.type === "tool_execution_start") {
           const toolCallId = getStreamText(data, "tool_call_id") || crypto.randomUUID();
           const toolName = getStreamText(data, "tool_name") || "tool";
-          addTrace(makeTrace(`调用工具 ${toolName}`, "running", summarizeToolArguments(data?.arguments), toolCallId));
+          addTrace(makeTrace(`${ui.chat.callTool} ${toolName}`, "running", summarizeToolArguments(data?.arguments), toolCallId));
           return;
         }
 
@@ -709,18 +1212,18 @@ function App() {
           const seconds = getStreamNumber(data, "execution_time");
           const detail = seconds == null ? undefined : `${seconds.toFixed(2)}s`;
           if (toolCallId) {
-            updateTrace(toolCallId, { label: `工具 ${toolName} 完成`, status, detail });
+            updateTrace(toolCallId, { label: formatTemplate(ui.chat.toolDone, { tool: toolName }), status, detail });
           } else {
-            addTrace(makeTrace(`工具 ${toolName} 完成`, status, detail));
+            addTrace(makeTrace(formatTemplate(ui.chat.toolDone, { tool: toolName }), status, detail));
           }
-          currentStatus = status === "done" ? "工具执行完成，继续分析..." : "工具执行失败，正在调整回复...";
+          currentStatus = status === "done" ? ui.chat.toolDoneContinue : ui.chat.toolFailedContinue;
           commitStreamState();
           return;
         }
 
         if (streamEvent.type === "turn_end") {
           const hasToolCalls = data?.has_tool_calls === true;
-          currentStatus = hasToolCalls ? "工具结果已返回，继续推理..." : "正在收尾...";
+          currentStatus = hasToolCalls ? ui.chat.toolResultsReturned : ui.chat.finishing;
           commitStreamState();
           return;
         }
@@ -729,8 +1232,8 @@ function App() {
           sawAgentEnd = true;
           const finalResponse = getStreamText(data, "final_response");
           const messageId = getStreamText(data, "message_id");
-          streamedContent = finalResponse || streamedContent || "没有返回内容。";
-          currentStatus = "完成";
+          streamedContent = finalResponse || streamedContent || ui.chat.empty;
+          currentStatus = ui.chat.complete;
           trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
           updateAssistant({
             id: messageId || assistantMessageId,
@@ -738,7 +1241,7 @@ function App() {
             pending: false,
             status: currentStatus,
             trace,
-            createdAt: chatTime(),
+            createdAt: chatTime(language),
           });
         }
       });
@@ -746,19 +1249,19 @@ function App() {
       if (!sawAgentEnd) {
         trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
         updateAssistant({
-          content: streamedContent || "没有返回内容。",
+          content: streamedContent || ui.chat.empty,
           pending: false,
-          status: "完成",
+          status: ui.chat.complete,
           trace,
-          createdAt: chatTime(),
+          createdAt: chatTime(language),
         });
       }
     } catch (caught) {
-      const msg = caught instanceof Error ? caught.message : "对话请求失败";
+      const msg = caught instanceof Error ? caught.message : (language === "en" ? "Chat request failed" : "对话请求失败");
       setError(msg);
       if (convId) {
         chatHistory.updateMessage(convId, pendingMessage.id, {
-          content: `请求失败：${msg}`,
+          content: formatTemplate(ui.chat.requestFailed, { message: msg }),
           pending: false,
         });
       }
@@ -782,9 +1285,16 @@ function App() {
         embedding_model: draft.embedding_model,
         embedding_provider: draft.embedding_provider,
         workspace_dir: draft.workspace_dir,
+        app_language: draft.app_language,
         agent_max_steps: Number(draft.agent_max_steps),
         agent_max_context_tokens: Number(draft.agent_max_context_tokens),
         agent_max_context_turns: Number(draft.agent_max_context_turns),
+        multi_agent_enabled: draft.multi_agent_enabled,
+        multi_agent_max_parallel_agents: Number(draft.multi_agent_max_parallel_agents),
+        multi_agent_default_max_steps: Number(draft.multi_agent_default_max_steps),
+        multi_agent_max_depth: Number(draft.multi_agent_max_depth),
+        multi_agent_dangerous_tools: draft.multi_agent_dangerous_tools,
+        multi_agent_roles: draft.multi_agent_roles,
         knowledge_enabled: draft.knowledge_enabled,
         memory_enabled: draft.memory_enabled,
         memory_auto_curate_enabled: draft.memory_auto_curate_enabled,
@@ -828,7 +1338,7 @@ function App() {
       setConfigState("saved");
       window.setTimeout(() => setConfigState("idle"), 1400);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "配置保存失败";
+      const message = caught instanceof Error ? caught.message : ui.config.saveFailed;
       setError(message);
       setConfigState("error");
     }
@@ -836,6 +1346,12 @@ function App() {
 
   function patchDraft(patch: Partial<ConfigDraft>) {
     setDraft((current) => (current ? { ...current, ...patch } : current));
+  }
+
+  function applySavedConfig(next: AppConfig) {
+    setConfig(next);
+    setDraft(toDraft(next));
+    setConfigState("saved");
   }
 
   return (
@@ -847,13 +1363,14 @@ function App() {
           onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
           theme={theme}
         />
-        <MobileNav page={page} setPage={setPage} />
+        <MobileNav language={language} page={page} setPage={setPage} />
 
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)] xl:gap-4">
           <DesktopNav
             config={config}
             enabledCount={enabledCount}
             health={health}
+            language={language}
             page={page}
             setPage={setPage}
           />
@@ -869,6 +1386,7 @@ function App() {
               <OverviewPage
                 config={config}
                 enabledCount={enabledCount}
+                language={language}
                 onOpenConfig={() => setPage("config")}
                 onPrompt={(value) => {
                   setPrompt(value);
@@ -936,6 +1454,15 @@ function App() {
 
             {page === "skills" ? <SkillsPage /> : null}
 
+            {page === "subagents" ? (
+              <SubAgentsPage
+                config={config}
+                language={language}
+                onSaved={applySavedConfig}
+                onOpenConfig={() => setPage("config")}
+              />
+            ) : null}
+
             {page === "memory" ? <MemoryPage /> : null}
 
             {page === "knowledge" ? <KnowledgePage /> : null}
@@ -951,6 +1478,7 @@ function App() {
                 draft={draft}
                 enabledCount={enabledCount}
                 handleSaveConfig={handleSaveConfig}
+                language={language}
                 patchDraft={patchDraft}
                 setDraft={setDraft}
               />
@@ -1007,7 +1535,8 @@ function Header({
   );
 }
 
-function MobileNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
+function MobileNav({ language, page, setPage }: { language: AppLanguage; page: Page; setPage: (page: Page) => void }) {
+  const navItems = getNavItems(language);
   return (
     <nav className="panel shrink-0 rounded-md flex gap-2 overflow-x-auto p-2 lg:hidden" aria-label="移动端导航">
       {navItems.map((item) => (
@@ -1028,59 +1557,104 @@ function MobileNav({ page, setPage }: { page: Page; setPage: (page: Page) => voi
   );
 }
 
+function NavButton({ item, page, setPage }: { item: NavItem; page: Page; setPage: (page: Page) => void }) {
+  return (
+    <button
+      className={cn(
+        "nav-item flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors",
+        page === item.id
+          ? "bg-primary text-primary-foreground shadow-glow"
+          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+      )}
+      onClick={() => setPage(item.id)}
+      type="button"
+    >
+      <span className="[&_svg]:size-4">{item.icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium">{item.label}</span>
+        <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
+      </span>
+    </button>
+  );
+}
+
 function DesktopNav({
   config,
   enabledCount,
   health,
+  language,
   page,
   setPage,
 }: {
   config: AppConfig | null;
   enabledCount: number;
   health: "checking" | "online" | "offline";
+  language: AppLanguage;
   page: Page;
   setPage: (page: Page) => void;
 }) {
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const pinnedNavItems = getPinnedNavItems(language);
+  const navGroups = getNavGroups(language);
+  const copy = i18n[language];
+
+  function toggleGroup(groupId: string) {
+    setOpenGroups((current) => ({ ...current, [groupId]: !current[groupId] }));
+  }
+
   return (
     <aside className="hidden min-h-0 min-w-0 lg:block">
       <div className="panel flex h-full min-h-0 flex-col overflow-hidden rounded-md">
         <div className="panel-header">
-          <p className="text-sm font-semibold">Navigation</p>
-          <p className="text-xs text-muted-foreground">页面切换</p>
+          <p className="text-sm font-semibold">{copy.shell.navigation}</p>
+          <p className="text-xs text-muted-foreground">{copy.shell.pageSwitch}</p>
         </div>
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" aria-label="桌面导航">
-          {navItems.map((item) => (
-            <button
-              className={cn(
-                "nav-item flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors",
-                page === item.id
-                  ? "bg-primary text-primary-foreground shadow-glow"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-              )}
-              key={item.id}
-              onClick={() => setPage(item.id)}
-              type="button"
-            >
-              <span className="[&_svg]:size-4">{item.icon}</span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium">{item.label}</span>
-                <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
-              </span>
-            </button>
-          ))}
+        <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2" aria-label="桌面导航">
+          <div className="space-y-1">
+            <p className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/75">{copy.groups.pinned}</p>
+            {pinnedNavItems.map((item) => (
+              <NavButton item={item} key={item.id} page={page} setPage={setPage} />
+            ))}
+          </div>
+
+          <div className="space-y-1">
+            {navGroups.map((group) => {
+              const active = group.items.some((item) => item.id === page);
+              const open = active || openGroups[group.id] === true;
+              return (
+                <div className="rounded-md border border-border/45 bg-muted/10" key={group.id}>
+                  <button
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={() => toggleGroup(group.id)}
+                    type="button"
+                  >
+                    <span>{group.label}</span>
+                    {open ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                  </button>
+                  {open ? (
+                    <div className="space-y-1 px-1.5 pb-1.5">
+                      {group.items.map((item) => (
+                        <NavButton item={item} key={item.id} page={page} setPage={setPage} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         </nav>
         <Separator />
         <div className="shrink-0 space-y-3 p-3">
           <div className="metric-tile">
-            <p className="text-[11px] text-muted-foreground">API</p>
+            <p className="text-[11px] text-muted-foreground">{copy.shell.api}</p>
             <p className="text-sm font-semibold">{health === "online" ? "ONLINE" : health === "checking" ? "CHECKING" : "OFFLINE"}</p>
           </div>
           <div className="metric-tile">
-            <p className="text-[11px] text-muted-foreground">Model</p>
-            <p className="truncate text-sm font-semibold">{config?.llm_model ?? "未配置"}</p>
+            <p className="text-[11px] text-muted-foreground">{copy.shell.model}</p>
+            <p className="truncate text-sm font-semibold">{config?.llm_model ?? copy.shell.notConfigured}</p>
           </div>
           <div className="metric-tile">
-            <p className="text-[11px] text-muted-foreground">Capabilities</p>
+            <p className="text-[11px] text-muted-foreground">{copy.shell.capabilities}</p>
             <p className="text-sm font-semibold">{enabledCount}/4 ON</p>
           </div>
         </div>
@@ -1092,50 +1666,55 @@ function DesktopNav({
 function OverviewPage({
   config,
   enabledCount,
+  language,
   onOpenConfig,
   onPrompt,
 }: {
   config: AppConfig | null;
   enabledCount: number;
+  language: AppLanguage;
   onOpenConfig: () => void;
   onPrompt: (value: string) => void;
 }) {
+  const copy = i18n[language].overview;
+  const quickPrompts = i18n[language].quickPrompts;
+  const loading = language === "en" ? "Loading" : "加载中";
   return (
     <div className="page-enter grid h-full min-h-0 flex-1 gap-3 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-4 lg:overflow-hidden">
       <section className="panel motion-panel flex min-h-0 min-w-0 flex-col rounded-md">
         <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="size-5 text-primary" />
-              <p className="font-semibold">Workspace Overview</p>
-            </div>
-            <p className="text-xs text-muted-foreground">模型、能力和工作区状态</p>
-          </div>
-          <Button size="sm" variant="outline" onClick={onOpenConfig}>
-            <Settings2 />
-            Config
-          </Button>
+	            <div className="flex items-center gap-2">
+	              <ShieldCheck className="size-5 text-primary" />
+	              <p className="font-semibold">{copy.title}</p>
+	            </div>
+	            <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
+	          </div>
+	          <Button size="sm" variant="outline" onClick={onOpenConfig}>
+	            <Settings2 />
+	            {copy.config}
+	          </Button>
         </div>
         <div className="panel-body flex-1 space-y-4 overflow-y-auto">
           <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-            <StatusTile label="LLM Model" value={config?.llm_model ?? "未配置"} icon={<Cpu className="size-4 text-primary" />} />
-            <StatusTile label="Workspace" value={config?.workspace_dir ?? "加载中"} icon={<Database className="size-4 text-accent" />} />
-            <StatusTile label="Context Turns" value={String(config?.agent_max_context_turns ?? "-")} icon={<Bot className="size-4 text-secondary" />} />
-            <StatusTile label="Capabilities" value={`${enabledCount}/4 ON`} icon={<Sparkles className="size-4 text-primary" />} />
+	            <StatusTile label={copy.llmModel} value={config?.llm_model ?? i18n[language].shell.notConfigured} icon={<Cpu className="size-4 text-primary" />} />
+	            <StatusTile label={copy.workspace} value={config?.workspace_dir ?? loading} icon={<Database className="size-4 text-accent" />} />
+	            <StatusTile label={copy.contextTurns} value={String(config?.agent_max_context_turns ?? "-")} icon={<Bot className="size-4 text-secondary" />} />
+	            <StatusTile label={copy.capabilities} value={`${enabledCount}/4 ON`} icon={<Sparkles className="size-4 text-primary" />} />
           </div>
 
           <div className="grid gap-3 md:grid-cols-4">
-            <CapabilityCard active={config?.memory_enabled} icon={<BrainCircuit />} label="长期记忆" />
-            <CapabilityCard active={config?.knowledge_enabled} icon={<Database />} label="知识库" />
-            <CapabilityCard active={config?.scheduler_enabled} icon={<RefreshCw />} label="定时任务" />
-            <CapabilityCard active={config?.tracing_enabled} icon={<Cpu />} label="调用追踪" />
+	            <CapabilityCard active={config?.memory_enabled} icon={<BrainCircuit />} label={copy.memory} />
+	            <CapabilityCard active={config?.knowledge_enabled} icon={<Database />} label={copy.knowledge} />
+	            <CapabilityCard active={config?.scheduler_enabled} icon={<RefreshCw />} label={copy.scheduler} />
+	            <CapabilityCard active={config?.tracing_enabled} icon={<Cpu />} label={copy.tracing} />
           </div>
 
           <div className="rounded-lg border border-border/80 bg-background/45 p-3">
-            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-              <WandSparkles className="size-4 text-secondary" />
-              Quick Prompts
-            </div>
+	            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+	              <WandSparkles className="size-4 text-secondary" />
+	              {copy.quickPrompts}
+	            </div>
             <div className="grid gap-2 lg:grid-cols-3">
               {quickPrompts.map((item) => (
                 <button
@@ -1192,6 +1771,413 @@ function ChatTraceList({ trace }: { trace?: ChatTraceEvent[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+interface SubAgentRoleForm extends SubAgentRoleConfig {
+  name: string;
+}
+
+const emptySubAgentRoleForm: SubAgentRoleForm = {
+  name: "",
+  description: "",
+  system_prompt: "",
+  tool_allowlist: ["web_fetch", "read_skill"],
+  max_steps: 8,
+  allow_dangerous_tools: false,
+};
+
+function normalizeSubAgentRole(raw: SubAgentRoleConfig | Record<string, unknown> | undefined): SubAgentRoleConfig {
+  return {
+    description: typeof raw?.description === "string" ? raw.description : "",
+    system_prompt: typeof raw?.system_prompt === "string" ? raw.system_prompt : "",
+    tool_allowlist: Array.isArray(raw?.tool_allowlist) ? raw.tool_allowlist.map(String).filter(Boolean) : [],
+    max_steps: typeof raw?.max_steps === "number" ? raw.max_steps : Number(raw?.max_steps ?? 8) || 8,
+    allow_dangerous_tools: Boolean(raw?.allow_dangerous_tools),
+  };
+}
+
+function roleToForm(name: string, role?: SubAgentRoleConfig): SubAgentRoleForm {
+  return { name, ...normalizeSubAgentRole(role) };
+}
+
+function uniqueRoleName(base: string, roles: Record<string, SubAgentRoleConfig>) {
+  let candidate = base;
+  let idx = 2;
+  while (roles[candidate]) {
+    candidate = `${base}_${idx}`;
+    idx += 1;
+  }
+  return candidate;
+}
+
+function SubAgentsPage({
+  config,
+  language,
+  onSaved,
+  onOpenConfig,
+}: {
+  config: AppConfig | null;
+  language: AppLanguage;
+  onSaved: (config: AppConfig) => void;
+  onOpenConfig: () => void;
+}) {
+  const copy = i18n[language].subagents;
+  const [roles, setRoles] = useState<Record<string, SubAgentRoleConfig>>({});
+  const [form, setForm] = useState<SubAgentRoleForm>(emptySubAgentRoleForm);
+  const [selectedName, setSelectedName] = useState("");
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [enabled, setEnabled] = useState(true);
+  const [maxParallel, setMaxParallel] = useState(3);
+  const [defaultMaxSteps, setDefaultMaxSteps] = useState(8);
+  const [maxDepth, setMaxDepth] = useState(1);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const dangerousTools = config?.multi_agent_dangerous_tools ?? ["bash", "write_file", "scheduler"];
+  const roleNames = Object.keys(roles).sort();
+  const selectedRole = selectedName ? roles[selectedName] : undefined;
+  const hasUnsavedNameChange = selectedName && form.name.trim() !== selectedName;
+
+  useEffect(() => {
+    if (!config) return;
+    const normalized: Record<string, SubAgentRoleConfig> = {};
+    for (const [name, role] of Object.entries(config.multi_agent_roles ?? {})) {
+      normalized[name] = normalizeSubAgentRole(role);
+    }
+    setRoles(normalized);
+    const firstName = Object.keys(normalized).sort()[0] ?? "";
+    setSelectedName(firstName);
+    setForm(firstName ? roleToForm(firstName, normalized[firstName]) : emptySubAgentRoleForm);
+    setEnabled(config.multi_agent_enabled);
+    setMaxParallel(config.multi_agent_max_parallel_agents);
+    setDefaultMaxSteps(config.multi_agent_default_max_steps);
+    setMaxDepth(config.multi_agent_max_depth);
+  }, [config]);
+
+  useEffect(() => {
+    setIsLoadingTools(true);
+    listTools()
+      .then((res) => setTools(res.tools))
+      .catch(() => setTools([]))
+      .finally(() => setIsLoadingTools(false));
+  }, []);
+
+  function selectRole(name: string) {
+    setSelectedName(name);
+    setForm(roleToForm(name, roles[name]));
+    setMessage("");
+    setError("");
+  }
+
+  function patchForm(patch: Partial<SubAgentRoleForm>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
+
+  function handleNewRole() {
+    const name = uniqueRoleName("custom_agent", roles);
+    const nextForm = {
+      ...emptySubAgentRoleForm,
+      name,
+      description: copy.customDescription,
+      system_prompt: copy.customPrompt,
+      max_steps: defaultMaxSteps,
+    };
+    setSelectedName("");
+    setForm(nextForm);
+    setMessage(copy.newMessage);
+    setError("");
+  }
+
+  function handleDuplicateRole() {
+    const name = uniqueRoleName(`${form.name || "agent"}_copy`, roles);
+    setSelectedName("");
+    setForm({ ...form, name });
+    setMessage(copy.duplicateMessage);
+  }
+
+  function toggleTool(name: string) {
+    const exists = form.tool_allowlist.includes(name);
+    patchForm({
+      tool_allowlist: exists
+        ? form.tool_allowlist.filter((tool) => tool !== name)
+        : [...form.tool_allowlist, name],
+    });
+  }
+
+  function validateForm() {
+    const name = form.name.trim();
+    if (!name) return copy.missingName;
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) return copy.badName;
+    if (!form.description.trim()) return copy.missingDescription;
+    if (!form.system_prompt.trim()) return copy.missingPrompt;
+    if (form.tool_allowlist.includes("delegate_agent")) return copy.blockedDelegate;
+    if (!form.allow_dangerous_tools && form.tool_allowlist.some((tool) => dangerousTools.includes(tool))) {
+      return copy.dangerousBlocked;
+    }
+    return "";
+  }
+
+  async function handleSaveRole() {
+    if (!config) return;
+    const validation = validateForm();
+    if (validation) {
+      setError(validation);
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+    setMessage("");
+    const name = form.name.trim();
+    const nextRoles = { ...roles };
+    if (selectedName && selectedName !== name) delete nextRoles[selectedName];
+    nextRoles[name] = {
+      description: form.description.trim(),
+      system_prompt: form.system_prompt.trim(),
+      tool_allowlist: Array.from(new Set(form.tool_allowlist)).filter(Boolean),
+      max_steps: Math.max(1, Number(form.max_steps) || defaultMaxSteps),
+      allow_dangerous_tools: form.allow_dangerous_tools,
+    };
+
+    try {
+      const next = await saveConfig({
+        multi_agent_enabled: enabled,
+        multi_agent_max_parallel_agents: Math.max(1, Number(maxParallel) || 1),
+        multi_agent_default_max_steps: Math.max(1, Number(defaultMaxSteps) || 1),
+        multi_agent_max_depth: Math.max(1, Number(maxDepth) || 1),
+        multi_agent_roles: nextRoles,
+      });
+      setRoles(next.multi_agent_roles);
+      setSelectedName(name);
+      setForm(roleToForm(name, next.multi_agent_roles[name]));
+      onSaved(next);
+      setMessage(copy.savedMessage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : copy.saveFailed);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDeleteRole(name: string) {
+    if (!config || !window.confirm(formatTemplate(copy.deleteConfirm, { name }))) return;
+    const nextRoles = { ...roles };
+    delete nextRoles[name];
+    setIsSaving(true);
+    setError("");
+    try {
+      const next = await saveConfig({ multi_agent_roles: nextRoles });
+      setRoles(next.multi_agent_roles);
+      const firstName = Object.keys(next.multi_agent_roles).sort()[0] ?? "";
+      setSelectedName(firstName);
+      setForm(firstName ? roleToForm(firstName, next.multi_agent_roles[firstName]) : emptySubAgentRoleForm);
+      onSaved(next);
+      setMessage(copy.deletedMessage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : copy.deleteFailed);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const visibleTools = tools.length
+    ? tools
+    : Array.from(new Set([...form.tool_allowlist, ...dangerousTools, "web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"]))
+        .map((name) => ({ name, description: "", parameters: {} }));
+
+  return (
+    <section className="panel flex min-h-0 flex-1 flex-col">
+      <div className="panel-header">
+        <div className="flex items-center gap-3">
+          <div className="grid size-10 place-items-center rounded-md bg-primary/10 text-primary">
+            <Bot className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold">{copy.title}</p>
+            <p className="truncate text-xs text-muted-foreground sm:text-sm">{copy.subtitle}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={enabled ? "default" : "muted"}>{enabled ? copy.enabledState : copy.disabledState}</Badge>
+          <Button size="sm" variant="outline" onClick={onOpenConfig}>
+            <Settings2 />
+            {copy.config}
+          </Button>
+        </div>
+      </div>
+
+      <div className="panel-body min-h-0 flex-1 overflow-auto">
+        {!config ? (
+          <div className="rounded-md border border-dashed border-border/80 px-3 py-8 text-center text-sm text-muted-foreground">{copy.loading}</div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+            <div className="space-y-3">
+              <div className="grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3">
+                <ToggleRow checked={enabled} icon={<ShieldCheck className="size-4 text-primary" />} label={copy.enabled} onCheckedChange={setEnabled} />
+                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                  <Field label={copy.parallelLimit}>
+                    <Input min={1} type="number" value={maxParallel} onChange={(e) => setMaxParallel(Number(e.target.value))} />
+                  </Field>
+                  <Field label={copy.defaultSteps}>
+                    <Input min={1} type="number" value={defaultMaxSteps} onChange={(e) => setDefaultMaxSteps(Number(e.target.value))} />
+                  </Field>
+                  <Field label={copy.maxDepth}>
+                    <Input min={1} type="number" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold">{copy.roles}</p>
+                  <p className="text-xs text-muted-foreground">{formatTemplate(copy.roleCount, { count: roleNames.length })}</p>
+                </div>
+                <Button size="sm" onClick={handleNewRole}>
+                  <Plus />
+                  {copy.add}
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {roleNames.map((name) => {
+                  const role = roles[name];
+                  const active = selectedName === name;
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => selectRole(name)}
+                      className={cn(
+                        "w-full rounded-md border px-3 py-3 text-left transition-colors",
+                        active ? "border-primary/60 bg-primary/10" : "border-border/80 bg-background/50 hover:border-primary/40",
+                      )}
+                    >
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="truncate text-sm font-semibold">{name}</span>
+                        <Badge variant={role.allow_dangerous_tools ? "danger" : "outline"}>{role.max_steps} steps</Badge>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{role.description || copy.noDescription}</p>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {role.tool_allowlist.slice(0, 4).map((tool) => <Badge key={tool} variant="muted">{tool}</Badge>)}
+                        {role.tool_allowlist.length > 4 ? <Badge variant="outline">+{role.tool_allowlist.length - 4}</Badge> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="min-w-0 space-y-4">
+              {message ? <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">{message}</div> : null}
+              {error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
+
+              <div className="rounded-md border border-border/80 bg-background/50 p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">{selectedName ? copy.editTitle : copy.addTitle}</p>
+                    <p className="text-xs text-muted-foreground">{hasUnsavedNameChange ? formatTemplate(copy.renameHint, { name: selectedName }) : copy.formHint}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={handleDuplicateRole} disabled={!form.name}>
+                      <Copy />
+                      {copy.duplicate}
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => selectedName && handleDeleteRole(selectedName)} disabled={!selectedName || isSaving}>
+                      <Trash2 />
+                      {copy.delete}
+                    </Button>
+                    <Button size="sm" onClick={handleSaveRole} disabled={isSaving}>
+                      {isSaving ? <Loader2 className="animate-spin" /> : <Save />}
+                      {copy.save}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_140px]">
+                  <Field label={copy.agentId}>
+                    <Input value={form.name} onChange={(e) => patchForm({ name: e.target.value.trim() })} placeholder="researcher" />
+                  </Field>
+                  <Field label={copy.description}>
+                    <Input value={form.description} onChange={(e) => patchForm({ description: e.target.value })} placeholder={copy.descriptionPlaceholder} />
+                  </Field>
+                  <Field label={copy.maxSteps}>
+                    <Input min={1} type="number" value={form.max_steps} onChange={(e) => patchForm({ max_steps: Number(e.target.value) })} />
+                  </Field>
+                </div>
+
+                <div className="mt-3">
+                  <ToggleRow
+                    checked={form.allow_dangerous_tools}
+                    icon={<ShieldCheck className="size-4 text-destructive" />}
+                    label={copy.allowDangerous}
+                    onCheckedChange={(checked) => patchForm({
+                      allow_dangerous_tools: checked,
+                      tool_allowlist: checked ? form.tool_allowlist : form.tool_allowlist.filter((tool) => !dangerousTools.includes(tool)),
+                    })}
+                  />
+                </div>
+
+                <Field className="mt-4" label={copy.systemPrompt}>
+                  <Textarea
+                    className="min-h-[180px]"
+                    value={form.system_prompt}
+                    onChange={(e) => patchForm({ system_prompt: e.target.value })}
+                    placeholder={copy.promptPlaceholder}
+                  />
+                </Field>
+              </div>
+
+              <div className="rounded-md border border-border/80 bg-background/50 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">{copy.tools}</p>
+                    <p className="text-xs text-muted-foreground">{isLoadingTools ? copy.loadingTools : formatTemplate(copy.toolsAvailable, { count: visibleTools.length })}</p>
+                  </div>
+                  <Badge variant="outline">{form.tool_allowlist.length} {copy.selected}</Badge>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleTools.map((tool) => {
+                    const isDangerous = dangerousTools.includes(tool.name);
+                    const isDelegate = tool.name === "delegate_agent";
+                    const disabled = isDelegate || (isDangerous && !form.allow_dangerous_tools);
+                    const checked = form.tool_allowlist.includes(tool.name);
+                    return (
+                      <label
+                        key={tool.name}
+                        className={cn(
+                          "flex min-h-[88px] cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors",
+                          checked ? "border-primary/60 bg-primary/10" : "border-border/75 bg-muted/10 hover:border-primary/40",
+                          disabled && "cursor-not-allowed opacity-55",
+                        )}
+                      >
+                        <input
+                          checked={checked}
+                          className="mt-1"
+                          disabled={disabled}
+                          type="checkbox"
+                          onChange={() => toggleTool(tool.name)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex min-w-0 flex-wrap items-center gap-1">
+                            <span className="truncate font-medium">{tool.name}</span>
+                            {isDangerous ? <Badge variant="danger">danger</Badge> : null}
+                            {isDelegate ? <Badge variant="muted">blocked</Badge> : null}
+                          </span>
+                          <span className="mt-1 line-clamp-2 text-xs text-muted-foreground">{tool.description || copy.noDescription}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1648,13 +2634,13 @@ function TracingPage({
                 暂无会话。
               </div>
             ) : null}
-            <div className="grid gap-2 xl:grid-cols-2">
+            <div className="space-y-2">
               {sessions.map((session) => (
                 <button
                   key={session.id}
                   type="button"
                   onClick={() => openSession(session)}
-                  className="min-w-0 rounded-md border border-border/80 bg-muted/15 px-3 py-3 text-left transition-colors hover:border-primary/45 hover:bg-primary/5"
+                  className="block w-full min-w-0 rounded-md border border-border/80 bg-muted/15 px-3 py-3 text-left transition-colors hover:border-primary/45 hover:bg-primary/5"
                 >
                   <div className="mb-1 flex min-w-0 items-center justify-between gap-2">
                     <span className="truncate text-sm font-semibold">{session.title}</span>
@@ -1733,7 +2719,7 @@ function TracingPage({
                   setExpandedEventId(null);
                 }}
                 className={cn(
-                  "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                  "block w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
                   selectedRun?.id === run.id
                     ? "border-primary/60 bg-primary/10 text-foreground"
                     : "border-border/80 bg-muted/20 text-muted-foreground hover:border-primary/40 hover:text-foreground",
@@ -1798,12 +2784,23 @@ function TraceTimeline({
     );
   }
 
+  const laneDepthFor = (event: AgentTraceEvent) => {
+    if (event.node_type === "subagent_batch") return 0;
+    if (event.node_type.startsWith("subagent")) return 1;
+    return 0;
+  };
+
   return (
     <div className="space-y-0">
       {events.map((event, index) => {
         const expanded = expandedEventId === event.id;
+        const depth = laneDepthFor(event);
         return (
-          <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3" key={event.id}>
+          <div
+            className="grid grid-cols-[32px_minmax(0,1fr)] gap-3"
+            key={event.id}
+            style={{ marginLeft: depth ? `${Math.min(depth, 6) * 18}px` : undefined }}
+          >
             <div className="relative flex justify-center">
               {index < events.length - 1 ? (
                 <span className="absolute top-8 bottom-0 w-px bg-border" />
@@ -2177,6 +3174,7 @@ function ConfigPage({
   draft,
   enabledCount,
   handleSaveConfig,
+  language,
   patchDraft,
   setDraft,
 }: {
@@ -2185,9 +3183,11 @@ function ConfigPage({
   draft: ConfigDraft | null;
   enabledCount: number;
   handleSaveConfig: () => void;
+  language: AppLanguage;
   patchDraft: (patch: Partial<ConfigDraft>) => void;
   setDraft: (draft: ConfigDraft) => void;
 }) {
+  const copy = i18n[language].config;
   const [telegramTestMessage, setTelegramTestMessage] = useState("Stocks Assistant Telegram 测试消息");
   const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [telegramTestResult, setTelegramTestResult] = useState("");
@@ -2212,25 +3212,25 @@ function ConfigPage({
         <div>
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="size-5 text-secondary" />
-            <p className="font-semibold">配置管理</p>
+            <p className="font-semibold">{copy.title}</p>
           </div>
-          <p className="text-xs text-muted-foreground">保存到 config.json，立即刷新运行时配置</p>
+          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{enabledCount}/4 ON</Badge>
           <Button
-            aria-label="重载配置"
+            aria-label={copy.reload}
             disabled={!config}
             variant="outline"
             size="sm"
             onClick={() => config && setDraft(toDraft(config))}
           >
             <RefreshCw />
-            Reload
+            {copy.reload}
           </Button>
           <Button size="sm" disabled={configState === "saving" || !draft} onClick={handleSaveConfig}>
             {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" ? <Check /> : <Save />}
-            {configState === "saving" ? "Saving" : configState === "saved" ? "Saved" : "Save"}
+            {configState === "saving" ? copy.saving : configState === "saved" ? copy.saved : copy.save}
           </Button>
         </div>
       </div>
@@ -2239,11 +3239,11 @@ function ConfigPage({
         <div className="panel-body min-h-0 flex-1 overflow-y-auto">
           <Tabs defaultValue="model">
             <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5">
-              <TabsTrigger value="model">模型</TabsTrigger>
-              <TabsTrigger value="agent">Agent</TabsTrigger>
-              <TabsTrigger value="longbridge">长桥</TabsTrigger>
-              <TabsTrigger value="telegram">Telegram</TabsTrigger>
-              <TabsTrigger value="features">能力</TabsTrigger>
+              <TabsTrigger value="model">{copy.modelTab}</TabsTrigger>
+              <TabsTrigger value="agent">{copy.agentTab}</TabsTrigger>
+              <TabsTrigger value="longbridge">{copy.longbridgeTab}</TabsTrigger>
+              <TabsTrigger value="telegram">{copy.telegramTab}</TabsTrigger>
+              <TabsTrigger value="features">{copy.featuresTab}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="model" className="space-y-4">
@@ -2283,11 +3283,29 @@ function ConfigPage({
             </TabsContent>
 
             <TabsContent value="agent" className="space-y-4">
-              <Field label="Workspace">
+              <Field label={copy.language}>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button
+                    size="sm"
+                    variant={draft.app_language === "zh" ? "default" : "outline"}
+                    onClick={() => patchDraft({ app_language: "zh" })}
+                  >
+                    {copy.chinese}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={draft.app_language === "en" ? "default" : "outline"}
+                    onClick={() => patchDraft({ app_language: "en" })}
+                  >
+                    {copy.english}
+                  </Button>
+                </div>
+              </Field>
+              <Field label={copy.workspace}>
                 <Input value={draft.workspace_dir} onChange={(event) => patchDraft({ workspace_dir: event.target.value })} />
               </Field>
               <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="Max Steps">
+                <Field label={copy.maxSteps}>
                   <Input
                     min={1}
                     type="number"
@@ -2295,7 +3313,7 @@ function ConfigPage({
                     onChange={(event) => patchDraft({ agent_max_steps: Number(event.target.value) })}
                   />
                 </Field>
-                <Field label="Context Tokens">
+                <Field label={copy.contextTokens}>
                   <Input
                     min={1000}
                     step={1000}
@@ -2304,7 +3322,7 @@ function ConfigPage({
                     onChange={(event) => patchDraft({ agent_max_context_tokens: Number(event.target.value) })}
                   />
                 </Field>
-                <Field label="Context Turns">
+                <Field label={copy.contextTurns}>
                   <Input
                     min={1}
                     type="number"
@@ -2313,7 +3331,39 @@ function ConfigPage({
                   />
                 </Field>
               </div>
-              <Field label="System Prompt">
+              <div className="grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(120px,160px))]">
+                <ToggleRow
+                  checked={draft.multi_agent_enabled}
+                  icon={<Bot className="size-4 text-primary" />}
+                  label={copy.multiAgent}
+                  onCheckedChange={(checked) => patchDraft({ multi_agent_enabled: checked })}
+                />
+                <Field label={copy.parallelLimit}>
+                  <Input
+                    min={1}
+                    type="number"
+                    value={draft.multi_agent_max_parallel_agents}
+                    onChange={(event) => patchDraft({ multi_agent_max_parallel_agents: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label={copy.subAgentSteps}>
+                  <Input
+                    min={1}
+                    type="number"
+                    value={draft.multi_agent_default_max_steps}
+                    onChange={(event) => patchDraft({ multi_agent_default_max_steps: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label={copy.maxDepth}>
+                  <Input
+                    min={1}
+                    type="number"
+                    value={draft.multi_agent_max_depth}
+                    onChange={(event) => patchDraft({ multi_agent_max_depth: Number(event.target.value) })}
+                  />
+                </Field>
+              </div>
+              <Field label={copy.systemPrompt}>
                 <Textarea
                   className="min-h-[220px]"
                   value={draft.system_prompt}
@@ -2505,7 +3555,7 @@ function ConfigPage({
       ) : (
         <div className="panel-body">
           <div className="ticker-line rounded-md border border-border/80 bg-background/50 px-3 py-8 text-center text-sm text-muted-foreground">
-            正在加载配置...
+            {copy.loading}
           </div>
         </div>
       )}

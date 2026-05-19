@@ -23,6 +23,14 @@ export interface ChatMessage {
   trace?: ChatTraceEvent[];
 }
 
+export interface SubAgentRoleConfig {
+  description: string;
+  system_prompt: string;
+  tool_allowlist: string[];
+  max_steps: number;
+  allow_dangerous_tools: boolean;
+}
+
 export interface AppConfig {
   llm_api_base: string;
   llm_model: string;
@@ -34,9 +42,16 @@ export interface AppConfig {
   embedding_api_key_masked: string;
   has_embedding_api_key: boolean;
   workspace_dir: string;
+  app_language: "zh" | "en";
   agent_max_steps: number;
   agent_max_context_tokens: number;
   agent_max_context_turns: number;
+  multi_agent_enabled: boolean;
+  multi_agent_max_parallel_agents: number;
+  multi_agent_default_max_steps: number;
+  multi_agent_max_depth: number;
+  multi_agent_dangerous_tools: string[];
+  multi_agent_roles: Record<string, SubAgentRoleConfig>;
   knowledge_enabled: boolean;
   memory_enabled: boolean;
   memory_auto_curate_enabled: boolean;
@@ -71,6 +86,17 @@ export interface ConfigDraft extends AppConfig {
   longbridge_app_secret: string;
   longbridge_access_token: string;
   mcp_servers_text: string;
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface ToolListResponse {
+  tools: ToolInfo[];
+  total: number;
 }
 
 export interface ChatResponse {

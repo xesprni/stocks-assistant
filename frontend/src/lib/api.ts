@@ -32,6 +32,7 @@ import type {
   SchedulerTaskRunList,
   SkillListResponse,
   TelegramTestResponse,
+  ToolListResponse,
   TraceSessionResponse,
   WatchlistCategory,
   WatchlistItem,
@@ -79,6 +80,10 @@ export function sendTelegramTestMessage(payload: { message: string }) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function listTools() {
+  return request<ToolListResponse>("/api/v1/tools");
 }
 
 function formatChatTime(iso: string) {
