@@ -1,0 +1,546 @@
+import type {
+  AppConfig,
+  CandlesticksResponse,
+  ChatMessage,
+  ChatResponse,
+  ChatSessionDetail,
+  ChatSessionListResponse,
+  ChatSessionMessage,
+  ChatSessionSummary,
+  ChatStreamEvent,
+  Conversation,
+  FinancialReportKind,
+  FinancialReportPeriod,
+  FinancialReportsResponse,
+  IntradayResponse,
+  KnowledgeFileContent,
+  KnowledgeGraph,
+  KnowledgeSaveResponse,
+  KnowledgeTree,
+  MarketTemperature,
+  MCPServerToolsResponse,
+  MCPStatusResponse,
+  MarketDashboardConfig,
+  MarketQuotesResponse,
+  MemoryFile,
+  MemoryFileContent,
+  MemorySearchResult,
+  MemoryStatus,
+  PortfolioItem,
+  PortfolioItemDraft,
+  PortfolioListResponse,
+  PortfolioMarket,
+  PortfolioSearchResponse,
+  SchedulerTask,
+  SchedulerTaskList,
+  SchedulerTaskRun,
+  SchedulerTaskRunList,
+  SkillListResponse,
+  TelegramTestResponse,
+  ToolListResponse,
+  TraceSessionResponse,
+  WatchlistCategory,
+  WatchlistItem,
+  WatchlistListResponse,
+  WatchlistSearchResponse,
+} from "@/types/app";
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+    ...init,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
+    throw new Error(detail || "Request failed");
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export function checkHealth() {
+  return request<{ status: string }>("/api/v1/health");
+}
+
+export function loadConfig() {
+  return request<AppConfig>("/api/v1/config");
+}
+
+export function saveConfig(payload: Record<string, unknown>) {
+  return request<AppConfig>("/api/v1/config", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function sendTelegramTestMessage(payload: { message: string }) {
+  return request<TelegramTestResponse>("/api/v1/config/telegram/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listTools() {
+  return request<ToolListResponse>("/api/v1/tools");
+}
+
+function formatChatTime(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function mapChatMessage(message: ChatSessionMessage): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: formatChatTime(message.created_at),
+  };
+}
+
+function mapConversation(session: ChatSessionSummary | ChatSessionDetail): Conversation {
+  const messages = "messages" in session ? session.messages.map(mapChatMessage) : [];
+  return {
+    id: session.id,
+    title: session.title,
+    messages,
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+    messageCount: session.message_count,
+    lastMessage: session.last_message,
+  };
+}
+
+export function sendChat(message: string, sessionId?: string | null, clearHistory = false) {
+  return request<ChatResponse>("/api/v1/agent/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      session_id: sessionId ?? undefined,
+      clear_history: clearHistory,
+    }),
+  });
+}
+
+function parseSseBlock(block: string): ChatStreamEvent | null {
+  const data = block
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+
+  if (!data) return null;
+  return JSON.parse(data) as ChatStreamEvent;
+}
+
+export async function streamChat(
+  message: string,
+  sessionId: string | null | undefined,
+  onEvent: (event: ChatStreamEvent) => void,
+  clearHistory = false,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(`${API_BASE}/api/v1/agent/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({
+      message,
+      session_id: sessionId ?? undefined,
+      clear_history: clearHistory,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
+    throw new Error(detail || "Request failed");
+  }
+
+  if (!response.body) {
+    throw new Error("This browser does not support streaming responses");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  function flushBlock(block: string) {
+    const event = parseSseBlock(block);
+    if (event) onEvent(event);
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      flushBlock(block);
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    flushBlock(buffer);
+  }
+}
+
+export async function listChatSessions() {
+  const response = await request<ChatSessionListResponse>("/api/v1/agent/sessions");
+  return response.sessions.map(mapConversation);
+}
+
+export async function listChatSessionPage(limit = 20, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await request<ChatSessionListResponse>(`/api/v1/agent/sessions?${params.toString()}`);
+  return {
+    sessions: response.sessions.map(mapConversation),
+    total: response.total,
+  };
+}
+
+export async function createChatSession(title?: string) {
+  const response = await request<ChatSessionDetail>("/api/v1/agent/sessions", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+  return mapConversation(response);
+}
+
+export async function getChatSession(sessionId: string) {
+  const response = await request<ChatSessionDetail>(`/api/v1/agent/sessions/${sessionId}`);
+  return mapConversation(response);
+}
+
+export async function updateChatSessionTitle(sessionId: string, title: string) {
+  const response = await request<ChatSessionSummary>(`/api/v1/agent/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+  return mapConversation(response);
+}
+
+export function deleteChatSession(sessionId: string) {
+  return request<{ status: string }>(`/api/v1/agent/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
+export function clearChatSessionMessages(sessionId: string) {
+  return request<{ status: string; deleted: number }>(`/api/v1/agent/sessions/${sessionId}/messages`, {
+    method: "DELETE",
+  });
+}
+
+export function getSessionTraces(sessionId: string, limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<TraceSessionResponse>(`/api/v1/tracing/sessions/${sessionId}?${params.toString()}`);
+}
+
+export function listWatchlist(category: WatchlistCategory) {
+  return request<WatchlistListResponse>(`/api/v1/watchlist?category=${category}`);
+}
+
+export function searchWatchlist(query: string, category: WatchlistCategory) {
+  const params = new URLSearchParams({ q: query, category, limit: "10" });
+  return request<WatchlistSearchResponse>(`/api/v1/watchlist/search?${params.toString()}`);
+}
+
+export function addWatchlistItem(item: Omit<WatchlistItem, "id" | "note" | "created_at" | "updated_at">) {
+  return request<WatchlistItem>("/api/v1/watchlist", {
+    method: "POST",
+    body: JSON.stringify({ ...item, note: "" }),
+  });
+}
+
+export function deleteWatchlistItem(id: number) {
+  return request<{ status: string }>(`/api/v1/watchlist/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function reorderWatchlist(ids: number[]) {
+  return request<{ status: string }>("/api/v1/watchlist/reorder", {
+    method: "PATCH",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+// ── Portfolio ───────────────────────────────────────────────────────────────
+
+export function listPortfolio(market: PortfolioMarket) {
+  return request<PortfolioListResponse>(`/api/v1/portfolio?market=${market}`);
+}
+
+export function searchPortfolioSymbols(query: string, market: PortfolioMarket) {
+  const params = new URLSearchParams({ q: query, market, limit: "10" });
+  return request<PortfolioSearchResponse>(`/api/v1/portfolio/search?${params.toString()}`);
+}
+
+export function addPortfolioItem(item: PortfolioItemDraft) {
+  return request<PortfolioItem>("/api/v1/portfolio", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+}
+
+export function updatePortfolioItem(id: number, item: Partial<PortfolioItemDraft>) {
+  return request<PortfolioItem>(`/api/v1/portfolio/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(item),
+  });
+}
+
+export function deletePortfolioItem(id: number) {
+  return request<{ status: string }>(`/api/v1/portfolio/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function savePortfolioSettings(market: PortfolioMarket, totalCapital: string) {
+  return request<{ market: PortfolioMarket; total_capital: string }>(`/api/v1/portfolio/settings/${market}`, {
+    method: "PUT",
+    body: JSON.stringify({ total_capital: totalCapital }),
+  });
+}
+
+// ── Market dashboard ────────────────────────────────────────────────────────
+
+export function getMarketConfig() {
+  return request<MarketDashboardConfig>("/api/v1/market/config");
+}
+
+export function saveMarketConfig(config: MarketDashboardConfig) {
+  return request<MarketDashboardConfig>("/api/v1/market/config", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+}
+
+export function getIndexQuotes() {
+  return request<MarketQuotesResponse>("/api/v1/market/index-quotes");
+}
+
+export function getStockQuotes(category?: string) {
+  const params = category ? `?category=${category}` : "";
+  return request<MarketQuotesResponse>(`/api/v1/market/stock-quotes${params}`);
+}
+
+export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", count = 200) {
+  const params = new URLSearchParams({ symbol, period, count: String(count) });
+  return request<CandlesticksResponse>(`/api/v1/market/candlesticks?${params.toString()}`);
+}
+
+export function getIntraday(symbol: string, since?: number | null) {
+  const params = new URLSearchParams({ symbol });
+  if (since != null) params.set("since", String(since));
+  return request<IntradayResponse>(`/api/v1/market/intraday?${params.toString()}`);
+}
+
+export function getMarketTemperature(market: string = "US") {
+  return request<MarketTemperature>(`/api/v1/market/temperature?market=${market}`);
+}
+
+// ── Fundamentals ─────────────────────────────────────────────────────────────
+
+export function getFinancialReports(
+  symbol: string,
+  kind: FinancialReportKind = "All",
+  period?: FinancialReportPeriod | "",
+) {
+  const params = new URLSearchParams({ symbol, kind });
+  if (period) params.set("period", period);
+  return request<FinancialReportsResponse>(`/api/v1/fundamentals/financial-reports?${params.toString()}`);
+}
+
+// ── MCP servers ────────────────────────────────────────────────────────────────
+
+export function getMcpStatus() {
+  return request<MCPStatusResponse>("/api/v1/mcp/status");
+}
+
+export function reconnectMcpServers() {
+  return request<MCPStatusResponse>("/api/v1/mcp/reconnect", { method: "POST" });
+}
+
+export function getMcpOAuthAuthorizeUrl(serverName: string) {
+  return `${API_BASE}/api/v1/mcp/${encodeURIComponent(serverName)}/oauth/authorize`;
+}
+
+export function deleteMcpOAuth(serverName: string) {
+  return request<{ status: string }>(`/api/v1/mcp/${encodeURIComponent(serverName)}/oauth`, {
+    method: "DELETE",
+  });
+}
+
+export function getMcpTools(serverName: string) {
+  return request<MCPServerToolsResponse>(`/api/v1/mcp/${encodeURIComponent(serverName)}/tools`);
+}
+
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+export function listSkills() {
+  return request<SkillListResponse>("/api/v1/skills");
+}
+
+export function toggleSkill(name: string, enabled: boolean) {
+  return request<{ status: string; name: string; enabled: boolean }>(
+    `/api/v1/skills/${encodeURIComponent(name)}/toggle`,
+    { method: "POST", body: JSON.stringify({ enabled }) },
+  );
+}
+
+export function refreshSkills() {
+  return request<{ status: string; total: number }>("/api/v1/skills/refresh", { method: "POST" });
+}
+
+// ── Memory ────────────────────────────────────────────────────────────────────
+
+export function searchMemory(query: string, options?: { limit?: number; min_score?: number }) {
+  const params = new URLSearchParams({ q: query });
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.min_score != null) params.set("min_score", String(options.min_score));
+  return request<MemorySearchResult[]>(`/api/v1/memory/search?${params.toString()}`);
+}
+
+export function addMemory(content: string, options?: { scope?: string; source?: string }) {
+  return request<{ status: string }>("/api/v1/memory/add", {
+    method: "POST",
+    body: JSON.stringify({ content, scope: options?.scope ?? "shared", source: options?.source ?? "manual" }),
+  });
+}
+
+export function syncMemory() {
+  return request<{ status: string }>("/api/v1/memory/sync", { method: "POST" });
+}
+
+export function getMemoryStatus() {
+  return request<MemoryStatus>("/api/v1/memory/status");
+}
+
+export function listMemoryFiles() {
+  return request<{ files: MemoryFile[] }>("/api/v1/memory/files");
+}
+
+export function getMemoryFile(path: string) {
+  return request<MemoryFileContent>(`/api/v1/memory/files/${encodeURIComponent(path)}`);
+}
+
+export function deleteMemoryFile(path: string) {
+  return request<{ status: string; deleted_file: boolean; deleted_chunks: number }>(
+    `/api/v1/memory/files/${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function deleteMemoryIndex(path: string) {
+  return request<{ status: string; deleted_file: boolean; deleted_chunks: number }>(
+    `/api/v1/memory/index/${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+}
+
+// ── Knowledge ─────────────────────────────────────────────────────────────────
+
+export function getKnowledgeTree() {
+  return request<{ tree: KnowledgeTree }>("/api/v1/knowledge/tree").then((res) => ({
+    root_files: res.tree.root_files ?? [],
+    tree: res.tree.tree ?? [],
+    stats: res.tree.stats ?? { pages: 0, size: 0 },
+    enabled: res.tree.enabled ?? true,
+  }));
+}
+
+export function getKnowledgeFile(path: string) {
+  const params = new URLSearchParams({ path });
+  return request<KnowledgeFileContent>(`/api/v1/knowledge/read?${params.toString()}`);
+}
+
+export function getKnowledgeGraph() {
+  return request<KnowledgeGraph>("/api/v1/knowledge/graph");
+}
+
+export function saveKnowledgeFile(payload: { filename: string; content: string; directory?: string }) {
+  return request<KnowledgeSaveResponse>("/api/v1/knowledge/files", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadKnowledgeFile(file: File, directory?: string) {
+  const content = await file.text();
+  return saveKnowledgeFile({ filename: file.name, content, directory });
+}
+
+export function saveKnowledgeUrl(payload: { url: string; filename?: string; directory?: string }) {
+  return request<KnowledgeSaveResponse>("/api/v1/knowledge/url", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+
+export function listSchedulerTasks() {
+  return request<SchedulerTaskList>("/api/v1/scheduler/tasks");
+}
+
+export function createSchedulerTask(payload: {
+  name: string;
+  prompt: string;
+  schedule: string;
+  enabled?: boolean;
+  notify_telegram?: boolean;
+}) {
+  return request<SchedulerTask>("/api/v1/scheduler/tasks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSchedulerTask(
+  id: string,
+  payload: {
+    name?: string;
+    prompt?: string;
+    schedule?: string;
+    enabled?: boolean;
+    notify_telegram?: boolean;
+  },
+) {
+  return request<SchedulerTask>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function runSchedulerTaskNow(id: string) {
+  return request<SchedulerTaskRun>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+  });
+}
+
+export function listSchedulerTaskRuns(id: string, limit = 30) {
+  return request<SchedulerTaskRunList>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}/runs?limit=${limit}`);
+}
+
+export function deleteSchedulerTask(id: string) {
+  return request<{ status: string }>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function toggleSchedulerTask(id: string) {
+  return request<{ status: string; enabled: boolean }>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}/toggle`, {
+    method: "POST",
+  });
+}
