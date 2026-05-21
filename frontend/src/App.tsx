@@ -78,6 +78,12 @@ const WatchlistPage = lazy(() => import("@/pages/WatchlistPage").then((module) =
 type NavItem = { id: Page; label: string; icon: ReactNode; hint: string };
 type NavGroup = { id: string; label: string; items: NavItem[] };
 
+function getActiveLlmModel(config: AppConfig | null, fallback: string): string {
+  if (!config) return fallback;
+  const isCodexOAuth = config.llm_provider === "openai_responses" && config.llm_auth_mode === "codex";
+  return (isCodexOAuth ? config.llm_codex_model : config.llm_model) || fallback;
+}
+
 function navItem(language: AppLanguage, id: Page, icon: ReactNode): NavItem {
   const [label, hint] = i18n[language].nav[id as keyof typeof i18n.zh.nav];
   return { id, label, icon, hint };
@@ -328,7 +334,7 @@ function App() {
     };
   }, []);
 
-  const modelName = config?.llm_model ?? ui.shell.notConfigured;
+  const modelName = getActiveLlmModel(config, ui.shell.notConfigured);
   const enabledCount = useMemo(() => {
     if (!config) return 0;
     return [config.memory_enabled, config.knowledge_enabled, config.scheduler_enabled, config.tracing_enabled].filter(Boolean).length;
@@ -1166,6 +1172,7 @@ function OverviewPage({
   const copy = i18n[language].overview;
   const quickPrompts = i18n[language].quickPrompts;
   const loading = language === "en" ? "Loading" : "加载中";
+  const modelName = getActiveLlmModel(config, i18n[language].shell.notConfigured);
   return (
     <div className="page-enter grid h-full min-h-0 flex-1 gap-3 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-4 lg:overflow-hidden">
       <section className="panel motion-panel flex min-h-0 min-w-0 flex-col rounded-md">
@@ -1184,7 +1191,7 @@ function OverviewPage({
         </div>
         <div className="panel-body flex-1 space-y-4 overflow-y-auto">
           <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-	            <StatusTile label={copy.llmModel} value={config?.llm_model ?? i18n[language].shell.notConfigured} icon={<Cpu className="size-4 text-primary" />} />
+	            <StatusTile label={copy.llmModel} value={modelName} icon={<Cpu className="size-4 text-primary" />} />
 	            <StatusTile label={copy.workspace} value={config?.workspace_dir ?? loading} icon={<Database className="size-4 text-accent" />} />
 	            <StatusTile label={copy.contextTurns} value={String(config?.agent_max_context_turns ?? "-")} icon={<Bot className="size-4 text-secondary" />} />
 	            <StatusTile label={copy.capabilities} value={`${enabledCount}/4 ON`} icon={<Sparkles className="size-4 text-primary" />} />
