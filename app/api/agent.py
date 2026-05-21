@@ -25,7 +25,7 @@ from app.schemas import (
     ChatSessionSummary,
     ChatSessionUpdateRequest,
 )
-from app.deps import get_llm_provider, get_skill_manager, get_memory_manager, get_session_store
+from app.deps import get_llm_provider, get_memory_llm_provider, get_skill_manager, get_memory_manager, get_session_store
 
 router = APIRouter()
 logger = logging.getLogger("stocks-assistant.agent.api")
@@ -202,9 +202,13 @@ def _schedule_memory_curate(
     def run_curator():
         try:
             from app.core.memory.curator import MemoryCurator
+            llm_provider = get_memory_llm_provider()
+            if not llm_provider:
+                logger.info("Memory curator skipped: compatible LLM provider is not configured")
+                return
 
             curator = MemoryCurator(
-                llm_provider=get_llm_provider(),
+                llm_provider=llm_provider,
                 memory_manager=get_memory_manager(),
                 model=settings.llm_model,
                 min_importance=settings.memory_curator_min_importance,

@@ -23,25 +23,122 @@ def get_memory_manager():
     from app.core.memory.manager import MemoryManager
 
     settings = get_settings()
+    active_embedding_model = (
+        settings.embedding_codex_model
+        if settings.embedding_auth_mode == "codex"
+        else settings.embedding_model
+    )
     config = MemoryConfig(
         workspace_root=settings.workspace_dir,
         embedding_provider=settings.embedding_provider,
-        embedding_model=settings.embedding_model,
+        embedding_model=active_embedding_model,
     )
-    llm_provider = get_llm_provider()
-    return MemoryManager(config=config, llm_provider=llm_provider)
+    return MemoryManager(
+        config=config,
+        embedding_provider=get_embedding_provider(),
+        llm_provider=get_memory_llm_provider(),
+    )
+
+
+@lru_cache
+def get_embedding_provider():
+    """获取向量化 provider。
+
+    Embedding 使用自己的 invocation mode，不跟随主对话模型。
+    """
+    from app.core.memory.embedding import create_embedding_provider
+
+    settings = get_settings()
+    if settings.embedding_auth_mode == "codex":
+        try:
+            from app.config import CODEX_OAUTH_API_BASE, EMBEDDING_DEFAULT_MODEL
+            from app.core.llm.codex_auth import resolve_codex_oauth
+
+            credentials = resolve_codex_oauth(settings.embedding_codex_auth_file or settings.llm_codex_auth_file or None)
+            api_base = settings.embedding_codex_api_base.rstrip("/") or CODEX_OAUTH_API_BASE
+            model = settings.embedding_codex_model or EMBEDDING_DEFAULT_MODEL
+            return create_embedding_provider(
+                provider=settings.embedding_provider,
+                model=model,
+                api_key=credentials.access_token,
+                api_base=api_base,
+                extra_headers={
+                    "ChatGPT-Account-Id": credentials.account_id,
+                    "OpenAI-Beta": "responses=experimental",
+                    "Origin": "https://chatgpt.com",
+                    "Referer": "https://chatgpt.com/",
+                },
+            )
+        except Exception:
+            return None
+
+    api_key = settings.embedding_api_key or settings.llm_api_key
+    if not api_key:
+        return None
+    api_base = settings.embedding_api_base or settings.llm_api_base
+    try:
+        return create_embedding_provider(
+            provider=settings.embedding_provider,
+            model=settings.embedding_model,
+            api_key=api_key,
+            api_base=api_base,
+        )
+    except Exception:
+        return None
+
+
+@lru_cache
+def get_memory_llm_provider():
+    """获取记忆整理用的兼容 LLM provider。
+
+    Memory curator / flush 不使用主对话 Codex OAuth，避免后台任务打到 Codex
+    ChatGPT backend。为空时记忆摘要会降级或跳过。
+    """
+    from app.core.llm.provider import OpenAICompatibleProvider
+
+    settings = get_settings()
+    if not settings.llm_api_key:
+        return None
+    return OpenAICompatibleProvider(
+        api_key=settings.llm_api_key,
+        api_base=settings.llm_api_base,
+        model=settings.llm_model,
+    )
 
 
 @lru_cache
 def get_llm_provider():
     """获取 LLM 提供商单例
 
-    基于 OpenAI 兼容 API 实现，支持 OpenAI/DeepSeek/Qwen 等。
+    支持 OpenAI 兼容 Chat Completions、Responses API，以及 Codex ChatGPT OAuth 登录态。
     """
-    from app.core.llm.provider import OpenAICompatibleProvider
+    from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
+
+    from app.config import CODEX_DEFAULT_MODEL, CODEX_OAUTH_API_BASE
 
     settings = get_settings()
-    return OpenAICompatibleProvider(
+    provider_cls = OpenAIResponsesProvider if settings.llm_provider == "openai_responses" else OpenAICompatibleProvider
+    default_model = CODEX_DEFAULT_MODEL if settings.llm_provider == "openai_responses" and not settings.llm_codex_model else settings.llm_codex_model
+    if settings.llm_provider == "openai_responses" and settings.llm_auth_mode == "codex":
+        from app.core.llm.codex_auth import resolve_codex_oauth
+
+        credentials = resolve_codex_oauth(settings.llm_codex_auth_file or None)
+        api_base = settings.llm_codex_api_base.rstrip("/") or CODEX_OAUTH_API_BASE
+        if api_base == "https://api.openai.com/v1":
+            api_base = CODEX_OAUTH_API_BASE
+        return OpenAIResponsesProvider(
+            api_key=credentials.access_token,
+            api_base=api_base,
+            model=default_model,
+            extra_headers={
+                "ChatGPT-Account-Id": credentials.account_id,
+                "OpenAI-Beta": "responses=experimental",
+                "Origin": "https://chatgpt.com",
+                "Referer": "https://chatgpt.com/",
+            },
+            store_response=False,
+        )
+    return provider_cls(
         api_key=settings.llm_api_key,
         api_base=settings.llm_api_base,
         model=settings.llm_model,

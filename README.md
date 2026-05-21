@@ -58,11 +58,20 @@ cp config.example.json config.json
 ```json
 {
   "llm_api_key": "your-api-key",
+  "llm_provider": "openai_compatible",
+  "llm_auth_mode": "api_key",
   "llm_api_base": "https://api.openai.com/v1",
   "llm_model": "gpt-4o",
+  "llm_codex_auth_file": "",
+  "llm_codex_api_base": "https://chatgpt.com/backend-api/codex",
+  "llm_codex_model": "gpt-5.5",
+  "embedding_auth_mode": "api_key",
   "embedding_api_key": "",
   "embedding_api_base": "https://api.openai.com/v1",
   "embedding_model": "text-embedding-3-small",
+  "embedding_codex_auth_file": "",
+  "embedding_codex_api_base": "https://chatgpt.com/backend-api/codex",
+  "embedding_codex_model": "text-embedding-3-small",
   "workspace_dir": "~/stocks-assistant"
 }
 ```
@@ -72,6 +81,17 @@ cp config.example.json config.json
 ```bash
 export APP_LLM_API_KEY=your-api-key
 export APP_LLM_MODEL=gpt-4o
+```
+
+如需使用 Codex 的 ChatGPT OAuth 登录态，先在本机执行 `codex login`，再设置：
+
+```json
+{
+  "llm_provider": "openai_responses",
+  "llm_auth_mode": "codex",
+  "llm_codex_api_base": "https://chatgpt.com/backend-api/codex",
+  "llm_codex_model": "gpt-5.2-codex"
+}
 ```
 
 ### 多 Agent 编排

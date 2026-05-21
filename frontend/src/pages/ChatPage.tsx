@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, Check, CircleDot, Copy, History, Loader2, MessageSquareText, Plus, Send, Square, Trash2, WandSparkles, X } from "lucide-react";
@@ -53,6 +53,95 @@ function formatRelativeDate(iso: string): string {
   return "更早";
 }
 
+function estimateTextTokens(text: string): number {
+  if (!text) return 0;
+  let nonAscii = 0;
+  for (const char of text) {
+    if (char.charCodeAt(0) > 127) nonAscii += 1;
+  }
+  const ascii = text.length - nonAscii;
+  return Math.max(1, Math.ceil(nonAscii * 1.5 + ascii * 0.25) + 1);
+}
+
+function estimateMessageTokens(message: ChatMessage): number {
+  return estimateTextTokens(message.content) + 4;
+}
+
+function recentContextMessages(messages: ChatMessage[], maxTurns: number): ChatMessage[] {
+  if (maxTurns <= 0) return messages;
+
+  let userTurns = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      userTurns += 1;
+      if (userTurns >= maxTurns) {
+        return messages.slice(index);
+      }
+    }
+  }
+
+  return messages;
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat("en-US").format(Math.max(0, Math.round(value)));
+}
+
+function ContextUsageRing({
+  copy,
+  total,
+  used,
+}: {
+  copy: {
+    contextUsage: string;
+    contextUsed: string;
+    contextTotal: string;
+    contextTokens: string;
+  };
+  total: number;
+  used: number;
+}) {
+  const safeTotal = Math.max(1, total);
+  const ratio = total > 0 ? Math.min(1, Math.max(0, used / safeTotal)) : 0;
+  const percent = Math.round(ratio * 100);
+  const degrees = Math.round(ratio * 360);
+  const fill = percent >= 90 ? "hsl(var(--destructive))" : percent >= 70 ? "hsl(var(--secondary))" : "hsl(var(--primary))";
+  const style = {
+    background: `conic-gradient(${fill} ${degrees}deg, hsl(var(--muted)) ${degrees}deg 360deg)`,
+  } satisfies CSSProperties;
+  const label = `${copy.contextUsage}: ${formatTokenCount(used)} / ${formatTokenCount(total)} ${copy.contextTokens}`;
+
+  return (
+    <div className="group/context relative shrink-0" title={label}>
+      <div
+        aria-label={label}
+        aria-valuemax={Math.max(0, total)}
+        aria-valuemin={0}
+        aria-valuenow={Math.min(Math.max(0, used), Math.max(0, total))}
+        className="grid size-10 place-items-center rounded-full border border-border/80 shadow-sm outline-none transition-transform focus-visible:ring-2 focus-visible:ring-ring group-hover/context:scale-[1.03]"
+        role="meter"
+        style={style}
+        tabIndex={0}
+      >
+        <div className="grid size-7 place-items-center rounded-full bg-background text-[10px] font-semibold tabular-nums text-foreground">
+          {percent}%
+        </div>
+      </div>
+      <div className="pointer-events-none absolute bottom-[calc(100%+0.55rem)] right-0 z-50 min-w-[188px] rounded-md border border-border/90 bg-popover/95 px-3 py-2 text-xs text-popover-foreground opacity-0 shadow-2xl backdrop-blur transition-opacity group-hover/context:opacity-100 group-focus-within/context:opacity-100">
+        <p className="mb-1 font-semibold">{copy.contextUsage}</p>
+        <div className="flex items-center justify-between gap-4 text-muted-foreground">
+          <span>{copy.contextUsed}</span>
+          <span className="font-medium tabular-nums text-foreground">{formatTokenCount(used)}</span>
+        </div>
+        <div className="mt-0.5 flex items-center justify-between gap-4 text-muted-foreground">
+          <span>{copy.contextTotal}</span>
+          <span className="font-medium tabular-nums text-foreground">{formatTokenCount(total)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function TraceIcon({ status }: { status: ChatTraceEvent["status"] }) {
   if (status === "running") return <Loader2 className="size-3 animate-spin text-primary" />;
@@ -97,6 +186,8 @@ export function ChatPage({
   prompt,
   quickPrompts,
   chatHistory,
+  contextTokenLimit,
+  contextTurnLimit,
   setPage,
   setPrompt,
 }: {
@@ -111,6 +202,8 @@ export function ChatPage({
   prompt: string;
   quickPrompts: string[];
   chatHistory: ChatHistoryState;
+  contextTokenLimit: number;
+  contextTurnLimit: number;
   setPage: (page: Page) => void;
   setPrompt: (value: string) => void;
 }) {
@@ -122,6 +215,15 @@ export function ChatPage({
   const [promptDockOpen, setPromptDockOpen] = useState(false);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const promptDockRef = useRef<HTMLDivElement | null>(null);
+  const contextUsage = useMemo(() => {
+    const windowMessages = recentContextMessages(messages, contextTurnLimit);
+    const messageTokens = windowMessages.reduce((total, message) => total + estimateMessageTokens(message), 0);
+    const draftTokens = prompt.trim() ? estimateTextTokens(prompt) + 4 : 0;
+    return {
+      total: Math.max(0, contextTokenLimit),
+      used: Math.max(0, Math.round(messageTokens + draftTokens)),
+    };
+  }, [contextTokenLimit, contextTurnLimit, messages, prompt]);
 
   const grouped = useMemo(() => {
     const groups: Record<string, Conversation[]> = {};
@@ -259,9 +361,9 @@ export function ChatPage({
           onScroll={handleChatScroll}
           ref={chatScrollRef}
         >
-          <div className="space-y-4">
+          <div className="mr-auto w-full space-y-4">
             {messages.map((message) => (
-              <div className={cn("group flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
+              <div className={cn("group flex min-w-0 gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
                 {message.role === "assistant" ? (
                   <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-md border border-primary/25 bg-primary/10 text-primary shadow-sm">
                     {message.pending ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
@@ -269,7 +371,7 @@ export function ChatPage({
                 ) : null}
                 <div
                   className={cn(
-                    "message-bubble max-w-[min(780px,92%)] rounded-lg border px-3.5 py-3 shadow-sm sm:px-4 sm:py-3.5",
+                    "message-bubble min-w-0 max-w-[92%] rounded-lg border px-3.5 py-3 shadow-sm sm:max-w-[84%] sm:px-4 sm:py-3.5 xl:max-w-[78%]",
                     message.role === "user"
                       ? "chat-bubble-user"
                       : "chat-bubble-assistant",
@@ -311,7 +413,7 @@ export function ChatPage({
         </div>
 
         <form className="border-t border-border/80 bg-card/35 px-3 py-3 sm:px-4" onSubmit={handleSend}>
-          <div className="mx-auto flex max-w-5xl items-end gap-2 rounded-lg border border-border/80 bg-background/90 p-2 shadow-sm transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/20">
+          <div className="mr-auto flex w-full items-end gap-2 rounded-lg border border-border/80 bg-background/90 p-2 shadow-sm transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/20">
             <div className="relative shrink-0" ref={promptDockRef}>
               <Button
                 aria-expanded={promptDockOpen}
@@ -364,6 +466,7 @@ export function ChatPage({
               placeholder={uiCopy.promptPlaceholder}
               value={prompt}
             />
+            <ContextUsageRing copy={uiCopy} total={contextUsage.total} used={contextUsage.used} />
             {isSending ? (
               <Button className="h-10 w-10 shrink-0 rounded-md sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
                 <Square className="fill-current" />

@@ -27,14 +27,31 @@ def _mask_secret(value: str) -> str:
 
 
 def _settings_to_response(settings: Settings) -> AppConfig:
+    codex_status = _codex_oauth_status(settings)
+    embedding_codex_status = _embedding_codex_oauth_status(settings)
     return AppConfig(
+        llm_provider=settings.llm_provider,
+        llm_auth_mode=settings.llm_auth_mode,
         llm_api_base=settings.llm_api_base,
         llm_model=settings.llm_model,
+        llm_codex_auth_file=settings.llm_codex_auth_file,
+        llm_codex_api_base=settings.llm_codex_api_base,
+        llm_codex_model=settings.llm_codex_model,
+        has_codex_oauth=bool(codex_status.get("available")),
+        codex_oauth_account_id_masked=_mask_secret(str(codex_status.get("account_id") or "")),
+        codex_oauth_error=str(codex_status.get("error") or ""),
         llm_api_key_masked=_mask_secret(settings.llm_api_key),
         has_llm_api_key=bool(settings.llm_api_key),
+        embedding_auth_mode=settings.embedding_auth_mode,
         embedding_api_base=settings.embedding_api_base,
         embedding_model=settings.embedding_model,
         embedding_provider=settings.embedding_provider,
+        embedding_codex_auth_file=settings.embedding_codex_auth_file,
+        embedding_codex_api_base=settings.embedding_codex_api_base,
+        embedding_codex_model=settings.embedding_codex_model,
+        has_embedding_codex_oauth=bool(embedding_codex_status.get("available")),
+        embedding_codex_oauth_account_id_masked=_mask_secret(str(embedding_codex_status.get("account_id") or "")),
+        embedding_codex_oauth_error=str(embedding_codex_status.get("error") or ""),
         embedding_api_key_masked=_mask_secret(settings.embedding_api_key),
         has_embedding_api_key=bool(settings.embedding_api_key),
         workspace_dir=settings.workspace_dir,
@@ -94,6 +111,69 @@ def _write_config_file(data: Dict[str, Any]) -> None:
     )
 
 
+def _codex_oauth_status(settings: Settings) -> Dict[str, Any]:
+    try:
+        from app.core.llm.codex_auth import inspect_codex_oauth
+
+        return inspect_codex_oauth(settings.llm_codex_auth_file or None)
+    except Exception as exc:
+        return {"available": False, "account_id": "", "error": str(exc)}
+
+
+def _embedding_codex_oauth_status(settings: Settings) -> Dict[str, Any]:
+    try:
+        from app.core.llm.codex_auth import inspect_codex_oauth
+
+        auth_file = settings.embedding_codex_auth_file or settings.llm_codex_auth_file or None
+        return inspect_codex_oauth(auth_file)
+    except Exception as exc:
+        return {"available": False, "account_id": "", "error": str(exc)}
+
+
+def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
+    """Clear cached dependencies that are affected by persisted config changes."""
+    try:
+        from app import deps
+    except Exception:
+        return
+
+    llm_keys = {
+        "llm_provider",
+        "llm_auth_mode",
+        "llm_api_key",
+        "llm_api_base",
+        "llm_model",
+        "llm_codex_auth_file",
+        "llm_codex_api_base",
+        "llm_codex_model",
+    }
+    memory_keys = llm_keys | {
+        "embedding_auth_mode",
+        "embedding_api_key",
+        "embedding_api_base",
+        "embedding_model",
+        "embedding_provider",
+        "embedding_codex_auth_file",
+        "embedding_codex_api_base",
+        "embedding_codex_model",
+        "memory_enabled",
+        "workspace_dir",
+    }
+    tool_keys = {"workspace_dir", "memory_enabled"}
+    skill_keys = {"workspace_dir"}
+
+    if llm_keys & patch.keys():
+        deps.get_llm_provider.cache_clear()
+        deps.get_memory_llm_provider.cache_clear()
+    if memory_keys & patch.keys():
+        deps.get_memory_manager.cache_clear()
+        deps.get_embedding_provider.cache_clear()
+    if tool_keys & patch.keys():
+        deps.get_tool_manager.cache_clear()
+    if skill_keys & patch.keys():
+        deps.get_skill_manager.cache_clear()
+
+
 @router.get("", response_model=AppConfig)
 async def get_config():
     """读取当前应用配置。"""
@@ -115,6 +195,7 @@ async def update_config(update: ConfigUpdate):
     _write_config_file(merged)
     config_module._config_instance = None
     settings = get_settings()
+    _refresh_runtime_caches(patch)
     if "scheduler_enabled" in patch:
         try:
             from app.deps import get_scheduler_service

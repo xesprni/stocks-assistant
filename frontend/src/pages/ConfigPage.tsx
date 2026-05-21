@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, Loader2, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, KeyRound, Loader2, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import { ToggleRow } from "@/components/common/ToggleRow";
@@ -19,6 +19,11 @@ import type { AppConfig, ConfigDraft, ToolInfo } from "@/types/app";
 function isMcpToolName(name: string): boolean {
   return name.startsWith("mcp_");
 }
+
+const OPENAI_API_BASE = "https://api.openai.com/v1";
+const CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex";
+const CODEX_DEFAULT_MODEL = "gpt-5.2-codex";
+const EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
 
 export function ConfigPage({
   config,
@@ -46,6 +51,7 @@ export function ConfigPage({
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [expandedMcpServers, setExpandedMcpServers] = useState<Record<string, boolean>>({});
+  const [compatibleSnapshot, setCompatibleSnapshot] = useState({ apiBase: "", model: "" });
 
   const dangerousTools = ["bash", "write_file", "scheduler"];
   const builtinTools = useMemo(() => tools.filter((tool) => !isMcpToolName(tool.name)), [tools]);
@@ -68,6 +74,9 @@ export function ConfigPage({
     }
     return selected;
   }, [draft?.agent_allow_all_mcp_tools, draft?.agent_tool_allowlist, tools]);
+  const llmProvider = draft?.llm_provider === "openai_responses" ? "openai_responses" : "openai_compatible";
+  const isCodexOAuth = llmProvider === "openai_responses" && draft?.llm_auth_mode === "codex";
+  const isEmbeddingCodexOAuth = draft?.embedding_auth_mode === "codex";
 
   useEffect(() => {
     setTelegramTestMessage((current) => (
@@ -95,6 +104,14 @@ export function ConfigPage({
       return next;
     });
   }, [mcpToolGroups]);
+
+  useEffect(() => {
+    if (!draft || isCodexOAuth) return;
+    setCompatibleSnapshot({
+      apiBase: draft.llm_api_base || OPENAI_API_BASE,
+      model: draft.llm_model || "",
+    });
+  }, [draft?.llm_api_base, draft?.llm_model, draft, isCodexOAuth]);
 
   async function handleTelegramTest() {
     if (!telegramTestMessage.trim()) return;
@@ -126,6 +143,42 @@ export function ConfigPage({
     const allowlist = new Set(draft.agent_tool_allowlist ?? []);
     for (const tool of builtinTools) allowlist.add(tool.name);
     patchDraft({ agent_tool_allowlist: Array.from(allowlist).sort() });
+  }
+
+  function selectLlmProvider(provider: "openai_compatible" | "openai_responses") {
+    if (provider === "openai_responses") {
+      patchDraft({
+        llm_provider: provider,
+        llm_auth_mode: "codex",
+        llm_codex_api_base: draft?.llm_codex_api_base || CODEX_OAUTH_API_BASE,
+        llm_codex_model: draft?.llm_codex_model || CODEX_DEFAULT_MODEL,
+      });
+      return;
+    }
+    const nextApiBase = compatibleSnapshot.apiBase && compatibleSnapshot.apiBase !== CODEX_OAUTH_API_BASE
+      ? compatibleSnapshot.apiBase
+      : OPENAI_API_BASE;
+    const nextModel = compatibleSnapshot.model && compatibleSnapshot.model !== CODEX_DEFAULT_MODEL
+      ? compatibleSnapshot.model
+      : (draft?.llm_model && draft.llm_model !== CODEX_DEFAULT_MODEL ? draft.llm_model : "gpt-4o");
+    patchDraft({
+      llm_provider: provider,
+      llm_auth_mode: "api_key",
+      llm_api_base: nextApiBase,
+      llm_model: nextModel,
+    });
+  }
+
+  function selectEmbeddingProvider(mode: "api_key" | "codex") {
+    if (mode === "codex") {
+      patchDraft({
+        embedding_auth_mode: "codex",
+        embedding_codex_api_base: draft?.embedding_codex_api_base || CODEX_OAUTH_API_BASE,
+        embedding_codex_model: draft?.embedding_codex_model || EMBEDDING_DEFAULT_MODEL,
+      });
+      return;
+    }
+    patchDraft({ embedding_auth_mode: "api_key" });
   }
 
   return (
@@ -164,48 +217,188 @@ export function ConfigPage({
               <TabsTrigger value="model">{copy.modelTab}</TabsTrigger>
               <TabsTrigger value="agent">{copy.agentTab}</TabsTrigger>
               <TabsTrigger value="longbridge">{copy.longbridgeTab}</TabsTrigger>
-              <TabsTrigger value="telegram">{copy.telegramTab}</TabsTrigger>
+              <TabsTrigger value="channels">{copy.channelsTab}</TabsTrigger>
               <TabsTrigger value="features">{copy.featuresTab}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="model" className="space-y-4">
               <ConfigSection
                 description={copy.modelSectionHint}
-                icon={<Cpu className="size-4 text-primary" />}
+                icon={<KeyRound className="size-4 text-primary" />}
                 title={copy.modelSection}
               >
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <Field label="LLM API Base">
-                    <Input value={draft.llm_api_base} onChange={(event) => patchDraft({ llm_api_base: event.target.value })} />
-                  </Field>
-                  <Field label="LLM Model">
-                    <Input value={draft.llm_model} onChange={(event) => patchDraft({ llm_model: event.target.value })} />
-                  </Field>
-                  <Field label="LLM API Key">
-                    <Input
-                      placeholder={draft.has_llm_api_key ? draft.llm_api_key_masked : "sk-..."}
-                      type="password"
-                      value={draft.llm_api_key}
-                      onChange={(event) => patchDraft({ llm_api_key: event.target.value })}
-                    />
-                  </Field>
-                  <Field label="Embedding API Key">
-                    <Input
-                      placeholder={draft.has_embedding_api_key ? draft.embedding_api_key_masked : "默认使用 LLM key"}
-                      type="password"
-                      value={draft.embedding_api_key}
-                      onChange={(event) => patchDraft({ embedding_api_key: event.target.value })}
-                    />
-                  </Field>
-                  <Field label="Embedding API Base">
-                    <Input
-                      value={draft.embedding_api_base}
-                      onChange={(event) => patchDraft({ embedding_api_base: event.target.value })}
-                    />
-                  </Field>
-                  <Field label="Embedding Model">
-                    <Input value={draft.embedding_model} onChange={(event) => patchDraft({ embedding_model: event.target.value })} />
-                  </Field>
+                <p className="mb-2 text-xs font-semibold text-muted-foreground">{copy.invocationMode}</p>
+                <div className="mb-3 grid gap-3 lg:grid-cols-2">
+                  <ModelProviderCard
+                    description={copy.openaiCompatibleHint}
+                    icon={<Cpu className="size-4 text-primary" />}
+                    label={copy.openaiCompatible}
+                    selected={!isCodexOAuth}
+                    onSelect={() => selectLlmProvider("openai_compatible")}
+                  />
+                  <ModelProviderCard
+                    description={copy.codexOauthHint}
+                    icon={<TerminalSquare className="size-4 text-secondary" />}
+                    label={copy.codexOauth}
+                    selected={isCodexOAuth}
+                    onSelect={() => selectLlmProvider("openai_responses")}
+                  />
+                </div>
+                <div className="mb-3 rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                  {isCodexOAuth ? copy.codexProviderHint : copy.compatibleProviderHint}
+                </div>
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                  {isCodexOAuth ? (
+                    <>
+                      <Field label={copy.codexApiBase}>
+                        <Input
+                          value={draft.llm_codex_api_base || CODEX_OAUTH_API_BASE}
+                          onChange={(event) => patchDraft({ llm_codex_api_base: event.target.value })}
+                        />
+                      </Field>
+                      <Field label={copy.codexModel}>
+                        <Input
+                          value={draft.llm_codex_model || CODEX_DEFAULT_MODEL}
+                          onChange={(event) => patchDraft({ llm_codex_model: event.target.value })}
+                        />
+                      </Field>
+                      <Field label={copy.codexAuthFile}>
+                        <Input
+                          placeholder="~/.codex/auth.json"
+                          value={draft.llm_codex_auth_file ?? ""}
+                          onChange={(event) => patchDraft({ llm_codex_auth_file: event.target.value })}
+                        />
+                      </Field>
+                      <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={draft.has_codex_oauth ? "secondary" : "outline"}>
+                            {draft.has_codex_oauth ? copy.codexOauthReady : copy.codexOauthMissing}
+                          </Badge>
+                          {draft.codex_oauth_account_id_masked ? <span>{draft.codex_oauth_account_id_masked}</span> : null}
+                        </div>
+                        <p className="mt-1">{draft.has_codex_oauth ? copy.codexOauthReadyHint : copy.codexOauthMissingHint}</p>
+                        {!draft.has_codex_oauth && draft.codex_oauth_error ? <p className="mt-1 text-destructive">{draft.codex_oauth_error}</p> : null}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <Field label={copy.llmApiBase}>
+                        <Input value={draft.llm_api_base} onChange={(event) => patchDraft({ llm_api_base: event.target.value })} />
+                      </Field>
+                      <Field label={copy.llmModel}>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Input
+                            className="flex-1"
+                            value={draft.llm_model}
+                            onChange={(event) => patchDraft({ llm_model: event.target.value })}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            type="button"
+                            onClick={() => patchDraft({
+                              llm_provider: "openai_responses",
+                              llm_auth_mode: "codex",
+                              llm_codex_api_base: CODEX_OAUTH_API_BASE,
+                              llm_codex_model: CODEX_DEFAULT_MODEL,
+                            })}
+                          >
+                            <TerminalSquare />
+                            {copy.useCodexPreset}
+                          </Button>
+                        </div>
+                      </Field>
+                    <Field label={copy.llmApiKey}>
+                      <Input
+                        placeholder={draft.has_llm_api_key ? draft.llm_api_key_masked : "sk-..."}
+                        type="password"
+                        value={draft.llm_api_key}
+                        onChange={(event) => patchDraft({ llm_api_key: event.target.value })}
+                      />
+                    </Field>
+                    </>
+                  )}
+                </div>
+              </ConfigSection>
+
+              <ConfigSection
+                description={copy.embeddingSectionHint}
+                icon={<Database className="size-4 text-secondary" />}
+                title={copy.embeddingSection}
+              >
+                <p className="mb-2 text-xs font-semibold text-muted-foreground">{copy.invocationMode}</p>
+                <div className="mb-3 grid gap-3 lg:grid-cols-2">
+                  <ModelProviderCard
+                    description={copy.embeddingCompatibleHint}
+                    icon={<Database className="size-4 text-secondary" />}
+                    label={copy.openaiCompatible}
+                    selected={!isEmbeddingCodexOAuth}
+                    onSelect={() => selectEmbeddingProvider("api_key")}
+                  />
+                  <ModelProviderCard
+                    description={copy.embeddingCodexHint}
+                    icon={<TerminalSquare className="size-4 text-secondary" />}
+                    label={copy.codexOauth}
+                    selected={isEmbeddingCodexOAuth}
+                    onSelect={() => selectEmbeddingProvider("codex")}
+                  />
+                </div>
+                <div className="grid gap-3 lg:grid-cols-3">
+                  {isEmbeddingCodexOAuth ? (
+                    <>
+                      <Field label={copy.codexApiBase}>
+                        <Input
+                          value={draft.embedding_codex_api_base || CODEX_OAUTH_API_BASE}
+                          onChange={(event) => patchDraft({ embedding_codex_api_base: event.target.value })}
+                        />
+                      </Field>
+                      <Field label={copy.embeddingModel}>
+                        <Input
+                          value={draft.embedding_codex_model || EMBEDDING_DEFAULT_MODEL}
+                          onChange={(event) => patchDraft({ embedding_codex_model: event.target.value })}
+                        />
+                      </Field>
+                      <Field label={copy.codexAuthFile}>
+                        <Input
+                          placeholder="~/.codex/auth.json"
+                          value={draft.embedding_codex_auth_file ?? ""}
+                          onChange={(event) => patchDraft({ embedding_codex_auth_file: event.target.value })}
+                        />
+                      </Field>
+                      <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground lg:col-span-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={draft.has_embedding_codex_oauth ? "secondary" : "outline"}>
+                            {draft.has_embedding_codex_oauth ? copy.codexOauthReady : copy.codexOauthMissing}
+                          </Badge>
+                          {draft.embedding_codex_oauth_account_id_masked ? <span>{draft.embedding_codex_oauth_account_id_masked}</span> : null}
+                        </div>
+                        <p className="mt-1">{draft.has_embedding_codex_oauth ? copy.codexOauthReadyHint : copy.codexOauthMissingHint}</p>
+                        {!draft.has_embedding_codex_oauth && draft.embedding_codex_oauth_error ? (
+                          <p className="mt-1 text-destructive">{draft.embedding_codex_oauth_error}</p>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <Field label={copy.embeddingApiBase}>
+                        <Input
+                          value={draft.embedding_api_base}
+                          onChange={(event) => patchDraft({ embedding_api_base: event.target.value })}
+                        />
+                      </Field>
+                      <Field label={copy.embeddingModel}>
+                        <Input value={draft.embedding_model} onChange={(event) => patchDraft({ embedding_model: event.target.value })} />
+                      </Field>
+                      <Field label={copy.embeddingApiKey}>
+                        <Input
+                          placeholder={draft.has_embedding_api_key ? draft.embedding_api_key_masked : copy.embeddingKeyFallback}
+                          type="password"
+                          value={draft.embedding_api_key}
+                          onChange={(event) => patchDraft({ embedding_api_key: event.target.value })}
+                        />
+                      </Field>
+                    </>
+                  )}
                 </div>
               </ConfigSection>
             </TabsContent>
@@ -400,16 +593,16 @@ export function ConfigPage({
               </ConfigSection>
             </TabsContent>
 
-            <TabsContent value="telegram" className="space-y-4">
+            <TabsContent value="channels" className="space-y-4">
               <ConfigSection
-                description={copy.telegramSectionHint}
-                icon={<Send className="size-4 text-primary" />}
-                title={copy.telegramSection}
+                description={copy.telegramChannelHint}
+                icon={<MessageCircle className="size-4 text-primary" />}
+                title={copy.telegramChannel}
               >
                 <div className="space-y-3">
                   <ToggleRow
                     checked={draft.telegram_enabled}
-                    icon={<Send className="size-4 text-primary" />}
+                    icon={<MessageCircle className="size-4 text-primary" />}
                     label={copy.telegramEnabled}
                     onCheckedChange={(checked) => patchDraft({ telegram_enabled: checked })}
                   />
@@ -447,9 +640,9 @@ export function ConfigPage({
                 </div>
               </ConfigSection>
               <ConfigSection
-                description={copy.telegramTestSavedHint}
+                description={copy.channelTestSavedHint}
                 icon={<Send className="size-4 text-secondary" />}
-                title={copy.telegramTestMessage}
+                title={copy.channelTestMessage}
               >
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
                   <Field label={copy.telegramTestMessage} className="flex-1">
@@ -574,6 +767,38 @@ export function ConfigPage({
         </div>
       )}
     </section>
+  );
+}
+
+
+function ModelProviderCard({
+  description,
+  icon,
+  label,
+  onSelect,
+  selected,
+}: {
+  description: string;
+  icon: ReactNode;
+  label: string;
+  onSelect: () => void;
+  selected: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex min-h-[96px] w-full items-start gap-3 rounded-md border p-3 text-left transition-colors",
+        selected ? "border-primary/60 bg-primary/10" : "border-border/75 bg-background/60 hover:border-primary/40",
+      )}
+      onClick={onSelect}
+    >
+      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/70">{icon}</span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">{label}</span>
+        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
+      </span>
+    </button>
   );
 }
 

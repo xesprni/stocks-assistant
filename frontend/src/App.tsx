@@ -647,12 +647,22 @@ function App() {
 
     try {
       const mcpServers = parseJsonObject(draft.mcp_servers_text || "{}", "MCP Servers JSON") as Record<string, Record<string, unknown>>;
+      const isCodexOAuth = draft.llm_provider === "openai_responses" && draft.llm_auth_mode === "codex";
       const payload: Record<string, unknown> = {
+        llm_provider: isCodexOAuth ? "openai_responses" : "openai_compatible",
+        llm_auth_mode: isCodexOAuth ? "codex" : "api_key",
         llm_api_base: draft.llm_api_base,
         llm_model: draft.llm_model,
+        llm_codex_auth_file: draft.llm_codex_auth_file ?? "",
+        llm_codex_api_base: draft.llm_codex_api_base ?? "https://chatgpt.com/backend-api/codex",
+        llm_codex_model: draft.llm_codex_model ?? "gpt-5.2-codex",
+        embedding_auth_mode: draft.embedding_auth_mode ?? "api_key",
         embedding_api_base: draft.embedding_api_base,
         embedding_model: draft.embedding_model,
         embedding_provider: draft.embedding_provider,
+        embedding_codex_auth_file: draft.embedding_codex_auth_file ?? "",
+        embedding_codex_api_base: draft.embedding_codex_api_base ?? "https://chatgpt.com/backend-api/codex",
+        embedding_codex_model: draft.embedding_codex_model ?? "text-embedding-3-small",
         workspace_dir: draft.workspace_dir,
         app_language: draft.app_language,
         agent_max_steps: Number(draft.agent_max_steps),
@@ -795,6 +805,8 @@ function App() {
                 prompt={prompt}
                 quickPrompts={quickPrompts}
                 chatHistory={chatHistory}
+                contextTokenLimit={config?.agent_max_context_tokens ?? 0}
+                contextTurnLimit={config?.agent_max_context_turns ?? 20}
                 setPage={setPage}
                 setPrompt={setPrompt}
               />

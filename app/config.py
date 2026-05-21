@@ -11,7 +11,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, JsonConfigSettingsSource, PydanticBaseSettingsSource
 
 
@@ -54,6 +54,10 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "memory_get",
     "scheduler",
 ]
+
+CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex"
+CODEX_DEFAULT_MODEL = "gpt-5.2-codex"
+EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small"
 
 
 DEFAULT_MULTI_AGENT_ROLES: Dict[str, Dict[str, Any]] = {
@@ -125,14 +129,23 @@ class Settings(BaseSettings):
     """
 
     # ---- LLM 大模型配置 ----
+    llm_provider: str = "openai_compatible"  # openai_compatible / openai_responses
+    llm_auth_mode: str = "api_key"  # api_key / codex
     llm_api_key: str = ""  # API 密钥
     llm_api_base: str = "https://api.openai.com/v1"  # API 地址（兼容 OpenAI 接口）
     llm_model: str = "gpt-4o"  # 模型名称
+    llm_codex_auth_file: str = ""  # Codex OAuth 登录态文件；为空时读取 $CODEX_HOME/auth.json 或 ~/.codex/auth.json
+    llm_codex_api_base: str = CODEX_OAUTH_API_BASE  # Codex OAuth API 地址
+    llm_codex_model: str = CODEX_DEFAULT_MODEL  # Codex OAuth 模型名称
 
     # ---- Embedding 向量化配置 ----
+    embedding_auth_mode: str = "api_key"  # api_key / codex
     embedding_api_key: str = ""  # 向量化 API 密钥（为空时使用 llm_api_key）
     embedding_api_base: str = "https://api.openai.com/v1"
-    embedding_model: str = "text-embedding-3-small"  # 向量化模型
+    embedding_model: str = EMBEDDING_DEFAULT_MODEL  # 向量化模型
+    embedding_codex_auth_file: str = ""  # Embedding Codex OAuth 登录态文件
+    embedding_codex_api_base: str = CODEX_OAUTH_API_BASE
+    embedding_codex_model: str = EMBEDDING_DEFAULT_MODEL
 
     # ---- 工作空间 ----
     workspace_dir: str = "~/stocks-assistant"  # 工作空间根目录
@@ -244,6 +257,66 @@ class Settings(BaseSettings):
         if normalized in {"en", "en-us", "english"}:
             return "en"
         return "zh"
+
+    @field_validator("llm_provider", mode="before")
+    @classmethod
+    def validate_llm_provider(cls, value):
+        normalized = str(value or "openai_compatible").strip().lower().replace("-", "_")
+        if normalized in {"openai", "chat", "chat_completions", "openai_chat", "openai_compatible"}:
+            return "openai_compatible"
+        if normalized in {"responses", "openai_responses", "codex", "openai_codex"}:
+            return "openai_responses"
+        return "openai_compatible"
+
+    @field_validator("llm_auth_mode", mode="before")
+    @classmethod
+    def validate_llm_auth_mode(cls, value):
+        normalized = str(value or "api_key").strip().lower().replace("-", "_")
+        if normalized in {"codex", "chatgpt", "chatgpt_oauth", "codex_oauth", "oauth"}:
+            return "codex"
+        return "api_key"
+
+    @field_validator("embedding_auth_mode", mode="before")
+    @classmethod
+    def validate_embedding_auth_mode(cls, value):
+        normalized = str(value or "api_key").strip().lower().replace("-", "_")
+        if normalized in {"codex", "chatgpt", "chatgpt_oauth", "codex_oauth", "oauth"}:
+            return "codex"
+        return "api_key"
+
+    @model_validator(mode="after")
+    def normalize_llm_auth_pair(self):
+        llm_base = (self.llm_api_base or "").rstrip("/")
+        embedding_base = (self.embedding_api_base or "").rstrip("/")
+        legacy_llm_codex_base = self.llm_provider == "openai_responses" and llm_base == CODEX_OAUTH_API_BASE
+        legacy_embedding_codex_base = embedding_base == CODEX_OAUTH_API_BASE
+
+        if legacy_llm_codex_base:
+            self.llm_auth_mode = "codex"
+        if self.llm_auth_mode == "codex":
+            self.llm_provider = "openai_responses"
+            if not self.llm_codex_api_base:
+                self.llm_codex_api_base = CODEX_OAUTH_API_BASE
+            if llm_base == CODEX_OAUTH_API_BASE:
+                self.llm_codex_api_base = CODEX_OAUTH_API_BASE
+                fallback_api_base = self.embedding_api_base if embedding_base and embedding_base != CODEX_OAUTH_API_BASE else "https://api.openai.com/v1"
+                self.llm_api_base = fallback_api_base
+            if not self.llm_codex_model:
+                self.llm_codex_model = self.llm_model if legacy_llm_codex_base and self.llm_model else CODEX_DEFAULT_MODEL
+            if not self.llm_model:
+                self.llm_model = "gpt-4o"
+        if legacy_embedding_codex_base:
+            self.embedding_auth_mode = "codex"
+        if self.embedding_auth_mode == "codex":
+            if not self.embedding_codex_api_base:
+                self.embedding_codex_api_base = CODEX_OAUTH_API_BASE
+            if embedding_base == CODEX_OAUTH_API_BASE:
+                self.embedding_codex_api_base = CODEX_OAUTH_API_BASE
+                fallback_embedding_base = self.llm_api_base if (self.llm_api_base or "").rstrip("/") != CODEX_OAUTH_API_BASE else "https://api.openai.com/v1"
+                self.embedding_api_base = fallback_embedding_base or "https://api.openai.com/v1"
+            if not self.embedding_codex_model:
+                self.embedding_codex_model = self.embedding_model if legacy_embedding_codex_base and self.embedding_model else EMBEDDING_DEFAULT_MODEL
+        return self
 
 
 # 全局配置单例

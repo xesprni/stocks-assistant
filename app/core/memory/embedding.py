@@ -6,7 +6,7 @@
 
 import hashlib
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -34,10 +34,11 @@ class EmbeddingProvider(ABC):
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """OpenAI 兼容向量化提供商"""
     def __init__(self, model: str = "text-embedding-3-small", api_key: Optional[str] = None,
-                 api_base: Optional[str] = None):
+                 api_base: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None):
         self.model = model
         self.api_key = api_key
         self.api_base = api_base or "https://api.openai.com/v1"
+        self.extra_headers = extra_headers or {}
         self._dimensions = 1536 if "small" in model else 3072
         if not self.api_key:
             raise ValueError("Embedding API key not configured")
@@ -45,7 +46,11 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     def _call(self, input_data):
         resp = httpx.post(
             f"{self.api_base}/embeddings",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                **self.extra_headers,
+            },
             json={"input": input_data, "model": self.model},
             timeout=10,
         )
@@ -80,7 +85,8 @@ class EmbeddingCache:
 def create_embedding_provider(
     provider: str = "openai", model: Optional[str] = None,
     api_key: Optional[str] = None, api_base: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
 ) -> EmbeddingProvider:
     """创建向量化提供商实例（工厂函数）"""
     model = model or "text-embedding-3-small"
-    return OpenAIEmbeddingProvider(model=model, api_key=api_key, api_base=api_base)
+    return OpenAIEmbeddingProvider(model=model, api_key=api_key, api_base=api_base, extra_headers=extra_headers)

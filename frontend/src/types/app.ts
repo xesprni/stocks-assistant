@@ -33,13 +33,28 @@ export interface SubAgentRoleConfig {
 }
 
 export interface AppConfig {
+  llm_provider: "openai_compatible" | "openai_responses" | string;
+  llm_auth_mode: "api_key" | "codex" | string;
   llm_api_base: string;
   llm_model: string;
+  llm_codex_auth_file: string;
+  llm_codex_api_base: string;
+  llm_codex_model: string;
+  has_codex_oauth: boolean;
+  codex_oauth_account_id_masked: string;
+  codex_oauth_error: string;
   llm_api_key_masked: string;
   has_llm_api_key: boolean;
+  embedding_auth_mode: "api_key" | "codex" | string;
   embedding_api_base: string;
   embedding_model: string;
   embedding_provider: string;
+  embedding_codex_auth_file: string;
+  embedding_codex_api_base: string;
+  embedding_codex_model: string;
+  has_embedding_codex_oauth: boolean;
+  embedding_codex_oauth_account_id_masked: string;
+  embedding_codex_oauth_error: string;
   embedding_api_key_masked: string;
   has_embedding_api_key: boolean;
   workspace_dir: string;

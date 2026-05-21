@@ -11,14 +11,29 @@ class AppConfig(BaseModel):
     API 密钥只返回掩码状态，避免浏览器初始化时泄露完整密钥。
     """
 
+    llm_provider: str = "openai_compatible"
+    llm_auth_mode: str = "api_key"
     llm_api_base: str
     llm_model: str
+    llm_codex_auth_file: str = ""
+    llm_codex_api_base: str = ""
+    llm_codex_model: str = ""
+    has_codex_oauth: bool = False
+    codex_oauth_account_id_masked: str = ""
+    codex_oauth_error: str = ""
     llm_api_key_masked: str = ""
     has_llm_api_key: bool = False
 
+    embedding_auth_mode: str = "api_key"
     embedding_api_base: str
     embedding_model: str
     embedding_provider: str = "openai"
+    embedding_codex_auth_file: str = ""
+    embedding_codex_api_base: str = ""
+    embedding_codex_model: str = ""
+    has_embedding_codex_oauth: bool = False
+    embedding_codex_oauth_account_id_masked: str = ""
+    embedding_codex_oauth_error: str = ""
     embedding_api_key_masked: str = ""
     has_embedding_api_key: bool = False
 
@@ -72,14 +87,23 @@ class ConfigUpdate(BaseModel):
     字段均为可选；只持久化请求中显式传入的字段。
     """
 
+    llm_provider: Optional[str] = None
+    llm_auth_mode: Optional[str] = None
     llm_api_key: Optional[str] = None
     llm_api_base: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_codex_auth_file: Optional[str] = None
+    llm_codex_api_base: Optional[str] = None
+    llm_codex_model: Optional[str] = None
 
+    embedding_auth_mode: Optional[str] = None
     embedding_api_key: Optional[str] = None
     embedding_api_base: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_provider: Optional[str] = None
+    embedding_codex_auth_file: Optional[str] = None
+    embedding_codex_api_base: Optional[str] = None
+    embedding_codex_model: Optional[str] = None
 
     workspace_dir: Optional[str] = None
     app_language: Optional[str] = None
