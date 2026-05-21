@@ -42,6 +42,46 @@ function TraceStatusIcon({ status }: { status: string }) {
 }
 
 const TRACE_SESSION_PAGE_SIZE = 10;
+const JSON_PREVIEW_MAX_CHARS = 180;
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isJsonContainer(value: unknown): value is Record<string, unknown> | unknown[] {
+  return Array.isArray(value) || isJsonRecord(value);
+}
+
+function parseJsonContainerString(value: string): Record<string, unknown> | unknown[] | null {
+  const trimmed = value.trim();
+  if (!trimmed || !["{", "["].includes(trimmed[0])) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isJsonContainer(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function jsonPreview(value: unknown) {
+  const text = JSON.stringify(value);
+  if (!text) return "";
+  return text.length > JSON_PREVIEW_MAX_CHARS ? `${text.slice(0, JSON_PREVIEW_MAX_CHARS)}...` : text;
+}
+
+function primitiveTone(value: unknown) {
+  if (value === null) return "text-muted-foreground";
+  if (typeof value === "string") return "text-emerald-600 dark:text-emerald-400";
+  if (typeof value === "number") return "text-sky-600 dark:text-sky-400";
+  if (typeof value === "boolean") return "text-violet-600 dark:text-violet-400";
+  return "text-muted-foreground";
+}
+
+function formatPrimitive(value: unknown) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === undefined) return "undefined";
+  return String(value);
+}
 
 export function TracingPage({
   activeSessionId,
@@ -464,10 +504,99 @@ function TraceNodeDetail({ event }: { event: AgentTraceEvent }) {
         <span className="truncate">Event {event.id}</span>
         <span className="truncate">Parent {event.parent_id ?? "-"}</span>
       </div>
-      <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
-        {JSON.stringify(event.payload, null, 2)}
-      </pre>
+      <TracePayloadViewer value={event.payload} />
     </div>
   );
 }
 
+function TracePayloadViewer({ value }: { value: unknown }) {
+  const parsed = typeof value === "string" ? parseJsonContainerString(value) : null;
+  const displayValue = parsed ?? value;
+  if (!isJsonContainer(displayValue)) {
+    return (
+      <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
+        {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+      </pre>
+    );
+  }
+
+  return (
+    <div className="mt-3 max-h-[420px] overflow-auto rounded-md border border-border/60 bg-muted/20 p-2 font-mono text-xs leading-5">
+      <JsonTreeNode value={displayValue} defaultExpanded />
+    </div>
+  );
+}
+
+function JsonTreeNode({
+  value,
+  name,
+  depth = 0,
+  defaultExpanded = false,
+}: {
+  value: unknown;
+  name?: string;
+  depth?: number;
+  defaultExpanded?: boolean;
+}) {
+  const parsedString = typeof value === "string" ? parseJsonContainerString(value) : null;
+  const displayValue = parsedString ?? value;
+  const [expanded, setExpanded] = useState(defaultExpanded || depth < 2);
+
+  if (isJsonContainer(displayValue)) {
+    const isArray = Array.isArray(displayValue);
+    const entries = isArray
+      ? displayValue.map((item, index) => [`[${index}]`, item] as const)
+      : Object.entries(displayValue);
+    const openMark = isArray ? "[" : "{";
+    const closeMark = isArray ? "]" : "}";
+    const typeLabel = isArray ? `Array(${entries.length})` : `Object(${entries.length})`;
+
+    return (
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="grid size-5 shrink-0 place-items-center rounded border border-transparent text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
+            aria-label={expanded ? "Collapse JSON node" : "Expand JSON node"}
+            title={expanded ? "Collapse" : "Expand"}
+          >
+            {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </button>
+          {name ? <span className="shrink-0 text-primary">{name}:</span> : null}
+          <span className="shrink-0 text-muted-foreground">{expanded ? openMark : typeLabel}</span>
+          {parsedString ? <Badge variant="outline" className="h-5 px-1.5 text-[10px]">JSON</Badge> : null}
+          {!expanded ? (
+            <span className="min-w-0 truncate text-muted-foreground">{jsonPreview(displayValue)}</span>
+          ) : null}
+        </div>
+        {expanded ? (
+          <div className="ml-2.5 border-l border-border/70 pl-3">
+            {entries.length === 0 ? (
+              <div className="text-muted-foreground">{openMark}{closeMark}</div>
+            ) : (
+              entries.map(([entryName, entryValue]) => (
+                <JsonTreeNode
+                  key={`${entryName}-${typeof entryValue}`}
+                  name={entryName}
+                  value={entryValue}
+                  depth={depth + 1}
+                />
+              ))
+            )}
+            <div className="text-muted-foreground">{closeMark}</div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 items-start gap-2 pl-5">
+      {name ? <span className="shrink-0 text-primary">{name}:</span> : null}
+      <span className={cn("min-w-0 whitespace-pre-wrap break-words", primitiveTone(displayValue))}>
+        {formatPrimitive(displayValue)}
+      </span>
+    </div>
+  );
+}

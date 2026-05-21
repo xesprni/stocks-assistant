@@ -19,6 +19,8 @@ MAX_TRACE_STRING_CHARS = 50_000
 MAX_RESPONSE_PREVIEW_CHARS = 1_000
 _TRUNCATION_MARKER = "\n\n[Trace payload truncated: {original} chars total]"
 _SECRET_KEYS = ("api_key", "authorization", "password", "secret", "token")
+_TOOL_CALL_NODE_TYPES = {"tool_call", "subagent_tool_call"}
+_TOOL_RESULT_NODE_TYPES = {"tool_result", "subagent_tool_result"}
 
 
 def _new_id() -> str:
@@ -48,6 +50,27 @@ def _decode_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return fallback
+
+
+def _drop_payload_keys(value: dict[str, Any], keys: set[str]) -> dict[str, Any]:
+    normalized = deepcopy(value)
+    for key in keys:
+        normalized.pop(key, None)
+    child_data = normalized.get("child_data")
+    if isinstance(child_data, dict):
+        for key in keys:
+            child_data.pop(key, None)
+    return normalized
+
+
+def _normalize_payload_for_response(node_type: str, payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    if node_type in _TOOL_CALL_NODE_TYPES:
+        return _drop_payload_keys(payload, {"result"})
+    if node_type in _TOOL_RESULT_NODE_TYPES:
+        return _drop_payload_keys(payload, {"arguments"})
+    return payload
 
 
 def _clean_text(value: str) -> str:
@@ -419,19 +442,21 @@ class TraceStore:
 
     @staticmethod
     def _event_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        node_type = row["node_type"]
+        payload = _decode_json(row["payload_json"], {})
         return {
             "id": row["id"],
             "run_id": row["run_id"],
             "seq": row["seq"],
             "parent_id": row["parent_id"],
-            "node_type": row["node_type"],
+            "node_type": node_type,
             "title": row["title"],
             "status": row["status"],
             "started_at": row["started_at"],
             "ended_at": row["ended_at"],
             "duration_ms": row["duration_ms"],
             "summary": row["summary"],
-            "payload": _decode_json(row["payload_json"], {}),
+            "payload": _normalize_payload_for_response(node_type, payload),
         }
 
 
@@ -688,22 +713,28 @@ class TraceRecorder:
             status = "done" if data.get("status") == "success" else "error"
             duration = data.get("execution_time")
             duration_ms = duration * 1000 if isinstance(duration, (int, float)) else None
-            payload = {
+            call_payload = {
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments": (info or {}).get("arguments"),
+                "status": data.get("status"),
+                "execution_time": data.get("execution_time"),
+            }
+            result_payload = {
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
                 "status": data.get("status"),
                 "execution_time": data.get("execution_time"),
                 "result": data.get("result"),
             }
             parent_id = self.current_turn_id or self.root_event_id
             if info:
-                # 工具结果挂在对应 tool_call 下；缺少 start 事件时退回到当前 turn，保证 trace 不中断。
+                # tool_call 只保留请求侧信息；结果单独落到 tool_result，展开时才有清晰分工。
                 parent_id = info["event_id"]
                 self.store.update_event(
                     info["event_id"],
                     status=status,
-                    payload=payload,
+                    payload=call_payload,
                     ended_at=timestamp,
                     duration_ms=duration_ms,
                     summary=f"{tool_name}: {data.get('status') or status}",
@@ -713,7 +744,7 @@ class TraceRecorder:
                 node_type="tool_result",
                 title=f"Tool result: {tool_name}",
                 status=status,
-                payload=payload,
+                payload=result_payload,
                 parent_id=parent_id,
                 started_at=timestamp,
                 ended_at=timestamp,
@@ -909,7 +940,14 @@ class TraceRecorder:
                 node_type="subagent_tool_call",
                 title=f"{role} tool: {tool_name}",
                 status="running",
-                payload=data,
+                payload={
+                    "batch_id": batch_id,
+                    "task_id": task_id,
+                    "role": role,
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "arguments": child_data.get("arguments"),
+                },
                 parent_id=self._subagent_active_turn_id(batch_id, task_id) or subagent_parent,
                 started_at=child_timestamp,
                 summary=tool_name,
@@ -918,6 +956,7 @@ class TraceRecorder:
                 "event_id": event_id,
                 "started_at": child_timestamp,
                 "tool_name": tool_name,
+                "arguments": child_data.get("arguments"),
             }
             return
 
@@ -928,12 +967,26 @@ class TraceRecorder:
             status = "done" if child_data.get("status") == "success" else "error"
             duration = child_data.get("execution_time")
             duration_ms = duration * 1000 if isinstance(duration, (int, float)) else None
+            call_payload = {
+                "batch_id": batch_id,
+                "task_id": task_id,
+                "role": role,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments": (info or {}).get("arguments"),
+                "status": child_data.get("status"),
+                "execution_time": child_data.get("execution_time"),
+            }
+            result_payload = {
+                **call_payload,
+                "result": child_data.get("result"),
+            }
             parent_id = (info or {}).get("event_id") or self._subagent_active_turn_id(batch_id, task_id) or subagent_parent
             if info:
                 self.store.update_event(
                     info["event_id"],
                     status=status,
-                    payload=data,
+                    payload=call_payload,
                     ended_at=child_timestamp,
                     duration_ms=duration_ms,
                     summary=f"{tool_name}: {child_data.get('status') or status}",
@@ -943,7 +996,7 @@ class TraceRecorder:
                 node_type="subagent_tool_result",
                 title=f"{role} tool result: {tool_name}",
                 status=status,
-                payload=data,
+                payload=result_payload,
                 parent_id=parent_id,
                 started_at=child_timestamp,
                 ended_at=child_timestamp,
