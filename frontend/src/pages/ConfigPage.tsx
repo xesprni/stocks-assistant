@@ -37,6 +37,7 @@ export function ConfigPage({
   enabledCount,
   handleSaveConfig,
   language,
+  onConfigBlur,
   patchDraft,
   setDraft,
 }: {
@@ -46,6 +47,7 @@ export function ConfigPage({
   enabledCount: number;
   handleSaveConfig: () => void;
   language: AppLanguage;
+  onConfigBlur: () => void;
   patchDraft: (patch: Partial<ConfigDraft>) => void;
   setDraft: (draft: ConfigDraft) => void;
 }) {
@@ -197,7 +199,7 @@ export function ConfigPage({
   }
 
   return (
-    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md">
+    <section className="panel motion-panel page-enter flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-md" onBlurCapture={onConfigBlur}>
       <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2">

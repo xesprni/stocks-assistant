@@ -11,6 +11,7 @@ from app.schemas.memory import (
     MemorySearchRequest, MemorySearchResult, MemoryAddRequest, MemoryStatusResponse,
 )
 from app.deps import get_memory_manager
+from app.core.security import CurrentUser, require_permissions
 
 router = APIRouter()
 
@@ -21,11 +22,17 @@ async def search_memory(
     user_id: Optional[str] = None,
     limit: Optional[int] = None,
     min_score: Optional[float] = None,
+    current_user: CurrentUser = Depends(require_permissions("memory:read")),
 ):
     mgr = get_memory_manager()
+    effective_user_id = user_id if (user_id and current_user.is_admin) else current_user.id
     try:
         results = await mgr.search(
-            query=q, user_id=user_id, max_results=limit, min_score=min_score,
+            query=q,
+            user_id=effective_user_id,
+            max_results=limit,
+            min_score=min_score,
+            include_shared=current_user.is_admin and not user_id,
         )
         return [MemorySearchResult(**r.__dict__) for r in results]
     except Exception as e:
@@ -33,12 +40,15 @@ async def search_memory(
 
 
 @router.post("/add")
-async def add_memory(request: MemoryAddRequest):
+async def add_memory(request: MemoryAddRequest, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
     mgr = get_memory_manager()
     try:
+        effective_user_id = request.user_id if (request.user_id and current_user.is_admin) else current_user.id
         await mgr.add_memory(
-            content=request.content, user_id=request.user_id,
-            scope=request.scope, source=request.source,
+            content=request.content,
+            user_id=effective_user_id,
+            scope="shared" if (current_user.is_admin and request.scope == "shared") else "user",
+            source=request.source,
             path=request.path, metadata=request.metadata,
         )
         return {"status": "ok"}
@@ -47,7 +57,9 @@ async def add_memory(request: MemoryAddRequest):
 
 
 @router.post("/sync")
-async def sync_memory():
+async def sync_memory(current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Only admins can run full memory sync")
     mgr = get_memory_manager()
     try:
         await mgr.sync()
@@ -57,13 +69,13 @@ async def sync_memory():
 
 
 @router.get("/status", response_model=MemoryStatusResponse)
-async def memory_status():
+async def memory_status(_: CurrentUser = Depends(require_permissions("memory:read"))):
     mgr = get_memory_manager()
     return MemoryStatusResponse(**mgr.get_status())
 
 
 @router.get("/files")
-async def list_memory_files():
+async def list_memory_files(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
     from pathlib import Path
     from app.config import get_settings
 
@@ -74,9 +86,14 @@ async def list_memory_files():
 
     files_by_path = {}
     root_memory = workspace / "MEMORY.md"
-    disk_files = [root_memory] if root_memory.exists() else []
+    disk_files = [root_memory] if (current_user.is_admin and root_memory.exists()) else []
     if memory_dir.exists():
-        disk_files.extend(memory_dir.rglob("*.md"))
+        if current_user.is_admin:
+            disk_files.extend(memory_dir.rglob("*.md"))
+        else:
+            user_dir = memory_dir / "users" / current_user.id
+            if user_dir.exists():
+                disk_files.extend(user_dir.rglob("*.md"))
 
     for f in disk_files:
         rel = str(f.relative_to(workspace))
@@ -103,7 +120,9 @@ async def list_memory_files():
 
 
 @router.delete("/files/{name:path}")
-async def delete_memory_file(name: str):
+async def delete_memory_file(name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+    if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
+        raise HTTPException(status_code=403, detail="Cannot delete another user's memory")
     mgr = get_memory_manager()
     try:
         result = mgr.delete_memory_path(name, delete_file=True)
@@ -115,7 +134,9 @@ async def delete_memory_file(name: str):
 
 
 @router.delete("/index/{name:path}")
-async def delete_memory_index(name: str):
+async def delete_memory_index(name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+    if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
+        raise HTTPException(status_code=403, detail="Cannot delete another user's memory")
     mgr = get_memory_manager()
     result = mgr.storage.delete_indexed_file(name)
     if result["deleted_chunks"] == 0 and result["deleted_index_files"] == 0:
@@ -124,7 +145,7 @@ async def delete_memory_index(name: str):
 
 
 @router.get("/files/{name:path}")
-async def get_memory_file(name: str):
+async def get_memory_file(name: str, current_user: CurrentUser = Depends(require_permissions("memory:read"))):
     from pathlib import Path
     from app.config import get_settings
 
@@ -134,6 +155,8 @@ async def get_memory_file(name: str):
 
     if not str(file_path).startswith(str(workspace.resolve())):
         raise HTTPException(status_code=403, detail="Path outside workspace")
+    if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
+        raise HTTPException(status_code=403, detail="Cannot read another user's memory")
 
     if not file_path.exists():
         mgr = get_memory_manager()

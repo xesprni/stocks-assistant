@@ -194,12 +194,11 @@ def get_scheduler_service():
     任务持久化到 scheduler/tasks.json。
     """
     from app.core.tools.scheduler.service import SchedulerService
-    from app.core.tools.scheduler.store import RunStore, TaskStore
+    from app.core.tools.scheduler.store import SQLiteRunStore, SQLiteTaskStore
 
     settings = get_settings()
-    workspace = Path(settings.workspace_dir).expanduser()
-    store = TaskStore(str(workspace / "scheduler" / "tasks.json"))
-    run_store = RunStore(str(workspace / "scheduler" / "runs.json"))
+    store = SQLiteTaskStore()
+    run_store = SQLiteRunStore()
 
     def execute_callback(task: dict):
         import logging
@@ -216,7 +215,7 @@ def get_scheduler_service():
         if action_type == "send_message":
             result = str(action.get("content") or prompt)
         elif prompt:
-            result = _run_scheduled_agent(prompt)
+            result = _run_scheduled_agent(prompt, user_id=task.get("user_id"))
         else:
             result = f"Scheduled task executed: {task.get('name', task.get('id'))}"
 
@@ -235,13 +234,18 @@ def get_scheduler_service():
     return service
 
 
-def _run_scheduled_agent(prompt: str) -> str:
+def _run_scheduled_agent(prompt: str, user_id: str | None = None) -> str:
     """Run a scheduled prompt through a fresh stateless Agent."""
     from app.config import DEFAULT_SYSTEM_PROMPT
     from app.core.agent.agent import Agent
     from app.core.agent.models import LLMModel
 
     settings = get_settings()
+    workspace_dir = settings.workspace_dir
+    if user_id:
+        from app.core.security import user_workspace_dir
+
+        workspace_dir = user_workspace_dir(settings.workspace_dir, user_id)
     llm = get_llm_provider()
     model = LLMModel(model=settings.llm_model)
     model.call = llm.call
@@ -255,7 +259,7 @@ def _run_scheduled_agent(prompt: str) -> str:
         max_context_tokens=settings.agent_max_context_tokens,
         max_context_turns=settings.agent_max_context_turns,
         memory_manager=get_memory_manager(),
-        workspace_dir=settings.workspace_dir,
+        workspace_dir=workspace_dir,
         skill_manager=get_skill_manager(),
     )
     return agent.run_stream(user_message=prompt, clear_history=True)

@@ -243,6 +243,75 @@ def _looks_secret(key: str) -> bool:
     return any(part in lower for part in ("authorization", "token", "secret", "password", "api-key", "apikey", "key"))
 
 
+def _auth_key_is_secret(key: str, auth: Mapping[str, Any]) -> bool:
+    lower = key.lower()
+    if _looks_secret(key) or lower in {"password", "client_secret"}:
+        return True
+    if lower == "value":
+        return _looks_secret(str(auth.get("name") or ""))
+    return False
+
+
+def _preserve_if_unchanged_masked(existing: Any, incoming: Any, secret: bool) -> Any:
+    if not secret or not isinstance(existing, str) or not isinstance(incoming, str):
+        return incoming
+    return existing if incoming == _mask_value(existing) else incoming
+
+
+def _preserve_secret_map(existing: Any, incoming: Any) -> Any:
+    if not isinstance(existing, Mapping) or not isinstance(incoming, Mapping):
+        return incoming
+    merged: dict[str, Any] = dict(incoming)
+    for key, incoming_value in incoming.items():
+        if key not in existing:
+            continue
+        merged[key] = _preserve_if_unchanged_masked(existing[key], incoming_value, _looks_secret(str(key)))
+    return merged
+
+
+def _preserve_secret_auth(existing: Any, incoming: Any) -> Any:
+    if isinstance(existing, str) and isinstance(incoming, str):
+        return _preserve_if_unchanged_masked(existing, incoming, True)
+    if not isinstance(existing, Mapping) or not isinstance(incoming, Mapping):
+        return incoming
+    merged: dict[str, Any] = dict(incoming)
+    for key, incoming_value in incoming.items():
+        if key not in existing:
+            continue
+        secret = _auth_key_is_secret(str(key), incoming) or _auth_key_is_secret(str(key), existing)
+        merged[key] = _preserve_if_unchanged_masked(existing[key], incoming_value, secret)
+    return merged
+
+
+def preserve_masked_mcp_secrets(
+    existing_servers: Mapping[str, Any] | None,
+    incoming_servers: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Keep old secret values when a client PATCHes back unchanged masked values."""
+    result: dict[str, dict[str, Any]] = {}
+    existing_servers = existing_servers or {}
+    for name, incoming_config in incoming_servers.items():
+        if not isinstance(incoming_config, Mapping):
+            result[name] = incoming_config  # type: ignore[assignment]
+            continue
+        existing_config = existing_servers.get(name)
+        if not isinstance(existing_config, Mapping):
+            result[name] = dict(incoming_config)
+            continue
+        merged: dict[str, Any] = dict(incoming_config)
+        for key, incoming_value in incoming_config.items():
+            if key not in existing_config:
+                continue
+            if key in {"headers", "env"}:
+                merged[key] = _preserve_secret_map(existing_config.get(key), incoming_value)
+            elif key == "auth":
+                merged[key] = _preserve_secret_auth(existing_config.get(key), incoming_value)
+            else:
+                merged[key] = _preserve_if_unchanged_masked(existing_config[key], incoming_value, _looks_secret(str(key)))
+        result[name] = merged
+    return result
+
+
 def mask_mcp_server_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """对 MCP 服务器配置中的敏感字段（headers、env、auth）进行脱敏，用于日志和接口响应。"""
     masked = dict(config)
@@ -261,7 +330,12 @@ def mask_mcp_server_config(config: Mapping[str, Any]) -> dict[str, Any]:
     # 脱敏鉴权配置中的敏感值
     if isinstance(masked.get("auth"), Mapping):
         masked["auth"] = {
-            key: _mask_value(value) if _looks_secret(str(key)) else value
+            key: _mask_value(value) if isinstance(value, str) and _auth_key_is_secret(str(key), masked["auth"]) else value
             for key, value in masked["auth"].items()
         }
+    elif isinstance(masked.get("auth"), str):
+        masked["auth"] = _mask_value(masked["auth"])
+    for key, value in list(masked.items()):
+        if isinstance(value, str) and _looks_secret(str(key)):
+            masked[key] = _mask_value(value)
     return masked

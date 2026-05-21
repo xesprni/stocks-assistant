@@ -5,11 +5,12 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import get_settings
 from app.core.skills.clawhub import ClawHubError, ClawHubService
 from app.deps import get_skill_manager
+from app.core.security import CurrentUser, require_permissions
 from app.schemas.skills import (
     ClawHubInstallRequest,
     ClawHubInstallResponse,
@@ -33,7 +34,7 @@ def get_clawhub_service() -> ClawHubService:
 
 
 @router.get("", response_model=SkillListResponse)
-async def list_skills():
+async def list_skills(_: CurrentUser = Depends(require_permissions("skills:read"))):
     mgr = get_skill_manager()
     skills = mgr.list_skills()
     skills_config = mgr.get_skills_config()
@@ -57,7 +58,11 @@ async def list_skills():
 
 
 @router.get("/clawhub/search", response_model=ClawHubSearchResponse)
-async def search_clawhub_skills(q: str = Query(default=""), limit: int = Query(default=20, ge=1, le=50)):
+async def search_clawhub_skills(
+    q: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=50),
+    _: CurrentUser = Depends(require_permissions("skills:read")),
+):
     try:
         return get_clawhub_service().search(q, limit=limit)
     except ClawHubError as e:
@@ -65,7 +70,7 @@ async def search_clawhub_skills(q: str = Query(default=""), limit: int = Query(d
 
 
 @router.get("/clawhub/{slug}", response_model=ClawHubSkillDetail)
-async def get_clawhub_skill(slug: str):
+async def get_clawhub_skill(slug: str, _: CurrentUser = Depends(require_permissions("skills:read"))):
     try:
         return get_clawhub_service().get_detail(slug)
     except ClawHubError as e:
@@ -73,7 +78,11 @@ async def get_clawhub_skill(slug: str):
 
 
 @router.post("/clawhub/{slug}/install", response_model=ClawHubInstallResponse)
-async def install_clawhub_skill(slug: str, request: ClawHubInstallRequest):
+async def install_clawhub_skill(
+    slug: str,
+    request: ClawHubInstallRequest,
+    _: CurrentUser = Depends(require_permissions("skills:write")),
+):
     try:
         return get_clawhub_service().install(slug, version=request.version, tag=request.tag)
     except ClawHubError as e:
@@ -81,7 +90,11 @@ async def install_clawhub_skill(slug: str, request: ClawHubInstallRequest):
 
 
 @router.post("/{name}/toggle")
-async def toggle_skill(name: str, request: SkillToggleRequest):
+async def toggle_skill(
+    name: str,
+    request: SkillToggleRequest,
+    _: CurrentUser = Depends(require_permissions("skills:write")),
+):
     mgr = get_skill_manager()
     try:
         mgr.set_skill_enabled(name, request.enabled)
@@ -91,7 +104,7 @@ async def toggle_skill(name: str, request: SkillToggleRequest):
 
 
 @router.delete("/{name}")
-async def delete_skill(name: str):
+async def delete_skill(name: str, _: CurrentUser = Depends(require_permissions("skills:write"))):
     mgr = get_skill_manager()
     try:
         deleted_path = mgr.delete_skill(name)
@@ -103,7 +116,7 @@ async def delete_skill(name: str):
 
 
 @router.post("/refresh")
-async def refresh_skills():
+async def refresh_skills(_: CurrentUser = Depends(require_permissions("skills:write"))):
     mgr = get_skill_manager()
     mgr.refresh_skills()
     return {"status": "ok", "total": len(mgr.skills)}

@@ -68,7 +68,7 @@ const mcpPageCopy = {
     disconnected: "disconnected",
     tools: "tools",
     unconfiguredUrl: "未配置 URL",
-    draftOnly: "配置只在当前草稿中，尚未写入 config.json。",
+    draftOnly: "配置只在当前草稿中，尚未保存到 SQLite。",
     login: "登录",
     relogin: "重新登录",
     viewTools: "查看工具",
@@ -134,7 +134,7 @@ const mcpPageCopy = {
     disconnected: "disconnected",
     tools: "tools",
     unconfiguredUrl: "No URL configured",
-    draftOnly: "This config only exists in the current draft and has not been saved to config.json.",
+    draftOnly: "This config only exists in the current draft and has not been saved to SQLite.",
     login: "Login",
     relogin: "Re-login",
     viewTools: "View tools",
@@ -172,8 +172,7 @@ export function MCPPage({ language }: { language: AppLanguage }) {
   async function handleServersChange(updated: Record<string, Record<string, unknown>>) {
     setError("");
     try {
-      const current = await loadConfig();
-      const next = await saveConfig({ ...current, mcp_servers: updated });
+      const next = await saveConfig({ mcp_servers: updated });
       setMcpServersText(JSON.stringify(next.mcp_servers ?? {}, null, 2));
     } catch (e) {
       setError(e instanceof Error ? e.message : copy.saveFailed);

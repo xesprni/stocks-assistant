@@ -10,12 +10,15 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  CheckCircle2,
+  CircleAlert,
   Clock,
   Cpu,
   Database,
   FileText,
   Home,
   Loader2,
+  LogOut,
   MessageSquareText,
   Monitor,
   Moon,
@@ -27,7 +30,9 @@ import {
   Star,
   Sun,
   TrendingUp,
+  UserCog,
   WandSparkles,
+  X,
   Zap,
 } from "lucide-react";
 
@@ -43,6 +48,7 @@ import {
   saveConfig,
   streamChat,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { parseJsonObject } from "@/lib/json";
@@ -60,6 +66,7 @@ import type {
 } from "@/types/app";
 
 const ChatPage = lazy(() => import("@/pages/ChatPage").then((module) => ({ default: module.ChatPage })));
+const AuthPage = lazy(() => import("@/pages/AuthPage").then((module) => ({ default: module.AuthPage })));
 const ConfigPage = lazy(() => import("@/pages/ConfigPage").then((module) => ({ default: module.ConfigPage })));
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
@@ -73,10 +80,112 @@ const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ d
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
 const TechnicalAnalysis = lazy(() => import("@/components/TechnicalAnalysis"));
 const TracingPage = lazy(() => import("@/pages/TracingPage").then((module) => ({ default: module.TracingPage })));
+const UsersPage = lazy(() => import("@/pages/UsersPage").then((module) => ({ default: module.UsersPage })));
 const WatchlistPage = lazy(() => import("@/pages/WatchlistPage").then((module) => ({ default: module.WatchlistPage })));
 
 type NavItem = { id: Page; label: string; icon: ReactNode; hint: string };
 type NavGroup = { id: string; label: string; items: NavItem[] };
+type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
+
+const PAGE_PERMISSION: Partial<Record<Page, string>> = {
+  overview: "config:read",
+  chat: "chat:read",
+  tracing: "tracing:read",
+  market: "market:read",
+  market_config: "market:write",
+  watchlist: "watchlist:read",
+  portfolio: "portfolio:read",
+  config: "config:write",
+  chart: "market:read",
+  fundamentals: "fundamentals:read",
+  skills: "skills:read",
+  subagents: "config:write",
+  mcp: "mcp:read",
+  memory: "memory:read",
+  knowledge: "knowledge:read",
+  scheduler: "scheduler:read",
+  users: "users:manage",
+};
+
+const PAGE_PATH: Record<Page, string> = {
+  overview: "/dashboard",
+  chat: "/chat",
+  tracing: "/tracing",
+  market: "/market",
+  market_config: "/market/config",
+  watchlist: "/watchlist",
+  portfolio: "/portfolio",
+  config: "/settings",
+  chart: "/chart",
+  fundamentals: "/fundamentals",
+  skills: "/skills",
+  subagents: "/subagents",
+  mcp: "/mcp",
+  memory: "/memory",
+  knowledge: "/knowledge",
+  scheduler: "/scheduler",
+  users: "/users",
+};
+
+const PATH_PAGE = new Map<string, Page>([
+  ...Object.entries(PAGE_PATH).map(([page, path]) => [path, page as Page] as const),
+  ["/", "overview"],
+  ["/config", "config"],
+  ["/overview", "overview"],
+]);
+
+const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string[]>> = {
+  llm_provider: ["llm_provider", "llm_auth_mode"],
+  llm_auth_mode: ["llm_provider", "llm_auth_mode"],
+  llm_api_base: ["llm_api_base"],
+  llm_model: ["llm_model"],
+  llm_api_key: ["llm_api_key"],
+  llm_codex_auth_file: ["llm_codex_auth_file"],
+  llm_codex_api_base: ["llm_codex_api_base"],
+  llm_codex_model: ["llm_codex_model"],
+  embedding_auth_mode: ["embedding_auth_mode"],
+  embedding_api_base: ["embedding_api_base"],
+  embedding_model: ["embedding_model"],
+  embedding_provider: ["embedding_provider"],
+  embedding_api_key: ["embedding_api_key"],
+  embedding_codex_auth_file: ["embedding_codex_auth_file"],
+  embedding_codex_api_base: ["embedding_codex_api_base"],
+  embedding_codex_model: ["embedding_codex_model"],
+  workspace_dir: ["workspace_dir"],
+  app_language: ["app_language"],
+  agent_max_steps: ["agent_max_steps"],
+  agent_max_context_tokens: ["agent_max_context_tokens"],
+  agent_max_context_turns: ["agent_max_context_turns"],
+  agent_tool_allowlist: ["agent_tool_allowlist"],
+  agent_allow_all_mcp_tools: ["agent_allow_all_mcp_tools"],
+  multi_agent_enabled: ["multi_agent_enabled"],
+  multi_agent_max_parallel_agents: ["multi_agent_max_parallel_agents"],
+  multi_agent_default_max_steps: ["multi_agent_default_max_steps"],
+  multi_agent_max_depth: ["multi_agent_max_depth"],
+  multi_agent_dangerous_tools: ["multi_agent_dangerous_tools"],
+  multi_agent_roles: ["multi_agent_roles"],
+  knowledge_enabled: ["knowledge_enabled"],
+  memory_enabled: ["memory_enabled"],
+  memory_auto_curate_enabled: ["memory_auto_curate_enabled"],
+  memory_curator_min_importance: ["memory_curator_min_importance"],
+  memory_curator_min_confidence: ["memory_curator_min_confidence"],
+  scheduler_enabled: ["scheduler_enabled"],
+  tracing_enabled: ["tracing_enabled"],
+  telegram_enabled: ["telegram_enabled"],
+  telegram_bot_token: ["telegram_bot_token"],
+  telegram_chat_id: ["telegram_chat_id"],
+  telegram_api_base: ["telegram_api_base"],
+  telegram_parse_mode: ["telegram_parse_mode"],
+  system_prompt: ["system_prompt"],
+  mcp_servers_text: ["mcp_servers"],
+  mcp_tool_timeout_seconds: ["mcp_tool_timeout_seconds"],
+  longbridge_app_key: ["longbridge_app_key"],
+  longbridge_app_secret: ["longbridge_app_secret"],
+  longbridge_access_token: ["longbridge_access_token"],
+  longbridge_http_url: ["longbridge_http_url"],
+  longbridge_quote_ws_url: ["longbridge_quote_ws_url"],
+  debug: ["debug"],
+};
 
 function getActiveLlmModel(config: AppConfig | null, fallback: string): string {
   if (!config) return fallback;
@@ -139,6 +248,7 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
     id: "system",
     label: groups.system,
     items: [
+      navItem(language, "users", <UserCog />),
       navItem(language, "config", <Settings2 />),
     ],
   },
@@ -175,6 +285,47 @@ function compactStreamText(value: string, maxLength = 96) {
 
 function formatDurationDetail(ms: number | null) {
   return ms == null ? undefined : `${(ms / 1000).toFixed(2)}s`;
+}
+
+function normalizeRoutePath(pathname: string) {
+  const clean = pathname.replace(/\/+$/, "");
+  return clean || "/";
+}
+
+function pageFromPath(pathname: string): Page {
+  return PATH_PAGE.get(normalizeRoutePath(pathname)) ?? "overview";
+}
+
+function pathForPage(page: Page) {
+  return PAGE_PATH[page] ?? PAGE_PATH.overview;
+}
+
+function ConfigSaveToast({ onClose, toast }: { onClose: () => void; toast: ConfigToast | null }) {
+  if (!toast) return null;
+  const Icon = toast.kind === "success" ? CheckCircle2 : CircleAlert;
+  return (
+    <div
+      className={cn(
+        "config-toast",
+        "fixed right-4 top-4 z-50 flex w-[min(360px,calc(100vw-2rem))] items-start gap-3 rounded-md border px-3 py-3 text-sm shadow-lg",
+        "bg-popover text-popover-foreground",
+        toast.kind === "success" ? "border-primary/35" : "border-destructive/45",
+      )}
+      data-state={toast.state}
+      role="status"
+    >
+      <Icon className={cn("mt-0.5 size-4 shrink-0", toast.kind === "success" ? "text-primary" : "text-destructive")} />
+      <span className="min-w-0 flex-1 leading-5">{toast.message}</span>
+      <button
+        aria-label="Close"
+        className="rounded-sm p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        type="button"
+        onClick={onClose}
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
 }
 
 function summarizeToolArguments(value: unknown) {
@@ -217,7 +368,30 @@ function isAbortError(error: unknown): boolean {
 // ── Chat History ───────────────────────────────────────────────────────────
 
 function App() {
-  const [page, setPage] = useState<Page>("chat");
+  const auth = useAuth();
+  if (auth.loading) {
+    return (
+      <div className="console-shell grid h-[100dvh] place-items-center">
+        <div className="flex items-center gap-2 rounded-md border border-border/80 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin text-primary" />
+          Loading...
+        </div>
+      </div>
+    );
+  }
+  if (auth.setupRequired || !auth.user) {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <AuthPage />
+      </Suspense>
+    );
+  }
+  return <ConsoleApp />;
+}
+
+function ConsoleApp() {
+  const auth = useAuth();
+  const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = window.localStorage.getItem("stocks-assistant-theme");
@@ -239,12 +413,19 @@ function App() {
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
   const [health, setHealth] = useState<"checking" | "online" | "offline">("checking");
   const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [configToast, setConfigToast] = useState<ConfigToast | null>(null);
   const [error, setError] = useState("");
   const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const configAutoSaveTimerRef = useRef<number | null>(null);
+  const configAutoSaveDraftRef = useRef<ConfigDraft | null>(null);
+  const configAutoSavePatchRef = useRef<Partial<ConfigDraft>>({});
+  const configToastTimerRef = useRef<number | null>(null);
+  const configToastExitTimerRef = useRef<number | null>(null);
+  const routeReadyRef = useRef(false);
   const chatHistory = useConversations();
   const confirmDialog = useConfirmDialog();
   const language = normalizeLanguage(draft?.app_language ?? config?.app_language);
@@ -255,6 +436,31 @@ function App() {
     ? chatHistory.activeConversation.messages
     : createInitialMessages(language);
   const activeConvId = chatHistory.activeId;
+  const canPage = (target: Page) => {
+    const permission = PAGE_PERMISSION[target];
+    return !permission || auth.can(permission);
+  };
+
+  useEffect(() => {
+    const handlePopState = () => setPage(pageFromPath(window.location.pathname));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const nextPath = pathForPage(page);
+    if (normalizeRoutePath(window.location.pathname) !== nextPath) {
+      const method = routeReadyRef.current ? "pushState" : "replaceState";
+      window.history[method]({ page }, "", `${nextPath}${window.location.search}${window.location.hash}`);
+    }
+    routeReadyRef.current = true;
+  }, [page]);
+
+  useEffect(() => {
+    if (!canPage(page)) {
+      setPage(auth.can("chat:read") ? "chat" : "overview");
+    }
+  }, [page, auth.permissions]);
 
   useEffect(() => {
     if (page !== "chat" || !shouldAutoScrollChatRef.current) return;
@@ -293,6 +499,17 @@ function App() {
     handleChange();
     media.addEventListener("change", handleChange);
     return () => media.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (configToastTimerRef.current) {
+        window.clearTimeout(configToastTimerRef.current);
+      }
+      if (configToastExitTimerRef.current) {
+        window.clearTimeout(configToastExitTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -645,95 +862,197 @@ function App() {
     streamAbortRef.current?.abort();
   }
 
-  async function handleSaveConfig() {
-    if (!draft) return;
+  function buildConfigPayload(source: ConfigDraft, changedKeys?: Array<keyof ConfigDraft>) {
+    const mcpServers = parseJsonObject(source.mcp_servers_text || "{}", "MCP Servers JSON") as Record<string, Record<string, unknown>>;
+    const isCodexOAuth = source.llm_provider === "openai_responses" && source.llm_auth_mode === "codex";
+    const payload: Record<string, unknown> = {
+      llm_provider: isCodexOAuth ? "openai_responses" : "openai_compatible",
+      llm_auth_mode: isCodexOAuth ? "codex" : "api_key",
+      llm_api_base: source.llm_api_base,
+      llm_model: source.llm_model,
+      llm_codex_auth_file: source.llm_codex_auth_file ?? "",
+      llm_codex_api_base: source.llm_codex_api_base ?? "https://chatgpt.com/backend-api/codex",
+      llm_codex_model: source.llm_codex_model ?? "gpt-5.2-codex",
+      embedding_auth_mode: source.embedding_auth_mode ?? "api_key",
+      embedding_api_base: source.embedding_api_base,
+      embedding_model: source.embedding_model,
+      embedding_provider: source.embedding_provider,
+      embedding_codex_auth_file: source.embedding_codex_auth_file ?? "",
+      embedding_codex_api_base: source.embedding_codex_api_base ?? "https://chatgpt.com/backend-api/codex",
+      embedding_codex_model: source.embedding_codex_model ?? "text-embedding-3-small",
+      workspace_dir: source.workspace_dir,
+      app_language: source.app_language,
+      agent_max_steps: Number(source.agent_max_steps),
+      agent_max_context_tokens: Number(source.agent_max_context_tokens),
+      agent_max_context_turns: Number(source.agent_max_context_turns),
+      agent_tool_allowlist: source.agent_tool_allowlist,
+      agent_allow_all_mcp_tools: source.agent_allow_all_mcp_tools,
+      multi_agent_enabled: source.multi_agent_enabled,
+      multi_agent_max_parallel_agents: Number(source.multi_agent_max_parallel_agents),
+      multi_agent_default_max_steps: Number(source.multi_agent_default_max_steps),
+      multi_agent_max_depth: Number(source.multi_agent_max_depth),
+      multi_agent_dangerous_tools: source.multi_agent_dangerous_tools,
+      multi_agent_roles: source.multi_agent_roles,
+      knowledge_enabled: source.knowledge_enabled,
+      memory_enabled: source.memory_enabled,
+      memory_auto_curate_enabled: source.memory_auto_curate_enabled,
+      memory_curator_min_importance: Number(source.memory_curator_min_importance),
+      memory_curator_min_confidence: Number(source.memory_curator_min_confidence),
+      scheduler_enabled: source.scheduler_enabled,
+      tracing_enabled: source.tracing_enabled,
+      telegram_enabled: source.telegram_enabled,
+      telegram_chat_id: source.telegram_chat_id ?? "",
+      telegram_api_base: source.telegram_api_base ?? "https://api.telegram.org",
+      telegram_parse_mode: source.telegram_parse_mode ?? "",
+      debug: source.debug,
+      system_prompt: source.system_prompt,
+      mcp_servers: mcpServers,
+      mcp_tool_timeout_seconds: Number(source.mcp_tool_timeout_seconds) || 60,
+      longbridge_http_url: source.longbridge_http_url ?? "",
+      longbridge_quote_ws_url: source.longbridge_quote_ws_url ?? "",
+    };
 
+    if (source.llm_api_key.trim()) {
+      payload.llm_api_key = source.llm_api_key.trim();
+    }
+    if (source.embedding_api_key.trim()) {
+      payload.embedding_api_key = source.embedding_api_key.trim();
+    }
+    if (source.telegram_bot_token.trim()) {
+      payload.telegram_bot_token = source.telegram_bot_token.trim();
+    }
+    if (source.longbridge_app_key.trim()) {
+      payload.longbridge_app_key = source.longbridge_app_key.trim();
+    }
+    if (source.longbridge_app_secret.trim()) {
+      payload.longbridge_app_secret = source.longbridge_app_secret.trim();
+    }
+    if (source.longbridge_access_token.trim()) {
+      payload.longbridge_access_token = source.longbridge_access_token.trim();
+    }
+    if (!changedKeys?.length) {
+      return payload;
+    }
+    const allowedPayloadKeys = new Set<string>();
+    for (const key of changedKeys) {
+      for (const payloadKey of CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY[key] ?? []) {
+        allowedPayloadKeys.add(payloadKey);
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(payload).filter(([key]) => allowedPayloadKeys.has(key)),
+    );
+  }
+
+  function showConfigToast(kind: ConfigToast["kind"], message: string) {
+    if (configToastTimerRef.current) {
+      window.clearTimeout(configToastTimerRef.current);
+    }
+    if (configToastExitTimerRef.current) {
+      window.clearTimeout(configToastExitTimerRef.current);
+      configToastExitTimerRef.current = null;
+    }
+    setConfigToast({ id: Date.now(), kind, message, state: "open" });
+    configToastTimerRef.current = window.setTimeout(() => {
+      dismissConfigToast();
+    }, kind === "success" ? 2200 : 4600);
+  }
+
+  function dismissConfigToast() {
+    if (configToastTimerRef.current) {
+      window.clearTimeout(configToastTimerRef.current);
+      configToastTimerRef.current = null;
+    }
+    setConfigToast((current) => current ? { ...current, state: "closing" } : current);
+    if (configToastExitTimerRef.current) {
+      window.clearTimeout(configToastExitTimerRef.current);
+    }
+    configToastExitTimerRef.current = window.setTimeout(() => {
+      setConfigToast(null);
+      configToastExitTimerRef.current = null;
+    }, 180);
+  }
+
+  async function saveDraftConfig(source: ConfigDraft, patch?: Partial<ConfigDraft>) {
     setConfigState("saving");
     setError("");
-
     try {
-      const mcpServers = parseJsonObject(draft.mcp_servers_text || "{}", "MCP Servers JSON") as Record<string, Record<string, unknown>>;
-      const isCodexOAuth = draft.llm_provider === "openai_responses" && draft.llm_auth_mode === "codex";
-      const payload: Record<string, unknown> = {
-        llm_provider: isCodexOAuth ? "openai_responses" : "openai_compatible",
-        llm_auth_mode: isCodexOAuth ? "codex" : "api_key",
-        llm_api_base: draft.llm_api_base,
-        llm_model: draft.llm_model,
-        llm_codex_auth_file: draft.llm_codex_auth_file ?? "",
-        llm_codex_api_base: draft.llm_codex_api_base ?? "https://chatgpt.com/backend-api/codex",
-        llm_codex_model: draft.llm_codex_model ?? "gpt-5.2-codex",
-        embedding_auth_mode: draft.embedding_auth_mode ?? "api_key",
-        embedding_api_base: draft.embedding_api_base,
-        embedding_model: draft.embedding_model,
-        embedding_provider: draft.embedding_provider,
-        embedding_codex_auth_file: draft.embedding_codex_auth_file ?? "",
-        embedding_codex_api_base: draft.embedding_codex_api_base ?? "https://chatgpt.com/backend-api/codex",
-        embedding_codex_model: draft.embedding_codex_model ?? "text-embedding-3-small",
-        workspace_dir: draft.workspace_dir,
-        app_language: draft.app_language,
-        agent_max_steps: Number(draft.agent_max_steps),
-        agent_max_context_tokens: Number(draft.agent_max_context_tokens),
-        agent_max_context_turns: Number(draft.agent_max_context_turns),
-        agent_tool_allowlist: draft.agent_tool_allowlist,
-        agent_allow_all_mcp_tools: draft.agent_allow_all_mcp_tools,
-        multi_agent_enabled: draft.multi_agent_enabled,
-        multi_agent_max_parallel_agents: Number(draft.multi_agent_max_parallel_agents),
-        multi_agent_default_max_steps: Number(draft.multi_agent_default_max_steps),
-        multi_agent_max_depth: Number(draft.multi_agent_max_depth),
-        multi_agent_dangerous_tools: draft.multi_agent_dangerous_tools,
-        multi_agent_roles: draft.multi_agent_roles,
-        knowledge_enabled: draft.knowledge_enabled,
-        memory_enabled: draft.memory_enabled,
-        memory_auto_curate_enabled: draft.memory_auto_curate_enabled,
-        memory_curator_min_importance: Number(draft.memory_curator_min_importance),
-        memory_curator_min_confidence: Number(draft.memory_curator_min_confidence),
-        scheduler_enabled: draft.scheduler_enabled,
-        tracing_enabled: draft.tracing_enabled,
-        telegram_enabled: draft.telegram_enabled,
-        telegram_chat_id: draft.telegram_chat_id ?? "",
-        telegram_api_base: draft.telegram_api_base ?? "https://api.telegram.org",
-        telegram_parse_mode: draft.telegram_parse_mode ?? "",
-        debug: draft.debug,
-        system_prompt: draft.system_prompt,
-        mcp_servers: mcpServers,
-        mcp_tool_timeout_seconds: Number(draft.mcp_tool_timeout_seconds) || 60,
-        longbridge_http_url: draft.longbridge_http_url ?? "",
-        longbridge_quote_ws_url: draft.longbridge_quote_ws_url ?? "",
-      };
-
-      if (draft.llm_api_key.trim()) {
-        payload.llm_api_key = draft.llm_api_key.trim();
-      }
-      if (draft.embedding_api_key.trim()) {
-        payload.embedding_api_key = draft.embedding_api_key.trim();
-      }
-      if (draft.telegram_bot_token.trim()) {
-        payload.telegram_bot_token = draft.telegram_bot_token.trim();
-      }
-      if (draft.longbridge_app_key.trim()) {
-        payload.longbridge_app_key = draft.longbridge_app_key.trim();
-      }
-      if (draft.longbridge_app_secret.trim()) {
-        payload.longbridge_app_secret = draft.longbridge_app_secret.trim();
-      }
-      if (draft.longbridge_access_token.trim()) {
-        payload.longbridge_access_token = draft.longbridge_access_token.trim();
+      const changedKeys = patch ? Object.keys(patch) as Array<keyof ConfigDraft> : undefined;
+      const payload = buildConfigPayload(source, changedKeys);
+      if (Object.keys(payload).length === 0) {
+        setConfigState("idle");
+        return;
       }
 
       const next = await saveConfig(payload);
       setConfig(next);
       setDraft(toDraft(next));
+      configAutoSavePatchRef.current = {};
       setConfigState("saved");
+      showConfigToast("success", ui.config.saved);
       window.setTimeout(() => setConfigState("idle"), 1400);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : ui.config.saveFailed;
       setError(message);
       setConfigState("error");
+      showConfigToast("error", message);
     }
   }
 
+  async function handleSaveConfig() {
+    const source = configAutoSaveDraftRef.current ?? draft;
+    if (!source) return;
+    if (configAutoSaveTimerRef.current) {
+      window.clearTimeout(configAutoSaveTimerRef.current);
+      configAutoSaveTimerRef.current = null;
+    }
+    const pendingPatch = configAutoSavePatchRef.current;
+    const patch = Object.keys(pendingPatch).length ? pendingPatch : undefined;
+    configAutoSaveDraftRef.current = null;
+    configAutoSavePatchRef.current = {};
+    await saveDraftConfig(source, patch);
+  }
+
+  function scheduleConfigAutoSave(nextDraft: ConfigDraft, patch: Partial<ConfigDraft>) {
+    configAutoSaveDraftRef.current = nextDraft;
+    configAutoSavePatchRef.current = { ...configAutoSavePatchRef.current, ...patch };
+    if (configAutoSaveTimerRef.current) {
+      window.clearTimeout(configAutoSaveTimerRef.current);
+    }
+    const keys = Object.keys(patch);
+    const immediate = keys.some((key) => typeof patch[key as keyof ConfigDraft] === "boolean");
+    const longEdit = keys.some((key) => key === "system_prompt" || key === "mcp_servers_text");
+    const delay = immediate ? 0 : longEdit ? 1200 : 800;
+    configAutoSaveTimerRef.current = window.setTimeout(() => {
+      configAutoSaveTimerRef.current = null;
+      const source = configAutoSaveDraftRef.current;
+      const pendingPatch = configAutoSavePatchRef.current;
+      configAutoSaveDraftRef.current = null;
+      configAutoSavePatchRef.current = {};
+      if (source) void saveDraftConfig(source, pendingPatch);
+    }, delay);
+  }
+
+  function flushConfigAutoSave() {
+    if (!configAutoSaveDraftRef.current) return;
+    if (configAutoSaveTimerRef.current) {
+      window.clearTimeout(configAutoSaveTimerRef.current);
+      configAutoSaveTimerRef.current = null;
+    }
+    const source = configAutoSaveDraftRef.current;
+    const pendingPatch = configAutoSavePatchRef.current;
+    configAutoSaveDraftRef.current = null;
+    configAutoSavePatchRef.current = {};
+    void saveDraftConfig(source, pendingPatch);
+  }
+
   function patchDraft(patch: Partial<ConfigDraft>) {
-    setDraft((current) => (current ? { ...current, ...patch } : current));
+    setDraft((current) => {
+      if (!current) return current;
+      const next = { ...current, ...patch };
+      scheduleConfigAutoSave(next, patch);
+      return next;
+    });
   }
 
   function applySavedConfig(next: AppConfig) {
@@ -752,16 +1071,19 @@ function App() {
   return (
     <div className="console-shell h-[100dvh] overflow-hidden">
       {confirmDialog.dialog}
+      <ConfigSaveToast key={configToast?.id ?? "empty"} toast={configToast} onClose={dismissConfigToast} />
       <div className="app-frame flex h-full w-full flex-col gap-0 p-0">
         <Header
           health={health}
           language={language}
           modelName={modelName}
+          onLogout={auth.logout}
           onThemeChange={setTheme}
           resolvedTheme={resolvedTheme}
           theme={theme}
+          username={auth.user?.username ?? ""}
         />
-        <MobileNav language={language} page={page} setPage={handleNavigate} />
+        <MobileNav canPage={canPage} language={language} page={page} setPage={handleNavigate} />
 
         <div
           className={cn(
@@ -774,6 +1096,7 @@ function App() {
             language={language}
             onToggleCollapsed={() => setIsNavCollapsed((current) => !current)}
             page={page}
+            canPage={canPage}
             setPage={handleNavigate}
           />
 
@@ -910,6 +1233,8 @@ function App() {
 
             {page === "mcp" ? <MCPPage language={language} /> : null}
 
+            {page === "users" ? <UsersPage language={language} /> : null}
+
               {page === "config" ? (
                 <ConfigPage
                   config={config}
@@ -918,6 +1243,7 @@ function App() {
                   enabledCount={enabledCount}
                   handleSaveConfig={handleSaveConfig}
                   language={language}
+                  onConfigBlur={flushConfigAutoSave}
                   patchDraft={patchDraft}
                   setDraft={setDraft}
                 />
@@ -934,16 +1260,20 @@ function Header({
   health,
   language,
   modelName,
+  onLogout,
   onThemeChange,
   resolvedTheme,
   theme,
+  username,
 }: {
   health: "checking" | "online" | "offline";
   language: AppLanguage;
   modelName: string;
+  onLogout: () => void;
   onThemeChange: (theme: Theme) => void;
   resolvedTheme: EffectiveTheme;
   theme: Theme;
+  username: string;
 }) {
   const themeLabels = language === "en"
     ? { system: "System", dark: "Dark", light: "Light", current: "Theme", switchTo: "Switch to", darkNow: "dark", lightNow: "light" }
@@ -973,6 +1303,10 @@ function Header({
           <Cpu className="size-3.5" />
           <span className="truncate">{modelName}</span>
         </Badge>
+        <Badge variant="outline" className="max-w-[160px] truncate">{username}</Badge>
+        <Button size="icon" variant="outline" onClick={onLogout} aria-label={language === "en" ? "Log out" : "退出登录"}>
+          <LogOut />
+        </Button>
         <div
           aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
           className="theme-toggle inline-flex h-8 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5"
@@ -1007,8 +1341,18 @@ function Header({
   );
 }
 
-function MobileNav({ language, page, setPage }: { language: AppLanguage; page: Page; setPage: (page: Page) => void }) {
-  const navItems = getNavItems(language);
+function MobileNav({
+  canPage,
+  language,
+  page,
+  setPage,
+}: {
+  canPage: (page: Page) => boolean;
+  language: AppLanguage;
+  page: Page;
+  setPage: (page: Page) => void;
+}) {
+  const navItems = getNavItems(language).filter((item) => canPage(item.id));
   const copy = i18n[language].shell;
   return (
     <nav className="panel app-mobile-nav flex shrink-0 gap-1 overflow-x-auto rounded-none border-x-0 border-t-0 p-1.5 shadow-none lg:hidden" aria-label={copy.navigation}>
@@ -1066,12 +1410,14 @@ function NavButton({
 }
 
 function DesktopNav({
+  canPage,
   collapsed,
   language,
   onToggleCollapsed,
   page,
   setPage,
 }: {
+  canPage: (page: Page) => boolean;
   collapsed: boolean;
   language: AppLanguage;
   onToggleCollapsed: () => void;
@@ -1079,8 +1425,10 @@ function DesktopNav({
   setPage: (page: Page) => void;
 }) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const pinnedNavItems = getPinnedNavItems(language);
-  const navGroups = getNavGroups(language);
+  const pinnedNavItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
+  const navGroups = getNavGroups(language)
+    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
+    .filter((group) => group.items.length > 0);
   const collapsedNavItems = [...pinnedNavItems, ...navGroups.flatMap((group) => group.items)];
   const copy = i18n[language];
 

@@ -2,12 +2,13 @@
 
 from html import escape
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_settings
 from app.core.tools.mcp.config import LEGACY_SSE_TRANSPORT, STANDARD_HTTP_TRANSPORT, mask_mcp_server_config, normalize_transport
+from app.core.security import CurrentUser, require_permissions
 from app.schemas.mcp import MCPServerStatus, MCPStatusResponse, MCPServerToolsResponse, MCPToolInfo
 
 router = APIRouter()
@@ -86,14 +87,18 @@ def _build_server_statuses() -> list[MCPServerStatus]:
 
 
 @router.get("/status", response_model=MCPStatusResponse)
-async def get_mcp_status():
+async def get_mcp_status(_: CurrentUser = Depends(require_permissions("mcp:read"))):
     """获取所有 MCP 服务器的连接状态。"""
     servers = _build_server_statuses()
     return MCPStatusResponse(servers=servers, total=len(servers))
 
 
 @router.get("/{server_name}/oauth/authorize")
-async def authorize_mcp_server(server_name: str, request: Request):
+async def authorize_mcp_server(
+    server_name: str,
+    request: Request,
+    _: CurrentUser = Depends(require_permissions("mcp:write")),
+):
     """启动需要浏览器登录的 MCP OAuth 授权流程。"""
     settings = get_settings()
     if server_name not in settings.mcp_servers:
@@ -156,7 +161,7 @@ async def mcp_oauth_callback(
 
 
 @router.post("/reconnect", response_model=MCPStatusResponse)
-async def reconnect_mcp_servers():
+async def reconnect_mcp_servers(_: CurrentUser = Depends(require_permissions("mcp:write"))):
     """重新连接所有已配置 MCP 服务器。"""
     settings = get_settings()
     try:
@@ -171,7 +176,7 @@ async def reconnect_mcp_servers():
 
 
 @router.delete("/{server_name}/oauth")
-async def delete_mcp_oauth(server_name: str):
+async def delete_mcp_oauth(server_name: str, _: CurrentUser = Depends(require_permissions("mcp:write"))):
     """删除指定 MCP 服务器的 OAuth 令牌和客户端信息。"""
     settings = get_settings()
     if server_name not in settings.mcp_servers:
@@ -188,7 +193,7 @@ async def delete_mcp_oauth(server_name: str):
 
 
 @router.get("/{server_name}/tools", response_model=MCPServerToolsResponse)
-async def get_mcp_server_tools(server_name: str):
+async def get_mcp_server_tools(server_name: str, _: CurrentUser = Depends(require_permissions("mcp:read"))):
     """获取指定 MCP 服务器的工具列表。"""
     settings = get_settings()
     if server_name not in settings.mcp_servers:

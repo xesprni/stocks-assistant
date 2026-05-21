@@ -1,5 +1,7 @@
 import type {
   AppConfig,
+  AuthTokenResponse,
+  AuthUser,
   CandlesticksResponse,
   ChatMessage,
   ChatResponse,
@@ -34,14 +36,20 @@ import type {
   PortfolioListResponse,
   PortfolioMarket,
   PortfolioSearchResponse,
+  RoleListResponse,
+  RoleUpdateRequest,
   SchedulerTask,
   SchedulerTaskList,
   SchedulerTaskRun,
   SchedulerTaskRunList,
   SkillListResponse,
+  SetupStatusResponse,
   TelegramTestResponse,
   ToolListResponse,
   TraceSessionResponse,
+  UserCreateRequest,
+  UserListResponse,
+  UserUpdateRequest,
   WatchlistCategory,
   WatchlistItem,
   WatchlistListResponse,
@@ -49,15 +57,87 @@ import type {
 } from "@/types/app";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+const ACCESS_TOKEN_KEY = "stocks_assistant_access_token";
+const REFRESH_TOKEN_KEY = "stocks_assistant_refresh_token";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+let accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) ?? "";
+let refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) ?? "";
+let refreshPromise: Promise<AuthTokenResponse> | null = null;
+const AUTH_RETRY_EXCLUDED_PATHS = new Set([
+  "/api/v1/auth/login",
+  "/api/v1/auth/logout",
+  "/api/v1/auth/refresh",
+  "/api/v1/auth/setup",
+  "/api/v1/auth/setup/status",
+]);
+
+export function getStoredAccessToken() {
+  return accessToken;
+}
+
+export function getStoredRefreshToken() {
+  return refreshToken;
+}
+
+export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
+  accessToken = tokens.access_token;
+  refreshToken = tokens.refresh_token;
+  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+}
+
+export function clearAuthTokens() {
+  accessToken = "";
+  refreshToken = "";
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
+function authHeaders(init?: RequestInit) {
+  return {
+    "Content-Type": "application/json",
+    ...init?.headers,
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  };
+}
+
+async function refreshAuthToken() {
+  if (!refreshToken) throw new Error("Authentication required");
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${API_BASE}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          clearAuthTokens();
+          const body = await response.json().catch(() => null);
+          throw new Error(typeof body?.detail === "string" ? body.detail : "Authentication expired");
+        }
+        const next = await response.json() as AuthTokenResponse;
+        setAuthTokens(next);
+        return next;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
+async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
+  const initWithoutHeaders = init ? { ...init } : {};
+  delete initWithoutHeaders.headers;
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-    ...init,
+    ...initWithoutHeaders,
+    headers: authHeaders(init),
   });
+
+  if (response.status === 401 && retry && !AUTH_RETRY_EXCLUDED_PATHS.has(path)) {
+    await refreshAuthToken();
+    return request<T>(path, init, false);
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => null);
@@ -72,13 +152,75 @@ export function checkHealth() {
   return request<{ status: string }>("/api/v1/health");
 }
 
+export function getSetupStatus() {
+  return request<SetupStatusResponse>("/api/v1/auth/setup/status");
+}
+
+export function setupAdmin(payload: { username: string; password: string; display_name?: string }) {
+  return request<AuthTokenResponse>("/api/v1/auth/setup", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function login(payload: { username: string; password: string }) {
+  return request<AuthTokenResponse>("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getMe() {
+  return request<AuthUser>("/api/v1/auth/me");
+}
+
+export async function logout() {
+  const token = refreshToken;
+  if (token) {
+    await request<{ status: string }>("/api/v1/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: token }),
+    }).catch(() => null);
+  }
+  clearAuthTokens();
+}
+
+export function listUsers() {
+  return request<UserListResponse>("/api/v1/users");
+}
+
+export function createUser(payload: UserCreateRequest) {
+  return request<AuthUser>("/api/v1/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateUser(userId: string, payload: UserUpdateRequest) {
+  return request<AuthUser>(`/api/v1/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listRoles() {
+  return request<RoleListResponse>("/api/v1/roles");
+}
+
+export function saveRole(name: string, payload: RoleUpdateRequest) {
+  return request<RoleListResponse["roles"][number]>(`/api/v1/roles/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function loadConfig() {
   return request<AppConfig>("/api/v1/config");
 }
 
 export function saveConfig(payload: Record<string, unknown>) {
   return request<AppConfig>("/api/v1/config", {
-    method: "PUT",
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -144,7 +286,7 @@ function parseSseBlock(block: string): ChatStreamEvent | null {
   return JSON.parse(data) as ChatStreamEvent;
 }
 
-export async function streamChat(
+async function streamChatOnce(
   message: string,
   sessionId: string | null | undefined,
   onEvent: (event: ChatStreamEvent) => void,
@@ -153,7 +295,7 @@ export async function streamChat(
 ) {
   const response = await fetch(`${API_BASE}/api/v1/agent/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     signal,
     body: JSON.stringify({
       message,
@@ -196,6 +338,25 @@ export async function streamChat(
   buffer += decoder.decode();
   if (buffer.trim()) {
     flushBlock(buffer);
+  }
+}
+
+export async function streamChat(
+  message: string,
+  sessionId: string | null | undefined,
+  onEvent: (event: ChatStreamEvent) => void,
+  clearHistory = false,
+  signal?: AbortSignal,
+) {
+  try {
+    await streamChatOnce(message, sessionId, onEvent, clearHistory, signal);
+  } catch (error) {
+    if (error instanceof Error && /Authentication|required|expired|invalid/i.test(error.message) && refreshToken) {
+      await refreshAuthToken();
+      await streamChatOnce(message, sessionId, onEvent, clearHistory, signal);
+      return;
+    }
+    throw error;
   }
 }
 

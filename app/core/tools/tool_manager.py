@@ -23,12 +23,14 @@ class ToolManager:
     管理所有已注册的工具类，支持内置工具加载和自定义目录扫描。
     """
 
-    def __init__(self, workspace_dir: Optional[str] = None):
+    def __init__(self, workspace_dir: Optional[str] = None, user_id: Optional[str] = None):
         self.tool_classes: Dict[str, type] = {}  # 工具名称 -> 工具类映射
         self.tool_configs: Dict[str, dict] = {}  # 工具名称 -> 工具配置映射
         self.workspace_dir = workspace_dir
+        self.user_id = user_id
+        self.memory_manager = None
 
-    def load_builtin_tools(self, memory_manager=None):
+    def load_builtin_tools(self, memory_manager=None, user_id: Optional[str] = None):
         """加载所有内置工具
 
         内置工具包括：bash、web_search、web_fetch、read_file、write_file、
@@ -58,8 +60,11 @@ class ToolManager:
         ]
 
         if memory_manager:
+            self.memory_manager = memory_manager
             builtin.append(MemorySearchTool)
             builtin.append(MemoryGetTool)
+        if user_id is not None:
+            self.user_id = user_id
 
         for cls in builtin:
             try:
@@ -146,4 +151,6 @@ class ToolManager:
             return tool_class(workspace_dir=self.workspace_dir or ".")
         if class_name == "BashTool" and self.workspace_dir:
             return tool_class(config={"cwd": self.workspace_dir})
+        if class_name in {"MemorySearchTool", "MemoryGetTool"}:
+            return tool_class(memory_manager=self.memory_manager, user_id=self.user_id)
         return tool_class()

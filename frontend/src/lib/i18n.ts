@@ -27,6 +27,7 @@ export const i18n = {
       knowledge: ["知识库", "Markdown 知识"],
       scheduler: ["任务", "Cron/间隔"],
       mcp: ["MCP", "工具服务器"],
+      users: ["用户", "账号/角色"],
       config: ["配置", "运行时参数"],
     },
     groups: {
@@ -166,7 +167,7 @@ export const i18n = {
     },
     config: {
       title: "配置管理",
-      subtitle: "保存到 config.json，立即刷新运行时配置",
+      subtitle: "自动保存到 SQLite，立即刷新运行时配置",
       reload: "重载配置",
       save: "Save",
       saving: "Saving",
@@ -417,6 +418,7 @@ export const i18n = {
       knowledge: ["Knowledge", "Markdown knowledge"],
       scheduler: ["Tasks", "Cron/interval"],
       mcp: ["MCP", "Tool servers"],
+      users: ["Users", "Accounts/RBAC"],
       config: ["Config", "Runtime settings"],
     },
     groups: {
@@ -556,7 +558,7 @@ export const i18n = {
     },
     config: {
       title: "Configuration",
-      subtitle: "Saved to config.json and applied immediately",
+      subtitle: "Auto-saved to SQLite and applied immediately",
       reload: "Reload config",
       save: "Save",
       saving: "Saving",

@@ -9,12 +9,13 @@ from app.schemas.tools import ToolListResponse, ToolExecuteRequest, ToolExecuteR
 from app.config import get_settings
 from app.core.tools.permissions import is_tool_allowed_for_agent, mcp_server_name_from_tool
 from app.deps import get_mcp_manager, get_tool_manager
+from app.core.security import CurrentUser, require_permissions
 
 router = APIRouter()
 
 
 @router.get("", response_model=ToolListResponse)
-async def list_tools():
+async def list_tools(_: CurrentUser = Depends(require_permissions("tools:read"))):
     settings = get_settings()
     mgr = get_tool_manager()
     tools = mgr.get_all_tools()
@@ -37,7 +38,11 @@ async def list_tools():
 
 
 @router.post("/{name}/execute", response_model=ToolExecuteResponse)
-async def execute_tool(name: str, request: ToolExecuteRequest):
+async def execute_tool(
+    name: str,
+    request: ToolExecuteRequest,
+    _: CurrentUser = Depends(require_permissions("tools:execute")),
+):
     mgr = get_tool_manager()
     tool = mgr.get_tool(name)
     if not tool and name.startswith("mcp_") and get_settings().mcp_servers:

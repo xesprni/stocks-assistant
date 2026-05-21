@@ -1,7 +1,7 @@
 """技能管理器
 
 管理技能的加载、启用/禁用、过滤和提示词生成。
-技能配置持久化到 skills_config.json 文件。
+技能配置运行时持久化到应用 SQLite；旧 skills_config.json 只作为迁移来源。
 """
 
 import json
@@ -62,6 +62,14 @@ class SkillManager:
         self._save_skills_config()
 
     def _load_skills_config(self) -> Dict[str, dict]:
+        try:
+            from app.core.app_store import get_app_store
+
+            saved = get_app_store().load_skill_configs()
+            if saved:
+                return saved
+        except Exception:
+            pass
         if not os.path.exists(self._skills_config_path):
             return {}
         try:
@@ -72,12 +80,19 @@ class SkillManager:
             return {}
 
     def _save_skills_config(self):
+        try:
+            from app.core.app_store import get_app_store
+
+            get_app_store().save_skill_configs(self.skills_config)
+            return
+        except Exception as e:
+            logger.debug(f"Failed to save skills config to SQLite, falling back to file: {e}")
         os.makedirs(os.path.dirname(self._skills_config_path) or ".", exist_ok=True)
         try:
             with open(self._skills_config_path, "w", encoding="utf-8") as f:
                 json.dump(self.skills_config, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            logger.error(f"Failed to save skills config: {e}")
+            logger.error(f"Failed to save skills config fallback file: {e}")
 
     def is_skill_enabled(self, name: str) -> bool:
         entry = self.skills_config.get(name)

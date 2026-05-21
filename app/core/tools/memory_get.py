@@ -52,6 +52,10 @@ class MemoryGetTool(BaseTool):
             workspace_dir = mgr.config.get_workspace()
             if not path.startswith('memory/') and not path.startswith('knowledge/') and path != 'MEMORY.md':
                 path = f'memory/{path}'
+            if self.user_id:
+                allowed_prefix = f"memory/users/{self.user_id}/"
+                if not path.startswith(allowed_prefix):
+                    return ToolResult.fail("Error: memory path is outside the current user's memory")
             from pathlib import Path
             file_path = (workspace_dir / path).resolve()
             if not str(file_path).startswith(str(workspace_dir.resolve())):

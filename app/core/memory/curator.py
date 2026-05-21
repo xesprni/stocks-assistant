@@ -84,6 +84,7 @@ class MemoryCurator:
         assistant_response: str,
         user_message_id: Optional[str] = None,
         assistant_message_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[CuratedMemory]:
         if not user_message.strip() or not assistant_response.strip():
             return None
@@ -108,7 +109,8 @@ class MemoryCurator:
         }
         asyncio.run(self.memory_manager.add_memory(
             content=decision.memory,
-            scope="shared",
+            user_id=user_id,
+            scope="user" if user_id else "shared",
             source="memory",
             metadata=metadata,
         ))

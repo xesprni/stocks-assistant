@@ -32,6 +32,71 @@ export interface SubAgentRoleConfig {
   allow_all_mcp_tools: boolean;
 }
 
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string;
+  roles: string[];
+  permissions: string[];
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_login_at?: string | null;
+}
+
+export interface UserListResponse {
+  users: AuthUser[];
+  total: number;
+}
+
+export interface UserCreateRequest {
+  username: string;
+  password: string;
+  display_name?: string;
+  roles: string[];
+  is_active?: boolean;
+}
+
+export interface UserUpdateRequest {
+  display_name?: string;
+  password?: string;
+  roles?: string[];
+  is_active?: boolean;
+}
+
+export interface RoleInfo {
+  id: string;
+  name: string;
+  description: string;
+  builtin: boolean;
+  permissions: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RoleListResponse {
+  roles: RoleInfo[];
+  permissions: Record<string, string>;
+}
+
+export interface RoleUpdateRequest {
+  name: string;
+  description: string;
+  permissions: string[];
+}
+
+export interface AuthTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+  user: AuthUser;
+}
+
+export interface SetupStatusResponse {
+  setup_required: boolean;
+}
+
 export interface AppConfig {
   llm_provider: "openai_compatible" | "openai_responses" | string;
   llm_auth_mode: "api_key" | "codex" | string;

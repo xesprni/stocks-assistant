@@ -246,6 +246,9 @@ class ChatSessionStore:
                 )
                 """
             )
+            session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+            if "user_id" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS messages (

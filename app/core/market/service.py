@@ -123,7 +123,17 @@ class MarketService:
 
     # ------------------------------------------------------------------ config
 
-    def get_config(self) -> dict:
+    def get_config(self, user_id: Optional[str] = None) -> dict:
+        if user_id:
+            try:
+                from app.core.app_store import get_app_store
+
+                stored = get_app_store().get_market_config(user_id)
+                if stored:
+                    return _normalize_config(stored)
+            except Exception:
+                pass
+            return _default_config()
         if self.config_path.exists():
             try:
                 with open(self.config_path, encoding="utf-8") as f:
@@ -132,16 +142,23 @@ class MarketService:
                 pass
         return _default_config()
 
-    def save_config(self, config: dict) -> dict:
+    def save_config(self, config: dict, user_id: Optional[str] = None) -> dict:
         config = _normalize_config(config)
+        if user_id:
+            try:
+                from app.core.app_store import get_app_store
+
+                return get_app_store().save_market_config(user_id, config)
+            except Exception:
+                pass
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         return config
 
     # ------------------------------------------------------------------ quotes
 
-    def get_index_quotes(self) -> list[dict]:
-        cfg = self.get_config()
+    def get_index_quotes(self, user_id: Optional[str] = None) -> list[dict]:
+        cfg = self.get_config(user_id=user_id)
         indices = cfg.get("indices", DEFAULT_INDICES)
         name_map = {idx["symbol"]: idx["name"] for idx in indices}
         symbols = [idx["symbol"] for idx in indices if idx.get("enabled", True)]

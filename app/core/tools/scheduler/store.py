@@ -138,3 +138,108 @@ class RunStore:
             runs = [run for run in runs if run.get("task_id") == task_id]
         runs.sort(key=lambda item: item.get("started_at") or "", reverse=True)
         return runs[:limit]
+
+
+class SQLiteTaskStore:
+    """SQLite-backed scheduler task store with optional user scoping."""
+
+    def __init__(self, user_id: Optional[str] = None):
+        self.user_id = user_id
+
+    def for_user(self, user_id: str) -> "SQLiteTaskStore":
+        return SQLiteTaskStore(user_id=user_id)
+
+    def load_tasks(self) -> Dict[str, dict]:
+        from app.core.app_store import get_app_store
+
+        tasks = get_app_store().list_scheduler_tasks(user_id=self.user_id)
+        return {task["id"]: task for task in tasks}
+
+    def save_tasks(self, tasks: Dict[str, dict]):
+        from app.core.app_store import get_app_store
+
+        for task in tasks.values():
+            if self.user_id:
+                task["user_id"] = self.user_id
+            if not task.get("user_id"):
+                raise ValueError("Scheduler task requires user_id")
+            get_app_store().upsert_scheduler_task(task)
+
+    def add_task(self, task: dict) -> bool:
+        from app.core.app_store import get_app_store
+
+        task_id = task.get("id")
+        if not task_id:
+            raise ValueError("Task id is required")
+        if self.get_task(task_id):
+            raise ValueError(f"Task '{task_id}' already exists")
+        if self.user_id:
+            task["user_id"] = self.user_id
+        if not task.get("user_id"):
+            raise ValueError("Scheduler task requires user_id")
+        get_app_store().upsert_scheduler_task(task)
+        return True
+
+    def update_task(self, task_id: str, updates: dict) -> bool:
+        from app.core.app_store import get_app_store
+
+        task = self.get_task(task_id)
+        if not task:
+            raise ValueError(f"Task '{task_id}' not found")
+        task.update(updates)
+        task["updated_at"] = datetime.now().isoformat()
+        if self.user_id:
+            task["user_id"] = self.user_id
+        get_app_store().upsert_scheduler_task(task)
+        return True
+
+    def delete_task(self, task_id: str) -> bool:
+        from app.core.app_store import get_app_store
+
+        if not get_app_store().delete_scheduler_task(task_id, user_id=self.user_id):
+            raise ValueError(f"Task '{task_id}' not found")
+        return True
+
+    def get_task(self, task_id: str) -> Optional[dict]:
+        from app.core.app_store import get_app_store
+
+        return get_app_store().get_scheduler_task(task_id, user_id=self.user_id)
+
+    def list_tasks(self, enabled_only: bool = False) -> List[dict]:
+        from app.core.app_store import get_app_store
+
+        return get_app_store().list_scheduler_tasks(user_id=self.user_id, enabled_only=enabled_only)
+
+    def enable_task(self, task_id: str, enabled: bool = True) -> bool:
+        return self.update_task(task_id, {"enabled": enabled})
+
+
+class SQLiteRunStore:
+    """SQLite-backed scheduler run store with optional user scoping."""
+
+    def __init__(self, user_id: Optional[str] = None, max_records: int = 500):
+        self.user_id = user_id
+        self.max_records = max_records
+
+    def for_user(self, user_id: str) -> "SQLiteRunStore":
+        return SQLiteRunStore(user_id=user_id, max_records=self.max_records)
+
+    def add_run(self, run: dict) -> dict:
+        from app.core.app_store import get_app_store
+
+        if self.user_id:
+            run["user_id"] = self.user_id
+        if not run.get("user_id"):
+            task_id = run.get("task_id")
+            if task_id:
+                task = get_app_store().get_scheduler_task(task_id)
+                if task:
+                    run["user_id"] = task.get("user_id")
+        if not run.get("user_id"):
+            raise ValueError("Scheduler run requires user_id")
+        return get_app_store().add_scheduler_run(run, max_records=self.max_records)
+
+    def list_runs(self, task_id: Optional[str] = None, limit: int = 50) -> List[dict]:
+        from app.core.app_store import get_app_store
+
+        return get_app_store().list_scheduler_runs(user_id=self.user_id, task_id=task_id, limit=limit)

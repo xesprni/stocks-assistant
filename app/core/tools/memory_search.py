@@ -64,7 +64,7 @@ class MemorySearchTool(BaseTool):
                 query=query, user_id=self.user_id,
                 max_results=args.get("max_results", 10),
                 min_score=args.get("min_score", 0.1),
-                include_shared=True,
+                include_shared=self.user_id is None,
             ))
             if not results:
                 return ToolResult.success(f"No memories found for '{query}'")

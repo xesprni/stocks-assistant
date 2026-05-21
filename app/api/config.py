@@ -1,21 +1,19 @@
 """应用配置管理 API。"""
 
 import asyncio
-import json
-from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
 import app.config as config_module
 from app.config import Settings, get_settings
+from app.core.app_store import get_app_store
 from app.core.notifications.telegram import TelegramConfigError, TelegramSender
+from app.core.security import CurrentUser, require_permissions
 from app.schemas.config import AppConfig, ConfigUpdate, TelegramTestRequest, TelegramTestResponse
 
 router = APIRouter()
-
-CONFIG_PATH = Path("config.json")
 
 
 def _mask_secret(value: str) -> str:
@@ -82,7 +80,7 @@ def _settings_to_response(settings: Settings) -> AppConfig:
         telegram_api_base=settings.telegram_api_base,
         telegram_parse_mode=settings.telegram_parse_mode,
         system_prompt=settings.system_prompt,
-        mcp_servers=settings.mcp_servers,
+        mcp_servers=_mask_mcp_servers(settings.mcp_servers),
         mcp_tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
         longbridge_app_key_masked=_mask_secret(settings.longbridge_app_key),
         has_longbridge_app_key=bool(settings.longbridge_app_key),
@@ -95,20 +93,13 @@ def _settings_to_response(settings: Settings) -> AppConfig:
     )
 
 
-def _read_config_file() -> Dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        return {}
+def _mask_mcp_servers(servers: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f"config.json 格式错误: {exc}") from exc
+        from app.core.tools.mcp.config import mask_mcp_server_config
 
-
-def _write_config_file(data: Dict[str, Any]) -> None:
-    CONFIG_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+        return {name: mask_mcp_server_config(cfg) for name, cfg in servers.items()}
+    except Exception:
+        return {}
 
 
 def _codex_oauth_status(settings: Settings) -> Dict[str, Any]:
@@ -175,24 +166,28 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
 
 
 @router.get("", response_model=AppConfig)
-async def get_config():
+async def get_config(current: CurrentUser = Depends(require_permissions("config:read"))):
     """读取当前应用配置。"""
     return _settings_to_response(get_settings())
 
 
-@router.put("", response_model=AppConfig)
-async def update_config(update: ConfigUpdate):
+async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> AppConfig:
     """更新并持久化应用配置。"""
-    patch = update.model_dump(exclude_unset=True)
-    current = _read_config_file()
-    merged = {**current, **patch}
+    patch = {k: v for k, v in update.model_dump(exclude_unset=True).items() if v is not None}
+    stored = get_app_store().get_config()
+    if "mcp_servers" in patch:
+        from app.core.tools.mcp.config import preserve_masked_mcp_secrets
+
+        patch["mcp_servers"] = preserve_masked_mcp_secrets(stored.get("mcp_servers"), patch["mcp_servers"])
+    merged = {**stored, **patch}
 
     try:
-        Settings(**{k: v for k, v in merged.items() if v != ""})
+        Settings(**merged)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
-    _write_config_file(merged)
+    get_app_store().set_config_values(patch)
+    get_app_store().audit(current.id, "config.update", "app_config", {"keys": sorted(patch)})
     config_module._config_instance = None
     settings = get_settings()
     _refresh_runtime_caches(patch)
@@ -222,8 +217,23 @@ async def update_config(update: ConfigUpdate):
     return _settings_to_response(settings)
 
 
+@router.patch("", response_model=AppConfig)
+async def patch_config(update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:write"))):
+    """局部更新并持久化应用配置。"""
+    return await _persist_config_update(update, current)
+
+
+@router.put("", response_model=AppConfig)
+async def update_config(update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:write"))):
+    """兼容旧前端：PUT 仍按局部更新处理。"""
+    return await _persist_config_update(update, current)
+
+
 @router.post("/telegram/test", response_model=TelegramTestResponse)
-async def test_telegram(request: TelegramTestRequest):
+async def test_telegram(
+    request: TelegramTestRequest,
+    _: CurrentUser = Depends(require_permissions("config:write")),
+):
     """使用已保存的 Telegram 配置发送测试消息。"""
     sender = TelegramSender.from_settings(get_settings())
     if not sender.enabled:

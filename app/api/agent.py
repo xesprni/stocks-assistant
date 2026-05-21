@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.agent.executor import AgentCancelledError
@@ -26,6 +26,7 @@ from app.schemas import (
     ChatSessionUpdateRequest,
 )
 from app.deps import get_llm_provider, get_memory_llm_provider, get_skill_manager, get_memory_manager, get_session_store
+from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 
 router = APIRouter()
 logger = logging.getLogger("stocks-assistant.agent.api")
@@ -37,6 +38,7 @@ def _build_agent(user_id: Optional[str] = None):
     from app.config import DEFAULT_SYSTEM_PROMPT, get_settings
 
     settings = get_settings()
+    workspace_dir = user_workspace_dir(settings.workspace_dir, user_id) if user_id else settings.workspace_dir
     llm = get_llm_provider()
     skill_mgr = get_skill_manager()
     memory_mgr = get_memory_manager() if settings.memory_enabled else None
@@ -44,8 +46,8 @@ def _build_agent(user_id: Optional[str] = None):
     from app.core.tools.tool_manager import ToolManager
     from pathlib import Path
 
-    tool_manager = ToolManager(workspace_dir=str(Path(settings.workspace_dir).expanduser()))
-    tool_manager.load_builtin_tools(memory_manager=memory_mgr)
+    tool_manager = ToolManager(workspace_dir=str(Path(workspace_dir).expanduser()), user_id=user_id)
+    tool_manager.load_builtin_tools(memory_manager=memory_mgr, user_id=user_id)
     tools = tool_manager.get_all_tools()
     if settings.mcp_servers:
         try:
@@ -72,7 +74,7 @@ def _build_agent(user_id: Optional[str] = None):
         max_context_tokens=settings.agent_max_context_tokens,
         max_context_turns=settings.agent_max_context_turns,
         memory_manager=memory_mgr,
-        workspace_dir=settings.workspace_dir,
+        workspace_dir=workspace_dir,
         skill_manager=skill_mgr,
     )
 
@@ -102,13 +104,20 @@ def _init_agent(request: ChatRequest, history_messages: list[dict]):
     return agent
 
 
-def _prepare_session(request: ChatRequest) -> tuple[str, list[dict]]:
+def _assert_session_owner(session: dict, user: CurrentUser) -> None:
+    owner = session.get("user_id")
+    if owner and owner != user.id and not user.is_admin:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list[dict]]:
     store = get_session_store()
     history_messages: list[dict] = []
 
     if request.session_id:
         try:
-            store.get_session(request.session_id)
+            session = store.get_session(request.session_id)
+            _assert_session_owner(session, user)
             if request.clear_history:
                 store.clear_messages(request.session_id)
             else:
@@ -118,7 +127,7 @@ def _prepare_session(request: ChatRequest) -> tuple[str, list[dict]]:
         return request.session_id, history_messages
 
     session = store.create_session(
-        user_id=request.user_id,
+        user_id=user.id,
         title=_title_from_text(request.message),
     )
     if request.history and not request.clear_history:
@@ -192,6 +201,7 @@ def _schedule_memory_curate(
     assistant_response: str,
     user_message_id: Optional[str] = None,
     assistant_message_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     from app.config import get_settings
 
@@ -220,6 +230,7 @@ def _schedule_memory_curate(
                 assistant_response=assistant_response,
                 user_message_id=user_message_id,
                 assistant_message_id=assistant_message_id,
+                user_id=user_id,
             )
         except Exception as exc:
             logger.warning("Memory curator failed for session %s: %s", session_id, exc)
@@ -228,11 +239,12 @@ def _schedule_memory_curate(
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     recorder = None
     try:
-        session_id, history_messages = _prepare_session(request)
+        session_id, history_messages = _prepare_session(request, current_user)
         recorder = _start_trace(session_id, request.message)
+        request.user_id = current_user.id
         agent = _init_agent(request, history_messages)
         response = agent.run_stream(
             user_message=request.message,
@@ -254,6 +266,7 @@ async def chat(request: ChatRequest):
             assistant_response=response,
             user_message_id=user_message_id,
             assistant_message_id=message_id,
+            user_id=current_user.id,
         )
         return ChatResponse(response=response, session_id=session_id, message_id=message_id)
     except HTTPException:
@@ -264,9 +277,10 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/stream")
-async def stream_chat(request: ChatRequest):
-    session_id, history_messages = _prepare_session(request)
+async def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+    session_id, history_messages = _prepare_session(request, current_user)
     recorder = _start_trace(session_id, request.message)
+    request.user_id = current_user.id
     agent = _init_agent(request, history_messages)
     cancel_event = threading.Event()
 
@@ -331,6 +345,7 @@ async def stream_chat(request: ChatRequest):
                     assistant_response=response,
                     user_message_id=user_message_id,
                     assistant_message_id=message_id,
+                    user_id=current_user.id,
                 )
                 event_queue.put({
                     "type": "agent_end",
@@ -386,37 +401,47 @@ async def list_sessions(
     user_id: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    current_user: CurrentUser = Depends(require_permissions("chat:read")),
 ):
     store = get_session_store()
-    sessions = store.list_sessions(user_id=user_id, limit=limit, offset=offset)
-    return ChatSessionListResponse(sessions=sessions, total=store.count_sessions(user_id=user_id))
+    effective_user_id = user_id if (user_id and current_user.is_admin) else current_user.id
+    sessions = store.list_sessions(user_id=effective_user_id, limit=limit, offset=offset)
+    return ChatSessionListResponse(sessions=sessions, total=store.count_sessions(user_id=effective_user_id))
 
 
 @router.post("/sessions", response_model=ChatSessionDetail)
-async def create_session(request: ChatSessionCreateRequest):
+async def create_session(request: ChatSessionCreateRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     session = get_session_store().create_session(
-        user_id=request.user_id,
+        user_id=current_user.id,
         title=request.title or "新对话",
     )
     return get_session_store().get_detail(session["id"])
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSessionDetail)
-async def get_session(session_id: str):
-    return _session_or_404(session_id)
+async def get_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))):
+    session = _session_or_404(session_id)
+    _assert_session_owner(session, current_user)
+    return session
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionSummary)
-async def update_session(session_id: str, request: ChatSessionUpdateRequest):
+async def update_session(
+    session_id: str,
+    request: ChatSessionUpdateRequest,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
     try:
+        _assert_session_owner(get_session_store().get_session(session_id), current_user)
         return get_session_store().update_title(session_id, request.title)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found")
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     try:
+        _assert_session_owner(get_session_store().get_session(session_id), current_user)
         get_session_store().delete_session(session_id)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -424,8 +449,9 @@ async def delete_session(session_id: str):
 
 
 @router.delete("/sessions/{session_id}/messages")
-async def clear_session_messages(session_id: str):
+async def clear_session_messages(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     try:
+        _assert_session_owner(get_session_store().get_session(session_id), current_user)
         deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -433,13 +459,17 @@ async def clear_session_messages(session_id: str):
 
 
 @router.delete("/history")
-async def clear_history(session_id: Optional[str] = None):
+async def clear_history(
+    session_id: Optional[str] = None,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
     if not session_id:
         return {
             "status": "ok",
             "message": "No session_id supplied; stateless requests have no server history to clear",
         }
     try:
+        _assert_session_owner(get_session_store().get_session(session_id), current_user)
         deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found")

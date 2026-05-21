@@ -1,10 +1,8 @@
 """全局配置模块
 
-基于 pydantic-settings 实现配置管理，支持以下配置来源（优先级从高到低）：
-1. 环境变量（前缀 APP_，如 APP_LLM_API_KEY）
-2. .env 文件
-3. config.json 文件
-4. 默认值
+配置持久化在应用级 SQLite 数据库中。环境变量不再覆盖业务配置；
+唯一启动级环境变量是 STOCKS_ASSISTANT_DB_PATH，用于定位应用 SQLite。
+首次加载时会把旧 config.json 作为一次性迁移来源。
 """
 
 from copy import deepcopy
@@ -12,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, JsonConfigSettingsSource, PydanticBaseSettingsSource
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 
 DEFAULT_SYSTEM_PROMPT = """You are Stocks Assistant, an AI agent specialized in stocks, finance, and market analysis.
@@ -124,8 +122,7 @@ DEFAULT_MULTI_AGENT_ROLES: Dict[str, Dict[str, Any]] = {
 class Settings(BaseSettings):
     """应用全局配置
 
-    所有配置项均可通过环境变量覆盖，环境变量前缀为 APP_。
-    例如 llm_api_key 对应环境变量 APP_LLM_API_KEY。
+    Settings 保留 Pydantic 校验/默认值能力；实际数据由 app_config 表加载。
     """
 
     # ---- LLM 大模型配置 ----
@@ -209,12 +206,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"  # 服务监听地址
     port: int = 8000  # 服务监听端口
 
-    # pydantic-settings 配置：环境变量前缀 + .env + config.json 文件支持
+    # 只接收显式 init 数据；不再读取 .env、APP_* 或 config.json。
     model_config = {
-        "env_prefix": "APP_",
-        "env_file": ".env",
-        "json_file": "config.json",
-        "json_file_encoding": "utf-8",
         "extra": "ignore",
     }
 
@@ -229,10 +222,6 @@ class Settings(BaseSettings):
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            env_settings,
-            dotenv_settings,
-            JsonConfigSettingsSource(settings_cls),
-            file_secret_settings,
         )
 
     def get_workspace_path(self) -> Path:
@@ -332,5 +321,9 @@ def get_settings() -> Settings:
 
 
 def _load_settings() -> Settings:
-    """从 config.json 加载配置，环境变量和 .env 优先级更高"""
-    return Settings()
+    """Load settings from the application SQLite config table."""
+    from app.core.app_store import get_app_store
+
+    store = get_app_store()
+    store.migrate_config_json_once()
+    return Settings(**store.get_config())

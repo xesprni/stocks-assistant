@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api import skills as skills_api
 from app.core.skills.clawhub import ClawHubConflictError
+from app.core.security import CurrentUser, get_current_user
 
 
 class FakeClawHubService:
@@ -59,6 +60,14 @@ class ClawHubApiTest(unittest.TestCase):
     def setUp(self):
         app = FastAPI()
         app.include_router(skills_api.router, prefix="/api/v1/skills")
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="admin",
+            username="admin",
+            display_name="Admin",
+            roles=("admin",),
+            permissions=frozenset({"*"}),
+            is_active=True,
+        )
         self.client = TestClient(app)
 
     def test_search_route_uses_clawhub_service(self):

@@ -10,8 +10,11 @@ from pathlib import Path
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.core.app_store import get_app_store
+from app.core.security import AuthError, bearer_from_header, decode_access_token
 from app.core.logging import setup_logging
 from app.api import router
 
@@ -81,6 +84,54 @@ app = FastAPI(
 
 # 注册所有 API 路由
 app.include_router(router)
+
+
+PUBLIC_API_PATHS = {
+    "/api/v1/health",
+    "/api/v1/auth/setup/status",
+    "/api/v1/auth/setup",
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/logout",
+}
+
+
+def _is_public_api_path(path: str) -> bool:
+    if path in PUBLIC_API_PATHS:
+        return True
+    return path.startswith("/api/v1/mcp/oauth/callback/")
+
+
+@app.middleware("http")
+async def enforce_api_auth(request: Request, call_next):
+    """Require JWT auth for all API routes except explicit public endpoints."""
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/api/") or _is_public_api_path(path):
+        return await call_next(request)
+
+    store = get_app_store()
+    if not store.has_users():
+        return JSONResponse(
+            {"detail": "Setup required", "setup_required": True},
+            status_code=503,
+        )
+
+    token = bearer_from_header(request.headers.get("authorization"))
+    if not token:
+        return JSONResponse(
+            {"detail": "Authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        request.state.current_user = decode_access_token(token)
+    except AuthError as exc:
+        return JSONResponse(
+            {"detail": str(exc) or "Invalid token"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")

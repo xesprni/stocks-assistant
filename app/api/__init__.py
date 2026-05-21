@@ -17,6 +17,7 @@
 
 from fastapi import APIRouter
 
+from app.api.auth import router as auth_router
 from app.api.agent import router as agent_router
 from app.api.memory import router as memory_router
 from app.api.knowledge import router as knowledge_router
@@ -30,9 +31,12 @@ from app.api.market import router as market_router
 from app.api.fundamentals import router as fundamentals_router
 from app.api.mcp import router as mcp_router
 from app.api.tracing import router as tracing_router
+from app.api.users import router as users_router
+from app.api.roles import router as roles_router
 
 router = APIRouter(prefix="/api/v1")
 
+router.include_router(auth_router, prefix="/auth", tags=["auth"])
 router.include_router(agent_router, prefix="/agent", tags=["agent"])
 router.include_router(memory_router, prefix="/memory", tags=["memory"])
 router.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
@@ -46,3 +50,5 @@ router.include_router(market_router, prefix="/market", tags=["market"])
 router.include_router(fundamentals_router, prefix="/fundamentals", tags=["fundamentals"])
 router.include_router(mcp_router, prefix="/mcp", tags=["mcp"])
 router.include_router(tracing_router, prefix="/tracing", tags=["tracing"])
+router.include_router(users_router, prefix="/users", tags=["users"])
+router.include_router(roles_router, prefix="/roles", tags=["roles"])

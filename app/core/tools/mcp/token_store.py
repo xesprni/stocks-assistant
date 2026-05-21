@@ -1,12 +1,11 @@
-"""MCP OAuth 令牌持久化存储。
+"""MCP OAuth token persistence.
 
-将 OAuth 授权令牌和客户端注册信息保存到 JSON 文件，
-避免每次重启应用都需要重新登录。
+Tokens now live in the application SQLite database. The legacy JSON file is
+still read by the app-level migration, but runtime reads/writes use SQLite.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from pathlib import Path
@@ -18,8 +17,8 @@ logger = logging.getLogger("stocks-assistant.mcp.token_store")
 class MCPTokenStore:
     """基于 JSON 文件的 MCP OAuth 令牌持久化存储。
 
-    文件路径: {workspace_dir}/mcp/oauth_tokens.json
-    线程安全，通过可重入锁保护读写操作。
+    The workspace_dir argument is kept for constructor compatibility; it no
+    longer determines the runtime token store location.
     """
 
     def __init__(self, workspace_dir: str):
@@ -29,14 +28,16 @@ class MCPTokenStore:
         self._cache: Optional[dict[str, Any]] = None
 
     def _load(self) -> dict[str, Any]:
-        """从磁盘加载令牌数据，带内存缓存。"""
+        """Load all token entries from SQLite into a small process cache."""
         if self._cache is not None:
             return self._cache
         try:
-            if self._path.exists():
-                with open(self._path, "r", encoding="utf-8") as f:
-                    self._cache = json.load(f)
-                    return self._cache
+            from app.core.app_store import get_app_store
+
+            # There is no list API because MCPManager only asks for configured
+            # server names. Keep an empty cache and lazily fill per server.
+            self._cache = {}
+            return self._cache
         except Exception as e:
             logger.warning(f"Failed to load MCP OAuth tokens: {e}")
         self._cache = {}
@@ -54,18 +55,27 @@ class MCPTokenStore:
         return str(obj)
 
     def _save(self, data: dict[str, Any]) -> None:
-        """将令牌数据写入磁盘。"""
-        self._dir.mkdir(parents=True, exist_ok=True)
+        """Persist cached entries to SQLite."""
+        from app.core.app_store import get_app_store
+
         sanitized = self._sanitize(data)
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump(sanitized, f, indent=2, ensure_ascii=False)
-        self._cache = data
+        for server_name, entry in sanitized.items():
+            if isinstance(entry, dict):
+                get_app_store().set_mcp_oauth_entry(server_name, entry)
+        self._cache = sanitized
+
+    def _entry(self, server_name: str) -> dict[str, Any]:
+        data = self._load()
+        if server_name not in data:
+            from app.core.app_store import get_app_store
+
+            data[server_name] = get_app_store().get_mcp_oauth_entry(server_name)
+        return data.get(server_name, {})
 
     def get_tokens(self, server_name: str) -> Optional[dict[str, Any]]:
         """获取指定服务器的 OAuth 令牌。"""
         with self._lock:
-            data = self._load()
-            entry = data.get(server_name, {})
+            entry = self._entry(server_name)
             tokens = entry.get("tokens")
             return tokens if tokens else None
 
@@ -80,8 +90,7 @@ class MCPTokenStore:
     def get_client_info(self, server_name: str) -> Optional[dict[str, Any]]:
         """获取指定服务器的 OAuth 客户端注册信息。"""
         with self._lock:
-            data = self._load()
-            entry = data.get(server_name, {})
+            entry = self._entry(server_name)
             info = entry.get("client_info")
             return info if info else None
 
@@ -96,8 +105,7 @@ class MCPTokenStore:
     def get_client_credentials_token(self, server_name: str) -> Optional[tuple[str, float]]:
         """获取指定服务器的 Client Credentials 令牌和过期时间。"""
         with self._lock:
-            data = self._load()
-            entry = data.get(server_name, {})
+            entry = self._entry(server_name)
             cc = entry.get("client_credentials_token")
             if cc and isinstance(cc.get("token"), str) and isinstance(cc.get("expires_at"), (int, float)):
                 return (cc["token"], float(cc["expires_at"]))
@@ -116,4 +124,7 @@ class MCPTokenStore:
         with self._lock:
             data = self._load()
             data.pop(server_name, None)
-            self._save(data)
+            from app.core.app_store import get_app_store
+
+            get_app_store().clear_mcp_oauth_entry(server_name)
+            self._cache = data

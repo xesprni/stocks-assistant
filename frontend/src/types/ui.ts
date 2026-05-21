@@ -14,7 +14,8 @@ export type Page =
   | "mcp"
   | "memory"
   | "knowledge"
-  | "scheduler";
+  | "scheduler"
+  | "users";
 
 export type Theme = "system" | "dark" | "light";
 export type EffectiveTheme = "dark" | "light";
