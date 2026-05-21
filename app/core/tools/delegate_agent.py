@@ -52,6 +52,7 @@ class DelegateAgentTool(BaseTool):
         runner = SubAgentRunner(
             parent_agent=parent_agent,
             event_emitter=getattr(self, "event_emitter", None),
+            # 传入父工具调用 ID，追踪视图可以把整批子 Agent 挂到对应 delegate_agent 节点下。
             parent_tool_call_id=current_tool_call.get("id"),
         )
         try:

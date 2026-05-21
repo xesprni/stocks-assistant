@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger("stocks-assistant.tracing")
 
+# 追踪会保存完整请求/响应片段，入库前统一截断大字段并脱敏常见凭据字段。
 MAX_TRACE_STRING_CHARS = 50_000
 MAX_RESPONSE_PREVIEW_CHARS = 1_000
 _TRUNCATION_MARKER = "\n\n[Trace payload truncated: {original} chars total]"
@@ -65,6 +66,7 @@ def _sanitize_payload(value: Any, key: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize_payload(item) for item in value]
     if isinstance(value, dict):
+        # reasoning/thinking 内容可能很长且不适合持久化，只保留节点存在性的标记。
         if value.get("type") == "thinking":
             return {"type": "thinking", "omitted": True}
         return {str(k): _sanitize_payload(v, str(k)) for k, v in value.items()}
@@ -441,13 +443,16 @@ class TraceRecorder:
         self.run_id = run_id
         self.root_event_id = root_event_id
         self._closed = False
+        # SQLite 写入集中到单线程，避免流式事件并发入库时打乱父子节点关系。
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trace-recorder")
         self.current_turn_id: Optional[str] = None
         self.turn_events: dict[int, str] = {}
         self.llm_events: dict[str, dict[str, Any]] = {}
         self.tool_events: dict[str, dict[str, Any]] = {}
+        # message_update 是 token 级高频事件，先缓冲，等 message_end/LLM 结束时合并成一条记录。
         self.message_buffer: list[str] = []
         self.message_delta_count = 0
+        # 子 Agent 事件用 batch_id/task_id 维持独立层级，避免并行任务互相抢当前节点。
         self.subagent_batches: dict[str, dict[str, Any]] = {}
         self.subagent_tasks: dict[tuple[str, str], dict[str, Any]] = {}
         self.subagent_turns: dict[tuple[str, str, int], str] = {}
@@ -693,6 +698,7 @@ class TraceRecorder:
             }
             parent_id = self.current_turn_id or self.root_event_id
             if info:
+                # 工具结果挂在对应 tool_call 下；缺少 start 事件时退回到当前 turn，保证 trace 不中断。
                 parent_id = info["event_id"]
                 self.store.update_event(
                     info["event_id"],
@@ -813,6 +819,7 @@ class TraceRecorder:
         role = str(data.get("role") or "subagent")
         child_type = str(data.get("child_event_type") or "")
         child_data = data.get("child_data") if isinstance(data.get("child_data"), dict) else {}
+        # 子 Agent 自带时间戳时优先用子事件时间，否则沿用外层包装事件时间。
         child_timestamp = data.get("child_timestamp") or timestamp
         subagent_parent = self._subagent_parent_id(batch_id, task_id)
 
@@ -969,6 +976,7 @@ class TraceRecorder:
         return self.current_turn_id or self.root_event_id
 
     def _subagent_active_turn_id(self, batch_id: str, task_id: str) -> Optional[str]:
+        # dict 保持插入顺序，反向扫描可以找到该子任务最近打开的 turn。
         for b_id, t_id, _turn in reversed(self.subagent_turns.keys()):
             if b_id == batch_id and t_id == task_id:
                 return self.subagent_turns[(b_id, t_id, _turn)]

@@ -69,6 +69,7 @@ def _canonical_symbol(symbol: str, market: Optional[PortfolioMarket] = None) -> 
         return normalized
     if market == "US":
         return f"{normalized}.US"
+    # A 股根据代码段推断交易所后缀，满足 Longbridge 报价接口的标准 symbol 格式。
     suffix = "SH" if normalized.startswith(("5", "6", "9")) else "SZ"
     return f"{normalized}.{suffix}"
 
@@ -103,6 +104,7 @@ class PortfolioService:
         try:
             items, total_assets, cash_ratio = self._enrich_items(rows, cash_amount)
         except LongbridgeUnavailableError as exc:
+            # 行情不可用时仍返回本地持仓，前端可以展示静态数据并提示 quote_error。
             quote_error = str(exc)
             items = [self._empty_enriched_item(row) for row in rows]
             cash = _decimal(cash_amount) or Decimal("0")
@@ -195,6 +197,7 @@ class PortfolioService:
         if "cost_price" in patch:
             patch["cost_price"] = _decimal_text(patch["cost_price"])
 
+        # patch 字段来自 Pydantic schema 的白名单，动态拼接只覆盖请求中出现的列。
         assignments = [f"{key} = :{key}" for key in patch]
         patch["id"] = item_id
         patch["updated_at"] = _now()
@@ -286,6 +289,7 @@ class PortfolioService:
         cash_value = _decimal(cash_amount) or Decimal("0")
         row_values: dict[str, Optional[Decimal]] = {}
         total_market_value = Decimal("0")
+        # 先算出总市值和总资产，再回填每只股票的仓位占比，避免边遍历边依赖未完成的总数。
         for row in rows:
             quote = quotes.get(row["symbol"], {})
             shares = _decimal(row.get("shares"))
@@ -378,6 +382,7 @@ class PortfolioService:
         try:
             raw_calc_indexes = list(ctx.calc_indexes(symbols, [CalcIndex.PeTtmRatio]))
         except Exception:
+            # PE-TTM 是增强展示字段，失败不影响基础报价和持仓估值。
             raw_calc_indexes = []
         for calc in raw_calc_indexes:
             symbol = str(getattr(calc, "symbol", "") or "").upper()

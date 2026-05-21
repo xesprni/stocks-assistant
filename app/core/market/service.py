@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
 }
 
 SYMBOL_ALIASES = {
+    # Longbridge 对部分指数会返回带前导点的 symbol，配置和结果统一归一成无前导点格式。
     ".HSI.HK": "HSI.HK",
     ".HSCEI.HK": "HSCEI.HK",
     ".HSTECH.HK": "HSTECH.HK",
@@ -72,6 +73,7 @@ def _normalize_config(config: Any) -> dict:
     for index in indices:
         item = _normalize_index_config(index)
         symbol = item.get("symbol", "")
+        # 配置文件可能来自旧版本或手工编辑，保存/读取时顺手去掉空 symbol 和重复项。
         if not symbol or symbol in seen:
             continue
         seen.add(symbol)
@@ -175,6 +177,7 @@ class MarketService:
         seen_symbols: set[str] = set()
         for symbol in symbols:
             canonical = _canonical_symbol(symbol)
+            # 批量报价前先做归一和去重，减少 Longbridge 请求量并稳定结果 key。
             if not canonical or canonical in seen_symbols:
                 continue
             seen_symbols.add(canonical)

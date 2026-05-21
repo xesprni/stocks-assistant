@@ -51,6 +51,7 @@ class SubAgentRunner:
 
         parent_depth = int(getattr(self.parent_agent, "multi_agent_depth", 0) or 0)
         max_depth = max(0, int(self.settings.multi_agent_max_depth or 0))
+        # 子 Agent 本身不会拿到 delegate_agent，这里再用深度做兜底，避免配置遗漏导致递归委派。
         if parent_depth >= max_depth:
             raise SubAgentValidationError("Sub-agents cannot call delegate_agent")
 
@@ -61,6 +62,7 @@ class SubAgentRunner:
         if len(raw_tasks) > max_parallel:
             raise SubAgentValidationError(f"Too many sub-agent tasks: maximum is {max_parallel}")
 
+        # 先完整校验整批任务，再启动线程池，避免部分任务已经运行后才发现权限或参数错误。
         prepared = [self._prepare_task(index, item) for index, item in enumerate(raw_tasks)]
         batch_id = f"subagents_{uuid.uuid4().hex[:12]}"
 
@@ -72,6 +74,7 @@ class SubAgentRunner:
         })
 
         started = time.time()
+        # as_completed 按完成顺序返回；用原始 index 回填，确保结果仍按请求顺序输出。
         results: list[Optional[dict[str, Any]]] = [None] * len(prepared)
         with ThreadPoolExecutor(max_workers=min(max_parallel, len(prepared)), thread_name_prefix="subagent") as executor:
             future_map = {executor.submit(self._run_one, batch_id, task): task.index for task in prepared}
@@ -130,6 +133,7 @@ class SubAgentRunner:
         allow_dangerous = bool(role.get("allow_dangerous_tools", False))
         allow_all_mcp_tools = bool(role.get("allow_all_mcp_tools", False))
 
+        # 未显式请求工具时按角色白名单给默认工具；MCP 工具可按角色策略批量放行。
         if requested_tools is None:
             selected_names = [name for name in role_allowlist if name in available_tools]
             if allow_all_mcp_tools:
@@ -168,6 +172,7 @@ class SubAgentRunner:
         skill_filter = self._coerce_string_list(item.get("skill_filter"))
 
         task_id = str(item.get("id") or f"task_{index + 1}").strip() or f"task_{index + 1}"
+        # 子 Agent 独立运行，工具实例也复制一份，避免运行态字段在父子 Agent 之间串用。
         child_tools = [self._clone_tool(available_tools[name]) for name in selected_names]
         return PreparedSubAgentTask(
             index=index,
@@ -263,6 +268,7 @@ class SubAgentRunner:
             cloned = tool.__class__()
         except Exception:
             cloned = copy.copy(tool)
+        # 保留静态配置和工作目录，清掉模型、上下文、事件回调等单次运行状态。
         if hasattr(tool, "config"):
             cloned.config = copy.deepcopy(getattr(tool, "config"))
         for attr in ("workspace_dir", "cwd", "default_timeout", "task_store"):
