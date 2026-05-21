@@ -8,6 +8,9 @@ import type {
   ChatSessionMessage,
   ChatSessionSummary,
   ChatStreamEvent,
+  ClawHubInstallResponse,
+  ClawHubSearchResponse,
+  ClawHubSkillDetail,
   Conversation,
   FinancialReportKind,
   FinancialReportPeriod,
@@ -403,6 +406,25 @@ export function toggleSkill(name: string, enabled: boolean) {
 
 export function refreshSkills() {
   return request<{ status: string; total: number }>("/api/v1/skills/refresh", { method: "POST" });
+}
+
+export function searchClawHubSkills(query: string, limit = 20) {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return request<ClawHubSearchResponse>(`/api/v1/skills/clawhub/search?${params.toString()}`);
+}
+
+export function getClawHubSkill(slug: string) {
+  return request<ClawHubSkillDetail>(`/api/v1/skills/clawhub/${encodeURIComponent(slug)}`);
+}
+
+export function installClawHubSkill(slug: string, payload?: { version?: string | null; tag?: string | null }) {
+  return request<ClawHubInstallResponse>(`/api/v1/skills/clawhub/${encodeURIComponent(slug)}/install`, {
+    method: "POST",
+    body: JSON.stringify({
+      version: payload?.version || undefined,
+      tag: payload?.tag || undefined,
+    }),
+  });
 }
 
 // ── Memory ────────────────────────────────────────────────────────────────────

@@ -153,7 +153,7 @@ def _run_scheduled_agent(prompt: str) -> str:
     agent = Agent(
         system_prompt=settings.system_prompt or DEFAULT_SYSTEM_PROMPT,
         model=model,
-        tools=get_tool_manager().get_all_tools(),
+        tools=_get_agent_tools(settings),
         max_steps=settings.agent_max_steps,
         max_context_tokens=settings.agent_max_context_tokens,
         max_context_turns=settings.agent_max_context_turns,
@@ -162,6 +162,19 @@ def _run_scheduled_agent(prompt: str) -> str:
         skill_manager=get_skill_manager(),
     )
     return agent.run_stream(user_message=prompt, clear_history=True)
+
+
+def _get_agent_tools(settings):
+    """Return tools filtered by the main Agent permission settings."""
+    from app.core.tools.permissions import filter_agent_tools
+
+    tools = get_tool_manager().get_all_tools()
+    if settings.mcp_servers:
+        try:
+            tools.extend(get_mcp_manager().get_tools())
+        except Exception:
+            pass
+    return filter_agent_tools(tools, settings)
 
 
 def _format_scheduled_telegram_message(task: dict, body: str) -> str:

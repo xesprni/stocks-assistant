@@ -14,8 +14,9 @@ export function toDraft(config: AppConfig): ConfigDraft {
     longbridge_access_token: "",
     longbridge_http_url: config.longbridge_http_url ?? "",
     longbridge_quote_ws_url: config.longbridge_quote_ws_url ?? "",
+    agent_tool_allowlist: config.agent_tool_allowlist ?? [],
+    agent_allow_all_mcp_tools: config.agent_allow_all_mcp_tools ?? true,
     mcp_servers_text: JSON.stringify(config.mcp_servers ?? {}, null, 2),
     mcp_tool_timeout_seconds: config.mcp_tool_timeout_seconds ?? 60,
   };
 }
-

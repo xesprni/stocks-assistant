@@ -27,6 +27,8 @@ class AppConfig(BaseModel):
     agent_max_steps: int
     agent_max_context_tokens: int
     agent_max_context_turns: int
+    agent_tool_allowlist: list[str] = Field(default_factory=list)
+    agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True
     multi_agent_max_parallel_agents: int = 3
     multi_agent_default_max_steps: int = 8
@@ -84,6 +86,8 @@ class ConfigUpdate(BaseModel):
     agent_max_steps: Optional[int] = None
     agent_max_context_tokens: Optional[int] = None
     agent_max_context_turns: Optional[int] = None
+    agent_tool_allowlist: Optional[list[str]] = None
+    agent_allow_all_mcp_tools: Optional[bool] = None
     multi_agent_enabled: Optional[bool] = None
     multi_agent_max_parallel_agents: Optional[int] = None
     multi_agent_default_max_steps: Optional[int] = None

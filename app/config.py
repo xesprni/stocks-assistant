@@ -41,6 +41,21 @@ DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
 ]
 
 
+DEFAULT_AGENT_TOOL_ALLOWLIST = [
+    "bash",
+    "web_search",
+    "web_fetch",
+    "read_file",
+    "read_skill",
+    "write_file",
+    "get_financial_reports",
+    "delegate_agent",
+    "memory_search",
+    "memory_get",
+    "scheduler",
+]
+
+
 DEFAULT_MULTI_AGENT_ROLES: Dict[str, Dict[str, Any]] = {
     "researcher": {
         "description": "Gather facts, source context, and relevant background before analysis.",
@@ -127,6 +142,8 @@ class Settings(BaseSettings):
     agent_max_steps: int = 20  # 单次对话最大工具调用轮数
     agent_max_context_tokens: int = 50000  # 上下文窗口最大 token 数
     agent_max_context_turns: int = 20  # 上下文最大对话轮数
+    agent_tool_allowlist: list[str] = Field(default_factory=lambda: list(DEFAULT_AGENT_TOOL_ALLOWLIST))
+    agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True  # 是否启用多 Agent 委派工具
     multi_agent_max_parallel_agents: int = 3  # 单次委派最多并行智能体数
     multi_agent_default_max_steps: int = 8  # 智能体默认最大执行步数
@@ -146,6 +163,7 @@ class Settings(BaseSettings):
     memory_curator_min_confidence: float = 0.7  # 自动记忆置信度阈值
     scheduler_enabled: bool = True  # 是否启用定时任务
     tracing_enabled: bool = False  # 是否启用 Agent 调用追踪
+    clawhub_registry_url: str = "https://clawhub.ai"  # ClawHub HTTP API 根地址
 
     # ---- Telegram 通知配置 ----
     telegram_enabled: bool = False  # 是否允许定时任务发送 Telegram 消息

@@ -658,6 +658,8 @@ function App() {
         agent_max_steps: Number(draft.agent_max_steps),
         agent_max_context_tokens: Number(draft.agent_max_context_tokens),
         agent_max_context_turns: Number(draft.agent_max_context_turns),
+        agent_tool_allowlist: draft.agent_tool_allowlist,
+        agent_allow_all_mcp_tools: draft.agent_allow_all_mcp_tools,
         multi_agent_enabled: draft.multi_agent_enabled,
         multi_agent_max_parallel_agents: Number(draft.multi_agent_max_parallel_agents),
         multi_agent_default_max_steps: Number(draft.multi_agent_default_max_steps),
@@ -759,7 +761,7 @@ function App() {
             setPage={handleNavigate}
           />
 
-          <main className="app-main-stage flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-border/80 bg-background/70" key={page}>
+          <main className="app-main-stage flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-border/80 bg-background/70 p-3 sm:p-4" key={page}>
             {error ? (
               <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
@@ -870,7 +872,7 @@ function App() {
               />
             ) : null}
 
-            {page === "skills" ? <SkillsPage language={language} /> : null}
+            {page === "skills" ? <SkillsPage confirmAction={confirmDialog.confirm} language={language} /> : null}
 
             {page === "subagents" ? (
               <SubAgentsPage
@@ -935,9 +937,9 @@ function Header({
   ];
 
   return (
-    <header className="panel app-header flex shrink-0 flex-col gap-2 rounded-none border-x-0 border-t-0 px-3 py-2 shadow-none sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+    <header className="panel app-header flex shrink-0 flex-col gap-2 rounded-none border-x-0 border-t-0 px-4 py-3 shadow-none lg:flex-row lg:items-center lg:justify-between">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-primary/40 bg-primary/10 text-primary shadow-glow sm:size-11">
+        <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-primary/35 bg-primary/10 text-primary shadow-glow sm:size-11">
           <Sparkles className="size-5" />
         </div>
         <div className="min-w-0">
@@ -955,7 +957,7 @@ function Header({
         </Badge>
         <div
           aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
-          className="theme-toggle inline-flex h-7 shrink-0 items-center rounded-full border border-border bg-muted/45 p-0.5"
+          className="theme-toggle inline-flex h-8 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5"
           role="group"
         >
           {themeOptions.map((option) => {
@@ -969,8 +971,8 @@ function Header({
                 aria-label={`${themeLabels.switchTo} ${title}`}
                 aria-pressed={active}
                 className={cn(
-                  "grid h-6 w-7 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5",
-                  active && "bg-background text-foreground shadow-sm",
+                  "grid h-7 w-7 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5",
+                  active && "bg-card text-foreground shadow-sm",
                 )}
                 key={option.value}
                 onClick={() => onThemeChange(option.value)}
@@ -991,12 +993,12 @@ function MobileNav({ language, page, setPage }: { language: AppLanguage; page: P
   const navItems = getNavItems(language);
   const copy = i18n[language].shell;
   return (
-    <nav className="panel app-mobile-nav flex shrink-0 gap-1 overflow-x-auto rounded-none border-x-0 border-t-0 p-1 shadow-none lg:hidden" aria-label={copy.navigation}>
+    <nav className="panel app-mobile-nav flex shrink-0 gap-1 overflow-x-auto rounded-none border-x-0 border-t-0 p-1.5 shadow-none lg:hidden" aria-label={copy.navigation}>
       {navItems.map((item) => (
         <button
           className={cn(
-            "nav-item inline-flex h-8 min-w-[82px] items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors",
-            page === item.id ? "bg-primary text-primary-foreground" : "bg-muted/50 text-muted-foreground hover:text-foreground",
+            "nav-item inline-flex h-8 min-w-[82px] items-center justify-center gap-1.5 rounded-md px-2 text-xs font-semibold transition-colors",
+            page === item.id ? "bg-primary text-primary-foreground shadow-sm" : "bg-background/55 text-muted-foreground hover:bg-background/85 hover:text-foreground",
           )}
           key={item.id}
           onClick={() => setPage(item.id)}
@@ -1024,18 +1026,19 @@ function NavButton({
   return (
     <button
       aria-label={item.label}
+      aria-current={page === item.id ? "page" : undefined}
       className={cn(
         "nav-item flex w-full items-center rounded-md text-xs transition-colors",
-        collapsed ? "h-6 justify-center px-0 py-0" : "h-7 gap-1.5 px-2 text-left",
+        collapsed ? "h-8 justify-center px-0 py-0" : "h-8 gap-2 px-2.5 text-left",
         page === item.id
           ? "bg-primary text-primary-foreground shadow-glow"
-          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
       )}
       onClick={() => setPage(item.id)}
       title={collapsed ? `${item.label} · ${item.hint}` : undefined}
       type="button"
     >
-      <span className="[&_svg]:size-3">{item.icon}</span>
+      <span className="[&_svg]:size-3.5">{item.icon}</span>
       <span className={cn("min-w-0 flex-1", collapsed && "sr-only")}>
         <span className="block truncate font-medium leading-none">{item.label}</span>
         <span className="hidden truncate text-[9px] leading-[10px] opacity-70">{item.hint}</span>
@@ -1107,7 +1110,7 @@ function DesktopNav({
                   const active = group.items.some((item) => item.id === page);
                   const open = active || openGroups[group.id] !== false;
                   return (
-                    <div className="rounded-md border border-border/45 bg-muted/10" key={group.id}>
+                    <div className="rounded-md border border-border/60 bg-background/35 shadow-sm" key={group.id}>
                       <button
                         className="flex w-full items-center justify-between gap-2 px-2 py-1 text-left text-[9px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                         onClick={() => toggleGroup(group.id)}

@@ -31,7 +31,7 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
     <button
       type="button"
       className={cn(
-        "shrink-0 rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-foreground",
+        "shrink-0 rounded-md p-1 text-current/60 transition-colors hover:bg-foreground/10 hover:text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
       onClick={handleCopy}
@@ -65,7 +65,7 @@ function ChatTraceList({ trace }: { trace?: ChatTraceEvent[] }) {
   if (!trace?.length) return null;
 
   return (
-    <div className="mb-3 space-y-1 rounded-md border border-border/70 bg-muted/25 px-2.5 py-2 text-xs text-muted-foreground">
+    <div className="mb-3 space-y-1 rounded-md border border-border/80 bg-background/70 px-2.5 py-2 text-xs text-muted-foreground shadow-sm">
       {trace.map((item) => (
         <div className="flex min-w-0 items-start gap-2" key={item.id}>
           <span className="mt-1 shrink-0">
@@ -156,11 +156,13 @@ export function ChatPage({
 
   return (
     <div className="page-enter flex h-full min-h-0 flex-1 overflow-hidden">
-      <section className="panel motion-panel flex min-h-0 min-w-0 flex-1 flex-col rounded-md">
+      <section className="panel motion-panel flex min-h-0 min-w-0 flex-1 flex-col rounded-lg">
         <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <Bot className="size-5 text-primary" />
+              <span className="grid size-8 place-items-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+                <Bot className="size-4" />
+              </span>
               <p className="font-semibold">Agent Chat</p>
             </div>
             <p className="text-xs text-muted-foreground">{uiCopy.endpoint}</p>
@@ -189,7 +191,7 @@ export function ChatPage({
                 {common.history}
               </Button>
               {historyOpen ? (
-                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-40 w-[320px] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover p-2 shadow-xl">
+                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-40 w-[320px] max-w-[calc(100vw-2rem)] rounded-lg border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur">
                   <div className="mb-2 px-1">
                     <div>
                       <p className="text-xs font-semibold">{common.history}</p>
@@ -204,8 +206,8 @@ export function ChatPage({
                           <div
                             key={c.id}
                             className={cn(
-                              "group flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-                              activeId === c.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                              "group flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              activeId === c.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                             )}
                             onClick={() => {
                               switchConversation(c.id);
@@ -261,27 +263,27 @@ export function ChatPage({
             {messages.map((message) => (
               <div className={cn("group flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
                 {message.role === "assistant" ? (
-                  <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+                  <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-md border border-primary/25 bg-primary/10 text-primary shadow-sm">
                     {message.pending ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
                   </div>
                 ) : null}
                 <div
                   className={cn(
-                    "message-bubble max-w-[min(760px,92%)] rounded-lg border px-3 py-2.5 text-sm leading-6 shadow-sm sm:px-4 sm:py-3",
+                    "message-bubble max-w-[min(780px,92%)] rounded-lg border px-3.5 py-3 shadow-sm sm:px-4 sm:py-3.5",
                     message.role === "user"
-                      ? "border-primary/50 bg-primary text-primary-foreground"
-                      : "border-border/80 bg-background/60 text-foreground",
+                      ? "chat-bubble-user"
+                      : "chat-bubble-assistant",
                   )}
                 >
                   {message.role === "assistant" ? <ChatTraceList trace={message.trace} /> : null}
                   {message.role === "assistant" && message.pending && message.status ? (
-                    <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
                       <Loader2 className="size-3 animate-spin text-primary" />
                       <span>{message.status}</span>
                     </div>
                   ) : null}
                   {message.pending && message.status && message.content === message.status ? null : (
-                    <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:rounded-md prose-pre:bg-muted/40 prose-code:text-primary prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-table:my-2">
+                    <div className="chat-message-content prose prose-sm dark:prose-invert max-w-none break-words prose-headings:my-2 prose-p:my-1 prose-p:text-inherit prose-pre:my-2 prose-pre:rounded-md prose-code:text-primary prose-strong:text-inherit prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-li:text-inherit prose-table:my-2">
                       {message.role === "assistant" ? (
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                       ) : (
@@ -292,7 +294,7 @@ export function ChatPage({
                   <div
                     className={cn(
                       "mt-2 flex items-center gap-1.5",
-                      message.role === "user" ? "text-primary-foreground/70" : "text-muted-foreground",
+                      message.role === "user" ? "text-current/70" : "text-muted-foreground",
                     )}
                   >
                     <span className="text-[11px]">{message.createdAt}</span>
@@ -308,14 +310,14 @@ export function ChatPage({
           </div>
         </div>
 
-        <form className="border-t border-border/80 bg-muted/20 px-3 py-2.5 sm:px-4" onSubmit={handleSend}>
-          <div className="mx-auto flex max-w-5xl items-end gap-2 rounded-2xl border border-border/80 bg-background/85 p-2 shadow-sm">
+        <form className="border-t border-border/80 bg-card/35 px-3 py-3 sm:px-4" onSubmit={handleSend}>
+          <div className="mx-auto flex max-w-5xl items-end gap-2 rounded-lg border border-border/80 bg-background/90 p-2 shadow-sm transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/20">
             <div className="relative shrink-0" ref={promptDockRef}>
               <Button
                 aria-expanded={promptDockOpen}
                 aria-haspopup="menu"
                 aria-label={uiCopy.promptDock}
-                className="h-10 w-10 rounded-full border-border/80 bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="h-10 w-10 rounded-md border-border/80 bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
                 onClick={() => setPromptDockOpen((current) => !current)}
                 type="button"
                 variant="outline"
@@ -323,7 +325,7 @@ export function ChatPage({
                 <WandSparkles />
               </Button>
               {promptDockOpen ? (
-                <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-40 w-[340px] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover p-2 shadow-xl">
+                <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-40 w-[340px] max-w-[calc(100vw-2rem)] rounded-lg border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur">
                   <div className="mb-2 flex items-center gap-2 px-1">
                     <WandSparkles className="size-4 text-secondary" />
                     <div>
@@ -334,7 +336,7 @@ export function ChatPage({
                   <div className="max-h-[300px] space-y-1 overflow-y-auto">
                     {quickPrompts.map((item) => (
                       <button
-                        className="w-full rounded-md border border-border/80 bg-background/50 px-2.5 py-2 text-left text-xs leading-5 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                        className="w-full rounded-md border border-border/80 bg-background/70 px-2.5 py-2 text-left text-xs leading-5 text-muted-foreground shadow-sm transition-colors hover:border-primary/50 hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         key={item}
                         onClick={() => {
                           setPrompt(item);
@@ -351,7 +353,7 @@ export function ChatPage({
               ) : null}
             </div>
             <Textarea
-              className="max-h-[160px] min-h-10 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0"
+              className="max-h-[160px] min-h-10 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-[15px] leading-6 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0"
               disabled={isSending}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
@@ -363,12 +365,12 @@ export function ChatPage({
               value={prompt}
             />
             {isSending ? (
-              <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
+              <Button className="h-10 w-10 shrink-0 rounded-md sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
                 <Square className="fill-current" />
                 <span className="hidden sm:inline">{chatCopy.stop}</span>
               </Button>
             ) : (
-              <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" disabled={!prompt.trim()} type="submit">
+              <Button className="h-10 w-10 shrink-0 rounded-md sm:w-auto sm:px-4" disabled={!prompt.trim()} type="submit">
                 <Send />
                 <span className="hidden sm:inline">{common.send}</span>
               </Button>

@@ -54,6 +54,9 @@ def _build_agent(user_id: Optional[str] = None):
             tools.extend(get_mcp_manager().get_tools())
         except Exception:
             pass
+    from app.core.tools.permissions import filter_agent_tools
+
+    tools = filter_agent_tools(tools, settings)
 
     model = LLMModel(model=settings.llm_model)
     model.call = llm.call

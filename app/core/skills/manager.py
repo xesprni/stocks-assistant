@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core.skills.types import Skill, SkillEntry, SkillSnapshot
 from app.core.skills.loader import SkillLoader
@@ -51,6 +51,7 @@ class SkillManager:
             prev = saved.get(name, {})
             enabled = prev.get("enabled", entry.metadata.default_enabled if entry.metadata else True) if name in saved else (entry.metadata.default_enabled if entry.metadata else True)
             merged[name] = {
+                **prev,
                 "name": name,
                 "description": entry.skill.description,
                 "source": prev.get("source") or entry.skill.source,
@@ -85,6 +86,12 @@ class SkillManager:
         if name not in self.skills_config:
             raise ValueError(f"Skill '{name}' not found")
         self.skills_config[name]["enabled"] = enabled
+        self._save_skills_config()
+
+    def update_skill_config(self, name: str, updates: Dict[str, Any]):
+        if name not in self.skills_config:
+            raise ValueError(f"Skill '{name}' not found")
+        self.skills_config[name].update(updates)
         self._save_skills_config()
 
     def get_skills_config(self) -> Dict[str, dict]:

@@ -42,6 +42,8 @@ def _settings_to_response(settings: Settings) -> AppConfig:
         agent_max_steps=settings.agent_max_steps,
         agent_max_context_tokens=settings.agent_max_context_tokens,
         agent_max_context_turns=settings.agent_max_context_turns,
+        agent_tool_allowlist=settings.agent_tool_allowlist,
+        agent_allow_all_mcp_tools=settings.agent_allow_all_mcp_tools,
         multi_agent_enabled=settings.multi_agent_enabled,
         multi_agent_max_parallel_agents=settings.multi_agent_max_parallel_agents,
         multi_agent_default_max_steps=settings.multi_agent_default_max_steps,

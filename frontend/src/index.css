@@ -6,74 +6,94 @@
   :root {
     --color-up: #089981;
     --color-down: #f23645;
-    --background: 212 28% 95%;
-    --foreground: 217 28% 13%;
-    --card: 210 32% 98%;
-    --card-foreground: 217 28% 13%;
-    --popover: 210 36% 99%;
-    --popover-foreground: 217 28% 13%;
-    --primary: 165 72% 30%;
-    --primary-foreground: 165 24% 98%;
-    --secondary: 36 86% 48%;
-    --secondary-foreground: 34 30% 10%;
-    --muted: 213 21% 90%;
-    --muted-foreground: 216 11% 38%;
-    --accent: 197 76% 35%;
-    --accent-foreground: 197 34% 98%;
+    --background: 214 29% 96%;
+    --foreground: 222 31% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 31% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 31% 11%;
+    --primary: 168 76% 30%;
+    --primary-foreground: 170 30% 98%;
+    --secondary: 36 92% 50%;
+    --secondary-foreground: 34 32% 10%;
+    --muted: 216 24% 91%;
+    --muted-foreground: 218 12% 34%;
+    --accent: 205 82% 39%;
+    --accent-foreground: 204 36% 98%;
     --destructive: 350 74% 48%;
     --destructive-foreground: 0 0% 98%;
-    --border: 214 18% 80%;
-    --input: 214 18% 78%;
-    --ring: 165 72% 30%;
-    --grid-line: rgba(15, 23, 42, 0.055);
+    --border: 214 23% 79%;
+    --input: 214 22% 76%;
+    --ring: 168 76% 30%;
+    --grid-line: rgba(15, 23, 42, 0.06);
     --grid-line-soft: rgba(15, 23, 42, 0.038);
-    --shell-primary: rgba(6, 95, 70, 0.09);
-    --shell-secondary: rgba(180, 83, 9, 0.07);
-    --app-header-bg: linear-gradient(180deg, hsl(210 38% 99%), hsl(212 24% 96%));
-    --app-grid-bg: hsl(214 20% 90%);
-    --app-sidebar-bg: linear-gradient(180deg, hsl(214 24% 93%), hsl(214 18% 89%));
-    --app-mobile-nav-bg: hsl(214 22% 91%);
-    --app-stage-bg: linear-gradient(180deg, hsl(210 32% 97%), hsl(212 24% 94%));
-    --panel-bg: hsl(210 34% 98% / 0.92);
-    --tile-bg: hsl(210 28% 96% / 0.72);
-    --panel-shadow: 0 12px 34px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.85);
-    --control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    --shell-primary: rgba(13, 148, 136, 0.12);
+    --shell-secondary: rgba(217, 119, 6, 0.08);
+    --app-header-bg: linear-gradient(180deg, hsl(0 0% 100% / 0.96), hsl(214 31% 94% / 0.92));
+    --app-grid-bg: hsl(214 25% 88%);
+    --app-sidebar-bg: linear-gradient(180deg, hsl(214 29% 95% / 0.94), hsl(215 24% 91% / 0.92));
+    --app-mobile-nav-bg: hsl(214 28% 93% / 0.94);
+    --app-stage-bg:
+      linear-gradient(180deg, hsl(214 36% 97% / 0.96), hsl(214 27% 93% / 0.94)),
+      linear-gradient(90deg, var(--grid-line-soft) 1px, transparent 1px),
+      linear-gradient(180deg, var(--grid-line-soft) 1px, transparent 1px);
+    --panel-bg: hsl(0 0% 100% / 0.9);
+    --tile-bg: hsl(214 32% 97% / 0.78);
+    --panel-shadow: 0 18px 46px rgba(15, 23, 42, 0.11), 0 2px 10px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    --control-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.74);
+    --control-shadow-hover: 0 7px 18px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    --chat-assistant-bg: hsl(0 0% 100% / 0.92);
+    --chat-assistant-border: hsl(214 23% 76% / 0.92);
+    --chat-user-bg: linear-gradient(135deg, hsl(168 76% 29%), hsl(199 78% 34%));
+    --chat-user-border: hsl(178 68% 38% / 0.78);
+    --chat-user-foreground: hsl(0 0% 100%);
+    --chat-code-bg: hsl(216 24% 93% / 0.86);
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 210 17% 7%;
-    --foreground: 180 18% 94%;
-    --card: 210 15% 10%;
-    --card-foreground: 180 18% 94%;
-    --popover: 210 15% 9%;
-    --popover-foreground: 180 18% 94%;
-    --primary: 158 68% 48%;
-    --primary-foreground: 160 30% 8%;
-    --secondary: 32 86% 56%;
+    --background: 220 18% 8%;
+    --foreground: 210 22% 94%;
+    --card: 218 18% 12%;
+    --card-foreground: 210 22% 94%;
+    --popover: 218 19% 11%;
+    --popover-foreground: 210 22% 94%;
+    --primary: 164 72% 46%;
+    --primary-foreground: 168 36% 7%;
+    --secondary: 36 88% 56%;
     --secondary-foreground: 35 28% 10%;
-    --muted: 210 11% 15%;
-    --muted-foreground: 195 10% 68%;
-    --accent: 188 92% 45%;
-    --accent-foreground: 195 34% 8%;
+    --muted: 216 14% 17%;
+    --muted-foreground: 212 13% 74%;
+    --accent: 198 88% 53%;
+    --accent-foreground: 202 34% 8%;
     --destructive: 350 78% 58%;
     --destructive-foreground: 0 0% 98%;
-    --border: 200 16% 21%;
-    --input: 200 16% 21%;
-    --ring: 158 68% 48%;
-    --grid-line: rgba(255, 255, 255, 0.045);
-    --grid-line-soft: rgba(255, 255, 255, 0.035);
-    --shell-primary: rgba(52, 211, 153, 0.12);
+    --border: 213 15% 24%;
+    --input: 213 15% 27%;
+    --ring: 164 72% 46%;
+    --grid-line: rgba(255, 255, 255, 0.05);
+    --grid-line-soft: rgba(255, 255, 255, 0.034);
+    --shell-primary: rgba(45, 212, 191, 0.12);
     --shell-secondary: rgba(245, 158, 11, 0.1);
-    --app-header-bg: hsl(var(--card));
-    --app-grid-bg: hsl(var(--muted) / 0.45);
-    --app-sidebar-bg: hsl(var(--muted) / 0.42);
-    --app-mobile-nav-bg: hsl(var(--muted) / 0.42);
-    --app-stage-bg: linear-gradient(180deg, hsl(var(--background) / 0.96), hsl(var(--background) / 0.9));
-    --panel-bg: hsl(var(--card) / 0.9);
-    --tile-bg: hsl(var(--muted) / 0.3);
-    --panel-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
-    --control-shadow: none;
+    --app-header-bg: linear-gradient(180deg, hsl(218 18% 13% / 0.96), hsl(220 18% 10% / 0.94));
+    --app-grid-bg: hsl(220 15% 6%);
+    --app-sidebar-bg: linear-gradient(180deg, hsl(218 16% 13% / 0.94), hsl(220 17% 9% / 0.94));
+    --app-mobile-nav-bg: hsl(218 17% 12% / 0.96);
+    --app-stage-bg:
+      linear-gradient(180deg, hsl(220 18% 8% / 0.96), hsl(220 17% 6% / 0.96)),
+      linear-gradient(90deg, var(--grid-line-soft) 1px, transparent 1px),
+      linear-gradient(180deg, var(--grid-line-soft) 1px, transparent 1px);
+    --panel-bg: hsl(218 18% 12% / 0.88);
+    --tile-bg: hsl(216 15% 16% / 0.68);
+    --panel-shadow: 0 22px 60px rgba(0, 0, 0, 0.42), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    --control-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --control-shadow-hover: 0 10px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --chat-assistant-bg: hsl(218 17% 13% / 0.94);
+    --chat-assistant-border: hsl(210 16% 27% / 0.9);
+    --chat-user-bg: linear-gradient(135deg, hsl(164 71% 39%), hsl(201 82% 42%));
+    --chat-user-border: hsl(177 70% 45% / 0.68);
+    --chat-user-foreground: hsl(190 30% 6%);
+    --chat-code-bg: hsl(220 15% 9% / 0.9);
   }
 
   [data-color-scheme="cn"] {
@@ -103,11 +123,45 @@
     font-feature-settings: "ss01", "cv01", "cv11";
   }
 
+  ::selection {
+    background: hsl(var(--primary) / 0.22);
+  }
+
   button,
   input,
   textarea,
   select {
     letter-spacing: 0;
+  }
+
+  button,
+  [role="button"],
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  * {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.42) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.28);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.42);
+    border: 3px solid transparent;
+    background-clip: padding-box;
   }
 }
 
@@ -141,20 +195,24 @@
 
   .app-main-stage {
     background: var(--app-stage-bg), hsl(var(--background));
+    background-size:
+      auto,
+      34px 34px,
+      34px 34px;
   }
 
   .app-main-stage > .page-enter {
-    gap: 0;
+    gap: 0.75rem;
   }
 
   .app-main-stage > .panel,
   .app-main-stage > .page-enter > .panel {
-    border-radius: 0;
-    box-shadow: none;
+    box-shadow: var(--panel-shadow);
   }
 
   .panel {
     @apply rounded-lg border backdrop-blur-xl;
+    border-color: hsl(var(--border) / 0.9);
     background: var(--panel-bg);
     box-shadow: var(--panel-shadow);
     transition:
@@ -178,6 +236,7 @@
 
   .panel-header {
     @apply border-b border-border/80 px-4 py-3;
+    background: linear-gradient(180deg, hsl(var(--card) / 0.58), hsl(var(--card) / 0.14));
   }
 
   .panel-body {
@@ -188,6 +247,17 @@
     @apply rounded-md border border-border/80 px-3 py-2;
     background: var(--tile-bg);
     box-shadow: var(--control-shadow);
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 180ms ease,
+      transform 180ms ease;
+  }
+
+  .metric-tile:hover {
+    border-color: hsl(var(--primary) / 0.38);
+    box-shadow: var(--control-shadow-hover);
+    transform: translateY(-1px);
   }
 
   .ticker-line {
@@ -215,6 +285,62 @@
     animation: message-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 
+  .chat-bubble-assistant {
+    background: var(--chat-assistant-bg);
+    border-color: var(--chat-assistant-border);
+    color: hsl(var(--foreground));
+  }
+
+  .chat-bubble-user {
+    background: var(--chat-user-bg);
+    border-color: var(--chat-user-border);
+    color: var(--chat-user-foreground);
+    box-shadow: 0 12px 26px hsl(var(--primary) / 0.18);
+  }
+
+  .chat-message-content {
+    color: inherit;
+    font-size: 0.9375rem;
+    line-height: 1.75;
+  }
+
+  .chat-message-content :where(p, li, td, th, blockquote) {
+    color: inherit;
+  }
+
+  .chat-message-content :where(strong) {
+    color: inherit;
+    font-weight: 700;
+  }
+
+  .chat-message-content :where(a) {
+    color: hsl(var(--accent));
+    font-weight: 600;
+    text-underline-offset: 3px;
+  }
+
+  .chat-message-content :where(pre) {
+    border: 1px solid hsl(var(--border) / 0.72);
+    background: var(--chat-code-bg) !important;
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.05);
+  }
+
+  .chat-message-content :where(code):not(pre code) {
+    border-radius: 0.25rem;
+    background: hsl(var(--muted) / 0.7);
+    color: hsl(var(--primary));
+    padding: 0.12rem 0.3rem;
+  }
+
+  .chat-bubble-user .chat-message-content :where(a),
+  .chat-bubble-user .chat-message-content :where(code):not(pre code) {
+    color: var(--chat-user-foreground);
+  }
+
+  .chat-bubble-user .chat-message-content :where(code):not(pre code) {
+    background: rgba(255, 255, 255, 0.16);
+  }
+
   .nav-item {
     position: relative;
     overflow: hidden;
@@ -223,6 +349,11 @@
       color 180ms ease,
       transform 180ms ease,
       box-shadow 180ms ease;
+  }
+
+  .nav-item:focus-visible {
+    outline: 2px solid hsl(var(--ring) / 0.55);
+    outline-offset: 2px;
   }
 
   .nav-item:hover {

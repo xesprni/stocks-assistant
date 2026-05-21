@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.tools import ToolListResponse, ToolExecuteRequest, ToolExecuteResponse
 from app.config import get_settings
+from app.core.tools.permissions import is_tool_allowed_for_agent, mcp_server_name_from_tool
 from app.deps import get_mcp_manager, get_tool_manager
 
 router = APIRouter()
@@ -14,12 +15,23 @@ router = APIRouter()
 
 @router.get("", response_model=ToolListResponse)
 async def list_tools():
+    settings = get_settings()
     mgr = get_tool_manager()
     tools = mgr.get_all_tools()
-    if get_settings().mcp_servers:
+    if settings.mcp_servers:
         tools.extend(get_mcp_manager().get_tools())
     return ToolListResponse(
-        tools=[{"name": t.name, "description": t.description, "parameters": t.params} for t in tools],
+        tools=[
+            {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.params,
+                "source": "mcp" if t.name.startswith("mcp_") else "builtin",
+                "server_name": getattr(t, "server_name", None) or mcp_server_name_from_tool(t.name),
+                "enabled": is_tool_allowed_for_agent(t.name, settings),
+            }
+            for t in tools
+        ],
         total=len(tools),
     )
 

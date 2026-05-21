@@ -1,6 +1,6 @@
 """工具系统 API Schema"""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -10,6 +10,9 @@ class ToolInfo(BaseModel):
     name: str  # 工具名称
     description: str  # 工具描述
     parameters: Dict[str, Any]  # 参数 JSON Schema
+    source: str = "builtin"
+    server_name: Optional[str] = None
+    enabled: bool = True
 
 
 class ToolListResponse(BaseModel):
