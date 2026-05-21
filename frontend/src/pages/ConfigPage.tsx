@@ -25,6 +25,11 @@ const CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex";
 const CODEX_DEFAULT_MODEL = "gpt-5.2-codex";
 const EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
 
+function isCompatibleBase(value?: string | null): value is string {
+  const normalized = value?.trim().replace(/\/+$/, "");
+  return Boolean(normalized && normalized !== CODEX_OAUTH_API_BASE);
+}
+
 export function ConfigPage({
   config,
   configState,
@@ -147,6 +152,12 @@ export function ConfigPage({
 
   function selectLlmProvider(provider: "openai_compatible" | "openai_responses") {
     if (provider === "openai_responses") {
+      if (draft && !isCodexOAuth) {
+        setCompatibleSnapshot({
+          apiBase: isCompatibleBase(draft.llm_api_base) ? draft.llm_api_base : compatibleSnapshot.apiBase,
+          model: draft.llm_model || compatibleSnapshot.model,
+        });
+      }
       patchDraft({
         llm_provider: provider,
         llm_auth_mode: "codex",
@@ -155,12 +166,16 @@ export function ConfigPage({
       });
       return;
     }
-    const nextApiBase = compatibleSnapshot.apiBase && compatibleSnapshot.apiBase !== CODEX_OAUTH_API_BASE
-      ? compatibleSnapshot.apiBase
-      : OPENAI_API_BASE;
-    const nextModel = compatibleSnapshot.model && compatibleSnapshot.model !== CODEX_DEFAULT_MODEL
-      ? compatibleSnapshot.model
-      : (draft?.llm_model && draft.llm_model !== CODEX_DEFAULT_MODEL ? draft.llm_model : "gpt-4o");
+    const nextApiBase = isCompatibleBase(draft?.llm_api_base)
+      ? draft.llm_api_base
+      : isCompatibleBase(compatibleSnapshot.apiBase)
+        ? compatibleSnapshot.apiBase
+        : OPENAI_API_BASE;
+    const nextModel = draft?.llm_model && draft.llm_model !== CODEX_DEFAULT_MODEL
+      ? draft.llm_model
+      : compatibleSnapshot.model && compatibleSnapshot.model !== CODEX_DEFAULT_MODEL
+        ? compatibleSnapshot.model
+        : "gpt-4o";
     patchDraft({
       llm_provider: provider,
       llm_auth_mode: "api_key",
