@@ -90,6 +90,18 @@ async def toggle_skill(name: str, request: SkillToggleRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.delete("/{name}")
+async def delete_skill(name: str):
+    mgr = get_skill_manager()
+    try:
+        deleted_path = mgr.delete_skill(name)
+        return {"status": "ok", "name": name, "deleted_path": deleted_path}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/refresh")
 async def refresh_skills():
     mgr = get_skill_manager()

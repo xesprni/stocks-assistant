@@ -408,6 +408,13 @@ export function refreshSkills() {
   return request<{ status: string; total: number }>("/api/v1/skills/refresh", { method: "POST" });
 }
 
+export function deleteSkill(name: string) {
+  return request<{ status: string; name: string; deleted_path: string }>(
+    `/api/v1/skills/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function searchClawHubSkills(query: string, limit = 20) {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
   return request<ClawHubSearchResponse>(`/api/v1/skills/clawhub/search?${params.toString()}`);

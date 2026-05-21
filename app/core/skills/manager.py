@@ -7,6 +7,7 @@
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -93,6 +94,43 @@ class SkillManager:
             raise ValueError(f"Skill '{name}' not found")
         self.skills_config[name].update(updates)
         self._save_skills_config()
+
+    def delete_skill(self, name: str) -> str:
+        entry = self.skills.get(name)
+        if not entry:
+            raise ValueError(f"Skill '{name}' not found")
+        if entry.skill.source == "builtin":
+            raise PermissionError("Built-in skills cannot be deleted")
+        if not entry.skill.file_path:
+            raise PermissionError("Skill has no deletable file path")
+
+        custom_root = Path(self.custom_dir).expanduser().resolve()
+        file_path = Path(entry.skill.file_path).expanduser().resolve()
+        base_dir = Path(entry.skill.base_dir).expanduser().resolve()
+
+        try:
+            file_path.relative_to(custom_root)
+            base_dir.relative_to(custom_root)
+        except ValueError as exc:
+            raise PermissionError("Only workspace skills can be deleted") from exc
+
+        target = file_path if base_dir == custom_root else base_dir
+        if target == custom_root:
+            raise PermissionError("Refusing to delete the skills root")
+
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.is_file():
+            target.unlink()
+        else:
+            raise ValueError(f"Skill path for '{name}' no longer exists")
+
+        saved = self._load_skills_config()
+        saved.pop(name, None)
+        self.skills_config = saved
+        self._save_skills_config()
+        self.refresh_skills()
+        return str(target)
 
     def get_skills_config(self) -> Dict[str, dict]:
         return dict(self.skills_config)

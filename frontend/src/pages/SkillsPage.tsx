@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Download, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, X, Zap } from "lucide-react";
+import { Download, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, Trash2, X, Zap } from "lucide-react";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
+  deleteSkill,
   getClawHubSkill,
   installClawHubSkill,
   listSkills,
@@ -44,6 +45,7 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [marketResults, setMarketResults] = useState<ClawHubSearchResult[]>([]);
@@ -92,6 +94,28 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
       setError(e instanceof Error ? e.message : copy.toggleFailed);
     } finally {
       setToggling(null);
+    }
+  }
+
+  async function handleDeleteSkill(skill: SkillInfo) {
+    const confirmed = await confirmAction({
+      cancelText: common.cancel,
+      confirmText: copy.delete,
+      description: formatTemplate(copy.deleteConfirmBody, { name: skill.name }),
+      destructive: true,
+      title: copy.deleteConfirmTitle,
+    });
+    if (!confirmed) return;
+
+    setDeleting(skill.name);
+    setError("");
+    try {
+      await deleteSkill(skill.name);
+      await loadSkills();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : copy.deleteFailed);
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -321,6 +345,15 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
                           disabled={toggling === skill.name}
                           onCheckedChange={(checked) => handleToggle(skill.name, checked)}
                         />
+                        <Button
+                          aria-label={`${copy.delete} ${skill.name}`}
+                          disabled={skill.source === "builtin" || deleting === skill.name}
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleDeleteSkill(skill)}
+                        >
+                          {deleting === skill.name ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                        </Button>
                       </div>
                     </div>
                   </div>

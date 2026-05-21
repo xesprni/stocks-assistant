@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Bot, Check, Copy, Loader2, Plus, Plug, Save, Settings2, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bot, Check, ChevronDown, Copy, Loader2, Plus, Plug, Save, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
@@ -16,6 +16,10 @@ import type { AppConfig, SubAgentRoleConfig, ToolInfo } from "@/types/app";
 
 function isMcpToolName(name: string): boolean {
   return name.startsWith("mcp_");
+}
+
+function mcpServerName(tool: ToolInfo): string {
+  return tool.server_name || tool.name.replace(/^mcp_/, "").split("_")[0] || "mcp";
 }
 
 interface SubAgentRoleForm extends SubAgentRoleConfig {
@@ -82,6 +86,7 @@ export function SubAgentsPage({
   const [maxDepth, setMaxDepth] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [expandedMcpServers, setExpandedMcpServers] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -261,6 +266,16 @@ export function SubAgentsPage({
     ? tools
     : Array.from(new Set([...form.tool_allowlist, ...dangerousTools, "web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"]))
         .map((name) => ({ name, description: "", parameters: {} }));
+  const builtinTools = visibleTools.filter((tool) => !isMcpToolName(tool.name));
+  const mcpToolGroups = useMemo(() => {
+    const groups: Record<string, ToolInfo[]> = {};
+    for (const tool of visibleTools) {
+      if (!isMcpToolName(tool.name)) continue;
+      const server = mcpServerName(tool);
+      groups[server] = [...(groups[server] ?? []), tool];
+    }
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  }, [visibleTools]);
   const effectiveSelectedTools = new Set([
     ...form.tool_allowlist,
     ...(form.allow_all_mcp_tools ? visibleTools.filter((tool) => isMcpToolName(tool.name)).map((tool) => tool.name) : []),
@@ -432,41 +447,76 @@ export function SubAgentsPage({
                   />
                   <p className="px-1 text-xs text-muted-foreground">{copy.allowAllMcpToolsHint}</p>
                 </div>
-                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleTools.map((tool) => {
-                    const isDangerous = dangerousTools.includes(tool.name);
-                    const isDelegate = tool.name === "delegate_agent";
-                    const isMcp = isMcpToolName(tool.name);
-                    const disabled = isDelegate || (isDangerous && !form.allow_dangerous_tools) || (isMcp && form.allow_all_mcp_tools);
-                    const checked = effectiveSelectedTools.has(tool.name);
-                    return (
-                      <label
-                        key={tool.name}
-                        className={cn(
-                          "flex min-h-[88px] cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors",
-                          checked ? "border-primary/60 bg-primary/10" : "border-border/75 bg-muted/10 hover:border-primary/40",
-                          disabled && "cursor-not-allowed opacity-55",
-                        )}
-                      >
-                        <input
-                          checked={checked}
-                          className="mt-1"
-                          disabled={disabled}
-                          type="checkbox"
-                          onChange={() => toggleTool(tool.name)}
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground">{copy.builtinTools}</p>
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {builtinTools.map((tool) => (
+                        <SubAgentToolTile
+                          key={tool.name}
+                          checked={effectiveSelectedTools.has(tool.name)}
+                          copy={copy}
+                          disabled={
+                            tool.name === "delegate_agent"
+                            || (dangerousTools.includes(tool.name) && !form.allow_dangerous_tools)
+                          }
+                          isDangerous={dangerousTools.includes(tool.name)}
+                          isDelegate={tool.name === "delegate_agent"}
+                          isMcpCovered={false}
+                          tool={tool}
+                          onToggle={() => toggleTool(tool.name)}
                         />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex min-w-0 flex-wrap items-center gap-1">
-                            <span className="truncate font-medium">{tool.name}</span>
-                            {isDangerous ? <Badge variant="danger">danger</Badge> : null}
-                            {isMcp && form.allow_all_mcp_tools ? <Badge variant="default">{copy.allMcpTools}</Badge> : null}
-                            {isDelegate ? <Badge variant="muted">blocked</Badge> : null}
-                          </span>
-                          <span className="mt-1 line-clamp-2 text-xs text-muted-foreground">{tool.description || copy.noDescription}</span>
-                        </span>
-                      </label>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground">{copy.mcpTools}</p>
+                    {mcpToolGroups.length > 0 ? (
+                      <div className="space-y-2">
+                        {mcpToolGroups.map(([server, serverTools]) => {
+                          const expanded = Boolean(expandedMcpServers[server]);
+                          const selectedCount = serverTools.filter((tool) => effectiveSelectedTools.has(tool.name)).length;
+                          return (
+                            <div key={server} className="rounded-md border border-border/80 bg-muted/10">
+                              <button
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                                type="button"
+                                onClick={() => setExpandedMcpServers((current) => ({ ...current, [server]: !current[server] }))}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate text-sm font-semibold">{server}</span>
+                                  <span className="block text-xs text-muted-foreground">{selectedCount}/{serverTools.length}</span>
+                                </span>
+                                <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
+                              </button>
+                              {expanded ? (
+                                <div className="grid gap-2 border-t border-border/70 p-2 md:grid-cols-2 xl:grid-cols-3">
+                                  {serverTools.map((tool) => (
+                                    <SubAgentToolTile
+                                      key={tool.name}
+                                      checked={effectiveSelectedTools.has(tool.name)}
+                                      copy={copy}
+                                      disabled={form.allow_all_mcp_tools}
+                                      isDangerous={false}
+                                      isDelegate={false}
+                                      isMcpCovered={form.allow_all_mcp_tools}
+                                      tool={tool}
+                                      onToggle={() => toggleTool(tool.name)}
+                                    />
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-6 text-center text-xs text-muted-foreground">
+                        {copy.noMcpTools}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -474,5 +524,52 @@ export function SubAgentsPage({
         )}
       </div>
     </section>
+  );
+}
+
+function SubAgentToolTile({
+  checked,
+  copy,
+  disabled,
+  isDangerous,
+  isDelegate,
+  isMcpCovered,
+  onToggle,
+  tool,
+}: {
+  checked: boolean;
+  copy: typeof i18n.zh.subagents;
+  disabled: boolean;
+  isDangerous: boolean;
+  isDelegate: boolean;
+  isMcpCovered: boolean;
+  onToggle: () => void;
+  tool: ToolInfo;
+}) {
+  return (
+    <label
+      className={cn(
+        "flex min-h-[88px] cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors",
+        checked ? "border-primary/60 bg-primary/10" : "border-border/75 bg-muted/10 hover:border-primary/40",
+        disabled && "cursor-not-allowed opacity-55",
+      )}
+    >
+      <input
+        checked={checked}
+        className="mt-1"
+        disabled={disabled}
+        type="checkbox"
+        onChange={onToggle}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 flex-wrap items-center gap-1">
+          <span className="truncate font-medium">{tool.name}</span>
+          {isDangerous ? <Badge variant="danger">danger</Badge> : null}
+          {isMcpCovered ? <Badge variant="default">{copy.allMcpTools}</Badge> : null}
+          {isDelegate ? <Badge variant="muted">blocked</Badge> : null}
+        </span>
+        <span className="mt-1 line-clamp-2 text-xs text-muted-foreground">{tool.description || copy.noDescription}</span>
+      </span>
+    </label>
   );
 }
