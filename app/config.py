@@ -45,6 +45,7 @@ DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
     "get_longbridge_market_status",
     "get_longbridge_trading_days",
     "get_longbridge_quote_indicators",
+    "get_technical_indicators",
 ]
 
 
@@ -70,6 +71,7 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "get_longbridge_market_status",
     "get_longbridge_trading_days",
     "get_longbridge_quote_indicators",
+    "get_technical_indicators",
 ]
 
 CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex"

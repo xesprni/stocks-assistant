@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Optional
 
+from app.core.market.technical_indicators import calculate_technical_indicators
 from app.core.market.utils import (
     canonical_symbol,
     change_rate,
@@ -284,6 +285,56 @@ class LongbridgeMarketDataMixin:
             "requested_indexes": index_names,
             "indicators": indicators,
             "total": len(indicators),
+        }
+
+    def get_technical_indicators(
+        self,
+        symbol: str,
+        period: str = "1D",
+        count: int = 300,
+        indicators: Optional[list[str]] = None,
+        adjust_type: str = "forward",
+        trade_sessions: Optional[str] = None,
+        params: Optional[dict[str, Any]] = None,
+        series_limit: int = 120,
+        settings: Any = None,
+    ) -> dict:
+        """基于 Longbridge K 线本地计算经典技术指标。"""
+        try:
+            bounded_count = min(max(int(count), 1), 1000)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("count must be an integer") from exc
+
+        # 复用同一条 K 线数据通道，保证 API 与内置工具的复权、盘段和 symbol 规范一致。
+        kline_payload = self.get_candlesticks(
+            symbol,
+            period,
+            count=bounded_count,
+            adjust_type=adjust_type,
+            trade_sessions=trade_sessions,
+            settings=settings,
+        )
+        calculation = calculate_technical_indicators(
+            kline_payload["bars"],
+            indicators=indicators,
+            params=params,
+            series_limit=series_limit,
+        )
+        return {
+            "source": "Longbridge QuoteContext.candlesticks + local technical indicator calculation",
+            "symbol": kline_payload["symbol"],
+            "period": kline_payload["period"],
+            "adjust_type": kline_payload["adjust_type"],
+            "trade_sessions": kline_payload["trade_sessions"],
+            "bars_count": calculation["bars_count"],
+            "latest_timestamp": calculation["latest_timestamp"],
+            "requested_indicators": calculation["requested_indicators"],
+            "available_indicators": calculation["available_indicators"],
+            "params": calculation["params"],
+            "series_limit": calculation["series_limit"],
+            "series_timestamps": calculation["series_timestamps"],
+            "latest": calculation["latest"],
+            "series": calculation["series"],
         }
 
     def get_market_temperature(self, market: str = "US", settings: Any = None) -> dict:

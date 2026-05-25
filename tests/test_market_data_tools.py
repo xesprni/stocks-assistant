@@ -9,6 +9,7 @@ from app.core.tools.market_data import (
     GetLongbridgeMarketStatusTool,
     GetLongbridgeQuoteIndicatorsTool,
     GetLongbridgeRealtimeQuotesTool,
+    GetLongbridgeTechnicalIndicatorsTool,
     GetLongbridgeTradesTool,
     GetLongbridgeTradingDaysTool,
 )
@@ -63,6 +64,34 @@ class FakeMarketService:
     def get_quote_indicators(self, symbols, indexes, settings=None):
         self.calls.append(("get_quote_indicators", symbols, indexes, settings))
         return {"indicators": []}
+
+    def get_technical_indicators(
+        self,
+        symbol,
+        period="1D",
+        count=300,
+        indicators=None,
+        adjust_type="forward",
+        trade_sessions=None,
+        params=None,
+        series_limit=120,
+        settings=None,
+    ):
+        self.calls.append(
+            (
+                "get_technical_indicators",
+                symbol,
+                period,
+                count,
+                indicators,
+                adjust_type,
+                trade_sessions,
+                params,
+                series_limit,
+                settings,
+            )
+        )
+        return {"latest": {}}
 
 
 class MarketDataToolsTest(unittest.TestCase):
@@ -128,6 +157,30 @@ class MarketDataToolsTest(unittest.TestCase):
                 {"symbols": ["AAPL.US"], "indexes": ["LastDone", "VolumeRatio"]},
                 ("get_quote_indicators", ["AAPL.US"], ["LastDone", "VolumeRatio"], settings),
             ),
+            (
+                GetLongbridgeTechnicalIndicatorsTool,
+                {
+                    "symbol": "AAPL.US",
+                    "period": "1D",
+                    "count": 250,
+                    "indicators": ["MACD", "RSI"],
+                    "adjust_type": "forward",
+                    "series_limit": 20,
+                    "params": {"rsi_periods": [6, 12]},
+                },
+                (
+                    "get_technical_indicators",
+                    "AAPL.US",
+                    "1D",
+                    250,
+                    ["MACD", "RSI"],
+                    "forward",
+                    None,
+                    {"rsi_periods": [6, 12]},
+                    20,
+                    settings,
+                ),
+            ),
         ]
 
         for cls, args, expected in cases:
@@ -153,6 +206,7 @@ class MarketDataToolsTest(unittest.TestCase):
         self.assertIn("get_longbridge_realtime_quotes", names)
         self.assertIn("get_longbridge_history_candlesticks", names)
         self.assertIn("get_longbridge_quote_indicators", names)
+        self.assertIn("get_technical_indicators", names)
 
 
 if __name__ == "__main__":

@@ -296,3 +296,83 @@ class GetLongbridgeQuoteIndicatorsTool(_LongbridgeMarketTool):
             return ToolResult.fail("symbols is required")
         indexes = _string_list(args.get("indexes"))
         return self._call("get_quote_indicators", symbols, indexes)
+
+
+class GetLongbridgeTechnicalIndicatorsTool(_LongbridgeMarketTool):
+    name = "get_technical_indicators"
+    description = (
+        "基于 Longbridge K 线计算经典技术指标时使用此工具。Use for VOL, MA, EMA, MACD, KDJ, RSI, "
+        "CCI, WR, DMI, OSC, BOLL, BBIBOLL or technical analysis over recent candlesticks."
+    )
+    params = {
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK, 600519.SH."},
+            "period": {
+                "type": "string",
+                "description": "K-line period: 1D, 1W, 1M, 1Y, 1min, 5min, 15min, 30min, 60min.",
+                "default": "1D",
+            },
+            "count": {
+                "type": "integer",
+                "description": "Number of candlesticks used for calculation, capped at 1000.",
+                "default": 300,
+            },
+            "indicators": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["VOL", "MA", "EMA", "MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC", "BOLL", "BBIBOLL"],
+                },
+                "description": "Optional indicator names. Empty means all supported indicators.",
+            },
+            "adjust_type": {
+                "type": "string",
+                "enum": ["forward", "none"],
+                "description": "Forward-adjusted or raw prices. Default: forward.",
+                "default": "forward",
+            },
+            "trade_sessions": {
+                "type": "string",
+                "enum": ["intraday", "all"],
+                "description": "Use all to include extended sessions where supported.",
+            },
+            "series_limit": {
+                "type": "integer",
+                "description": "Maximum number of tail points returned per indicator series.",
+                "default": 120,
+            },
+            "params": {
+                "type": "object",
+                "description": (
+                    "Optional formula parameter overrides, e.g. {'ma_periods':[5,20], 'macd_fast':12, "
+                    "'macd_slow':26, 'macd_signal':9, 'boll_period':20, 'boll_std':2}."
+                ),
+            },
+        },
+        "required": ["symbol"],
+    }
+
+    def execute(self, args: Dict[str, Any]) -> ToolResult:
+        symbol = str(args.get("symbol") or "").strip()
+        if not symbol:
+            return ToolResult.fail("symbol is required")
+        try:
+            count = _int_arg(args.get("count"), 300, "count")
+            series_limit = _int_arg(args.get("series_limit"), 120, "series_limit")
+        except ValueError as exc:
+            return ToolResult.fail(str(exc))
+        params = args.get("params")
+        if params is not None and not isinstance(params, dict):
+            return ToolResult.fail("params must be an object")
+        return self._call(
+            "get_technical_indicators",
+            symbol,
+            period=str(args.get("period") or "1D"),
+            count=count,
+            indicators=_string_list(args.get("indicators")),
+            adjust_type=str(args.get("adjust_type") or "forward"),
+            trade_sessions=args.get("trade_sessions"),
+            params=params,
+            series_limit=series_limit,
+        )

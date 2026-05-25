@@ -52,6 +52,7 @@ class ToolManager:
             GetLongbridgeMarketStatusTool,
             GetLongbridgeQuoteIndicatorsTool,
             GetLongbridgeRealtimeQuotesTool,
+            GetLongbridgeTechnicalIndicatorsTool,
             GetLongbridgeTradesTool,
             GetLongbridgeTradingDaysTool,
         )
@@ -78,6 +79,7 @@ class ToolManager:
             GetLongbridgeMarketStatusTool,
             GetLongbridgeTradingDaysTool,
             GetLongbridgeQuoteIndicatorsTool,
+            GetLongbridgeTechnicalIndicatorsTool,
             GetPortfolioPositionsTool,
             DelegateAgentTool,
         ]

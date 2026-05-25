@@ -52,14 +52,15 @@ class FakeQuoteContext:
         return [
             SimpleNamespace(
                 timestamp=datetime(2026, 1, 2, 9, 30),
-                open="10",
-                high="12",
-                low="9",
-                close="11",
-                volume="1000",
-                turnover="11000",
+                open=str(10 + index),
+                high=str(12 + index),
+                low=str(9 + index),
+                close=str(11 + index),
+                volume=str(1000 + index),
+                turnover=str(11000 + index),
                 trade_session="TradeSession.Intraday",
             )
+            for index in range(max(1, min(count, 80)))
         ]
 
     def history_candlesticks_by_date(self, symbol, period, adjust_type, start, end, *args):
@@ -233,6 +234,27 @@ class MarketServiceConfigTest(unittest.TestCase):
         self.assertEqual(quote_context.candlestick_args[3], "AdjustType.NoAdjust")
         self.assertEqual(quote_context.candlestick_args[4], ["TradeSessions.All"])
         self.assertEqual(payload["bars"][0]["trade_session"], "Intraday")
+
+    def test_technical_indicators_calculate_from_longbridge_candlesticks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_context = FakeQuoteContext()
+            service = TestableMarketService(tmp, quote_context)
+
+            payload = service.get_technical_indicators(
+                "hsi.hk",
+                "1D",
+                count=60,
+                indicators=["MA", "MACD"],
+                params={"ma_periods": [5]},
+                series_limit=3,
+            )
+
+        self.assertEqual(quote_context.candlestick_args[0], "HSI.HK")
+        self.assertEqual(payload["symbol"], "HSI.HK")
+        self.assertEqual(payload["requested_indicators"], ["MA", "MACD"])
+        self.assertEqual(payload["bars_count"], 60)
+        self.assertEqual(len(payload["series_timestamps"]), 3)
+        self.assertEqual(payload["latest"]["MA"]["ma5"], 68.0)
 
     def test_history_trades_depth_trading_days_status_and_indicators(self):
         with tempfile.TemporaryDirectory() as tmp:
