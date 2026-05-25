@@ -2,6 +2,7 @@ export type Page =
   | "overview"
   | "chat"
   | "tracing"
+  | "security"
   | "market"
   | "market_config"
   | "watchlist"

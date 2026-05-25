@@ -114,6 +114,7 @@ PAGE_PERMISSION_REQUIREMENTS: dict[str, str] = {
     "overview": "config:read",
     "chat": "chat:read",
     "tracing": "tracing:read",
+    "security": "config:read",
     "market": "market:read",
     "market_config": "market:write",
     "watchlist": "watchlist:read",
@@ -264,9 +265,23 @@ class AppStore:
                     FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS login_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    user_agent TEXT NOT NULL DEFAULT '',
+                    ip_address TEXT NOT NULL DEFAULT '',
+                    last_ip_address TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS refresh_tokens (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
+                    session_id TEXT,
                     token_hash TEXT NOT NULL UNIQUE,
                     expires_at TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -274,7 +289,8 @@ class AppStore:
                     replaced_by TEXT,
                     user_agent TEXT NOT NULL DEFAULT '',
                     ip_address TEXT NOT NULL DEFAULT '',
-                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(session_id) REFERENCES login_sessions(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS audit_events (
@@ -334,10 +350,13 @@ class AppStore:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+                CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON refresh_tokens(session_id);
+                CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id);
                 CREATE INDEX IF NOT EXISTS idx_scheduler_tasks_user ON scheduler_tasks(user_id);
                 CREATE INDEX IF NOT EXISTS idx_scheduler_runs_user_started ON scheduler_runs(user_id, started_at);
                 """
             )
+            self._ensure_refresh_tokens_session_schema(conn)
             self._ensure_mcp_oauth_tokens_schema(conn)
             self._seed_rbac(conn)
             if not self.get_system_value(JWT_SECRET_KEY, conn=conn):
@@ -353,6 +372,13 @@ class AppStore:
             self._migrate_plaintext_secrets(conn)
             self._migrate_subagent_roles_from_config(conn)
             conn.commit()
+
+    def _ensure_refresh_tokens_session_schema(self, conn: sqlite3.Connection) -> None:
+        """为旧版 refresh token 表补上设备会话关联列。"""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(refresh_tokens)").fetchall()}
+        if "session_id" not in cols:
+            conn.execute("ALTER TABLE refresh_tokens ADD COLUMN session_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON refresh_tokens(session_id)")
 
     def _ensure_mcp_oauth_tokens_schema(self, conn: sqlite3.Connection) -> None:
         """Upgrade legacy global MCP OAuth token storage to user-scoped rows."""
@@ -950,12 +976,165 @@ class AppStore:
 
     # ------------------------------------------------------------------ tokens
 
+    def create_login_session(
+        self,
+        user_id: str,
+        *,
+        expires_at: str,
+        user_agent: str = "",
+        ip_address: str = "",
+    ) -> dict[str, Any]:
+        session_id = str(uuid.uuid4())
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO login_sessions (
+                    id, user_id, created_at, last_seen_at, expires_at, user_agent, ip_address, last_ip_address
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    user_id,
+                    now,
+                    now,
+                    expires_at,
+                    user_agent[:500],
+                    ip_address[:100],
+                    ip_address[:100],
+                ),
+            )
+            conn.commit()
+        session = self.get_login_session(session_id)
+        if not session:
+            raise RuntimeError("Failed to create login session")
+        return session
+
+    def get_login_session(self, session_id: str) -> Optional[dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM login_sessions WHERE id = ?", (session_id,)).fetchone()
+            return self._login_session_row_to_dict(conn, row) if row else None
+
+    def list_login_sessions(self, user_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM login_sessions
+                WHERE user_id = ?
+                ORDER BY revoked_at IS NOT NULL ASC, last_seen_at DESC, created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+            return [self._login_session_row_to_dict(conn, row) for row in rows]
+
+    def touch_login_session(
+        self,
+        session_id: str,
+        *,
+        user_agent: str = "",
+        ip_address: str = "",
+    ) -> None:
+        with self.connect() as conn:
+            # 刷新 token 时同步最近活动信息，用于登录设备页判断设备是否仍在使用。
+            conn.execute(
+                """
+                UPDATE login_sessions
+                SET last_seen_at = ?, last_ip_address = ?, user_agent = CASE WHEN ? != '' THEN ? ELSE user_agent END
+                WHERE id = ?
+                """,
+                (utc_now(), ip_address[:100], user_agent[:500], user_agent[:500], session_id),
+            )
+            conn.commit()
+
+    def revoke_login_session(self, session_id: str) -> bool:
+        with self.connect() as conn:
+            now = utc_now()
+            cursor = conn.execute(
+                "UPDATE login_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?",
+                (now, session_id),
+            )
+            conn.execute(
+                """
+                UPDATE refresh_tokens
+                SET revoked_at = COALESCE(revoked_at, ?)
+                WHERE session_id = ?
+                """,
+                (now, session_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def enforce_login_session_limit(self, user_id: str, max_sessions: int, *, keep_session_id: str) -> list[str]:
+        """保留最近活跃设备，超过账号上限时下线最久未使用的旧设备。"""
+        max_sessions = max(1, int(max_sessions))
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ls.id
+                FROM login_sessions ls
+                WHERE ls.user_id = ?
+                  AND ls.revoked_at IS NULL
+                  AND ls.expires_at > ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM refresh_tokens rt
+                      WHERE rt.session_id = ls.id
+                        AND rt.revoked_at IS NULL
+                        AND rt.expires_at > ?
+                  )
+                ORDER BY CASE WHEN ls.id = ? THEN 0 ELSE 1 END, ls.last_seen_at DESC, ls.created_at DESC
+                """,
+                (user_id, now, now, keep_session_id),
+            ).fetchall()
+            revoke_ids = [row["id"] for row in rows[max_sessions:] if row["id"] != keep_session_id]
+            for session_id in revoke_ids:
+                conn.execute(
+                    "UPDATE login_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?",
+                    (now, session_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE refresh_tokens
+                    SET revoked_at = COALESCE(revoked_at, ?)
+                    WHERE session_id = ?
+                    """,
+                    (now, session_id),
+                )
+            conn.commit()
+            return revoke_ids
+
+    def _login_session_row_to_dict(self, conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+        active_tokens = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM refresh_tokens
+            WHERE session_id = ? AND revoked_at IS NULL AND expires_at > ?
+            """,
+            (row["id"], utc_now()),
+        ).fetchone()
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "created_at": row["created_at"],
+            "last_seen_at": row["last_seen_at"],
+            "expires_at": row["expires_at"],
+            "revoked_at": row["revoked_at"],
+            "user_agent": row["user_agent"],
+            "ip_address": row["ip_address"],
+            "last_ip_address": row["last_ip_address"],
+            "active_refresh_tokens": int(active_tokens["count"] if active_tokens else 0),
+        }
+
     def create_refresh_token(
         self,
         user_id: str,
         token_hash: str,
         expires_at: str,
         *,
+        session_id: Optional[str] = None,
         user_agent: str = "",
         ip_address: str = "",
     ) -> str:
@@ -964,11 +1143,20 @@ class AppStore:
             conn.execute(
                 """
                 INSERT INTO refresh_tokens (
-                    id, user_id, token_hash, expires_at, created_at, user_agent, ip_address
+                    id, user_id, session_id, token_hash, expires_at, created_at, user_agent, ip_address
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (token_id, user_id, token_hash, expires_at, utc_now(), user_agent[:500], ip_address[:100]),
+                (
+                    token_id,
+                    user_id,
+                    session_id,
+                    token_hash,
+                    expires_at,
+                    utc_now(),
+                    user_agent[:500],
+                    ip_address[:100],
+                ),
             )
             conn.commit()
         return token_id

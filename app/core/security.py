@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - stdlib fallback keeps local tests runnab
 
 ACCESS_TOKEN_MINUTES = 15
 REFRESH_TOKEN_DAYS = 7
+LOGIN_SESSION_DAYS = 30
 JWT_ALGORITHM = "HS256"
 
 
@@ -46,6 +47,7 @@ class CurrentUser:
     roles: tuple[str, ...]
     permissions: frozenset[str]
     is_active: bool
+    session_id: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:
@@ -123,7 +125,33 @@ def get_jwt_secret() -> str:
     return secret
 
 
-def create_access_token(user: dict[str, Any]) -> str:
+def _session_expires_at() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(days=LOGIN_SESSION_DAYS)
+
+
+def _refresh_expires_at(session: Optional[dict[str, Any]] = None) -> datetime:
+    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+    if session:
+        session_expires = datetime.fromisoformat(session["expires_at"])
+        expires = min(expires, session_expires)
+    return expires
+
+
+def create_login_session(
+    user_id: str,
+    *,
+    user_agent: str = "",
+    ip_address: str = "",
+) -> dict[str, Any]:
+    return get_app_store().create_login_session(
+        user_id=user_id,
+        expires_at=_session_expires_at().replace(microsecond=0).isoformat(),
+        user_agent=user_agent,
+        ip_address=ip_address,
+    )
+
+
+def create_access_token(user: dict[str, Any], *, session_id: Optional[str] = None) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user["id"],
@@ -133,19 +161,24 @@ def create_access_token(user: dict[str, Any]) -> str:
         "exp": int((now + timedelta(minutes=ACCESS_TOKEN_MINUTES)).timestamp()),
         "typ": "access",
     }
+    if session_id:
+        payload["sid"] = session_id
     return _jwt_encode(payload, get_jwt_secret())
 
 
 def create_refresh_token(
     user_id: str,
     *,
+    session_id: Optional[str] = None,
+    expires_at: Optional[datetime] = None,
     user_agent: str = "",
     ip_address: str = "",
 ) -> tuple[str, str]:
     token = secrets.token_urlsafe(48)
-    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+    expires = expires_at or _refresh_expires_at()
     token_id = get_app_store().create_refresh_token(
         user_id=user_id,
+        session_id=session_id,
         token_hash=hash_refresh_token(token),
         expires_at=expires.replace(microsecond=0).isoformat(),
         user_agent=user_agent,
@@ -170,7 +203,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def to_current_user(user: dict[str, Any]) -> CurrentUser:
+def to_current_user(user: dict[str, Any], *, session_id: Optional[str] = None) -> CurrentUser:
     return CurrentUser(
         id=user["id"],
         username=user["username"],
@@ -178,6 +211,7 @@ def to_current_user(user: dict[str, Any]) -> CurrentUser:
         roles=tuple(user.get("roles") or []),
         permissions=frozenset(user.get("permissions") or []),
         is_active=bool(user.get("is_active")),
+        session_id=session_id,
     )
 
 
@@ -201,7 +235,17 @@ def decode_access_token(token: str) -> CurrentUser:
     user = get_app_store().get_user_by_id(str(payload["sub"]))
     if not user or not user.get("is_active"):
         raise AuthError("User is inactive or missing")
-    return to_current_user(user)
+    session_id = str(payload["sid"]) if payload.get("sid") else None
+    if session_id:
+        session = get_app_store().get_login_session(session_id)
+        if not session or session.get("user_id") != user["id"]:
+            raise AuthError("Login session is no longer active")
+        if session.get("revoked_at"):
+            raise AuthError("Login session has been signed out")
+        if datetime.fromisoformat(session["expires_at"]) <= datetime.now(timezone.utc):
+            get_app_store().revoke_login_session(session_id)
+            raise AuthError("Login session expired; please sign in again")
+    return to_current_user(user, session_id=session_id)
 
 
 def refresh_tokens(
@@ -221,11 +265,35 @@ def refresh_tokens(
     user = get_app_store().get_user_by_id(record["user_id"])
     if not user or not user.get("is_active"):
         raise AuthError("User is inactive or missing")
+    session_id = record.get("session_id")
+    if session_id:
+        session = get_app_store().get_login_session(str(session_id))
+        if not session or session.get("user_id") != user["id"]:
+            get_app_store().revoke_refresh_token(record["id"])
+            raise AuthError("Login session is no longer active")
+        if session.get("revoked_at"):
+            get_app_store().revoke_refresh_token(record["id"])
+            raise AuthError("Login session has been signed out")
+        if datetime.fromisoformat(session["expires_at"]) <= datetime.now(timezone.utc):
+            get_app_store().revoke_login_session(session["id"])
+            raise AuthError("Login session expired; please sign in again")
+        get_app_store().touch_login_session(session["id"], user_agent=user_agent, ip_address=ip_address)
+    else:
+        # 兼容旧版本数据库中的 refresh token，首次刷新时补建一个设备会话。
+        session = create_login_session(
+            user["id"],
+            user_agent=user_agent or record.get("user_agent") or "",
+            ip_address=ip_address or record.get("ip_address") or "",
+        )
     next_refresh, next_refresh_id = create_refresh_token(
-        user["id"], user_agent=user_agent, ip_address=ip_address,
+        user["id"],
+        session_id=session["id"],
+        expires_at=_refresh_expires_at(session),
+        user_agent=user_agent,
+        ip_address=ip_address,
     )
     get_app_store().revoke_refresh_token(record["id"], replaced_by=next_refresh_id)
-    return create_access_token(user), next_refresh, user
+    return create_access_token(user, session_id=session["id"]), next_refresh, user
 
 
 def bearer_from_header(authorization: Optional[str]) -> Optional[str]:

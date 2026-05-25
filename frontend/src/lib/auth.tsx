@@ -1,12 +1,15 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
+  addAuthExpiredListener,
   clearAuthTokens,
   getMe,
   getSetupStatus,
   getStoredAccessToken,
   login as apiLogin,
   logout as apiLogout,
+  rejectAuthRecovery,
+  resolveAuthRecovery,
   setAuthTokens,
   setupAdmin,
 } from "@/lib/api";
@@ -14,10 +17,13 @@ import type { AuthUser } from "@/types/app";
 
 type AuthState = {
   loading: boolean;
+  reauthRequired: boolean;
+  reauthMessage: string;
   setupRequired: boolean;
   user: AuthUser | null;
   permissions: Set<string>;
   login: (username: string, password: string) => Promise<void>;
+  reauthenticate: (password: string) => Promise<void>;
   setup: (payload: { username: string; password: string; display_name?: string }) => Promise<void>;
   logout: () => Promise<void>;
   can: (permission: string) => boolean;
@@ -27,8 +33,15 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
+  const [reauthRequired, setReauthRequired] = useState(false);
+  const [reauthMessage, setReauthMessage] = useState("");
   const [setupRequired, setSetupRequired] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const userRef = useRef<AuthUser | null>(null);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     let mounted = true;
@@ -61,33 +74,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => addAuthExpiredListener((message) => {
+    if (userRef.current) {
+      setReauthMessage(message);
+      setReauthRequired(true);
+    } else {
+      setUser(null);
+      rejectAuthRecovery(message);
+    }
+  }), []);
+
   const permissions = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions]);
 
   const value = useMemo<AuthState>(() => ({
     loading,
+    reauthRequired,
+    reauthMessage,
     setupRequired,
     user,
     permissions,
     async login(username: string, password: string) {
       const tokens = await apiLogin({ username, password });
       setAuthTokens(tokens);
+      setReauthRequired(false);
+      setReauthMessage("");
       setSetupRequired(false);
       setUser(tokens.user);
+      resolveAuthRecovery();
+    },
+    async reauthenticate(password: string) {
+      if (!user) throw new Error("Authentication required");
+      const tokens = await apiLogin({ username: user.username, password });
+      if (tokens.user.id !== user.id) {
+        clearAuthTokens();
+        setUser(null);
+        rejectAuthRecovery("Please sign in with the same account to continue");
+        throw new Error("Please sign in with the same account to continue");
+      }
+      setAuthTokens(tokens);
+      setReauthRequired(false);
+      setReauthMessage("");
+      setSetupRequired(false);
+      setUser(tokens.user);
+      resolveAuthRecovery();
     },
     async setup(payload) {
       const tokens = await setupAdmin(payload);
       setAuthTokens(tokens);
+      setReauthRequired(false);
+      setReauthMessage("");
       setSetupRequired(false);
       setUser(tokens.user);
+      resolveAuthRecovery();
     },
     async logout() {
       await apiLogout();
+      setReauthRequired(false);
+      setReauthMessage("");
       setUser(null);
+      rejectAuthRecovery();
     },
     can(permission: string) {
       return permissions.has("*") || permissions.has(permission);
     },
-  }), [loading, permissions, setupRequired, user]);
+  }), [loading, permissions, reauthMessage, reauthRequired, setupRequired, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

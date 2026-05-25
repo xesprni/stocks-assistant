@@ -70,6 +70,7 @@ def _settings_to_response(
         has_embedding_api_key=(show_all or owns("embedding_api_key")) and bool(settings.embedding_api_key),
         workspace_dir=settings.workspace_dir,
         app_language=settings.app_language,
+        auth_max_devices_per_user=settings.auth_max_devices_per_user,
         agent_max_steps=settings.agent_max_steps,
         agent_max_context_tokens=settings.agent_max_context_tokens,
         agent_max_context_turns=settings.agent_max_context_turns,

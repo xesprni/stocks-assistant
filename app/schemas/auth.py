@@ -54,6 +54,27 @@ class AuthTokenResponse(BaseModel):
     user: UserPublic
 
 
+class LoginSessionResponse(BaseModel):
+    id: str
+    created_at: str
+    last_seen_at: str
+    expires_at: str
+    revoked_at: Optional[str] = None
+    user_agent: str = ""
+    ip_address: str = ""
+    last_ip_address: str = ""
+    active_refresh_tokens: int = 0
+    is_current: bool = False
+    is_active: bool = False
+
+
+class LoginSessionListResponse(BaseModel):
+    sessions: List[LoginSessionResponse]
+    max_lifetime_days: int
+    max_devices_per_user: int
+    refresh_token_days: int
+
+
 class UserCreateRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8, max_length=256)

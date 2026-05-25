@@ -318,6 +318,26 @@ export function ConfigPage({
                 {passwordMessage}
               </p>
             ) : null}
+            {canManageSystem ? (
+              <div className="mt-3 grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-center">
+                <div className="flex items-start gap-2">
+                  <ShieldCheck className="mt-0.5 size-4 text-primary" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">{copy.maxLoginDevices}</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.maxLoginDevicesHint}</p>
+                  </div>
+                </div>
+                <Field label={copy.maxLoginDevicesValue}>
+                  <Input
+                    min={1}
+                    max={50}
+                    type="number"
+                    value={draft.auth_max_devices_per_user}
+                    onChange={(event) => patchDraft({ auth_max_devices_per_user: Number(event.target.value) })}
+                  />
+                </Field>
+              </div>
+            ) : null}
           </ConfigSection>
 
           <Tabs defaultValue="model">

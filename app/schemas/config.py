@@ -39,6 +39,7 @@ class AppConfig(BaseModel):
 
     workspace_dir: str
     app_language: str = "zh"
+    auth_max_devices_per_user: int = 5
     agent_max_steps: int
     agent_max_context_tokens: int
     agent_max_context_turns: int
@@ -108,6 +109,7 @@ class ConfigUpdate(BaseModel):
 
     workspace_dir: Optional[str] = None
     app_language: Optional[str] = None
+    auth_max_devices_per_user: Optional[int] = Field(default=None, ge=1, le=50)
     agent_max_steps: Optional[int] = None
     agent_max_context_tokens: Optional[int] = None
     agent_max_context_turns: Optional[int] = None

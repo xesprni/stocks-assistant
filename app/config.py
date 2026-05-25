@@ -205,6 +205,9 @@ class Settings(BaseSettings):
     workspace_dir: str = "~/stocks-assistant"  # 工作空间根目录
     app_language: str = "zh"  # UI 语言：zh / en
 
+    # ---- 认证安全配置 ----
+    auth_max_devices_per_user: int = Field(default=5, ge=1, le=50)  # 单账号最多保留的活跃登录设备数
+
     # ---- Agent 智能体配置 ----
     agent_max_steps: int = 20  # 单次对话最大工具调用轮数
     agent_max_context_tokens: int = 50000  # 上下文窗口最大 token 数

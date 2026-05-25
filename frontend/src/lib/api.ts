@@ -23,6 +23,7 @@ import type {
   KnowledgeGraph,
   KnowledgeSaveResponse,
   KnowledgeTree,
+  LoginSessionListResponse,
   MarketTemperature,
   MCPServerToolsResponse,
   MCPStatusResponse,
@@ -62,10 +63,14 @@ import type {
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const ACCESS_TOKEN_KEY = "stocks_assistant_access_token";
 const REFRESH_TOKEN_KEY = "stocks_assistant_refresh_token";
+const AUTH_EXPIRED_EVENT = "stocks-assistant:auth-expired";
 
 let accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) ?? "";
 let refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) ?? "";
 let refreshPromise: Promise<AuthTokenResponse> | null = null;
+let authRecoveryPromise: Promise<void> | null = null;
+let resolveAuthRecoveryPromise: (() => void) | null = null;
+let rejectAuthRecoveryPromise: ((error: Error) => void) | null = null;
 const AUTH_RETRY_EXCLUDED_PATHS = new Set([
   "/api/v1/auth/login",
   "/api/v1/auth/logout",
@@ -73,6 +78,16 @@ const AUTH_RETRY_EXCLUDED_PATHS = new Set([
   "/api/v1/auth/setup",
   "/api/v1/auth/setup/status",
 ]);
+
+class AuthRecoveryError extends Error {
+  recovery: Promise<void>;
+
+  constructor(message: string, recovery: Promise<void>) {
+    super(message);
+    this.name = "AuthRecoveryError";
+    this.recovery = recovery;
+  }
+}
 
 export function getStoredAccessToken() {
   return accessToken;
@@ -96,6 +111,43 @@ export function clearAuthTokens() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+function notifyAuthExpired(message: string) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }));
+}
+
+function startAuthRecovery(message: string) {
+  if (!authRecoveryPromise) {
+    authRecoveryPromise = new Promise<void>((resolve, reject) => {
+      resolveAuthRecoveryPromise = resolve;
+      rejectAuthRecoveryPromise = reject;
+    }).finally(() => {
+      authRecoveryPromise = null;
+      resolveAuthRecoveryPromise = null;
+      rejectAuthRecoveryPromise = null;
+    });
+  }
+  notifyAuthExpired(message);
+  return authRecoveryPromise;
+}
+
+export function resolveAuthRecovery() {
+  resolveAuthRecoveryPromise?.();
+}
+
+export function rejectAuthRecovery(message = "Authentication required") {
+  rejectAuthRecoveryPromise?.(new Error(message));
+}
+
+export function addAuthExpiredListener(listener: (message: string) => void) {
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<{ message?: string }>).detail;
+    listener(typeof detail?.message === "string" ? detail.message : "Authentication expired");
+  };
+  window.addEventListener(AUTH_EXPIRED_EVENT, handler);
+  return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handler);
+}
+
 function authHeaders(init?: RequestInit) {
   return {
     "Content-Type": "application/json",
@@ -105,7 +157,10 @@ function authHeaders(init?: RequestInit) {
 }
 
 async function refreshAuthToken() {
-  if (!refreshToken) throw new Error("Authentication required");
+  if (!refreshToken) {
+    const message = "Authentication required";
+    throw new AuthRecoveryError(message, startAuthRecovery(message));
+  }
   if (!refreshPromise) {
     refreshPromise = fetch(`${API_BASE}/api/v1/auth/refresh`, {
       method: "POST",
@@ -116,7 +171,8 @@ async function refreshAuthToken() {
         if (!response.ok) {
           clearAuthTokens();
           const body = await response.json().catch(() => null);
-          throw new Error(typeof body?.detail === "string" ? body.detail : "Authentication expired");
+          const message = typeof body?.detail === "string" ? body.detail : "Authentication expired";
+          throw new AuthRecoveryError(message, startAuthRecovery(message));
         }
         const next = await response.json() as AuthTokenResponse;
         setAuthTokens(next);
@@ -138,7 +194,15 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   });
 
   if (response.status === 401 && retry && !AUTH_RETRY_EXCLUDED_PATHS.has(path)) {
-    await refreshAuthToken();
+    try {
+      await refreshAuthToken();
+    } catch (error) {
+      if (error instanceof AuthRecoveryError) {
+        await error.recovery;
+      } else {
+        throw error;
+      }
+    }
     return request<T>(path, init, false);
   }
 
@@ -181,6 +245,16 @@ export function changeOwnPassword(payload: ChangePasswordRequest) {
   return request<{ status: string }>("/api/v1/auth/me/password", {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export function listLoginSessions() {
+  return request<LoginSessionListResponse>("/api/v1/auth/sessions");
+}
+
+export function revokeLoginSession(sessionId: string) {
+  return request<{ status: string; revoked_current: boolean }>(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
   });
 }
 
@@ -368,8 +442,16 @@ export async function streamChat(
   try {
     await streamChatOnce(message, sessionId, onEvent, clearHistory, signal);
   } catch (error) {
-    if (error instanceof Error && /Authentication|required|expired|invalid/i.test(error.message) && refreshToken) {
-      await refreshAuthToken();
+    if (error instanceof Error && /Authentication|required|expired|invalid/i.test(error.message)) {
+      try {
+        await refreshAuthToken();
+      } catch (refreshError) {
+        if (refreshError instanceof AuthRecoveryError) {
+          await refreshError.recovery;
+        } else {
+          throw refreshError;
+        }
+      }
       await streamChatOnce(message, sessionId, onEvent, clearHistory, signal);
       return;
     }

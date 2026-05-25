@@ -39,14 +39,17 @@ import {
 } from "lucide-react";
 
 import { MarketPulse } from "@/components/MarketPulse";
+import { ReauthDialog } from "@/components/ReauthDialog";
 import { StatusTile } from "@/components/common/StatusTile";
 import { useConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   checkHealth,
+  getChatSession,
   getMarketConfig,
   loadConfig,
+  sendChat,
   saveConfig,
   streamChat,
 } from "@/lib/api";
@@ -79,6 +82,7 @@ const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((module) => ({ d
 const NewsPage = lazy(() => import("@/pages/NewsPage").then((module) => ({ default: module.NewsPage })));
 const PortfolioPage = lazy(() => import("@/components/PortfolioPage").then((module) => ({ default: module.PortfolioPage })));
 const SchedulerPage = lazy(() => import("@/pages/SchedulerPage").then((module) => ({ default: module.SchedulerPage })));
+const SecurityPage = lazy(() => import("@/pages/SecurityPage").then((module) => ({ default: module.SecurityPage })));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })));
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
 const TechnicalAnalysis = lazy(() => import("@/components/TechnicalAnalysis"));
@@ -101,6 +105,7 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   overview: "config:read",
   chat: "chat:read",
   tracing: "tracing:read",
+  security: "config:read",
   market: "market:read",
   market_config: "market:write",
   watchlist: "watchlist:read",
@@ -122,6 +127,7 @@ const PAGE_PATH: Record<Page, string> = {
   overview: "/dashboard",
   chat: "/chat",
   tracing: "/tracing",
+  security: "/security",
   market: "/market",
   market_config: "/market/config",
   watchlist: "/watchlist",
@@ -165,6 +171,7 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   embedding_codex_model: ["embedding_codex_model"],
   workspace_dir: ["workspace_dir"],
   app_language: ["app_language"],
+  auth_max_devices_per_user: ["auth_max_devices_per_user"],
   agent_max_steps: ["agent_max_steps"],
   agent_max_context_tokens: ["agent_max_context_tokens"],
   agent_max_context_turns: ["agent_max_context_turns"],
@@ -308,6 +315,7 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
     id: "system",
     label: groups.system,
     items: [
+      navItem(language, "security", <ShieldCheck />),
       navItem(language, "users", <UserCog />),
       navItem(language, "config", <Settings2 />),
     ],
@@ -445,6 +453,38 @@ function isAbortError(error: unknown): boolean {
 function isNetworkLoadError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return /Load failed|Failed to fetch|NetworkError|network connection was lost|offline|cancelled/i.test(message);
+}
+
+function waitForPageResume(timeoutMs = 15000): Promise<void> {
+  if (document.visibilityState !== "hidden" && navigator.onLine !== false) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const cleanup = () => {
+      window.removeEventListener("focus", check);
+      window.removeEventListener("online", check);
+      window.removeEventListener("pageshow", check);
+      document.removeEventListener("visibilitychange", check);
+      window.clearTimeout(timer);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const check = () => {
+      if (document.visibilityState !== "hidden" && navigator.onLine !== false) {
+        finish();
+      }
+    };
+    const timer = window.setTimeout(finish, timeoutMs);
+    window.addEventListener("focus", check);
+    window.addEventListener("online", check);
+    window.addEventListener("pageshow", check);
+    document.addEventListener("visibilitychange", check);
+  });
 }
 
 function chatFailureMessage(error: unknown, language: AppLanguage): string {
@@ -782,6 +822,23 @@ function ConsoleApp() {
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
 
+    const updateAssistant = (patch: Partial<ChatMessage>) => {
+      if (!convId) return;
+      chatHistory.updateMessage(convId, assistantMessageId, patch);
+      if (typeof patch.id === "string") {
+        assistantMessageId = patch.id;
+      }
+    };
+
+    const commitStreamState = (patch: Partial<ChatMessage> = {}) => {
+      updateAssistant({
+        content: streamedContent || currentStatus,
+        status: currentStatus,
+        trace,
+        ...patch,
+      });
+    };
+
     try {
       if (!convId) {
         convId = await chatHistory.createConversation(userMessage);
@@ -790,23 +847,6 @@ function ConsoleApp() {
         chatHistory.addMessage(convId, userMessage);
         chatHistory.addMessage(convId, pendingMessage);
       }
-
-      const updateAssistant = (patch: Partial<ChatMessage>) => {
-        if (!convId) return;
-        chatHistory.updateMessage(convId, assistantMessageId, patch);
-        if (typeof patch.id === "string") {
-          assistantMessageId = patch.id;
-        }
-      };
-
-      const commitStreamState = (patch: Partial<ChatMessage> = {}) => {
-        updateAssistant({
-          content: streamedContent || currentStatus,
-          status: currentStatus,
-          trace,
-          ...patch,
-        });
-      };
 
       const addTrace = (item: ChatTraceEvent) => {
         trace = [...trace, item].slice(-30);
@@ -1030,10 +1070,70 @@ function ConsoleApp() {
         }
         return;
       }
+      if (isNetworkLoadError(caught) && convId && !sawAgentEnd) {
+        try {
+          currentStatus = ui.chat.streamRecovering;
+          trace = trace.map((item) => (item.status === "running" ? { ...item, detail: item.detail || ui.chat.streamInterrupted } : item));
+          commitStreamState();
+
+          await waitForPageResume();
+
+          const synced = await getChatSession(convId);
+          let userIndex = -1;
+          for (let index = synced.messages.length - 1; index >= 0; index -= 1) {
+            const message = synced.messages[index];
+            if (message.role === "user" && message.content === text) {
+              userIndex = index;
+              break;
+            }
+          }
+          const persistedAssistant = userIndex >= 0
+            ? synced.messages.slice(userIndex + 1).find((message) => message.role === "assistant" && message.content.trim())
+            : undefined;
+
+          if (persistedAssistant) {
+            streamedContent = persistedAssistant.content;
+            trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
+            updateAssistant({
+              id: persistedAssistant.id,
+              content: streamedContent,
+              pending: false,
+              status: ui.chat.complete,
+              trace: [...trace, makeTrace(ui.chat.streamRecovered, "done")],
+              createdAt: persistedAssistant.createdAt,
+            });
+            return;
+          }
+
+          currentStatus = ui.chat.streamRetrying;
+          commitStreamState();
+          const recovered = await sendChat(text, convId);
+          streamedContent = recovered.response || ui.chat.empty;
+          trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
+          updateAssistant({
+            id: recovered.message_id || assistantMessageId,
+            content: streamedContent,
+            pending: false,
+            status: ui.chat.complete,
+            trace: [...trace, makeTrace(ui.chat.streamRecovered, "done")],
+            createdAt: chatTime(language),
+          });
+          return;
+        } catch (recoveryError) {
+          const msg = chatFailureMessage(recoveryError, language);
+          setError(msg);
+          chatHistory.updateMessage(convId, assistantMessageId, {
+            content: formatTemplate(ui.chat.requestFailed, { message: msg }),
+            pending: false,
+            status: ui.chat.streamRecoveryFailed,
+          });
+          return;
+        }
+      }
       const msg = chatFailureMessage(caught, language);
       setError(msg);
       if (convId) {
-        chatHistory.updateMessage(convId, pendingMessage.id, {
+        chatHistory.updateMessage(convId, assistantMessageId, {
           content: formatTemplate(ui.chat.requestFailed, { message: msg }),
           pending: false,
         });
@@ -1092,6 +1192,7 @@ function ConsoleApp() {
       embedding_codex_model: source.embedding_codex_model ?? "text-embedding-3-small",
       workspace_dir: source.workspace_dir,
       app_language: source.app_language,
+      auth_max_devices_per_user: Number(source.auth_max_devices_per_user) || 5,
       agent_max_steps: Number(source.agent_max_steps),
       agent_max_context_tokens: Number(source.agent_max_context_tokens),
       agent_max_context_turns: Number(source.agent_max_context_turns),
@@ -1272,6 +1373,7 @@ function ConsoleApp() {
   return (
     <div className="console-shell h-[100dvh] overflow-hidden">
       {confirmDialog.dialog}
+      <ReauthDialog />
       <ConfigSaveToast key={configToast?.id ?? "empty"} toast={configToast} onClose={dismissConfigToast} />
       <div className="app-frame flex h-full min-h-0 w-full flex-col gap-0 p-0">
         <button
@@ -1481,6 +1583,8 @@ function ConsoleApp() {
             {page === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
 
             {page === "mcp" ? <MCPPage language={language} /> : null}
+
+            {page === "security" ? <SecurityPage confirmAction={confirmDialog.confirm} language={language} /> : null}
 
             {page === "users" ? <UsersPage language={language} /> : null}
 

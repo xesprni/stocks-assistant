@@ -110,6 +110,27 @@ export interface SetupStatusResponse {
   setup_required: boolean;
 }
 
+export interface LoginSession {
+  id: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  user_agent: string;
+  ip_address: string;
+  last_ip_address: string;
+  active_refresh_tokens: number;
+  is_current: boolean;
+  is_active: boolean;
+}
+
+export interface LoginSessionListResponse {
+  sessions: LoginSession[];
+  max_lifetime_days: number;
+  max_devices_per_user: number;
+  refresh_token_days: number;
+}
+
 export interface AppConfig {
   llm_provider: "openai_compatible" | "openai_responses" | string;
   llm_auth_mode: "api_key" | "codex" | string;
@@ -137,6 +158,7 @@ export interface AppConfig {
   has_embedding_api_key: boolean;
   workspace_dir: string;
   app_language: "zh" | "en";
+  auth_max_devices_per_user: number;
   agent_max_steps: number;
   agent_max_context_tokens: number;
   agent_max_context_turns: number;

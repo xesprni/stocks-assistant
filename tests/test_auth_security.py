@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -94,6 +95,104 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertEqual(logout.status_code, 200)
         after_logout = self.client.post("/api/v1/auth/refresh", json={"refresh_token": next_refresh})
         self.assertEqual(after_logout.status_code, 401)
+
+    def test_login_sessions_are_listed_and_can_be_revoked(self):
+        tokens = self.setup_admin()
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+        listed = self.client.get("/api/v1/auth/sessions", headers=headers)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        body = listed.json()
+        self.assertEqual(body["max_lifetime_days"], 30)
+        self.assertEqual(body["max_devices_per_user"], 5)
+        self.assertEqual(body["refresh_token_days"], 7)
+        self.assertEqual(len(body["sessions"]), 1)
+        session = body["sessions"][0]
+        self.assertTrue(session["is_current"])
+        self.assertTrue(session["is_active"])
+
+        revoked = self.client.delete(f"/api/v1/auth/sessions/{session['id']}", headers=headers)
+        self.assertEqual(revoked.status_code, 200, revoked.text)
+        self.assertTrue(revoked.json()["revoked_current"])
+
+        blocked = self.client.get("/api/v1/auth/me", headers=headers)
+        self.assertEqual(blocked.status_code, 401)
+        refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        self.assertEqual(refresh.status_code, 401)
+
+    def test_refresh_requires_relogin_after_absolute_session_expiry(self):
+        tokens = self.setup_admin()
+        record = self.store.get_refresh_token(hash_refresh_token(tokens["refresh_token"]))
+        self.assertIsNotNone(record)
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+        with self.store.connect() as conn:
+            conn.execute(
+                "UPDATE login_sessions SET expires_at = ? WHERE id = ?",
+                (expired_at, record["session_id"]),
+            )
+            conn.commit()
+
+        refreshed = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        self.assertEqual(refreshed.status_code, 401)
+        self.assertIn("expired", refreshed.json()["detail"].lower())
+
+    def test_login_device_limit_revokes_oldest_active_session(self):
+        self.store.set_config_values({"auth_max_devices_per_user": 1})
+        config_module._config_instance = None
+        tokens = self.setup_admin()
+        first_headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+        second = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": "Password123!"},
+            headers={"user-agent": "Second Device"},
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        second_headers = {"Authorization": f"Bearer {second.json()['access_token']}"}
+
+        old_access = self.client.get("/api/v1/auth/me", headers=first_headers)
+        self.assertEqual(old_access.status_code, 401)
+        old_refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        self.assertEqual(old_refresh.status_code, 401)
+
+        listed = self.client.get("/api/v1/auth/sessions", headers=second_headers)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        sessions = listed.json()["sessions"]
+        self.assertEqual(sum(1 for session in sessions if session["is_active"]), 1)
+        self.assertEqual(sum(1 for session in sessions if session["is_current"]), 1)
+
+    def test_only_admin_can_update_login_device_limit(self):
+        admin_tokens = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin_tokens['access_token']}"}
+        updated = self.client.patch(
+            "/api/v1/config",
+            json={"auth_max_devices_per_user": 2},
+            headers=admin_headers,
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["auth_max_devices_per_user"], 2)
+
+        created = self.client.post(
+            "/api/v1/users",
+            json={
+                "username": "limited",
+                "password": "Password123!",
+                "display_name": "Limited",
+                "roles": ["user"],
+            },
+            headers=admin_headers,
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        login = self.client.post("/api/v1/auth/login", json={"username": "limited", "password": "Password123!"})
+        self.assertEqual(login.status_code, 200, login.text)
+        user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        denied = self.client.patch(
+            "/api/v1/config",
+            json={"auth_max_devices_per_user": 3},
+            headers=user_headers,
+        )
+        self.assertEqual(denied.status_code, 403)
 
     def test_rbac_denies_readonly_user_management(self):
         admin_tokens = self.setup_admin()
