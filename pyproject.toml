@@ -12,6 +12,7 @@ dependencies = [
     "PyJWT>=2.8.0",
     "pwdlib[argon2]>=0.2.0",
     "cryptography>=42.0.0",
+    "SQLAlchemy>=2.0",
     "croniter>=2.0.0",
     "mcp>=1.0.0",
     "longbridge==4.1.0",

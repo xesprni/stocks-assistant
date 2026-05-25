@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from app.config import get_settings
+from app.core.orm.repositories.watchlist import WatchlistRepository
 from app.schemas.watchlist import WatchlistCategory, WatchlistItemCreate
 
 
@@ -172,44 +172,19 @@ class LongbridgeSearchClient:
 class WatchlistService:
     """SQLite-backed watchlist service."""
 
-    def __init__(self, workspace_dir: str):
+    def __init__(self, workspace_dir: str, repository: WatchlistRepository | None = None):
         root = Path(workspace_dir).expanduser()
         self.db_path = root / "watchlist" / "watchlist.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        self.repository = repository or WatchlistRepository(self.db_path)
         self.longbridge = LongbridgeSearchClient()
 
     def list_items(self, category: Optional[WatchlistCategory] = None, user_id: Optional[str] = None) -> list[dict[str, Any]]:
-        query = "SELECT * FROM watchlist_items"
-        clauses = []
-        params: list[Any] = []
-        if user_id:
-            clauses.append("user_id = ?")
-            params.append(user_id)
-        if category:
-            clauses.append("category = ?")
-            params.append(category)
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY sort_order ASC, id ASC"
-        with self._connect() as conn:
-            return [dict(row) for row in conn.execute(query, params).fetchall()]
+        return self.repository.list_items(category=category, user_id=user_id)
 
     def reorder_items(self, ordered_ids: list[int], user_id: Optional[str] = None) -> None:
         """Update sort_order for each item according to the provided ID sequence."""
-        with self._connect() as conn:
-            for position, item_id in enumerate(ordered_ids):
-                if user_id:
-                    conn.execute(
-                        "UPDATE watchlist_items SET sort_order = ? WHERE id = ? AND user_id = ?",
-                        (position, item_id, user_id),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE watchlist_items SET sort_order = ? WHERE id = ?",
-                        (position, item_id),
-                    )
-            conn.commit()
+        self.repository.reorder_items(ordered_ids, user_id=user_id)
 
     def add_item(self, item: WatchlistItemCreate, user_id: Optional[str] = None) -> dict[str, Any]:
         now = _now()
@@ -217,162 +192,12 @@ class WatchlistService:
         payload["user_id"] = user_id or ""
         payload["symbol"] = item.symbol.strip().upper()
         payload["updated_at"] = now
-        with self._connect() as conn:
-            # Place new items at the end
-            max_order = conn.execute(
-                "SELECT COALESCE(MAX(sort_order), -1) FROM watchlist_items WHERE user_id = ?",
-                (payload["user_id"],),
-            ).fetchone()[0]
-            payload["sort_order"] = max_order + 1
-            conn.execute(
-                """
-                INSERT INTO watchlist_items (
-                    user_id, category, symbol, name, name_cn, name_en, name_hk, exchange,
-                    currency, last_done, change_value, change_rate, note,
-                    sort_order, created_at, updated_at
-                )
-                VALUES (
-                    :user_id, :category, :symbol, :name, :name_cn, :name_en, :name_hk, :exchange,
-                    :currency, :last_done, :change_value, :change_rate, :note,
-                    :sort_order, :updated_at, :updated_at
-                )
-                ON CONFLICT(user_id, symbol) DO UPDATE SET
-                    category = excluded.category,
-                    name = excluded.name,
-                    name_cn = excluded.name_cn,
-                    name_en = excluded.name_en,
-                    name_hk = excluded.name_hk,
-                    exchange = excluded.exchange,
-                    currency = excluded.currency,
-                    last_done = excluded.last_done,
-                    change_value = excluded.change_value,
-                    change_rate = excluded.change_rate,
-                    note = excluded.note,
-                    updated_at = excluded.updated_at
-                """,
-                payload,
-            )
-            row = conn.execute(
-                "SELECT * FROM watchlist_items WHERE user_id = ? AND symbol = ?",
-                (payload["user_id"], payload["symbol"]),
-            ).fetchone()
-            conn.commit()
-        return dict(row)
+        payload["created_at"] = now
+        return self.repository.add_item(payload)
 
     def delete_item(self, item_id: int, user_id: Optional[str] = None) -> None:
-        with self._connect() as conn:
-            if user_id:
-                cursor = conn.execute("DELETE FROM watchlist_items WHERE id = ? AND user_id = ?", (item_id, user_id))
-            else:
-                cursor = conn.execute("DELETE FROM watchlist_items WHERE id = ?", (item_id,))
-            conn.commit()
-        if cursor.rowcount == 0:
+        if not self.repository.delete_item(item_id, user_id=user_id):
             raise KeyError(item_id)
 
     def search(self, query: str, category: Optional[WatchlistCategory], limit: int, settings: Any = None) -> list[dict[str, Any]]:
         return self.longbridge.search(query=query, category=category, limit=limit, settings=settings)
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS watchlist_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL DEFAULT '',
-                    category TEXT NOT NULL CHECK (category IN ('US', 'A', 'H')),
-                    symbol TEXT NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    name_cn TEXT NOT NULL DEFAULT '',
-                    name_en TEXT NOT NULL DEFAULT '',
-                    name_hk TEXT NOT NULL DEFAULT '',
-                    exchange TEXT NOT NULL DEFAULT '',
-                    currency TEXT NOT NULL DEFAULT '',
-                    last_done TEXT,
-                    change_value TEXT,
-                    change_rate TEXT,
-                    note TEXT NOT NULL DEFAULT '',
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(user_id, symbol)
-                )
-                """
-            )
-            self._migrate_user_scope(conn)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_category ON watchlist_items(category)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user_category ON watchlist_items(user_id, category)")
-            # Migrate existing DB: add sort_order column if missing
-            cols = {row[1] for row in conn.execute("PRAGMA table_info(watchlist_items)").fetchall()}
-            if "sort_order" not in cols:
-                conn.execute("ALTER TABLE watchlist_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
-                # Assign initial order by id
-                conn.execute(
-                    """
-                    UPDATE watchlist_items SET sort_order = (
-                        SELECT COUNT(*) FROM watchlist_items w2 WHERE w2.id < watchlist_items.id
-                    )
-                    """
-                )
-            conn.commit()
-
-    def _migrate_user_scope(self, conn: sqlite3.Connection) -> None:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(watchlist_items)").fetchall()}
-        needs_rebuild = "user_id" not in cols
-        if not needs_rebuild:
-            for index in conn.execute("PRAGMA index_list(watchlist_items)").fetchall():
-                if not index[2]:
-                    continue
-                index_name = index[1]
-                index_cols = [row[2] for row in conn.execute(f"PRAGMA index_info({index_name})").fetchall()]
-                if index_cols == ["symbol"]:
-                    needs_rebuild = True
-                    break
-        if not needs_rebuild:
-            return
-
-        conn.execute("ALTER TABLE watchlist_items RENAME TO watchlist_items_old")
-        conn.execute(
-            """
-            CREATE TABLE watchlist_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL DEFAULT '',
-                category TEXT NOT NULL CHECK (category IN ('US', 'A', 'H')),
-                symbol TEXT NOT NULL,
-                name TEXT NOT NULL DEFAULT '',
-                name_cn TEXT NOT NULL DEFAULT '',
-                name_en TEXT NOT NULL DEFAULT '',
-                name_hk TEXT NOT NULL DEFAULT '',
-                exchange TEXT NOT NULL DEFAULT '',
-                currency TEXT NOT NULL DEFAULT '',
-                last_done TEXT,
-                change_value TEXT,
-                change_rate TEXT,
-                note TEXT NOT NULL DEFAULT '',
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(user_id, symbol)
-            )
-            """
-        )
-        old_cols = {row[1] for row in conn.execute("PRAGMA table_info(watchlist_items_old)").fetchall()}
-        user_expr = "user_id" if "user_id" in old_cols else "'' AS user_id"
-        sort_expr = "sort_order" if "sort_order" in old_cols else "id AS sort_order"
-        conn.execute(
-            f"""
-            INSERT OR IGNORE INTO watchlist_items (
-                id, user_id, category, symbol, name, name_cn, name_en, name_hk, exchange,
-                currency, last_done, change_value, change_rate, note, sort_order, created_at, updated_at
-            )
-            SELECT
-                id, {user_expr}, category, symbol, name, name_cn, name_en, name_hk, exchange,
-                currency, last_done, change_value, change_rate, note, {sort_expr}, created_at, updated_at
-            FROM watchlist_items_old
-            """
-        )
-        conn.execute("DROP TABLE watchlist_items_old")

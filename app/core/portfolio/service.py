@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 
+from app.core.orm.repositories.portfolio import PortfolioRepository
 from app.core.watchlist.service import LongbridgeSearchClient, LongbridgeUnavailableError
 from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate, PortfolioMarket
 
@@ -82,23 +82,16 @@ def _market_from_symbol(symbol: str) -> PortfolioMarket:
 class PortfolioService:
     """Local portfolio CRUD and quote enrichment."""
 
-    def __init__(self, workspace_dir: str):
+    def __init__(self, workspace_dir: str, repository: PortfolioRepository | None = None):
         root = Path(workspace_dir).expanduser()
         self.db_path = root / "portfolio" / "portfolio.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        self.repository = repository or PortfolioRepository(self.db_path)
         self.longbridge = LongbridgeSearchClient()
 
     def list_items(self, market: PortfolioMarket, user_id: Optional[str] = None, settings: Any = None) -> dict[str, Any]:
         cash_amount = self.get_settings(market, user_id=user_id)["total_capital"]
-        with self._connect() as conn:
-            rows = [
-                dict(row)
-                for row in conn.execute(
-                    "SELECT * FROM portfolio_items WHERE market = ? AND user_id = ? ORDER BY sort_order ASC, id ASC",
-                    (market, user_id or ""),
-                ).fetchall()
-            ]
+        rows = self.repository.list_items(market, user_id=user_id)
 
         quote_error = None
         try:
@@ -122,30 +115,14 @@ class PortfolioService:
         }
 
     def get_settings(self, market: PortfolioMarket, user_id: Optional[str] = None) -> dict[str, str]:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM portfolio_settings WHERE market = ? AND user_id = ?",
-                (market, user_id or ""),
-            ).fetchone()
-            if row:
-                return dict(row)
+        row = self.repository.get_settings(market, user_id=user_id)
+        if row:
+            return row
         return {"market": market, "user_id": user_id or "", "total_capital": "0"}
 
     def save_settings(self, market: PortfolioMarket, total_capital: str, user_id: Optional[str] = None) -> dict[str, str]:
         value = _decimal_text(total_capital) or "0"
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO portfolio_settings (user_id, market, total_capital, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id, market) DO UPDATE SET
-                    total_capital = excluded.total_capital,
-                    updated_at = excluded.updated_at
-                """,
-                (user_id or "", market, value, _now()),
-            )
-            conn.commit()
-        return {"market": market, "user_id": user_id or "", "total_capital": value}
+        return self.repository.save_settings(market, value, user_id, _now())
 
     def add_item(self, item: PortfolioItemCreate, user_id: Optional[str] = None) -> dict[str, Any]:
         now = _now()
@@ -155,38 +132,8 @@ class PortfolioService:
         payload["shares"] = _decimal_text(item.shares)
         payload["cost_price"] = _decimal_text(item.cost_price)
         payload["updated_at"] = now
-        with self._connect() as conn:
-            max_order = conn.execute(
-                "SELECT COALESCE(MAX(sort_order), -1) FROM portfolio_items WHERE user_id = ? AND market = ?",
-                (payload["user_id"], payload["market"]),
-            ).fetchone()[0]
-            payload["sort_order"] = max_order + 1
-            conn.execute(
-                """
-                INSERT INTO portfolio_items (
-                    user_id, market, symbol, name, shares, cost_price, note,
-                    sort_order, created_at, updated_at
-                )
-                VALUES (
-                    :user_id, :market, :symbol, :name, :shares, :cost_price, :note,
-                    :sort_order, :updated_at, :updated_at
-                )
-                ON CONFLICT(user_id, symbol) DO UPDATE SET
-                    market = excluded.market,
-                    name = excluded.name,
-                    shares = excluded.shares,
-                    cost_price = excluded.cost_price,
-                    note = excluded.note,
-                    updated_at = excluded.updated_at
-                """,
-                payload,
-            )
-            row = conn.execute(
-                "SELECT * FROM portfolio_items WHERE user_id = ? AND symbol = ?",
-                (payload["user_id"], payload["symbol"]),
-            ).fetchone()
-            conn.commit()
-        return self._empty_enriched_item(dict(row))
+        payload["created_at"] = now
+        return self._empty_enriched_item(self.repository.add_item(payload))
 
     def update_item(self, item_id: int, item: PortfolioItemUpdate, user_id: Optional[str] = None) -> dict[str, Any]:
         patch = item.model_dump(exclude_unset=True)
@@ -205,46 +152,14 @@ class PortfolioService:
             patch["cost_price"] = _decimal_text(patch["cost_price"])
 
         # patch 字段来自 Pydantic schema 的白名单，动态拼接只覆盖请求中出现的列。
-        assignments = [f"{key} = :{key}" for key in patch]
-        patch["id"] = item_id
         patch["updated_at"] = _now()
-        assignments.append("updated_at = :updated_at")
-        with self._connect() as conn:
-            if user_id:
-                patch["user_id_filter"] = user_id
-                cursor = conn.execute(
-                    f"UPDATE portfolio_items SET {', '.join(assignments)} WHERE id = :id AND user_id = :user_id_filter",
-                    patch,
-                )
-            else:
-                cursor = conn.execute(
-                    f"UPDATE portfolio_items SET {', '.join(assignments)} WHERE id = :id",
-                    patch,
-                )
-            if cursor.rowcount == 0:
-                raise KeyError(item_id)
-            row = conn.execute("SELECT * FROM portfolio_items WHERE id = ?", (item_id,)).fetchone()
-            conn.commit()
-        return self._empty_enriched_item(dict(row))
+        return self._empty_enriched_item(self.repository.update_item(item_id, patch, user_id=user_id))
 
     def get_item(self, item_id: int, user_id: Optional[str] = None) -> dict[str, Any]:
-        with self._connect() as conn:
-            if user_id:
-                row = conn.execute("SELECT * FROM portfolio_items WHERE id = ? AND user_id = ?", (item_id, user_id)).fetchone()
-            else:
-                row = conn.execute("SELECT * FROM portfolio_items WHERE id = ?", (item_id,)).fetchone()
-        if not row:
-            raise KeyError(item_id)
-        return self._empty_enriched_item(dict(row))
+        return self._empty_enriched_item(self.repository.get_item(item_id, user_id=user_id))
 
     def delete_item(self, item_id: int, user_id: Optional[str] = None) -> None:
-        with self._connect() as conn:
-            if user_id:
-                cursor = conn.execute("DELETE FROM portfolio_items WHERE id = ? AND user_id = ?", (item_id, user_id))
-            else:
-                cursor = conn.execute("DELETE FROM portfolio_items WHERE id = ?", (item_id,))
-            conn.commit()
-        if cursor.rowcount == 0:
+        if not self.repository.delete_item(item_id, user_id=user_id):
             raise KeyError(item_id)
 
     def search(self, query: str, market: PortfolioMarket, limit: int, settings: Any = None) -> list[dict[str, Any]]:
@@ -263,128 +178,6 @@ class PortfolioService:
                 }
             )
         return results
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS portfolio_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL DEFAULT '',
-                    market TEXT NOT NULL CHECK (market IN ('US', 'A')),
-                    symbol TEXT NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    shares TEXT,
-                    cost_price TEXT,
-                    note TEXT NOT NULL DEFAULT '',
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(user_id, symbol)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS portfolio_settings (
-                    user_id TEXT NOT NULL DEFAULT '',
-                    market TEXT NOT NULL CHECK (market IN ('US', 'A')),
-                    total_capital TEXT NOT NULL DEFAULT '0',
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY(user_id, market)
-                )
-                """
-            )
-            self._migrate_user_scope(conn)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_market ON portfolio_items(market)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)")
-            conn.commit()
-
-    def _migrate_user_scope(self, conn: sqlite3.Connection) -> None:
-        item_cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_items)").fetchall()}
-        needs_item_rebuild = "user_id" not in item_cols
-        if not needs_item_rebuild:
-            for index in conn.execute("PRAGMA index_list(portfolio_items)").fetchall():
-                if not index[2]:
-                    continue
-                index_cols = [row[2] for row in conn.execute(f"PRAGMA index_info({index[1]})").fetchall()]
-                if index_cols == ["symbol"]:
-                    needs_item_rebuild = True
-                    break
-        if needs_item_rebuild:
-            conn.execute("ALTER TABLE portfolio_items RENAME TO portfolio_items_old")
-            conn.execute(
-                """
-                CREATE TABLE portfolio_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL DEFAULT '',
-                    market TEXT NOT NULL CHECK (market IN ('US', 'A')),
-                    symbol TEXT NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    shares TEXT,
-                    cost_price TEXT,
-                    note TEXT NOT NULL DEFAULT '',
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(user_id, symbol)
-                )
-                """
-            )
-            old_cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_items_old)").fetchall()}
-            user_expr = "user_id" if "user_id" in old_cols else "'' AS user_id"
-            conn.execute(
-                f"""
-                INSERT OR IGNORE INTO portfolio_items (
-                    id, user_id, market, symbol, name, shares, cost_price, note,
-                    sort_order, created_at, updated_at
-                )
-                SELECT
-                    id, {user_expr}, market, symbol, name, shares, cost_price, note,
-                    sort_order, created_at, updated_at
-                FROM portfolio_items_old
-                """
-            )
-            conn.execute("DROP TABLE portfolio_items_old")
-
-        settings_cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_settings)").fetchall()}
-        needs_settings_rebuild = "user_id" not in settings_cols
-        if not needs_settings_rebuild:
-            for index in conn.execute("PRAGMA index_list(portfolio_settings)").fetchall():
-                if not index[2]:
-                    continue
-                index_cols = [row[2] for row in conn.execute(f"PRAGMA index_info({index[1]})").fetchall()]
-                if index_cols == ["market"]:
-                    needs_settings_rebuild = True
-                    break
-        if needs_settings_rebuild:
-            conn.execute("ALTER TABLE portfolio_settings RENAME TO portfolio_settings_old")
-            conn.execute(
-                """
-                CREATE TABLE portfolio_settings (
-                    user_id TEXT NOT NULL DEFAULT '',
-                    market TEXT NOT NULL CHECK (market IN ('US', 'A')),
-                    total_capital TEXT NOT NULL DEFAULT '0',
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY(user_id, market)
-                )
-                """
-            )
-            old_cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_settings_old)").fetchall()}
-            user_expr = "user_id" if "user_id" in old_cols else "'' AS user_id"
-            conn.execute(
-                f"""
-                INSERT OR IGNORE INTO portfolio_settings (user_id, market, total_capital, updated_at)
-                SELECT {user_expr}, market, total_capital, updated_at
-                FROM portfolio_settings_old
-                """
-            )
-            conn.execute("DROP TABLE portfolio_settings_old")
 
     def _enrich_items(self, rows: list[dict[str, Any]], cash_amount: str, settings: Any = None) -> tuple[list[dict[str, Any]], str, Optional[str]]:
         if not rows:

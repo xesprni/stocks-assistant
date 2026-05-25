@@ -112,6 +112,10 @@ export interface SetupStatusResponse {
 
 export interface LoginSession {
   id: string;
+  device_id: string;
+  user_id: string;
+  username: string;
+  display_name: string;
   created_at: string;
   last_seen_at: string;
   expires_at: string;
@@ -119,6 +123,7 @@ export interface LoginSession {
   user_agent: string;
   ip_address: string;
   last_ip_address: string;
+  session_count: number;
   active_refresh_tokens: number;
   is_current: boolean;
   is_active: boolean;

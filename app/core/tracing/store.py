@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+
+from app.core.orm.repositories.tracing import TraceRepository
 
 logger = logging.getLogger("stocks-assistant.tracing")
 
@@ -112,39 +113,34 @@ def _preview(text: str | None) -> str:
 class TraceStore:
     """Persist Agent run traces in the chat sessions SQLite database."""
 
-    def __init__(self, workspace_dir: str):
+    def __init__(self, workspace_dir: str, repository: TraceRepository | None = None):
         root = Path(workspace_dir).expanduser()
         self.db_path = root / "sessions" / "sessions.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        self.repository = repository or TraceRepository(self.db_path)
 
     def create_run(self, session_id: str, user_message: str) -> dict[str, str]:
         run_id = _new_id()
+        root_event_id = _new_id()
         now = _now()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO trace_runs (
-                    id, session_id, status, started_at, final_response_preview
-                )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (run_id, session_id, "running", now, ""),
-            )
-            root_event_id = self._insert_event(
-                conn,
-                run_id=run_id,
-                parent_id=None,
-                node_type="agent_run",
-                title="Agent run",
-                status="running",
-                started_at=now,
-                ended_at=None,
-                duration_ms=None,
-                summary=_preview(user_message),
-                payload={"session_id": session_id, "user_message": user_message},
-            )
-            conn.commit()
+        self.repository.create_run(
+            run_id=run_id,
+            root_event_id=root_event_id,
+            session_id=session_id,
+            started_at=now,
+            final_response_preview="",
+            root_event={
+                "parent_id": None,
+                "node_type": "agent_run",
+                "title": "Agent run",
+                "status": "running",
+                "started_at": now,
+                "ended_at": None,
+                "duration_ms": None,
+                "summary": _preview(user_message),
+                "payload_json": _json_dumps({"session_id": session_id, "user_message": user_message}),
+            },
+        )
         return {"run_id": run_id, "root_event_id": root_event_id}
 
     def add_event(
@@ -162,22 +158,22 @@ class TraceStore:
     ) -> str:
         start = self._coerce_time(started_at) if started_at is not None else _now()
         end = self._coerce_time(ended_at) if ended_at is not None else None
-        with self._connect() as conn:
-            event_id = self._insert_event(
-                conn,
-                run_id=run_id,
-                parent_id=parent_id,
-                node_type=node_type,
-                title=title,
-                status=status,
-                started_at=start,
-                ended_at=end,
-                duration_ms=duration_ms,
-                summary=summary,
-                payload=payload or {},
-            )
-            conn.commit()
-        return event_id
+        event_id = _new_id()
+        return self.repository.add_event(
+            event_id=event_id,
+            run_id=run_id,
+            event={
+                "parent_id": parent_id,
+                "node_type": node_type,
+                "title": title,
+                "status": status,
+                "started_at": start,
+                "ended_at": end,
+                "duration_ms": duration_ms,
+                "summary": summary,
+                "payload_json": _json_dumps(payload or {}),
+            },
+        )
 
     def update_event(
         self,
@@ -189,32 +185,20 @@ class TraceStore:
         summary: Optional[str] = None,
         title: Optional[str] = None,
     ) -> None:
-        fields: list[str] = []
-        params: list[Any] = []
+        values: dict[str, Any] = {}
         if status is not None:
-            fields.append("status = ?")
-            params.append(status)
+            values["status"] = status
         if payload is not None:
-            fields.append("payload_json = ?")
-            params.append(_json_dumps(payload))
+            values["payload_json"] = _json_dumps(payload)
         if ended_at is not None:
-            fields.append("ended_at = ?")
-            params.append(self._coerce_time(ended_at))
+            values["ended_at"] = self._coerce_time(ended_at)
         if duration_ms is not None:
-            fields.append("duration_ms = ?")
-            params.append(duration_ms)
+            values["duration_ms"] = duration_ms
         if summary is not None:
-            fields.append("summary = ?")
-            params.append(summary)
+            values["summary"] = summary
         if title is not None:
-            fields.append("title = ?")
-            params.append(title)
-        if not fields:
-            return
-        params.append(event_id)
-        with self._connect() as conn:
-            conn.execute(f"UPDATE trace_events SET {', '.join(fields)} WHERE id = ?", params)
-            conn.commit()
+            values["title"] = title
+        self.repository.update_event(event_id, values)
 
     def finish_run(
         self,
@@ -227,197 +211,54 @@ class TraceStore:
         error: Optional[str] = None,
     ) -> None:
         now = _now()
-        run_row = None
-        with self._connect() as conn:
-            run_row = conn.execute(
-                "SELECT started_at FROM trace_runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-            duration = None
-            if run_row:
-                try:
-                    started = datetime.fromisoformat(run_row["started_at"])
-                    ended = datetime.fromisoformat(now)
-                    duration = max(0.0, (ended - started).total_seconds() * 1000)
-                except ValueError:
-                    duration = None
-            conn.execute(
-                """
-                UPDATE trace_runs
-                SET user_message_id = ?,
-                    assistant_message_id = ?,
-                    status = ?,
-                    ended_at = ?,
-                    duration_ms = ?,
-                    error = ?,
-                    final_response_preview = ?
-                WHERE id = ?
-                """,
-                (
-                    user_message_id,
-                    assistant_message_id,
-                    status,
-                    now,
-                    duration,
-                    error,
-                    _preview(final_response),
-                    run_id,
+        duration = None
+        run_row = self.repository.get_run(run_id)
+        if run_row:
+            try:
+                started = datetime.fromisoformat(run_row["started_at"])
+                ended = datetime.fromisoformat(now)
+                duration = max(0.0, (ended - started).total_seconds() * 1000)
+            except ValueError:
+                duration = None
+        self.repository.finish_run(
+            run_id=run_id,
+            root_event_id=root_event_id,
+            values={
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+                "status": status,
+                "ended_at": now,
+                "duration_ms": duration,
+                "error": error,
+                "final_response_preview": _preview(final_response),
+            },
+            root_values={"status": status, "ended_at": now, "duration_ms": duration},
+            final_event_id=_new_id(),
+            final_event={
+                "parent_id": root_event_id,
+                "node_type": "agent_end" if status != "error" else "error",
+                "title": "Agent finished" if status != "error" else "Agent failed",
+                "status": status,
+                "started_at": now,
+                "ended_at": now,
+                "duration_ms": 0,
+                "summary": _preview(error or final_response),
+                "payload_json": _json_dumps(
+                    {
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "final_response": final_response,
+                        "error": error,
+                    }
                 ),
-            )
-            conn.execute(
-                """
-                UPDATE trace_events
-                SET status = ?, ended_at = ?, duration_ms = ?
-                WHERE id = ?
-                """,
-                (status, now, duration, root_event_id),
-            )
-            self._insert_event(
-                conn,
-                run_id=run_id,
-                parent_id=root_event_id,
-                node_type="agent_end" if status != "error" else "error",
-                title="Agent finished" if status != "error" else "Agent failed",
-                status=status,
-                started_at=now,
-                ended_at=now,
-                duration_ms=0,
-                summary=_preview(error or final_response),
-                payload={
-                    "user_message_id": user_message_id,
-                    "assistant_message_id": assistant_message_id,
-                    "final_response": final_response,
-                    "error": error,
-                },
-            )
-            conn.commit()
+            },
+        )
 
     def get_session_traces(self, session_id: str, limit: int = 20) -> dict[str, Any]:
-        clean_limit = max(1, min(limit, 100))
-        with self._connect() as conn:
-            run_rows = conn.execute(
-                """
-                SELECT id, session_id, user_message_id, assistant_message_id, status,
-                       started_at, ended_at, duration_ms, error, final_response_preview
-                FROM trace_runs
-                WHERE session_id = ?
-                ORDER BY started_at DESC
-                LIMIT ?
-                """,
-                (session_id, clean_limit),
-            ).fetchall()
-            runs = []
-            for row in run_rows:
-                run = self._run_row_to_dict(row)
-                event_rows = conn.execute(
-                    """
-                    SELECT id, run_id, seq, parent_id, node_type, title, status,
-                           started_at, ended_at, duration_ms, summary, payload_json
-                    FROM trace_events
-                    WHERE run_id = ?
-                    ORDER BY seq ASC
-                    """,
-                    (run["id"],),
-                ).fetchall()
-                run["events"] = [self._event_row_to_dict(event_row) for event_row in event_rows]
-                runs.append(run)
-        return {"session_id": session_id, "runs": runs, "total": len(runs)}
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
-
-    def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trace_runs (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    user_message_id TEXT,
-                    assistant_message_id TEXT,
-                    status TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    ended_at TEXT,
-                    duration_ms REAL,
-                    error TEXT,
-                    final_response_preview TEXT NOT NULL DEFAULT '',
-                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-                    FOREIGN KEY(user_message_id) REFERENCES messages(id) ON DELETE SET NULL,
-                    FOREIGN KEY(assistant_message_id) REFERENCES messages(id) ON DELETE SET NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trace_events (
-                    id TEXT PRIMARY KEY,
-                    run_id TEXT NOT NULL,
-                    seq INTEGER NOT NULL,
-                    parent_id TEXT,
-                    node_type TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    ended_at TEXT,
-                    duration_ms REAL,
-                    summary TEXT NOT NULL DEFAULT '',
-                    payload_json TEXT NOT NULL DEFAULT '{}',
-                    FOREIGN KEY(run_id) REFERENCES trace_runs(id) ON DELETE CASCADE,
-                    FOREIGN KEY(parent_id) REFERENCES trace_events(id) ON DELETE SET NULL,
-                    UNIQUE(run_id, seq)
-                )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_trace_runs_session_started ON trace_runs(session_id, started_at)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_run_seq ON trace_events(run_id, seq)")
-            conn.commit()
-
-    def _insert_event(
-        self,
-        conn: sqlite3.Connection,
-        run_id: str,
-        parent_id: Optional[str],
-        node_type: str,
-        title: str,
-        status: str,
-        started_at: str,
-        ended_at: Optional[str],
-        duration_ms: Optional[float],
-        summary: str,
-        payload: dict[str, Any],
-    ) -> str:
-        event_id = _new_id()
-        seq = conn.execute(
-            "SELECT COALESCE(MAX(seq), -1) + 1 FROM trace_events WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()[0]
-        conn.execute(
-            """
-            INSERT INTO trace_events (
-                id, run_id, seq, parent_id, node_type, title, status,
-                started_at, ended_at, duration_ms, summary, payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                run_id,
-                seq,
-                parent_id,
-                node_type,
-                title,
-                status,
-                started_at,
-                ended_at,
-                duration_ms,
-                summary,
-                _json_dumps(payload),
-            ),
-        )
-        return event_id
+        traces = self.repository.get_session_traces(session_id=session_id, limit=limit)
+        for run in traces["runs"]:
+            run["events"] = [self._event_row_to_dict(event_row) for event_row in run["events"]]
+        return traces
 
     @staticmethod
     def _coerce_time(value: float | str) -> str:
@@ -426,7 +267,7 @@ class TraceStore:
         return value
 
     @staticmethod
-    def _run_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    def _run_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": row["id"],
             "session_id": row["session_id"],
@@ -441,7 +282,7 @@ class TraceStore:
         }
 
     @staticmethod
-    def _event_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    def _event_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         node_type = row["node_type"]
         payload = _decode_json(row["payload_json"], {})
         return {

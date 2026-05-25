@@ -63,6 +63,8 @@ import type {
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const ACCESS_TOKEN_KEY = "stocks_assistant_access_token";
 const REFRESH_TOKEN_KEY = "stocks_assistant_refresh_token";
+const DEVICE_ID_KEY = "stocks_assistant_device_id";
+const DEVICE_ID_HEADER = "X-Device-Id";
 const AUTH_EXPIRED_EVENT = "stocks-assistant:auth-expired";
 
 let accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) ?? "";
@@ -95,6 +97,15 @@ export function getStoredAccessToken() {
 
 export function getStoredRefreshToken() {
   return refreshToken;
+}
+
+export function getDeviceId() {
+  let deviceId = localStorage.getItem(DEVICE_ID_KEY) ?? "";
+  if (!deviceId) {
+    deviceId = crypto.randomUUID?.() ?? `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  }
+  return deviceId;
 }
 
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
@@ -151,6 +162,7 @@ export function addAuthExpiredListener(listener: (message: string) => void) {
 function authHeaders(init?: RequestInit) {
   return {
     "Content-Type": "application/json",
+    [DEVICE_ID_HEADER]: getDeviceId(),
     ...init?.headers,
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
   };
@@ -164,8 +176,8 @@ async function refreshAuthToken() {
   if (!refreshPromise) {
     refreshPromise = fetch(`${API_BASE}/api/v1/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      headers: { "Content-Type": "application/json", [DEVICE_ID_HEADER]: getDeviceId() },
+      body: JSON.stringify({ refresh_token: refreshToken, device_id: getDeviceId() }),
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -226,14 +238,14 @@ export function getSetupStatus() {
 export function setupAdmin(payload: { username: string; password: string; display_name?: string }) {
   return request<AuthTokenResponse>("/api/v1/auth/setup", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, device_id: getDeviceId() }),
   });
 }
 
 export function login(payload: { username: string; password: string }) {
   return request<AuthTokenResponse>("/api/v1/auth/login", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, device_id: getDeviceId() }),
   });
 }
 
@@ -252,8 +264,9 @@ export function listLoginSessions() {
   return request<LoginSessionListResponse>("/api/v1/auth/sessions");
 }
 
-export function revokeLoginSession(sessionId: string) {
-  return request<{ status: string; revoked_current: boolean }>(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}`, {
+export function revokeLoginSession(sessionId: string, userId?: string) {
+  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; revoked_current: boolean }>(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}${query}`, {
     method: "DELETE",
   });
 }

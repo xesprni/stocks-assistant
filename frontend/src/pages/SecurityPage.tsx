@@ -13,6 +13,7 @@ const copy = {
   zh: {
     title: "登录安全",
     subtitle: "查看当前账号的登录设备，并让不再使用的设备下线",
+    adminSubtitle: "查看所有用户的登录设备，并让不再使用的设备下线",
     refresh: "刷新",
     loading: "正在加载登录设备...",
     empty: "暂无登录设备",
@@ -24,6 +25,8 @@ const copy = {
     expires: "需要重新登录",
     ip: "登录 IP",
     lastIp: "最近 IP",
+    owner: "用户",
+    sessions: "登录次数",
     sessionPolicy: "登录策略",
     sessionPolicyHint: "访问令牌短时有效；刷新令牌会滑动续期，但设备登录最长保留 {days} 天，到期后需要重新输入密码。当前账号最多保留 {devices} 台活跃设备。",
     revoke: "下线",
@@ -39,6 +42,7 @@ const copy = {
   en: {
     title: "Login Security",
     subtitle: "Review signed-in devices for this account and sign out devices you no longer use",
+    adminSubtitle: "Review signed-in devices for all users and sign out devices no longer in use",
     refresh: "Refresh",
     loading: "Loading login devices...",
     empty: "No login devices",
@@ -50,6 +54,8 @@ const copy = {
     expires: "Re-login by",
     ip: "Login IP",
     lastIp: "Recent IP",
+    owner: "User",
+    sessions: "Sign-ins",
     sessionPolicy: "Login policy",
     sessionPolicyHint: "Access tokens are short-lived. Refresh tokens rotate while active, but each device session lasts at most {days} days before a password prompt. This account can keep up to {devices} active devices.",
     revoke: "Sign out",
@@ -111,6 +117,7 @@ function policyText(template: string, days: number, devices: number) {
 export function SecurityPage({ confirmAction, language }: { confirmAction: ConfirmFn; language: AppLanguage }) {
   const auth = useAuth();
   const t = copy[language];
+  const isAdmin = auth.can("users:manage");
   const [sessions, setSessions] = useState<LoginSession[]>([]);
   const [maxLifetimeDays, setMaxLifetimeDays] = useState(30);
   const [maxDevices, setMaxDevices] = useState(5);
@@ -152,7 +159,7 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
     setRevoking(session.id);
     setError("");
     try {
-      const result = await revokeLoginSession(session.id);
+      const result = await revokeLoginSession(session.id, isAdmin ? session.user_id : undefined);
       if (result.revoked_current) {
         await auth.logout();
         return;
@@ -173,7 +180,7 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
             <ShieldCheck className="size-5 text-primary" />
             <p className="font-semibold">{t.title}</p>
           </div>
-          <p className="text-xs text-muted-foreground">{t.subtitle}</p>
+          <p className="text-xs text-muted-foreground">{isAdmin ? t.adminSubtitle : t.subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{activeCount} {t.active}</Badge>
@@ -209,12 +216,13 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
             {sessions.map((session) => {
               const DeviceIcon = isMobileDevice(session.user_agent) ? Smartphone : Laptop;
               return (
-                <article key={session.id} className="rounded-md border border-border/80 bg-background/60 p-3">
+                <article key={`${session.user_id}:${session.id}`} className="rounded-md border border-border/80 bg-background/60 p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <DeviceIcon className="size-4 text-primary" />
                         <p className="text-sm font-semibold">{deviceName(session.user_agent, language)}</p>
+                        {isAdmin ? <Badge variant="outline">{session.username || session.user_id}</Badge> : null}
                         {session.is_current ? <Badge variant="outline">{t.current}</Badge> : null}
                         <Badge variant={session.is_active ? "secondary" : "muted"}>
                           {session.is_active ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
@@ -238,8 +246,10 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
                     <Info label={t.firstSeen} value={formatDate(session.created_at, language)} />
                     <Info label={t.lastSeen} value={formatDate(session.last_seen_at, language)} />
                     <Info label={t.expires} value={formatDate(session.expires_at, language)} />
+                    {isAdmin ? <Info label={t.owner} value={session.display_name ? `${session.display_name} · ${session.username}` : session.username || session.user_id} /> : null}
                     <Info label={t.ip} value={session.ip_address || "-"} />
                     <Info label={t.lastIp} value={session.last_ip_address || "-"} />
+                    <Info label={t.sessions} value={String(session.session_count || 1)} />
                   </div>
                 </article>
               );

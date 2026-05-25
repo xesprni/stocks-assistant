@@ -13,15 +13,18 @@ class SetupRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8, max_length=256)
     display_name: str = Field(default="", max_length=120)
+    device_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+    device_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+    device_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class LogoutRequest(BaseModel):
@@ -56,6 +59,10 @@ class AuthTokenResponse(BaseModel):
 
 class LoginSessionResponse(BaseModel):
     id: str
+    device_id: str = ""
+    user_id: str = ""
+    username: str = ""
+    display_name: str = ""
     created_at: str
     last_seen_at: str
     expires_at: str
@@ -63,6 +70,7 @@ class LoginSessionResponse(BaseModel):
     user_agent: str = ""
     ip_address: str = ""
     last_ip_address: str = ""
+    session_count: int = 1
     active_refresh_tokens: int = 0
     is_current: bool = False
     is_active: bool = False

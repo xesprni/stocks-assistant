@@ -33,6 +33,7 @@ ACCESS_TOKEN_MINUTES = 15
 REFRESH_TOKEN_DAYS = 7
 LOGIN_SESSION_DAYS = 30
 JWT_ALGORITHM = "HS256"
+DEVICE_ID_HEADER = "x-device-id"
 
 
 class AuthError(RuntimeError):
@@ -137,17 +138,42 @@ def _refresh_expires_at(session: Optional[dict[str, Any]] = None) -> datetime:
     return expires
 
 
+def normalize_device_id(value: str | None) -> str:
+    """Normalize a client-provided stable device identifier."""
+    return "".join(ch for ch in (value or "").strip() if ch.isalnum() or ch in {"-", "_", ".", ":"})[:128]
+
+
+def resolve_device_id(
+    provided: str | None = None,
+    *,
+    request: Request | None = None,
+    user_agent: str = "",
+    ip_address: str = "",
+) -> str:
+    """Resolve a stable device id, falling back to a coarse UA/IP fingerprint for non-browser clients."""
+    header_value = request.headers.get(DEVICE_ID_HEADER) if request else ""
+    device_id = normalize_device_id(provided) or normalize_device_id(header_value)
+    if device_id:
+        return device_id
+    source_user_agent = user_agent or (request.headers.get("user-agent", "") if request else "")
+    source_ip = ip_address or (request_ip(request) if request else "")
+    fingerprint = hashlib.sha256(f"{source_user_agent}\0{source_ip}".encode("utf-8")).hexdigest()[:32]
+    return f"fp_{fingerprint}"
+
+
 def create_login_session(
     user_id: str,
     *,
     user_agent: str = "",
     ip_address: str = "",
+    device_id: str = "",
 ) -> dict[str, Any]:
     return get_app_store().create_login_session(
         user_id=user_id,
         expires_at=_session_expires_at().replace(microsecond=0).isoformat(),
         user_agent=user_agent,
         ip_address=ip_address,
+        device_id=device_id,
     )
 
 
@@ -253,6 +279,7 @@ def refresh_tokens(
     *,
     user_agent: str = "",
     ip_address: str = "",
+    device_id: str = "",
 ) -> tuple[str, str, dict[str, Any]]:
     token_hash = hash_refresh_token(refresh_token)
     record = get_app_store().get_refresh_token(token_hash)
@@ -277,13 +304,20 @@ def refresh_tokens(
         if datetime.fromisoformat(session["expires_at"]) <= datetime.now(timezone.utc):
             get_app_store().revoke_login_session(session["id"])
             raise AuthError("Login session expired; please sign in again")
-        get_app_store().touch_login_session(session["id"], user_agent=user_agent, ip_address=ip_address)
+        resolved_device_id = normalize_device_id(device_id) or session.get("device_id") or ""
+        get_app_store().touch_login_session(
+            session["id"],
+            user_agent=user_agent,
+            ip_address=ip_address,
+            device_id=resolved_device_id,
+        )
     else:
         # 兼容旧版本数据库中的 refresh token，首次刷新时补建一个设备会话。
         session = create_login_session(
             user["id"],
             user_agent=user_agent or record.get("user_agent") or "",
             ip_address=ip_address or record.get("ip_address") or "",
+            device_id=normalize_device_id(device_id),
         )
     next_refresh, next_refresh_id = create_refresh_token(
         user["id"],

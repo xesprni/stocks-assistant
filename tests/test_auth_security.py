@@ -120,6 +120,66 @@ class AuthSecurityTest(unittest.TestCase):
         refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
         self.assertEqual(refresh.status_code, 401)
 
+    def test_same_device_relogin_is_listed_as_one_device(self):
+        response = self.client.post(
+            "/api/v1/auth/setup",
+            json={"username": "admin", "password": "Password123!", "display_name": "Admin", "device_id": "browser-1"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        first_tokens = response.json()
+
+        logout = self.client.post("/api/v1/auth/logout", json={"refresh_token": first_tokens["refresh_token"]})
+        self.assertEqual(logout.status_code, 200, logout.text)
+
+        second = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": "Password123!", "device_id": "browser-1"},
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        headers = {"Authorization": f"Bearer {second.json()['access_token']}"}
+
+        listed = self.client.get("/api/v1/auth/sessions", headers=headers)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        sessions = listed.json()["sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["id"], "browser-1")
+        self.assertEqual(sessions[0]["device_id"], "browser-1")
+        self.assertEqual(sessions[0]["session_count"], 2)
+        self.assertTrue(sessions[0]["is_active"])
+        self.assertTrue(sessions[0]["is_current"])
+
+    def test_admin_lists_all_user_login_devices(self):
+        admin_tokens = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin_tokens['access_token']}"}
+        created = self.client.post(
+            "/api/v1/users",
+            json={
+                "username": "trader",
+                "password": "Password123!",
+                "display_name": "Trader",
+                "roles": ["user"],
+            },
+            headers=admin_headers,
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+
+        user_login = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "trader", "password": "Password123!", "device_id": "trader-laptop"},
+        )
+        self.assertEqual(user_login.status_code, 200, user_login.text)
+        user_headers = {"Authorization": f"Bearer {user_login.json()['access_token']}"}
+
+        admin_list = self.client.get("/api/v1/auth/sessions", headers=admin_headers)
+        self.assertEqual(admin_list.status_code, 200, admin_list.text)
+        admin_sessions = admin_list.json()["sessions"]
+        self.assertIn("admin", {session["username"] for session in admin_sessions})
+        self.assertIn("trader", {session["username"] for session in admin_sessions})
+
+        user_list = self.client.get("/api/v1/auth/sessions", headers=user_headers)
+        self.assertEqual(user_list.status_code, 200, user_list.text)
+        self.assertEqual({session["username"] for session in user_list.json()["sessions"]}, {"trader"})
+
     def test_refresh_requires_relogin_after_absolute_session_expiry(self):
         tokens = self.setup_admin()
         record = self.store.get_refresh_token(hash_refresh_token(tokens["refresh_token"]))

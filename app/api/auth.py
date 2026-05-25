@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.config import get_settings
 from app.core.app_store import PERMISSION_DESCRIPTIONS, get_app_store
@@ -20,6 +20,7 @@ from app.core.security import (
     hash_refresh_token,
     public_user,
     refresh_tokens,
+    resolve_device_id,
     request_ip,
     verify_password,
 )
@@ -52,8 +53,13 @@ def _session_response(session: dict, *, current_session_id: str | None = None) -
     revoked_at = session.get("revoked_at")
     expires_at = datetime.fromisoformat(session["expires_at"])
     is_active = not revoked_at and expires_at > datetime.now(timezone.utc) and session.get("active_refresh_tokens", 0) > 0
+    session_ids = session.get("session_ids") if isinstance(session.get("session_ids"), list) else [session["id"]]
     return LoginSessionResponse(
         id=session["id"],
+        device_id=session.get("device_id") or session["id"],
+        user_id=session.get("user_id") or "",
+        username=session.get("username") or "",
+        display_name=session.get("display_name") or "",
         created_at=session["created_at"],
         last_seen_at=session["last_seen_at"],
         expires_at=session["expires_at"],
@@ -61,8 +67,9 @@ def _session_response(session: dict, *, current_session_id: str | None = None) -
         user_agent=session.get("user_agent") or "",
         ip_address=session.get("ip_address") or "",
         last_ip_address=session.get("last_ip_address") or "",
+        session_count=int(session.get("session_count") or 1),
         active_refresh_tokens=int(session.get("active_refresh_tokens") or 0),
-        is_current=bool(current_session_id and session["id"] == current_session_id),
+        is_current=bool(current_session_id and current_session_id in session_ids),
         is_active=is_active,
     )
 
@@ -107,6 +114,7 @@ async def setup(request: SetupRequest, http_request: Request):
         user["id"],
         user_agent=http_request.headers.get("user-agent", ""),
         ip_address=request_ip(http_request),
+        device_id=resolve_device_id(request.device_id, request=http_request),
     )
     refresh_token, _ = create_refresh_token(
         user["id"],
@@ -128,6 +136,7 @@ async def login(request: LoginRequest, http_request: Request):
         user["id"],
         user_agent=http_request.headers.get("user-agent", ""),
         ip_address=request_ip(http_request),
+        device_id=resolve_device_id(request.device_id, request=http_request),
     )
     refresh_token, _ = create_refresh_token(
         user["id"],
@@ -147,6 +156,7 @@ async def refresh(request: RefreshRequest, http_request: Request):
             request.refresh_token,
             user_agent=http_request.headers.get("user-agent", ""),
             ip_address=request_ip(http_request),
+            device_id=resolve_device_id(request.device_id, request=http_request),
         )
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
@@ -173,7 +183,7 @@ async def logout(request: LogoutRequest):
 async def list_login_sessions(current_user=Depends(get_current_user)):
     sessions = [
         _session_response(session, current_session_id=current_user.session_id)
-        for session in get_app_store().list_login_sessions(current_user.id)
+        for session in get_app_store().list_login_sessions(None if current_user.is_admin else current_user.id)
     ]
     return LoginSessionListResponse(
         sessions=sessions,
@@ -184,14 +194,25 @@ async def list_login_sessions(current_user=Depends(get_current_user)):
 
 
 @router.delete("/sessions/{session_id}")
-async def revoke_login_session(session_id: str, current_user=Depends(get_current_user)):
+async def revoke_login_session(
+    session_id: str,
+    user_id: str | None = Query(default=None),
+    current_user=Depends(get_current_user),
+):
     store = get_app_store()
-    session = store.get_login_session(session_id)
-    if not session or session.get("user_id") != current_user.id:
+    target_user_id = user_id if current_user.is_admin else current_user.id
+    session = store.get_login_device(session_id, user_id=target_user_id)
+    if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Login session not found")
-    store.revoke_login_session(session_id)
-    store.audit(current_user.id, "auth.session_revoke", "login_sessions", {"session_id": session_id})
-    return {"status": "ok", "revoked_current": bool(current_user.session_id and current_user.session_id == session_id)}
+    store.revoke_login_device(session_id, user_id=target_user_id)
+    store.audit(
+        current_user.id,
+        "auth.session_revoke",
+        "login_sessions",
+        {"device_id": session.get("device_id") or session_id, "user_id": session.get("user_id")},
+    )
+    session_ids = session.get("session_ids") if isinstance(session.get("session_ids"), list) else [session.get("id")]
+    return {"status": "ok", "revoked_current": bool(current_user.session_id and current_user.session_id in session_ids)}
 
 
 @router.get("/me", response_model=UserPublic)
