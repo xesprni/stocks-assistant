@@ -1,12 +1,20 @@
-"""Market monitoring service — fetches index and watchlist quotes via Longbridge SDK."""
+"""Market monitoring service — dashboard config and quote aggregation."""
 
 from __future__ import annotations
 
 import json
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 
+from app.core.market.longbridge_data import LongbridgeMarketDataMixin
+from app.core.market.utils import (
+    canonical_symbol,
+    change_rate,
+    change_value,
+    normalize_symbol_map,
+    normalize_symbols,
+    stringify,
+)
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 # 默认监控指数列表
@@ -25,15 +33,6 @@ DEFAULT_CONFIG = {
     "refresh_interval": 60,
 }
 
-SYMBOL_ALIASES = {
-    # Longbridge 对部分指数会返回带前导点的 symbol，配置和结果统一归一成无前导点格式。
-    ".HSI.HK": "HSI.HK",
-    ".HSCEI.HK": "HSCEI.HK",
-    ".HSTECH.HK": "HSTECH.HK",
-    ".HSCFI.HK": "HSCFI.HK",
-    ".HSHCI.HK": "HSHCI.HK",
-}
-
 
 def _default_config() -> dict:
     return {
@@ -42,17 +41,12 @@ def _default_config() -> dict:
     }
 
 
-def _canonical_symbol(symbol: Any) -> str:
-    raw = str(symbol or "").strip().upper()
-    return SYMBOL_ALIASES.get(raw, raw)
-
-
 def _normalize_index_config(index: Any) -> dict:
     if not isinstance(index, dict):
-        symbol = _canonical_symbol(index)
+        symbol = canonical_symbol(index)
         return {"symbol": symbol, "name": symbol, "enabled": True}
 
-    symbol = _canonical_symbol(index.get("symbol"))
+    symbol = canonical_symbol(index.get("symbol"))
     normalized = dict(index)
     normalized["symbol"] = symbol
     normalized["name"] = str(index.get("name") or symbol)
@@ -83,37 +77,7 @@ def _normalize_config(config: Any) -> dict:
     return normalized
 
 
-def _normalize_symbol_map(symbol_map: Optional[dict]) -> dict:
-    if not symbol_map:
-        return {}
-    return {_canonical_symbol(symbol): value for symbol, value in symbol_map.items()}
-
-
-def _str(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _change_value(last_done: Any, prev_close: Any) -> Optional[str]:
-    try:
-        return str(Decimal(str(last_done)) - Decimal(str(prev_close)))
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-
-
-def _change_rate(last_done: Any, prev_close: Any) -> Optional[str]:
-    try:
-        last = Decimal(str(last_done))
-        prev = Decimal(str(prev_close))
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-    if prev == 0:
-        return None
-    return f"{((last - prev) / prev * Decimal('100')):.2f}%"
-
-
-class MarketService:
+class MarketService(LongbridgeMarketDataMixin):
     """行情监控服务，依赖 Longbridge SDK 拉取报价数据。"""
 
     def __init__(self, workspace_dir: str) -> None:
@@ -169,20 +133,18 @@ class MarketService:
     def get_watchlist_quotes(self, watchlist_items: list[dict], settings: Any = None) -> list[dict]:
         if not watchlist_items:
             return []
-        symbols = [_canonical_symbol(item["symbol"]) for item in watchlist_items]
+        symbols = [canonical_symbol(item["symbol"]) for item in watchlist_items]
         name_map = {
-            _canonical_symbol(item["symbol"]): (
+            canonical_symbol(item["symbol"]): (
                 item.get("name") or item.get("name_cn") or item.get("symbol", "")
             )
             for item in watchlist_items
         }
         category_map = {
-            _canonical_symbol(item["symbol"]): item.get("category", "")
+            canonical_symbol(item["symbol"]): item.get("category", "")
             for item in watchlist_items
         }
         return self._fetch_quotes(symbols, name_map=name_map, category_map=category_map, settings=settings)
-
-    # ------------------------------------------------------------------ internal
 
     def _fetch_quotes(
         self,
@@ -191,20 +153,13 @@ class MarketService:
         category_map: Optional[dict] = None,
         settings: Any = None,
     ) -> list[dict]:
-        normalized_symbols = []
-        seen_symbols: set[str] = set()
-        for symbol in symbols:
-            canonical = _canonical_symbol(symbol)
-            # 批量报价前先做归一和去重，减少 Longbridge 请求量并稳定结果 key。
-            if not canonical or canonical in seen_symbols:
-                continue
-            seen_symbols.add(canonical)
-            normalized_symbols.append(canonical)
+        # 批量报价前先做归一和去重，减少 Longbridge 请求量并稳定结果 key。
+        normalized_symbols = normalize_symbols(symbols)
         if not normalized_symbols:
             return []
 
-        normalized_name_map = _normalize_symbol_map(name_map)
-        normalized_category_map = _normalize_symbol_map(category_map)
+        normalized_name_map = normalize_symbol_map(name_map)
+        normalized_category_map = normalize_symbol_map(category_map)
 
         ctx = self._quote_context(settings=settings)
         try:
@@ -214,7 +169,7 @@ class MarketService:
 
         results: list[dict] = []
         for q in raw_quotes:
-            symbol = _canonical_symbol(getattr(q, "symbol", ""))
+            symbol = canonical_symbol(getattr(q, "symbol", ""))
             if not symbol:
                 continue
             last_done = getattr(q, "last_done", None)
@@ -224,133 +179,15 @@ class MarketService:
                     "symbol": symbol,
                     "name": normalized_name_map.get(symbol, ""),
                     "category": normalized_category_map.get(symbol, ""),
-                    "last_done": _str(last_done),
-                    "prev_close": _str(prev_close),
-                    "open": _str(getattr(q, "open", None)),
-                    "high": _str(getattr(q, "high", None)),
-                    "low": _str(getattr(q, "low", None)),
-                    "volume": _str(getattr(q, "volume", None)),
-                    "turnover": _str(getattr(q, "turnover", None)),
-                    "change_value": _change_value(last_done, prev_close),
-                    "change_rate": _change_rate(last_done, prev_close),
+                    "last_done": stringify(last_done),
+                    "prev_close": stringify(prev_close),
+                    "open": stringify(getattr(q, "open", None)),
+                    "high": stringify(getattr(q, "high", None)),
+                    "low": stringify(getattr(q, "low", None)),
+                    "volume": stringify(getattr(q, "volume", None)),
+                    "turnover": stringify(getattr(q, "turnover", None)),
+                    "change_value": change_value(last_done, prev_close),
+                    "change_rate": change_rate(last_done, prev_close),
                 }
             )
         return results
-
-    def _quote_context(self, settings: Any = None):
-        try:
-            from longbridge.openapi import Config, QuoteContext
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
-
-        from app.config import get_settings
-
-        settings = settings or get_settings()
-        if (
-            settings.longbridge_app_key
-            and settings.longbridge_app_secret
-            and settings.longbridge_access_token
-        ):
-            config = Config.from_apikey(
-                settings.longbridge_app_key,
-                settings.longbridge_app_secret,
-                settings.longbridge_access_token,
-                http_url=settings.longbridge_http_url or None,
-                quote_ws_url=settings.longbridge_quote_ws_url or None,
-            )
-        else:
-            try:
-                config = Config.from_apikey_env()
-            except Exception as exc:
-                raise LongbridgeUnavailableError(
-                    "Longbridge credentials are not configured. Set LONGBRIDGE_APP_KEY, "
-                    "LONGBRIDGE_APP_SECRET and LONGBRIDGE_ACCESS_TOKEN, or add them to config.json."
-                ) from exc
-
-        return QuoteContext(config)
-
-    # ---------------------------------------------------------------- candlestick / intraday
-
-    def get_candlesticks(self, symbol: str, period: str, count: int = 200, settings: Any = None) -> dict:
-        """拉取历史 K 线数据。period: 1D | 1W | 1M。"""
-        try:
-            from longbridge.openapi import AdjustType, Period
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
-
-        period_map = {
-            "1D": Period.Day,
-            "1W": Period.Week,
-            "1M": Period.Month,
-        }
-        lb_period = period_map.get(period, Period.Day)
-        symbol = _canonical_symbol(symbol)
-        ctx = self._quote_context(settings=settings)
-        try:
-            raw = ctx.candlesticks(symbol, lb_period, min(count, 1000), AdjustType.ForwardAdjust)
-        except Exception as exc:
-            raise LongbridgeUnavailableError(str(exc)) from exc
-
-        bars = []
-        for c in raw:
-            ts = getattr(c, "timestamp", None)
-            bars.append(
-                {
-                    "timestamp": int(ts.timestamp()) if ts is not None else 0,
-                    "open": _str(getattr(c, "open", None)) or "0",
-                    "high": _str(getattr(c, "high", None)) or "0",
-                    "low": _str(getattr(c, "low", None)) or "0",
-                    "close": _str(getattr(c, "close", None)) or "0",
-                    "volume": _str(getattr(c, "volume", None)) or "0",
-                    "turnover": _str(getattr(c, "turnover", None)) or "0",
-                }
-            )
-        return {"symbol": symbol, "period": period, "bars": bars}
-
-    def get_intraday(self, symbol: str, since: Optional[int] = None, settings: Any = None) -> dict:
-        """拉取今日分时数据。"""
-        symbol = _canonical_symbol(symbol)
-        ctx = self._quote_context(settings=settings)
-        try:
-            raw = ctx.intraday(symbol)
-        except Exception as exc:
-            raise LongbridgeUnavailableError(str(exc)) from exc
-
-        bars = []
-        for line in raw:
-            ts = getattr(line, "timestamp", None)
-            bars.append(
-                {
-                    "timestamp": int(ts.timestamp()) if ts is not None else 0,
-                    "price": _str(getattr(line, "price", None)) or "0",
-                    "volume": _str(getattr(line, "volume", None)) or "0",
-                    "turnover": _str(getattr(line, "turnover", None)) or "0",
-                    "avg_price": _str(getattr(line, "avg_price", None)) or "0",
-                }
-            )
-        if since is not None:
-            bars = [bar for bar in bars if int(bar["timestamp"]) >= since]
-        return {"symbol": symbol, "bars": bars}
-
-    def get_market_temperature(self, market: str = "US", settings: Any = None) -> dict:
-        """获取市场温度。market: US / HK / CN"""
-        try:
-            from longbridge.openapi import Market
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
-
-        market_map = {"US": Market.US, "HK": Market.HK, "CN": Market.CN}
-        lb_market = market_map.get(market, Market.US)
-        ctx = self._quote_context(settings=settings)
-        try:
-            resp = ctx.market_temperature(lb_market)
-        except Exception as exc:
-            raise LongbridgeUnavailableError(str(exc)) from exc
-        return {
-            "market": market,
-            "temperature": getattr(resp, "temperature", None),
-            "description": getattr(resp, "description", ""),
-            "valuation": getattr(resp, "valuation", None),
-            "sentiment": getattr(resp, "sentiment", None),
-            "updated_at": getattr(resp, "updated_at", None),
-        }

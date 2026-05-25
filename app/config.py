@@ -36,6 +36,15 @@ DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
     "memory_search",
     "memory_get",
     "get_financial_reports",
+    "get_longbridge_realtime_quotes",
+    "get_longbridge_history_candlesticks",
+    "get_longbridge_candlesticks",
+    "get_longbridge_intraday",
+    "get_longbridge_trades",
+    "get_longbridge_depth",
+    "get_longbridge_market_status",
+    "get_longbridge_trading_days",
+    "get_longbridge_quote_indicators",
 ]
 
 
@@ -52,6 +61,15 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "memory_search",
     "memory_get",
     "scheduler",
+    "get_longbridge_realtime_quotes",
+    "get_longbridge_history_candlesticks",
+    "get_longbridge_candlesticks",
+    "get_longbridge_intraday",
+    "get_longbridge_trades",
+    "get_longbridge_depth",
+    "get_longbridge_market_status",
+    "get_longbridge_trading_days",
+    "get_longbridge_quote_indicators",
 ]
 
 CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex"

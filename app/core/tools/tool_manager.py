@@ -35,7 +35,7 @@ class ToolManager:
         """加载所有内置工具
 
         内置工具包括：bash、web_search、web_fetch、read_file、write_file、
-        financial_reports、portfolio_positions、memory_search、memory_get、scheduler。
+        financial_reports、market_data、portfolio_positions、memory_search、memory_get、scheduler。
         """
         from app.core.tools.bash import BashTool
         from app.core.tools.web_search import WebSearchTool
@@ -44,6 +44,17 @@ class ToolManager:
         from app.core.tools.read_skill import ReadSkillTool
         from app.core.tools.write_file import WriteFileTool
         from app.core.tools.financial_reports import GetFinancialReportsTool
+        from app.core.tools.market_data import (
+            GetLongbridgeCandlesticksTool,
+            GetLongbridgeDepthTool,
+            GetLongbridgeHistoryCandlesticksTool,
+            GetLongbridgeIntradayTool,
+            GetLongbridgeMarketStatusTool,
+            GetLongbridgeQuoteIndicatorsTool,
+            GetLongbridgeRealtimeQuotesTool,
+            GetLongbridgeTradesTool,
+            GetLongbridgeTradingDaysTool,
+        )
         from app.core.tools.portfolio_positions import GetPortfolioPositionsTool
         from app.core.tools.delegate_agent import DelegateAgentTool
         from app.core.tools.memory_search import MemorySearchTool
@@ -58,6 +69,15 @@ class ToolManager:
             ReadSkillTool,
             WriteFileTool,
             GetFinancialReportsTool,
+            GetLongbridgeRealtimeQuotesTool,
+            GetLongbridgeHistoryCandlesticksTool,
+            GetLongbridgeCandlesticksTool,
+            GetLongbridgeIntradayTool,
+            GetLongbridgeTradesTool,
+            GetLongbridgeDepthTool,
+            GetLongbridgeMarketStatusTool,
+            GetLongbridgeTradingDaysTool,
+            GetLongbridgeQuoteIndicatorsTool,
             GetPortfolioPositionsTool,
             DelegateAgentTool,
         ]
@@ -165,6 +185,8 @@ class ToolManager:
         if class_name == "GetFinancialReportsTool":
             return tool_class(settings=self.settings)
         if class_name == "GetPortfolioPositionsTool":
+            return tool_class(user_id=self.user_id, settings=self.settings)
+        if class_name.startswith("GetLongbridge") and class_name.endswith("Tool"):
             return tool_class(user_id=self.user_id, settings=self.settings)
         if class_name == "SchedulerTool":
             from app.deps import get_scheduler_service
