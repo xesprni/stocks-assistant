@@ -1,0 +1,369 @@
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+import app.config as config_module
+import app.core.app_store as app_store_module
+from app.core.tracing import TraceStore
+from app.core.app_store import APP_DB_ENV, reset_app_store_for_tests
+from app.core.security import hash_password, hash_refresh_token, verify_password
+from app.deps import get_session_store, get_trace_store
+from app.main import app
+
+
+class AuthSecurityTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old_db_path = os.environ.get(APP_DB_ENV)
+        self.db_path = Path(self.tmp.name) / "app.db"
+        self.workspace = Path(self.tmp.name) / "workspace"
+        os.environ[APP_DB_ENV] = str(self.db_path)
+        self.store = reset_app_store_for_tests(self.db_path)
+        self.store.set_config_values({"workspace_dir": str(self.workspace)})
+        config_module._config_instance = None
+        get_session_store.cache_clear()
+        get_trace_store.cache_clear()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        self.client.close()
+        config_module._config_instance = None
+        get_session_store.cache_clear()
+        get_trace_store.cache_clear()
+        app_store_module._app_store = None
+        if self.old_db_path is None:
+            os.environ.pop(APP_DB_ENV, None)
+        else:
+            os.environ[APP_DB_ENV] = self.old_db_path
+        self.tmp.cleanup()
+
+    def setup_admin(self):
+        response = self.client.post(
+            "/api/v1/auth/setup",
+            json={"username": "admin", "password": "Password123!", "display_name": "Admin"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def test_password_hash_round_trip(self):
+        password_hash = hash_password("Password123!")
+        self.assertTrue(verify_password("Password123!", password_hash))
+        self.assertFalse(verify_password("wrong-password", password_hash))
+
+    def test_setup_only_once_and_protected_api_requires_token(self):
+        unauthorized = self.client.get("/api/v1/config")
+        self.assertEqual(unauthorized.status_code, 503)
+        self.assertTrue(unauthorized.json()["setup_required"])
+
+        tokens = self.setup_admin()
+        duplicate = self.client.post(
+            "/api/v1/auth/setup",
+            json={"username": "another", "password": "Password123!", "display_name": "Another"},
+        )
+        self.assertEqual(duplicate.status_code, 409)
+
+        protected = self.client.get("/api/v1/config")
+        self.assertEqual(protected.status_code, 401)
+
+        authenticated = self.client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(authenticated.status_code, 200)
+        self.assertEqual(authenticated.json()["username"], "admin")
+
+    def test_refresh_token_rotation_revokes_previous_token(self):
+        tokens = self.setup_admin()
+
+        rotated = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        self.assertEqual(rotated.status_code, 200, rotated.text)
+        next_refresh = rotated.json()["refresh_token"]
+
+        old_record = self.store.get_refresh_token(hash_refresh_token(tokens["refresh_token"]))
+        self.assertIsNotNone(old_record)
+        self.assertIsNotNone(old_record["revoked_at"])
+
+        replay = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        self.assertEqual(replay.status_code, 401)
+
+        logout = self.client.post("/api/v1/auth/logout", json={"refresh_token": next_refresh})
+        self.assertEqual(logout.status_code, 200)
+        after_logout = self.client.post("/api/v1/auth/refresh", json={"refresh_token": next_refresh})
+        self.assertEqual(after_logout.status_code, 401)
+
+    def test_rbac_denies_readonly_user_management(self):
+        admin_tokens = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin_tokens['access_token']}"}
+
+        created = self.client.post(
+            "/api/v1/users",
+            json={
+                "username": "viewer",
+                "password": "Password123!",
+                "display_name": "Viewer",
+                "roles": ["readonly"],
+            },
+            headers=admin_headers,
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+
+        login = self.client.post("/api/v1/auth/login", json={"username": "viewer", "password": "Password123!"})
+        self.assertEqual(login.status_code, 200, login.text)
+        viewer_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        denied = self.client.get("/api/v1/users", headers=viewer_headers)
+        self.assertEqual(denied.status_code, 403)
+
+        readonly_config = self.client.get("/api/v1/config", headers=viewer_headers)
+        self.assertEqual(readonly_config.status_code, 200)
+
+    def test_builtin_roles_can_be_modified_and_page_permissions_are_configurable(self):
+        admin_tokens = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin_tokens['access_token']}"}
+
+        roles = self.client.get("/api/v1/roles", headers=admin_headers)
+        self.assertEqual(roles.status_code, 200, roles.text)
+        self.assertEqual(roles.json()["page_permissions"]["news"], "market:read")
+
+        updated_page = self.client.put(
+            "/api/v1/roles/pages/news",
+            json={"permission": "config:read"},
+            headers=admin_headers,
+        )
+        self.assertEqual(updated_page.status_code, 200, updated_page.text)
+        self.assertEqual(updated_page.json()["page_permissions"]["news"], "config:read")
+
+        updated_role = self.client.put(
+            "/api/v1/roles/readonly",
+            json={"name": "readonly", "description": "Narrow read-only role", "permissions": ["config:read"]},
+            headers=admin_headers,
+        )
+        self.assertEqual(updated_role.status_code, 200, updated_role.text)
+        self.assertTrue(updated_role.json()["builtin"])
+        self.assertEqual(updated_role.json()["permissions"], ["config:read"])
+
+        # Re-initializing the store must not reset edited built-in role grants.
+        self.store = reset_app_store_for_tests(self.db_path)
+        readonly = next(role for role in self.store.list_roles() if role["name"] == "readonly")
+        self.assertTrue(readonly["builtin"])
+        self.assertEqual(readonly["permissions"], ["config:read"])
+        self.assertEqual(self.store.list_page_permissions()["news"], "config:read")
+
+    def test_clear_all_chat_sessions_deletes_attached_tracing(self):
+        tokens = self.setup_admin()
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+        first = self.client.post("/api/v1/agent/sessions", json={"title": "First"}, headers=headers)
+        self.assertEqual(first.status_code, 200, first.text)
+        second = self.client.post("/api/v1/agent/sessions", json={"title": "Second"}, headers=headers)
+        self.assertEqual(second.status_code, 200, second.text)
+
+        session_id = first.json()["id"]
+        trace_store = TraceStore(str(self.workspace))
+        run = trace_store.create_run(session_id=session_id, user_message="trace me")
+        trace_store.add_event(run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"])
+        self.assertEqual(len(trace_store.get_session_traces(session_id=session_id)["runs"]), 1)
+
+        cleared = self.client.delete("/api/v1/agent/sessions", headers=headers)
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        self.assertEqual(cleared.json()["deleted"], 2)
+        self.assertEqual(cleared.json()["tracing"], "cleared_by_session_cascade")
+
+        listed = self.client.get("/api/v1/agent/sessions", headers=headers)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(listed.json()["total"], 0)
+        self.assertEqual(trace_store.get_session_traces(session_id=session_id)["runs"], [])
+
+    def test_user_can_change_own_password(self):
+        admin_tokens = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin_tokens['access_token']}"}
+
+        created = self.client.post(
+            "/api/v1/users",
+            json={
+                "username": "trader",
+                "password": "Password123!",
+                "display_name": "Trader",
+                "roles": ["user"],
+            },
+            headers=admin_headers,
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+
+        login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "Password123!"})
+        self.assertEqual(login.status_code, 200, login.text)
+        user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        wrong_current = self.client.patch(
+            "/api/v1/auth/me/password",
+            json={"current_password": "wrong-password", "new_password": "NewPassword123!"},
+            headers=user_headers,
+        )
+        self.assertEqual(wrong_current.status_code, 400)
+
+        changed = self.client.patch(
+            "/api/v1/auth/me/password",
+            json={"current_password": "Password123!", "new_password": "NewPassword123!"},
+            headers=user_headers,
+        )
+        self.assertEqual(changed.status_code, 200, changed.text)
+
+        old_login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "Password123!"})
+        self.assertEqual(old_login.status_code, 401)
+        new_login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "NewPassword123!"})
+        self.assertEqual(new_login.status_code, 200, new_login.text)
+
+    def test_user_config_hides_inherited_defaults_and_saves_personal_mcp_capabilities(self):
+        admin_tokens = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin_tokens['access_token']}"}
+        self.store.set_config_values(
+            {
+                "llm_api_key": "sk-system-secret",
+                "llm_model": "system-model",
+                "telegram_bot_token": "telegram-system-secret",
+                "longbridge_access_token": "longbridge-system-secret",
+                "mcp_servers": {
+                    "system": {
+                        "transport": "streamable_http",
+                        "url": "https://example.com/system-mcp",
+                        "headers": {"Authorization": "Bearer system-token"},
+                    }
+                },
+            }
+        )
+        config_module._config_instance = None
+
+        created = self.client.post(
+            "/api/v1/users",
+            json={
+                "username": "personal",
+                "password": "Password123!",
+                "display_name": "Personal",
+                "roles": ["user"],
+            },
+            headers=admin_headers,
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        user_id = created.json()["id"]
+        login = self.client.post("/api/v1/auth/login", json={"username": "personal", "password": "Password123!"})
+        self.assertEqual(login.status_code, 200, login.text)
+        user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        inherited = self.client.get("/api/v1/config", headers=user_headers)
+        self.assertEqual(inherited.status_code, 200, inherited.text)
+        inherited_body = inherited.json()
+        self.assertEqual(inherited_body["llm_model"], "")
+        self.assertFalse(inherited_body["has_llm_api_key"])
+        self.assertEqual(inherited_body["mcp_servers"], {})
+        self.assertFalse(inherited_body["has_telegram_bot_token"])
+        self.assertFalse(inherited_body["has_longbridge_access_token"])
+
+        personal_mcp = {
+            "mine": {
+                "transport": "streamable_http",
+                "url": "https://example.com/personal-mcp",
+                "headers": {"Authorization": "Bearer personal-token"},
+            }
+        }
+        patched = self.client.patch(
+            "/api/v1/config",
+            json={
+                "app_language": "en",
+                "memory_enabled": False,
+                "scheduler_enabled": False,
+                "llm_model": "personal-model",
+                "mcp_servers": personal_mcp,
+                "agent_max_steps": 7,
+                "agent_max_context_turns": 5,
+                "multi_agent_enabled": False,
+                "memory_auto_curate_enabled": False,
+                "memory_curator_min_importance": 0.55,
+                "debug": True,
+            },
+            headers=user_headers,
+        )
+        self.assertEqual(patched.status_code, 200, patched.text)
+        body = patched.json()
+        self.assertEqual(body["app_language"], "en")
+        self.assertFalse(body["memory_enabled"])
+        self.assertFalse(body["scheduler_enabled"])
+        self.assertEqual(body["llm_model"], "personal-model")
+        self.assertEqual(body["agent_max_steps"], 7)
+        self.assertEqual(body["agent_max_context_turns"], 5)
+        self.assertFalse(body["multi_agent_enabled"])
+        self.assertFalse(body["memory_auto_curate_enabled"])
+        self.assertEqual(body["memory_curator_min_importance"], 0.55)
+        self.assertTrue(body["debug"])
+        self.assertIn("mine", body["mcp_servers"])
+        self.assertIn("memory_enabled", body["personal_config_keys"])
+        self.assertIn("mcp_servers", body["personal_config_keys"])
+        self.assertIn("agent_max_steps", body["personal_config_keys"])
+        self.assertIn("memory_auto_curate_enabled", body["personal_config_keys"])
+
+        self.assertEqual(self.store.get_config()["llm_model"], "system-model")
+        personal_config = self.store.get_user_config(user_id)
+        self.assertEqual(personal_config["llm_model"], "personal-model")
+        self.assertFalse(personal_config["memory_enabled"])
+        self.assertEqual(personal_config["agent_max_steps"], 7)
+        self.assertFalse(personal_config["multi_agent_enabled"])
+        self.assertFalse(personal_config["memory_auto_curate_enabled"])
+        self.assertEqual(personal_config["mcp_servers"]["mine"]["headers"]["Authorization"], "Bearer personal-token")
+
+        denied = self.client.patch(
+            "/api/v1/config",
+            json={"agent_tool_allowlist": ["read_file"], "multi_agent_roles": {}},
+            headers=user_headers,
+        )
+        self.assertEqual(denied.status_code, 403)
+
+    def test_config_api_masks_sensitive_values(self):
+        tokens = self.setup_admin()
+        self.store.set_config_values(
+            {
+                "llm_api_key": "sk-live-secret",
+                "telegram_bot_token": "telegram-bot-secret",
+                "longbridge_access_token": "lb-access-token",
+                "mcp_servers": {
+                    "remote": {
+                        "transport": "streamable_http",
+                        "url": "https://example.com/mcp",
+                        "headers": {"Authorization": "Bearer server-token"},
+                        "auth": {"type": "header", "name": "X-Api-Key", "value": "mcp-header-secret"},
+                    }
+                },
+            }
+        )
+        config_module._config_instance = None
+
+        response = self.client.get(
+            "/api/v1/config",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        serialized = json.dumps(body, ensure_ascii=False)
+
+        for secret in ("sk-live-secret", "telegram-bot-secret", "lb-access-token", "Bearer server-token", "mcp-header-secret"):
+            self.assertNotIn(secret, serialized)
+        self.assertTrue(body["has_llm_api_key"])
+        self.assertTrue(body["has_telegram_bot_token"])
+        self.assertTrue(body["has_longbridge_access_token"])
+        self.assertNotEqual(body["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token")
+
+        patched = self.client.patch(
+            "/api/v1/config",
+            json={"mcp_servers": body["mcp_servers"]},
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(patched.status_code, 200, patched.text)
+        stored = self.store.get_config()["mcp_servers"]["remote"]
+        self.assertEqual(stored["headers"]["Authorization"], "Bearer server-token")
+        self.assertEqual(stored["auth"]["value"], "mcp-header-secret")
+
+
+if __name__ == "__main__":
+    unittest.main()
