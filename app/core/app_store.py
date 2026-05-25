@@ -350,7 +350,6 @@ class AppStore:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-                CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON refresh_tokens(session_id);
                 CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id);
                 CREATE INDEX IF NOT EXISTS idx_scheduler_tasks_user ON scheduler_tasks(user_id);
                 CREATE INDEX IF NOT EXISTS idx_scheduler_runs_user_started ON scheduler_runs(user_id, started_at);

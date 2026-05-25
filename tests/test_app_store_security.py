@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 import app.core.app_store as app_store_module
-from app.core.app_store import APP_DB_ENV, reset_app_store_for_tests
+from app.core.app_store import APP_DB_ENV, AppStore, reset_app_store_for_tests
 
 
 class AppStoreSecurityTest(unittest.TestCase):
@@ -101,6 +101,44 @@ class AppStoreSecurityTest(unittest.TestCase):
         self.assertIsNone(app_config_row)
         self.assertIsNotNone(role_row)
         self.assertEqual(self.store.get_config()["multi_agent_roles"], roles)
+
+    def test_legacy_refresh_token_table_is_upgraded_before_session_index(self):
+        legacy_db = Path(self.tmp.name) / "legacy.db"
+        with sqlite3.connect(legacy_db) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_login_at TEXT
+                );
+
+                CREATE TABLE refresh_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    replaced_by TEXT,
+                    user_agent TEXT NOT NULL DEFAULT '',
+                    ip_address TEXT NOT NULL DEFAULT ''
+                );
+                """
+            )
+
+        store = AppStore(legacy_db)
+        with store.connect() as conn:
+            refresh_columns = {row[1] for row in conn.execute("PRAGMA table_info(refresh_tokens)").fetchall()}
+            indexes = {row[1] for row in conn.execute("PRAGMA index_list(refresh_tokens)").fetchall()}
+
+        self.assertIn("session_id", refresh_columns)
+        self.assertIn("idx_refresh_tokens_session", indexes)
 
 
 if __name__ == "__main__":
