@@ -78,6 +78,7 @@ def _build_agent(user_id: Optional[str] = None):
         memory_manager=memory_mgr,
         workspace_dir=workspace_dir,
         skill_manager=skill_mgr,
+        settings=settings,
     )
 
 

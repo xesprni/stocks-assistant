@@ -22,7 +22,8 @@ class MCPServerStatus(BaseModel):
     command: str = ""
     args: List[str] = Field(default_factory=list)
     headers: Dict[str, str] = Field(default_factory=dict)
-    status: str = "disconnected"  # connecting | auth_required | connected | error | disconnected
+    enabled: bool = True
+    status: str = "disconnected"  # connecting | auth_required | connected | error | disconnected | disabled
     error: Optional[str] = None
     tools_count: int = 0
     oauth_authorization_url: Optional[str] = None

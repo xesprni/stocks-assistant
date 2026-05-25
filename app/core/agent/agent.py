@@ -41,6 +41,7 @@ class Agent:
         skill_manager=None,
         enable_skills: bool = True,
         multi_agent_depth: int = 0,
+        settings: Any = None,
     ):
         self.system_prompt = system_prompt  # 系统提示词
         self.model: LLMModel = model  # LLM 模型实例
@@ -55,6 +56,7 @@ class Agent:
         self.enable_skills = enable_skills  # 是否启用技能
         self.active_skill_filter = None  # 当前请求允许读取的技能集合
         self.multi_agent_depth = multi_agent_depth  # 多 Agent 委派深度
+        self.settings = settings  # 当前请求/用户的有效配置
 
         # 技能管理器（从 Markdown 文件加载技能定义）
         self.skill_manager = None
@@ -101,12 +103,14 @@ Use memory_search proactively before answering when the request may depend on pr
         """获取多 Agent 委派策略提示词。"""
         if self.multi_agent_depth > 0:
             return ""
-        try:
-            from app.config import get_settings
+        settings = self.settings
+        if settings is None:
+            try:
+                from app.config import get_settings
 
-            settings = get_settings()
-        except Exception:
-            return ""
+                settings = get_settings()
+            except Exception:
+                return ""
         if not getattr(settings, "multi_agent_enabled", False):
             return ""
 

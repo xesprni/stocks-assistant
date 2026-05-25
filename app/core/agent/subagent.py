@@ -43,7 +43,7 @@ class SubAgentRunner:
         self.parent_agent = parent_agent
         self.event_emitter = event_emitter
         self.parent_tool_call_id = parent_tool_call_id
-        self.settings = get_settings()
+        self.settings = getattr(parent_agent, "settings", None) or get_settings()
 
     def run_batch(self, raw_tasks: Any) -> dict[str, Any]:
         if not self.settings.multi_agent_enabled:
@@ -213,6 +213,7 @@ class SubAgentRunner:
                 skill_manager=self.parent_agent.skill_manager,
                 enable_skills=self.parent_agent.enable_skills,
                 multi_agent_depth=int(getattr(self.parent_agent, "multi_agent_depth", 0) or 0) + 1,
+                settings=self.settings,
             )
             final_response = child_agent.run_stream(
                 user_message=task.task,
@@ -268,17 +269,19 @@ class SubAgentRunner:
             cloned = tool.__class__()
         except Exception:
             cloned = copy.copy(tool)
-        # 保留静态配置和工作目录，清掉模型、上下文、事件回调等单次运行状态。
-        if hasattr(tool, "config"):
-            cloned.config = copy.deepcopy(getattr(tool, "config"))
-        for attr in ("workspace_dir", "cwd", "default_timeout", "task_store"):
-            if hasattr(tool, attr):
-                setattr(cloned, attr, getattr(tool, attr))
+        # 保留工具构造期注入的依赖（如用户配置、service、MCP manager），但清掉单次运行态。
+        runtime_attrs = {"model", "context", "event_emitter", "current_tool_call"}
+        for attr, value in getattr(tool, "__dict__", {}).items():
+            if attr in runtime_attrs:
+                continue
+            setattr(cloned, attr, copy.deepcopy(value) if attr == "config" else value)
         cloned.model = None
         if hasattr(cloned, "context"):
             cloned.context = None
         if hasattr(cloned, "event_emitter"):
             cloned.event_emitter = None
+        if hasattr(cloned, "current_tool_call"):
+            cloned.current_tool_call = None
         return cloned
 
     @staticmethod

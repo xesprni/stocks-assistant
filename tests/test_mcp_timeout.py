@@ -30,6 +30,20 @@ class ErrorResultSession:
         )
 
 
+class FakeConnectMCPManager(MCPManager):
+    async def _connect_server(self, server_name: str, config: dict, wait: bool = False, timeout=None):
+        adapter = MCPToolAdapter(
+            server_name=server_name,
+            tool_name="quote",
+            tool_description="quote",
+            tool_schema={},
+            manager=self,
+        )
+        with self._lock:
+            self.tools[adapter.name] = adapter
+            self._states[server_name] = "connected"
+
+
 class McpErrorManager:
     def call_tool_sync(self, server_name: str, tool_name: str, params: dict):
         raise McpError(
@@ -119,6 +133,41 @@ class MCPToolTimeoutTest(unittest.TestCase):
         message = manager._format_connect_error(RuntimeError("unhandled errors in a TaskGroup (1 sub-exception)"))
 
         self.assertIn("OAuth authorization URL", message)
+
+    def test_disabled_server_does_not_register_tools_until_enabled(self):
+        manager = FakeConnectMCPManager({
+            "demo": {
+                "transport": "streamable_http",
+                "url": "https://example.com/mcp",
+                "enabled": False,
+            }
+        })
+        try:
+            manager.connect_all_sync(wait=True, timeout=0.1)
+            self.assertEqual(manager.get_server_state("demo")[0], "disabled")
+            self.assertEqual(manager.get_tools(), [])
+
+            manager.reconnect_sync({
+                "demo": {
+                    "transport": "streamable_http",
+                    "url": "https://example.com/mcp",
+                    "enabled": True,
+                }
+            }, wait=True, timeout=0.1)
+            self.assertEqual(manager.get_server_state("demo")[0], "connected")
+            self.assertEqual([tool.name for tool in manager.get_tools()], ["mcp_demo_quote"])
+
+            manager.reconnect_sync({
+                "demo": {
+                    "transport": "streamable_http",
+                    "url": "https://example.com/mcp",
+                    "enabled": False,
+                }
+            }, wait=True, timeout=0.1)
+            self.assertEqual(manager.get_server_state("demo")[0], "disabled")
+            self.assertEqual(manager.get_tools(), [])
+        finally:
+            manager.close_sync()
 
     def test_formats_mcp_json_rpc_error_data(self):
         manager = MCPManager({})

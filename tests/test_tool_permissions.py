@@ -27,6 +27,21 @@ class ToolPermissionTest(unittest.TestCase):
         self.assertTrue(is_tool_allowed_for_agent("mcp_market_quote", settings))
         self.assertFalse(is_tool_allowed_for_agent("read_file", settings))
 
+    def test_delegate_agent_requires_multi_agent_enabled(self):
+        enabled = SimpleNamespace(
+            agent_tool_allowlist=["delegate_agent"],
+            agent_allow_all_mcp_tools=False,
+            multi_agent_enabled=True,
+        )
+        disabled = SimpleNamespace(
+            agent_tool_allowlist=["delegate_agent"],
+            agent_allow_all_mcp_tools=False,
+            multi_agent_enabled=False,
+        )
+
+        self.assertTrue(is_tool_allowed_for_agent("delegate_agent", enabled))
+        self.assertFalse(is_tool_allowed_for_agent("delegate_agent", disabled))
+
     def test_extracts_mcp_server_name_from_tool_name(self):
         self.assertEqual(mcp_server_name_from_tool("mcp_market_quote"), "market")
         self.assertIsNone(mcp_server_name_from_tool("read_file"))

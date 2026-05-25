@@ -5,8 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.session import ChatSessionStore
+from app.core.agent.agent import Agent
+from app.core.agent.subagent import SubAgentRunner
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.delegate_agent import DelegateAgentTool
+from app.core.tools.market_data import GetLongbridgeRealtimeQuotesTool
 from app.core.tracing import TraceRecorder, TraceStore
 
 
@@ -21,7 +24,7 @@ class NamedTool(BaseTool):
 
 
 class FakeParentAgent:
-    def __init__(self, tools=None, depth=0):
+    def __init__(self, tools=None, depth=0, settings=None):
         self.model = object()
         self.tools = tools or [NamedTool("web_fetch"), NamedTool("bash"), NamedTool("delegate_agent")]
         self.max_context_tokens = 50_000
@@ -31,6 +34,7 @@ class FakeParentAgent:
         self.skill_manager = None
         self.enable_skills = True
         self.multi_agent_depth = depth
+        self.settings = settings
 
 
 class FakeAgent:
@@ -97,6 +101,24 @@ class DelegateAgentToolTest(unittest.TestCase):
         )
         self.assertEqual(result.status, "error")
         self.assertIn("disabled", result.result)
+
+    def test_parent_user_settings_override_global_multi_agent_settings(self):
+        parent = FakeParentAgent(settings=fake_settings(multi_agent_enabled=False))
+        result, _events = self.run_tool(
+            {"tasks": [{"role": "researcher", "task": "test", "tools": ["web_fetch"]}]},
+            settings=fake_settings(multi_agent_enabled=True),
+            parent=parent,
+        )
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("disabled", result.result)
+
+    def test_agent_prompt_uses_user_multi_agent_setting(self):
+        disabled_agent = Agent(system_prompt="", settings=fake_settings(multi_agent_enabled=False))
+        enabled_agent = Agent(system_prompt="", settings=fake_settings(multi_agent_enabled=True))
+
+        self.assertEqual(disabled_agent.get_multi_agent_prompt(), "")
+        self.assertIn("multi_agent_delegation_policy", enabled_agent.get_multi_agent_prompt())
 
     def test_rejects_unknown_role_and_tool_policy_violations(self):
         result, _ = self.run_tool({"tasks": [{"role": "missing", "task": "test"}]})
@@ -185,6 +207,26 @@ class DelegateAgentToolTest(unittest.TestCase):
         event_types = [event["type"] for event in events]
         self.assertIn("subagent_event", event_types)
         self.assertNotIn("message_update", event_types)
+
+    def test_clone_tool_preserves_injected_market_dependencies(self):
+        service = object()
+        settings = SimpleNamespace(longbridge_app_key="demo")
+        tool = GetLongbridgeRealtimeQuotesTool(market_service=service, user_id="user-1", settings=settings)
+        tool.model = object()
+        tool.context = object()
+        tool.event_emitter = lambda *_args: None
+        tool.current_tool_call = {"id": "call-1"}
+
+        cloned = SubAgentRunner._clone_tool(tool)
+
+        self.assertIsInstance(cloned, GetLongbridgeRealtimeQuotesTool)
+        self.assertIs(cloned.market_service, service)
+        self.assertEqual(cloned.user_id, "user-1")
+        self.assertIs(cloned.settings, settings)
+        self.assertIsNone(cloned.model)
+        self.assertIsNone(getattr(cloned, "context", None))
+        self.assertIsNone(getattr(cloned, "event_emitter", None))
+        self.assertIsNone(getattr(cloned, "current_tool_call", None))
 
 
 class SubAgentTraceTest(unittest.TestCase):

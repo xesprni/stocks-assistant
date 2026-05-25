@@ -21,6 +21,8 @@ def mcp_server_name_from_tool(name: str) -> str | None:
 
 
 def is_tool_allowed_for_agent(name: str, settings) -> bool:
+    if name == "delegate_agent" and not bool(getattr(settings, "multi_agent_enabled", False)):
+        return False
     allowlist = set(str(item) for item in (getattr(settings, "agent_tool_allowlist", []) or []))
     return name in allowlist or (bool(getattr(settings, "agent_allow_all_mcp_tools", False)) and is_mcp_tool_name(name))
 

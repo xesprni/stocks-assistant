@@ -439,7 +439,8 @@ export interface MCPServerStatus {
   command: string;
   args: string[];
   headers: Record<string, string>;
-  status: "connecting" | "auth_required" | "connected" | "error" | "disconnected";
+  enabled: boolean;
+  status: "connecting" | "auth_required" | "connected" | "error" | "disconnected" | "disabled";
   error: string | null;
   tools_count: number;
   oauth_authorization_url: string | null;

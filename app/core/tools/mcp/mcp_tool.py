@@ -17,6 +17,7 @@ from app.core.tools.mcp.config import (
     LEGACY_SSE_TRANSPORT,
     STANDARD_HTTP_TRANSPORT,
     STDIO_TRANSPORT,
+    is_mcp_server_enabled,
     normalize_mcp_servers,
     normalize_transport,
 )
@@ -188,8 +189,8 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
     def connect_all_background(self, wait: bool = False, timeout: Optional[float] = None):
         """后台发起所有 MCP 服务器连接，不阻塞调用方。"""
         with self._lock:
-            for name in self.server_configs:
-                self._states[name] = "connecting"
+            for name, config in self.server_configs.items():
+                self._states[name] = "connecting" if is_mcp_server_enabled(config) else "disabled"
                 self._errors.pop(name, None)
         return self._run_background(
             self.connect_all(wait=wait, timeout=timeout),
@@ -237,6 +238,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         with self._lock:
             prefix = f"mcp_{server_name}_"
             tools_count = sum(1 for name in self.tools if name.startswith(prefix))
+            config = self.server_configs.get(server_name)
+            if config is not None and not is_mcp_server_enabled(config):
+                return "disabled", None, 0, None
             state = self._states.get(
                 server_name,
                 "connected" if server_name in self._sessions else "disconnected",
@@ -283,9 +287,14 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
             self._sessions = {}
             self._errors = {}
             self._oauth_authorization_urls = {}
-            self._states = {name: "disconnected" for name in self.server_configs}
+            self._states = {
+                name: "disconnected" if is_mcp_server_enabled(config) else "disabled"
+                for name, config in self.server_configs.items()
+            }
 
         for server_name, config in self.server_configs.items():
+            if not is_mcp_server_enabled(config):
+                continue
             try:
                 await self._connect_server(server_name, config, wait=wait, timeout=timeout)
             except Exception as e:
@@ -307,6 +316,12 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         wait=True 时则限时异步等待连接就绪；
         否则后台启动一个连接超时监联任务。
         """
+        if not is_mcp_server_enabled(config):
+            await self._stop_server(server_name)
+            with self._lock:
+                self._errors.pop(server_name, None)
+                self._states[server_name] = "disabled"
+            return
         stop_event = asyncio.Event()
         ready: asyncio.Future = asyncio.get_running_loop().create_future()
         ready.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
@@ -529,6 +544,12 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
 
     async def _discover_tools(self, server_name: str, session):
         """向 MCP 服务器查询工具列表，将发现的工具包装为 MCPToolAdapter 并更新注册表。"""
+        if not is_mcp_server_enabled(self.server_configs.get(server_name)):
+            with self._lock:
+                for name in [name for name in self.tools if name.startswith(f"mcp_{server_name}_")]:
+                    self.tools.pop(name, None)
+                self._states[server_name] = "disabled"
+            return
         result = await session.list_tools()
         discovered: dict[str, MCPToolAdapter] = {}
         for tool in result.tools:
@@ -628,7 +649,10 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                     future.cancel()
             self._oauth_authorization_ready = {}
             self._oauth_callback_futures = {}
-            self._states = {name: "disconnected" for name in self.server_configs}
+            self._states = {
+                name: "disconnected" if is_mcp_server_enabled(config) else "disabled"
+                for name, config in self.server_configs.items()
+            }
 
     def get_tools(self) -> List[MCPToolAdapter]:
         with self._lock:

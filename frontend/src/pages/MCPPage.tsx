@@ -6,6 +6,7 @@ import { SideDrawer } from "@/components/common/SideDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { deleteMcpOAuth, getMcpStatus, getMcpTools, loadConfig, reconnectMcpServers, saveConfig, startMcpOAuthAuthorization } from "@/lib/api";
 import { formatTemplate } from "@/lib/i18n";
@@ -60,12 +61,18 @@ const mcpPageCopy = {
     urlRequired: "{name} 的 {transport} 配置需要 http(s) URL",
     headersObjectRequired: "{name} 的 headers 必须是对象",
     envObjectRequired: "{name} 的 env 必须是对象",
+    enabledBooleanRequired: "{name} 的 enabled 必须是布尔值",
     unsaved: "unsaved",
     connecting: "connecting",
     authRequired: "login required",
     connected: "connected",
     error: "error",
     disconnected: "disconnected",
+    disabled: "disabled",
+    enabledState: "ON",
+    disabledState: "OFF",
+    enableServer: "启用服务器",
+    disableServer: "停用服务器",
     tools: "tools",
     unconfiguredUrl: "未配置 URL",
     draftOnly: "配置只在当前草稿中，尚未保存到 SQLite。",
@@ -127,12 +134,18 @@ const mcpPageCopy = {
     urlRequired: "{name} {transport} config requires an http(s) URL",
     headersObjectRequired: "{name} headers must be an object",
     envObjectRequired: "{name} env must be an object",
+    enabledBooleanRequired: "{name} enabled must be a boolean",
     unsaved: "unsaved",
     connecting: "connecting",
     authRequired: "login required",
     connected: "connected",
     error: "error",
     disconnected: "disconnected",
+    disabled: "disabled",
+    enabledState: "ON",
+    disabledState: "OFF",
+    enableServer: "Enable server",
+    disableServer: "Disable server",
     tools: "tools",
     unconfiguredUrl: "No URL configured",
     draftOnly: "This config only exists in the current draft and has not been saved to SQLite.",
@@ -239,7 +252,7 @@ interface MCPServersPanelProps {
   copy: McpPageCopy;
   mcpServersText: string;
   setMcpServersText: (text: string) => void;
-  onServersChange?: (servers: Record<string, Record<string, unknown>>) => void;
+  onServersChange?: (servers: Record<string, Record<string, unknown>>) => void | Promise<void>;
 }
 
 type MCPTransport = "streamable_http" | "sse" | "stdio";
@@ -346,6 +359,10 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
       if (config.env != null && (typeof config.env !== "object" || Array.isArray(config.env))) {
         throw new Error(formatTemplate(copy.envObjectRequired, { name }));
       }
+      if (config.enabled != null && typeof config.enabled !== "boolean") {
+        throw new Error(formatTemplate(copy.enabledBooleanRequired, { name }));
+      }
+      config.enabled = config.enabled !== false;
       normalized[name] = config;
     }
     return normalized;
@@ -390,9 +407,23 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
       .finally(() => setIsLoadingTools(false));
   }
 
-  function syncServersToDraft(updated: Record<string, Record<string, unknown>>) {
+  async function syncServersToDraft(updated: Record<string, Record<string, unknown>>) {
     setMcpServersText(JSON.stringify(updated, null, 2));
-    onServersChange?.(updated);
+    await onServersChange?.(updated);
+    window.setTimeout(loadStatus, 300);
+  }
+
+  function handleToggleServer(name: string, enabled: boolean) {
+    const current = servers[name];
+    if (!current) return;
+    const updated = validateMcpServersConfig({
+      ...servers,
+      [name]: { ...current, enabled },
+    });
+    syncServersToDraft(updated);
+    if (!enabled && showToolsFor === name) {
+      setShowToolsFor(null);
+    }
   }
 
   function handleDeleteServer(name: string) {
@@ -457,7 +488,11 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
       return;
     }
 
-    const config: Record<string, unknown> = { transport: addForm.transport };
+    const existingConfig = editingServerName ? servers[editingServerName] : null;
+    const config: Record<string, unknown> = {
+      transport: addForm.transport,
+      enabled: existingConfig?.enabled !== false,
+    };
     if (addForm.transport === "streamable_http" || addForm.transport === "sse") {
       if (!addForm.url.trim()) {
         setAddError(copy.httpUrlRequired);
@@ -767,9 +802,12 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
         <div className="space-y-2">
           {Object.entries(servers).map(([name, config]) => {
             const status = statusMap.get(name);
+            const enabled = status?.enabled ?? config.enabled !== false;
             const transport = String(config.transport || (config.command ? "stdio" : "streamable_http"));
             const statusColor =
-              !status
+              !enabled
+                ? "text-muted-foreground"
+                : !status
                 ? "text-amber-500"
                 : status.status === "connecting"
                   ? "text-blue-500"
@@ -781,7 +819,9 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
                   ? "text-destructive"
                   : "text-muted-foreground";
             const statusLabel =
-              !status
+              !enabled
+                ? copy.disabled
+                : !status
                 ? copy.unsaved
                 : status.status === "connecting"
                   ? copy.connecting
@@ -805,6 +845,9 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
                       <span className="truncate text-sm font-semibold">{name}</span>
                       <Badge variant="outline" className="text-[10px]">
                         {transport}
+                      </Badge>
+                      <Badge variant={enabled ? "default" : "muted"} className="text-[10px]">
+                        {enabled ? copy.enabledState : copy.disabledState}
                       </Badge>
                       <span className={cn("text-[11px]", statusColor)}>{statusLabel}</span>
                       {status?.tools_count ? (
@@ -837,7 +880,14 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-1.5 sm:shrink-0 sm:justify-end">
-                    {status?.status === "auth_required" ? (
+                    <div className="flex h-7 items-center px-1" title={enabled ? copy.disableServer : copy.enableServer}>
+                      <Switch
+                        aria-label={enabled ? copy.disableServer : copy.enableServer}
+                        checked={enabled}
+                        onCheckedChange={(checked) => handleToggleServer(name, checked)}
+                      />
+                    </div>
+                    {enabled && status?.status === "auth_required" ? (
                       <Button
                         variant="outline"
                         size="sm"
@@ -849,7 +899,7 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
                         <ExternalLink className="size-3" />
                         {copy.login}
                       </Button>
-                    ) : status?.oauth_enabled ? (
+                    ) : enabled && status?.oauth_enabled ? (
                       <Button
                         variant="outline"
                         size="sm"
@@ -866,7 +916,7 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
                       variant="outline"
                       size="sm"
                       className="h-7 text-xs"
-                      disabled={!status}
+                      disabled={!status || !enabled}
                       aria-label={copy.viewTools}
                       title={copy.viewTools}
                       onClick={() => handleViewTools(name)}

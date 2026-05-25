@@ -93,6 +93,28 @@ def _normalize_args(value: Any) -> list[str]:
     return value
 
 
+def normalize_enabled(value: Any) -> bool:
+    """归一化 MCP server 启用开关；缺省启用以兼容旧配置。"""
+    if value in (None, ""):
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"false", "0", "no", "off", "disabled"}:
+            return False
+    raise ValueError("enabled must be a boolean")
+
+
+def is_mcp_server_enabled(config: Mapping[str, Any] | None) -> bool:
+    """返回 MCP server 是否启用。"""
+    if not isinstance(config, Mapping):
+        return True
+    return normalize_enabled(config.get("enabled"))
+
+
 def _validate_http_url(value: Any, transport: str) -> str:
     """校验 HTTP/HTTPS URL 格式，要求 scheme 为 http 或 https，且含有效主机名。"""
     if not isinstance(value, str) or not value.strip():
@@ -119,6 +141,7 @@ def normalize_mcp_server_config(name: str, config: Mapping[str, Any]) -> dict[st
         raise ValueError(f"server '{name}' config must be an object")
 
     normalized = dict(config)
+    normalized["enabled"] = normalize_enabled(config.get("enabled"))
     # 归一化传输类型字段
     transport = normalize_transport(config.get("transport"), config)
     normalized["transport"] = transport

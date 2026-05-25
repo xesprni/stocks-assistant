@@ -324,6 +324,7 @@ def _run_scheduled_agent(prompt: str, user_id: str | None = None) -> str:
         memory_manager=get_memory_manager_for_user(user_id) if settings.memory_enabled else None,
         workspace_dir=workspace_dir,
         skill_manager=get_skill_manager(),
+        settings=settings,
     )
     return agent.run_stream(user_message=prompt, clear_history=True)
 

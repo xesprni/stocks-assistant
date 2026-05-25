@@ -8,7 +8,13 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_effective_settings
-from app.core.tools.mcp.config import LEGACY_SSE_TRANSPORT, STANDARD_HTTP_TRANSPORT, mask_mcp_server_config, normalize_transport
+from app.core.tools.mcp.config import (
+    LEGACY_SSE_TRANSPORT,
+    STANDARD_HTTP_TRANSPORT,
+    is_mcp_server_enabled,
+    mask_mcp_server_config,
+    normalize_transport,
+)
 from app.core.security import CurrentUser, require_permissions
 from app.schemas.mcp import MCPOAuthAuthorizeResponse, MCPServerStatus, MCPStatusResponse, MCPServerToolsResponse, MCPToolInfo
 
@@ -41,6 +47,8 @@ async def _start_mcp_oauth_authorization(server_name: str, request: Request, cur
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
         raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
+    if not is_mcp_server_enabled(settings.mcp_servers.get(server_name)):
+        raise HTTPException(status_code=409, detail=f"MCP server '{server_name}' is disabled")
 
     try:
         from app.deps import get_mcp_manager_for_user
@@ -78,15 +86,16 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
         url = cfg.get("url", "")
         command = cfg.get("command", "")
         args = cfg.get("args", [])
+        enabled = is_mcp_server_enabled(cfg)
         masked_cfg = mask_mcp_server_config(cfg)
         headers = masked_cfg.get("headers", {})
 
-        server_status = "disconnected"
+        server_status = "disabled" if not enabled else "disconnected"
         error_msg = None
         tools_count = 0
 
         oauth_authorization_url = None
-        if manager:
+        if enabled and manager:
             server_status, error_msg, tools_count, oauth_authorization_url = manager.get_server_state(name)
 
         # 检查服务器是否需要/使用 OAuth 授权码流程
@@ -98,7 +107,7 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
         if isinstance(auth, dict):
             auth_type = str(auth.get("type", "")).lower()
             oauth_enabled = auth_type in {"oauth", "oauth2", "authorization_code", "oauth_browser", "oauth_authorization_code"}
-        if not oauth_enabled and manager:
+        if enabled and not oauth_enabled and manager:
             # 协议层发现的 OAuth：检查是否有持久化 token 或当前需要授权
             if manager._token_store and manager._token_store.get_tokens(name):
                 oauth_enabled = True
@@ -121,6 +130,7 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
                 command=command,
                 args=args,
                 headers=headers,
+                enabled=enabled,
                 status=server_status,
                 error=error_msg,
                 tools_count=tools_count,
@@ -247,6 +257,8 @@ async def get_mcp_server_tools(server_name: str, current_user: CurrentUser = Dep
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
         raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
+    if not is_mcp_server_enabled(settings.mcp_servers.get(server_name)):
+        return MCPServerToolsResponse(server_name=server_name, tools=[], total=0)
 
     tools: list[MCPToolInfo] = []
     manager = None
