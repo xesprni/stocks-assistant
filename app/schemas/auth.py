@@ -31,6 +31,10 @@ class LogoutRequest(BaseModel):
     refresh_token: str
 
 
+class DeviceHeartbeatRequest(BaseModel):
+    device_id: Optional[str] = Field(default=None, max_length=128)
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=1, max_length=256)
     new_password: str = Field(..., min_length=8, max_length=256)
@@ -57,7 +61,7 @@ class AuthTokenResponse(BaseModel):
     user: UserPublic
 
 
-class LoginSessionResponse(BaseModel):
+class LoginRecordResponse(BaseModel):
     id: str
     device_id: str = ""
     user_id: str = ""
@@ -74,6 +78,18 @@ class LoginSessionResponse(BaseModel):
     active_refresh_tokens: int = 0
     is_current: bool = False
     is_active: bool = False
+    is_online: bool = False
+
+
+class LoginSessionResponse(LoginRecordResponse):
+    records: List[LoginRecordResponse] = Field(default_factory=list)
+
+
+class DeviceHeartbeatResponse(BaseModel):
+    status: str = "ok"
+    device_id: str
+    last_seen_at: str
+    is_online: bool = True
 
 
 class LoginSessionListResponse(BaseModel):

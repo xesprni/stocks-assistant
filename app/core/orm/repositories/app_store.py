@@ -7,6 +7,7 @@ import logging
 import secrets
 import uuid
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.app_store_defs import (
     CONFIG_ENCRYPTION_KEY,
     JWT_SECRET_KEY,
+    LOGIN_DEVICE_ONLINE_SECONDS,
     PAGE_PERMISSION_REQUIREMENTS,
     PERMISSION_DESCRIPTIONS,
     ROLE_PERMISSIONS,
@@ -57,6 +59,18 @@ from app.core.orm.models.app import (
 )
 
 logger = logging.getLogger("stocks-assistant.app_store")
+
+
+def _parse_utc(value: str | None) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _looks_secret_key(key: str) -> bool:
@@ -720,6 +734,67 @@ class AppStoreRepository:
             if user_agent:
                 row.user_agent = user_agent[:500]
 
+    def heartbeat_login_device(
+        self,
+        user_id: str,
+        *,
+        expires_at: str,
+        session_id: Optional[str] = None,
+        user_agent: str = "",
+        ip_address: str = "",
+        device_id: str = "",
+    ) -> dict[str, Any]:
+        clean_device_id = (device_id or session_id or str(uuid.uuid4())).strip()[:128]
+        now = utc_now()
+        with session_scope(self.session_factory) as session:
+            row = session.get(LoginSession, session_id) if session_id else None
+            if row and row.user_id != user_id:
+                row = None
+            if row and (row.revoked_at or _parse_utc(row.expires_at) <= _parse_utc(now)):
+                row = None
+
+            if row is None:
+                existing_rows = session.scalars(
+                    select(LoginSession)
+                    .where(LoginSession.user_id == user_id, LoginSession.device_id == clean_device_id)
+                    .order_by(desc(LoginSession.last_seen_at), desc(LoginSession.created_at))
+                ).all()
+                row = next(
+                    (
+                        item
+                        for item in existing_rows
+                        if not item.revoked_at and _parse_utc(item.expires_at) > _parse_utc(now)
+                    ),
+                    None,
+                )
+
+            if row is None:
+                row = LoginSession(
+                    id=str(uuid.uuid4()),
+                    user_id=user_id,
+                    device_id=clean_device_id,
+                    created_at=now,
+                    last_seen_at=now,
+                    expires_at=expires_at,
+                    user_agent=user_agent[:500],
+                    ip_address=ip_address[:100],
+                    last_ip_address=ip_address[:100],
+                )
+                session.add(row)
+                session.flush()
+            else:
+                row.device_id = clean_device_id
+                row.last_seen_at = now
+                row.last_ip_address = ip_address[:100]
+                if user_agent:
+                    row.user_agent = user_agent[:500]
+                session.flush()
+
+            rows = session.scalars(
+                select(LoginSession).where(LoginSession.user_id == user_id, LoginSession.device_id == row.device_id)
+            ).all()
+            return self._device_group_to_dict(session, rows)
+
     def revoke_login_session(self, session_id: str) -> bool:
         now = utc_now()
         with session_scope(self.session_factory) as session:
@@ -750,6 +825,31 @@ class AppStoreRepository:
                     if not token.revoked_at:
                         token.revoked_at = now
             return True
+
+    def delete_login_session_record(self, session_id: str, user_id: Optional[str] = None) -> bool:
+        with session_scope(self.session_factory) as session:
+            row = session.get(LoginSession, session_id)
+            if not row or (user_id and row.user_id != user_id):
+                return False
+            session.execute(delete(RefreshToken).where(RefreshToken.session_id == row.id))
+            session.delete(row)
+            return True
+
+    def delete_login_device(self, identifier: str, user_id: Optional[str] = None) -> list[str]:
+        with session_scope(self.session_factory) as session:
+            first = session.get(LoginSession, identifier)
+            device_id = first.device_id if first and (not user_id or first.user_id == user_id) else identifier
+            stmt = select(LoginSession).where(LoginSession.device_id == device_id)
+            if user_id:
+                stmt = stmt.where(LoginSession.user_id == user_id)
+            rows = session.scalars(stmt).all()
+            if not rows:
+                return []
+            session_ids = [row.id for row in rows]
+            session.execute(delete(RefreshToken).where(RefreshToken.session_id.in_(session_ids)))
+            for row in rows:
+                session.delete(row)
+            return session_ids
 
     def enforce_login_session_limit(self, user_id: str, max_sessions: int, *, keep_session_id: str) -> list[str]:
         max_sessions = max(1, int(max_sessions))
@@ -798,21 +898,22 @@ class AppStoreRepository:
             return revoke_ids
 
     def _device_group_to_dict(self, session: Session, rows: list[LoginSession]) -> dict[str, Any]:
-        now = utc_now()
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
         sorted_rows = sorted(rows, key=lambda row: (row.last_seen_at, row.created_at), reverse=True)
         row_payloads = [self._login_session_to_dict(session, row) for row in sorted_rows]
         active_payloads = [
             item
             for item in row_payloads
             if not item.get("revoked_at")
-            and item.get("expires_at", "") > now
-            and int(item.get("active_refresh_tokens") or 0) > 0
+            and _parse_utc(item.get("expires_at")) > now_dt
+            and (int(item.get("active_refresh_tokens") or 0) > 0 or bool(item.get("is_online")))
         ]
         representative = active_payloads[0] if active_payloads else row_payloads[0]
         created_at = min(item["created_at"] for item in row_payloads)
         last_seen_at = max(item["last_seen_at"] for item in row_payloads)
         expires_at = max((item["expires_at"] for item in active_payloads), default=representative["expires_at"])
         active_tokens = sum(int(item.get("active_refresh_tokens") or 0) for item in row_payloads)
+        is_online = any(bool(item.get("is_online")) for item in row_payloads)
         session_ids = [item["id"] for item in row_payloads]
         return {
             **representative,
@@ -824,7 +925,9 @@ class AppStoreRepository:
             "session_count": len(row_payloads),
             "active_refresh_tokens": active_tokens,
             "is_active": bool(active_payloads),
+            "is_online": is_online,
             "session_ids": session_ids,
+            "records": row_payloads,
         }
 
     def _login_session_to_dict(self, session: Session, row: LoginSession) -> dict[str, Any]:
@@ -837,6 +940,12 @@ class AppStoreRepository:
                 RefreshToken.revoked_at.is_(None),
                 RefreshToken.expires_at > utc_now(),
             )
+        )
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        is_online = (
+            not row.revoked_at
+            and _parse_utc(row.expires_at) > now_dt
+            and _parse_utc(row.last_seen_at) >= now_dt - timedelta(seconds=LOGIN_DEVICE_ONLINE_SECONDS)
         )
         return {
             "id": row.id,
@@ -853,6 +962,8 @@ class AppStoreRepository:
             "last_ip_address": row.last_ip_address,
             "session_count": 1,
             "active_refresh_tokens": int(active_tokens or 0),
+            "is_active": bool(not row.revoked_at and _parse_utc(row.expires_at) > now_dt and (active_tokens or is_online)),
+            "is_online": is_online,
         }
 
     def create_refresh_token(

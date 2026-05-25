@@ -6,6 +6,7 @@ import {
   getMe,
   getSetupStatus,
   getStoredAccessToken,
+  heartbeatLoginDevice,
   login as apiLogin,
   logout as apiLogout,
   rejectAuthRecovery,
@@ -30,6 +31,7 @@ type AuthState = {
 };
 
 const AuthContext = createContext<AuthState | null>(null);
+const DEVICE_HEARTBEAT_INTERVAL_MS = 60_000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -83,6 +85,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       rejectAuthRecovery(message);
     }
   }), []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let disposed = false;
+    let timer: number | undefined;
+
+    async function sendHeartbeat() {
+      if (disposed || document.visibilityState === "hidden") return;
+      try {
+        await heartbeatLoginDevice();
+      } catch {
+        // 心跳只维护设备活跃状态；认证失效由统一请求恢复流程处理。
+      }
+    }
+
+    void sendHeartbeat();
+    timer = window.setInterval(() => void sendHeartbeat(), DEVICE_HEARTBEAT_INTERVAL_MS);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void sendHeartbeat();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      disposed = true;
+      if (timer) window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [user?.id]);
 
   const permissions = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions]);
 

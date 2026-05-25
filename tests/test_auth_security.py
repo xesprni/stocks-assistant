@@ -11,7 +11,7 @@ import app.config as config_module
 import app.core.app_store as app_store_module
 from app.core.tracing import TraceStore
 from app.core.app_store import APP_DB_ENV, reset_app_store_for_tests
-from app.core.security import hash_password, hash_refresh_token, verify_password
+from app.core.security import create_access_token, hash_password, hash_refresh_token, verify_password
 from app.deps import get_session_store, get_trace_store
 from app.main import app
 
@@ -145,8 +145,18 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertEqual(sessions[0]["id"], "browser-1")
         self.assertEqual(sessions[0]["device_id"], "browser-1")
         self.assertEqual(sessions[0]["session_count"], 2)
+        self.assertEqual(len(sessions[0]["records"]), 2)
         self.assertTrue(sessions[0]["is_active"])
         self.assertTrue(sessions[0]["is_current"])
+
+        old_record = next(record for record in sessions[0]["records"] if not record["is_current"])
+        deleted = self.client.delete(f"/api/v1/auth/sessions/browser-1/records/{old_record['id']}", headers=headers)
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertFalse(deleted.json()["deleted_current"])
+
+        relisted = self.client.get("/api/v1/auth/sessions", headers=headers)
+        self.assertEqual(relisted.status_code, 200, relisted.text)
+        self.assertEqual(relisted.json()["sessions"][0]["session_count"], 1)
 
     def test_admin_lists_all_user_login_devices(self):
         admin_tokens = self.setup_admin()
@@ -162,6 +172,7 @@ class AuthSecurityTest(unittest.TestCase):
             headers=admin_headers,
         )
         self.assertEqual(created.status_code, 200, created.text)
+        trader_user_id = created.json()["id"]
 
         user_login = self.client.post(
             "/api/v1/auth/login",
@@ -179,6 +190,74 @@ class AuthSecurityTest(unittest.TestCase):
         user_list = self.client.get("/api/v1/auth/sessions", headers=user_headers)
         self.assertEqual(user_list.status_code, 200, user_list.text)
         self.assertEqual({session["username"] for session in user_list.json()["sessions"]}, {"trader"})
+
+        deleted = self.client.delete(
+            f"/api/v1/auth/sessions/trader-laptop/device?user_id={trader_user_id}",
+            headers=admin_headers,
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json()["deleted"], 1)
+
+        blocked = self.client.get("/api/v1/auth/me", headers=user_headers)
+        self.assertEqual(blocked.status_code, 401)
+
+        admin_list_after_delete = self.client.get("/api/v1/auth/sessions", headers=admin_headers)
+        self.assertEqual(admin_list_after_delete.status_code, 200, admin_list_after_delete.text)
+        self.assertNotIn("trader", {session["username"] for session in admin_list_after_delete.json()["sessions"]})
+
+    def test_device_heartbeat_updates_online_status(self):
+        tokens = self.client.post(
+            "/api/v1/auth/setup",
+            json={"username": "admin", "password": "Password123!", "display_name": "Admin", "device_id": "browser-1"},
+        ).json()
+        headers = {"Authorization": f"Bearer {tokens['access_token']}", "X-Device-Id": "browser-1"}
+        old_seen = (datetime.now(timezone.utc) - timedelta(minutes=10)).replace(microsecond=0).isoformat()
+        with self.store.connect() as conn:
+            conn.execute("UPDATE login_sessions SET last_seen_at = ? WHERE device_id = ?", (old_seen, "browser-1"))
+            conn.commit()
+
+        before = self.client.get("/api/v1/auth/sessions", headers=headers)
+        self.assertEqual(before.status_code, 200, before.text)
+        self.assertFalse(before.json()["sessions"][0]["is_online"])
+
+        heartbeat = self.client.post("/api/v1/auth/device/heartbeat", headers=headers)
+        self.assertEqual(heartbeat.status_code, 200, heartbeat.text)
+        self.assertEqual(heartbeat.json()["device_id"], "browser-1")
+        self.assertTrue(heartbeat.json()["is_online"])
+
+        after = self.client.get("/api/v1/auth/sessions", headers=headers)
+        self.assertEqual(after.status_code, 200, after.text)
+        session = after.json()["sessions"][0]
+        self.assertEqual(session["device_id"], "browser-1")
+        self.assertTrue(session["is_online"])
+        self.assertTrue(session["is_active"])
+
+    def test_heartbeat_tracks_legacy_token_without_session_id(self):
+        user = self.store.create_user(
+            username="legacy",
+            password_hash=hash_password("Password123!"),
+            display_name="Legacy",
+            role_names=["user"],
+        )
+        token = create_access_token(user)
+        headers = {"Authorization": f"Bearer {token}", "X-Device-Id": "legacy-browser", "user-agent": "Legacy Browser"}
+
+        heartbeat = self.client.post("/api/v1/auth/device/heartbeat", headers=headers)
+        self.assertEqual(heartbeat.status_code, 200, heartbeat.text)
+        self.assertEqual(heartbeat.json()["device_id"], "legacy-browser")
+
+        listed = self.client.get("/api/v1/auth/sessions", headers=headers)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        sessions = listed.json()["sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["device_id"], "legacy-browser")
+        self.assertTrue(sessions[0]["is_online"])
+        self.assertTrue(sessions[0]["is_active"])
+
+        revoked = self.client.delete("/api/v1/auth/sessions/legacy-browser", headers=headers)
+        self.assertEqual(revoked.status_code, 200, revoked.text)
+        blocked = self.client.get("/api/v1/auth/me", headers=headers)
+        self.assertEqual(blocked.status_code, 401)
 
     def test_refresh_requires_relogin_after_absolute_session_expiry(self):
         tokens = self.setup_admin()

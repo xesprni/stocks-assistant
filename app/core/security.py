@@ -339,12 +339,29 @@ def bearer_from_header(authorization: Optional[str]) -> Optional[str]:
     return token.strip()
 
 
+def ensure_legacy_device_active(request: Request, user: CurrentUser) -> None:
+    if user.session_id:
+        return
+    device_id = resolve_device_id(request=request)
+    device = get_app_store().get_login_device(device_id, user_id=user.id)
+    if device and device.get("revoked_at"):
+        raise AuthError("Login device has been signed out")
+
+
 async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(default=None),
 ) -> CurrentUser:
     cached = getattr(request.state, "current_user", None)
     if isinstance(cached, CurrentUser):
+        try:
+            ensure_legacy_device_active(request, cached)
+        except AuthError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc) or "Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
         return cached
     token = bearer_from_header(authorization)
     if not token:
@@ -355,6 +372,14 @@ async def get_current_user(
         )
     try:
         user = decode_access_token(token)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc) or "Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    try:
+        ensure_legacy_device_active(request, user)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

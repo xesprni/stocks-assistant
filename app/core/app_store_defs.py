@@ -15,6 +15,7 @@ JWT_SECRET_KEY = "jwt_secret"
 CONFIG_ENCRYPTION_KEY = "config_encryption_key"
 ENCRYPTED_MARKER = "__stocks_assistant_encrypted__"
 ENCRYPTED_VERSION = "fernet-v1"
+LOGIN_DEVICE_ONLINE_SECONDS = 120
 
 SENSITIVE_CONFIG_KEYS = {
     "llm_api_key",
@@ -148,4 +149,3 @@ def is_encrypted_payload(value: Any) -> bool:
         and value.get(ENCRYPTED_MARKER) == ENCRYPTED_VERSION
         and isinstance(value.get("value"), str)
     )
-

@@ -23,6 +23,7 @@ import type {
   KnowledgeGraph,
   KnowledgeSaveResponse,
   KnowledgeTree,
+  LoginDeviceHeartbeatResponse,
   LoginSessionListResponse,
   MarketTemperature,
   MCPServerToolsResponse,
@@ -264,11 +265,34 @@ export function listLoginSessions() {
   return request<LoginSessionListResponse>("/api/v1/auth/sessions");
 }
 
+export function heartbeatLoginDevice() {
+  return request<LoginDeviceHeartbeatResponse>("/api/v1/auth/device/heartbeat", {
+    method: "POST",
+    body: JSON.stringify({ device_id: getDeviceId() }),
+  });
+}
+
 export function revokeLoginSession(sessionId: string, userId?: string) {
   const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{ status: string; revoked_current: boolean }>(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}${query}`, {
     method: "DELETE",
   });
+}
+
+export function deleteLoginDevice(deviceId: string, userId?: string) {
+  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; deleted: number; deleted_current: boolean }>(
+    `/api/v1/auth/sessions/${encodeURIComponent(deviceId)}/device${query}`,
+    { method: "DELETE" },
+  );
+}
+
+export function deleteLoginRecord(deviceId: string, recordId: string, userId?: string) {
+  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; deleted_current: boolean }>(
+    `/api/v1/auth/sessions/${encodeURIComponent(deviceId)}/records/${encodeURIComponent(recordId)}${query}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function logout() {

@@ -110,7 +110,7 @@ export interface SetupStatusResponse {
   setup_required: boolean;
 }
 
-export interface LoginSession {
+export interface LoginRecord {
   id: string;
   device_id: string;
   user_id: string;
@@ -127,6 +127,18 @@ export interface LoginSession {
   active_refresh_tokens: number;
   is_current: boolean;
   is_active: boolean;
+  is_online: boolean;
+}
+
+export interface LoginSession extends LoginRecord {
+  records: LoginRecord[];
+}
+
+export interface LoginDeviceHeartbeatResponse {
+  status: string;
+  device_id: string;
+  last_seen_at: string;
+  is_online: boolean;
 }
 
 export interface LoginSessionListResponse {

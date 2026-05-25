@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.core.app_store import get_app_store
-from app.core.security import AuthError, bearer_from_header, decode_access_token
+from app.core.security import AuthError, bearer_from_header, decode_access_token, ensure_legacy_device_active
 from app.core.logging import setup_logging
 from app.api import router
 
@@ -124,7 +124,9 @@ async def enforce_api_auth(request: Request, call_next):
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        request.state.current_user = decode_access_token(token)
+        current_user = decode_access_token(token)
+        ensure_legacy_device_active(request, current_user)
+        request.state.current_user = current_user
     except AuthError as exc:
         return JSONResponse(
             {"detail": str(exc) or "Invalid token"},
