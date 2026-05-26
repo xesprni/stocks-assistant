@@ -297,6 +297,12 @@ function mergeIntradayBars(current: ParsedIntradayBar[], incoming: ParsedIntrada
 
 // ── Watchlist sidebar ─────────────────────────────────────────────────────────
 
+function watchlistDisplayName(item: WatchlistItem, language: AppLanguage) {
+  return language === "en"
+    ? (item.name_en || item.name_cn || item.name || item.symbol)
+    : (item.name_cn || item.name || item.symbol);
+}
+
 function SymbolSideNav({
   active,
   copy,
@@ -343,29 +349,32 @@ function SymbolSideNav({
         {items.length === 0 ? (
           <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">{copy.noData}</div>
         ) : (
-          items.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onSelect(item.symbol, language === "en" ? (item.name_en || item.name || item.symbol) : (item.name_cn || item.name || item.symbol))}
-              className={`group relative w-36 shrink-0 border-r border-border/50 px-3 py-2.5 text-left transition-colors md:w-full md:border-b md:border-r-0 ${
-                item.symbol === active
-                  ? "bg-primary/5"
-                  : "hover:bg-muted/50"
-              }`}
-            >
-              {item.symbol === active && (
-                <span className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary" />
-              )}
-              <div className={`truncate text-xs font-semibold ${
-                item.symbol === active ? "text-primary" : "text-foreground"
-              }`}>
-                {item.symbol}
-              </div>
-              <div className="truncate text-[10px] text-muted-foreground group-hover:text-foreground/70">
-                {language === "en" ? (item.name_en || item.name || item.symbol) : (item.name_cn || item.name || item.symbol)}
-              </div>
-            </button>
-          ))
+          items.map((item) => {
+            const displayName = watchlistDisplayName(item, language);
+            return (
+              <button
+                key={item.id}
+                onClick={() => onSelect(item.symbol, displayName)}
+                className={`group relative w-36 shrink-0 border-r border-border/50 px-3 py-2.5 text-left transition-colors md:w-full md:border-b md:border-r-0 ${
+                  item.symbol === active
+                    ? "bg-primary/5"
+                    : "hover:bg-muted/50"
+                }`}
+              >
+                {item.symbol === active && (
+                  <span className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary" />
+                )}
+                <div className={`truncate text-xs font-semibold ${
+                  item.symbol === active ? "text-primary" : "text-foreground"
+                }`}>
+                  {item.symbol}
+                </div>
+                <div className="truncate text-[10px] text-muted-foreground group-hover:text-foreground/70">
+                  {displayName}
+                </div>
+              </button>
+            );
+          })
         )}
       </div>
     </aside>
