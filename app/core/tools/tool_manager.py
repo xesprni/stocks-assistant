@@ -35,7 +35,7 @@ class ToolManager:
         """加载所有内置工具
 
         内置工具包括：bash、web_search、web_fetch、read_file、write_file、
-        financial_reports、market_data、portfolio_positions、memory_search、memory_get、scheduler。
+        financial_reports、market_data、portfolio_positions、watchlist、memory_search、memory_get、scheduler。
         """
         from app.core.tools.bash import BashTool
         from app.core.tools.web_search import WebSearchTool
@@ -57,6 +57,7 @@ class ToolManager:
             GetLongbridgeTradingDaysTool,
         )
         from app.core.tools.portfolio_positions import GetPortfolioPositionsTool
+        from app.core.tools.watchlist import WatchlistTool
         from app.core.tools.delegate_agent import DelegateAgentTool
         from app.core.tools.memory_search import MemorySearchTool
         from app.core.tools.memory_get import MemoryGetTool
@@ -81,6 +82,7 @@ class ToolManager:
             GetLongbridgeQuoteIndicatorsTool,
             GetLongbridgeTechnicalIndicatorsTool,
             GetPortfolioPositionsTool,
+            WatchlistTool,
             DelegateAgentTool,
         ]
 
@@ -187,6 +189,8 @@ class ToolManager:
         if class_name == "GetFinancialReportsTool":
             return tool_class(settings=self.settings)
         if class_name == "GetPortfolioPositionsTool":
+            return tool_class(user_id=self.user_id, settings=self.settings)
+        if class_name == "WatchlistTool":
             return tool_class(user_id=self.user_id, settings=self.settings)
         if class_name.startswith("GetLongbridge") and class_name.endswith("Tool"):
             return tool_class(user_id=self.user_id, settings=self.settings)

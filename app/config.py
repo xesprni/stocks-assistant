@@ -58,6 +58,7 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "write_file",
     "get_financial_reports",
     "get_portfolio_positions",
+    "watchlist",
     "delegate_agent",
     "memory_search",
     "memory_get",
@@ -239,7 +240,7 @@ class Settings(BaseSettings):
     multi_agent_default_max_steps: int = 8  # 智能体默认最大执行步数
     multi_agent_max_depth: int = 1  # V1 固定为 1，避免递归委派
     multi_agent_dangerous_tools: list[str] = Field(
-        default_factory=lambda: ["bash", "write_file", "scheduler"],
+        default_factory=lambda: ["bash", "write_file", "scheduler", "watchlist"],
     )
     multi_agent_roles: Dict[str, Dict[str, Any]] = Field(
         default_factory=lambda: deepcopy(DEFAULT_MULTI_AGENT_ROLES),
