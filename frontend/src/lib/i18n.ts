@@ -191,6 +191,7 @@ export const i18n = {
       positionsCount: "{count} 只",
       pnl: "盈亏",
       marketHidden: "当前账号无权限查看市场数据",
+      watchlistHidden: "当前账号无权限查看自选数据",
       portfolioHidden: "当前账号无权限查看持仓数据",
     },
     chat: {
@@ -663,6 +664,7 @@ export const i18n = {
       positionsCount: "{count} positions",
       pnl: "P&L",
       marketHidden: "This account cannot view market data",
+      watchlistHidden: "This account cannot view watchlist data",
       portfolioHidden: "This account cannot view portfolio data",
     },
     chat: {

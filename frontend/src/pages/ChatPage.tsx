@@ -197,7 +197,7 @@ export function ChatPage({
   chatScrollRef: RefObject<HTMLDivElement | null>;
   confirmAction: ConfirmFn;
   endRef: RefObject<HTMLDivElement | null>;
-  handleSend: (event?: { preventDefault: () => void }, value?: string) => void;
+  handleSend: (event?: { preventDefault: () => void }, value?: string, options?: { forceNewSession?: boolean; newSession?: boolean }) => void;
   handleChatScroll: () => void;
   handleStopStreaming: () => void;
   isSending: boolean;

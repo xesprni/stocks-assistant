@@ -580,6 +580,7 @@ function ConsoleApp() {
     if (stored !== null) return stored === "true";
     return window.localStorage.getItem(LEGACY_MOBILE_CHROME_HIDDEN_KEY) !== "true";
   });
+  const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
@@ -808,7 +809,11 @@ function ConsoleApp() {
     return [config.memory_enabled, config.knowledge_enabled, config.scheduler_enabled, config.tracing_enabled].filter(Boolean).length;
   }, [config]);
 
-  async function handleSend(event?: { preventDefault: () => void }, value = prompt) {
+  async function handleSend(
+    event?: { preventDefault: () => void },
+    value = prompt,
+    options: { forceNewSession?: boolean; newSession?: boolean } = {},
+  ) {
     event?.preventDefault();
     const text = value.trim();
     if (!text || isSending) return;
@@ -836,7 +841,8 @@ function ConsoleApp() {
     setIsSending(true);
     setPage("chat");
 
-    let convId = activeConvId;
+    const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
+    let convId = shouldCreateNewSession ? null : activeConvId;
     let assistantMessageId = pendingMessage.id;
     let streamedContent = "";
     let currentStatus = ui.chat.connecting;
@@ -1415,9 +1421,11 @@ function ConsoleApp() {
           isMobileVisible={isMobileHeaderVisible}
           language={language}
           modelName={modelName}
+          onOpenMobileMore={() => setIsMobileMoreOpen(true)}
           onHideMobileChrome={() => {
             setIsMobileHeaderVisible(false);
             setIsMobileNavVisible(false);
+            setIsMobileMoreOpen(false);
           }}
           onHome={() => setPage("overview")}
           onLogout={auth.logout}
@@ -1427,6 +1435,14 @@ function ConsoleApp() {
           resolvedTheme={resolvedTheme}
           theme={theme}
           username={auth.user?.username ?? ""}
+        />
+        <MobileMoreSheet
+          canPage={canPage}
+          isOpen={isMobileMoreOpen}
+          language={language}
+          onClose={() => setIsMobileMoreOpen(false)}
+          page={page}
+          setPage={handleNavigate}
         />
         <DesktopTopNav
           canPage={canPage}
@@ -1453,7 +1469,7 @@ function ConsoleApp() {
         >
           <main
             className={cn(
-              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background/70 p-2 sm:p-4 lg:overflow-y-auto lg:pb-4",
+              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-2 sm:p-4 lg:overflow-y-auto lg:pb-4",
               isMobileHeaderVisible && "mobile-header-spacer",
               isMobileNavVisible
                 ? "pb-[calc(4.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(5rem+env(safe-area-inset-bottom))]"
@@ -1489,8 +1505,7 @@ function ConsoleApp() {
                   onOpenPortfolio={() => setPage("portfolio")}
                   onOpenWatchlist={() => setPage("watchlist")}
                   onPrompt={(value) => {
-                    setPrompt(value);
-                    setPage("chat");
+                    void handleSend(undefined, value, { forceNewSession: true });
                   }}
                 />
               ) : null}
@@ -1649,6 +1664,7 @@ function Header({
   onHideMobileChrome,
   onHome,
   onLogout,
+  onOpenMobileMore,
   onTouchMove,
   onTouchStart,
   onThemeChange,
@@ -1663,6 +1679,7 @@ function Header({
   onHideMobileChrome: () => void;
   onHome: () => void;
   onLogout: () => void;
+  onOpenMobileMore: () => void;
   onTouchMove: (event: TouchEvent<HTMLElement>) => void;
   onTouchStart: (event: TouchEvent<HTMLElement>) => void;
   onThemeChange: (theme: Theme) => void;
@@ -1707,6 +1724,17 @@ function Header({
           <span className="truncate">{modelName}</span>
         </Badge>
         <Badge variant="outline" className="hidden max-w-[160px] truncate lg:inline-flex">{username}</Badge>
+        <Button
+          aria-label={language === "en" ? "Open page menu" : "打开页面菜单"}
+          className="h-8 w-8 lg:hidden"
+          onClick={onOpenMobileMore}
+          size="icon"
+          title={language === "en" ? "Open page menu" : "打开页面菜单"}
+          type="button"
+          variant="outline"
+        >
+          <Menu className="size-4" />
+        </Button>
         <Button
           aria-label={hideMobileChromeLabel}
           className="h-8 w-8 lg:hidden"
@@ -1817,14 +1845,14 @@ function DesktopTopNav({
                 <div className="grid grid-cols-2 gap-3">
                   {moreGroups.map((group) => (
                     <div className="min-w-0" key={group.id}>
-                      <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{group.label}</p>
+                      <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>
                       <div className="space-y-0.5">
                         {group.items.map((item) => (
                           <button
                             aria-current={page === item.id ? "page" : undefined}
                             className={cn(
                               "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                              page === item.id ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground",
+                              page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
                             )}
                             key={item.id}
                             onClick={() => navigate(item.id)}
@@ -1847,6 +1875,78 @@ function DesktopTopNav({
         ) : null}
       </div>
     </nav>
+  );
+}
+
+function MobileMoreSheet({
+  canPage,
+  isOpen,
+  language,
+  onClose,
+  page,
+  setPage,
+}: {
+  canPage: (page: Page) => boolean;
+  isOpen: boolean;
+  language: AppLanguage;
+  onClose: () => void;
+  page: Page;
+  setPage: (page: Page) => void;
+}) {
+  const navItems = getNavItems(language).filter((item) => canPage(item.id));
+  const moreItems = navItems.filter((item) => !MOBILE_PRIMARY_PAGES.includes(item.id));
+  const copy = i18n[language].shell;
+  const closeLabel = language === "en" ? "Close" : "关闭";
+
+  function navigate(nextPage: Page) {
+    onClose();
+    setPage(nextPage);
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-40 lg:hidden">
+      <button
+        aria-label={closeLabel}
+        className="absolute inset-0 bg-background/60 backdrop-blur-[2px]"
+        onClick={onClose}
+        type="button"
+      />
+      <div className="absolute inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] mx-2 max-h-[min(560px,72dvh)] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/80 px-3 py-2">
+          <div>
+            <p className="text-sm font-semibold">{copy.navigation}</p>
+            <p className="text-xs text-muted-foreground">{copy.pageSwitch}</p>
+          </div>
+          <Button aria-label={closeLabel} className="h-8 w-8" onClick={onClose} size="icon" variant="ghost">
+            <X className="size-4" />
+          </Button>
+        </div>
+        <div className="grid max-h-[calc(min(560px,72dvh)-3.5rem)] grid-cols-2 gap-2 overflow-y-auto p-2 sm:grid-cols-3">
+          {moreItems.map((item) => (
+            <button
+              aria-current={page === item.id ? "page" : undefined}
+              className={cn(
+                "flex min-w-0 items-center gap-2 rounded-md border px-3 py-2.5 text-left transition-colors",
+                page === item.id
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border/80 bg-background/55 text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+              )}
+              key={item.id}
+              onClick={() => navigate(item.id)}
+              type="button"
+            >
+              <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/70 [&_svg]:size-4">{item.icon}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold">{item.label}</span>
+                <span className="block truncate text-[11px]">{item.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1875,77 +1975,23 @@ function MobileNav({
   page: Page;
   setPage: (page: Page) => void;
 }) {
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
   const navItems = getNavItems(language).filter((item) => canPage(item.id));
   const primaryItems = MOBILE_PRIMARY_PAGES
     .map((id) => navItems.find((item) => item.id === id))
     .filter((item): item is NavItem => Boolean(item));
-  const moreItems = navItems.filter((item) => !MOBILE_PRIMARY_PAGES.includes(item.id));
-  const isMoreActive = !MOBILE_PRIMARY_PAGES.includes(page);
   const copy = i18n[language].shell;
-  const moreLabel = language === "en" ? "More" : "更多";
-  const closeLabel = language === "en" ? "Close" : "关闭";
   const showNavLabel = language === "en" ? "Show bottom navigation" : "显示底部导航";
   const hideNavLabel = language === "en" ? "Hide bottom navigation" : "隐藏底部导航";
 
-  useEffect(() => {
-    if (!isVisible) setIsMoreOpen(false);
-  }, [isVisible]);
-
   function navigate(nextPage: Page) {
-    setIsMoreOpen(false);
     setPage(nextPage);
   }
 
   return (
     <>
-      {isMoreOpen ? (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <button
-            aria-label={closeLabel}
-            className="absolute inset-0 bg-background/50 backdrop-blur-[2px]"
-            onClick={() => setIsMoreOpen(false)}
-            type="button"
-          />
-          <div className="absolute inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] mx-2 max-h-[min(560px,72dvh)] overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
-            <div className="flex items-center justify-between border-b border-border/80 px-3 py-2">
-              <div>
-                <p className="text-sm font-semibold">{copy.navigation}</p>
-                <p className="text-xs text-muted-foreground">{copy.pageSwitch}</p>
-              </div>
-              <Button aria-label={closeLabel} className="h-8 w-8" onClick={() => setIsMoreOpen(false)} size="icon" variant="ghost">
-                <X className="size-4" />
-              </Button>
-            </div>
-            <div className="grid max-h-[calc(min(560px,72dvh)-3.5rem)] grid-cols-2 gap-2 overflow-y-auto p-2 sm:grid-cols-3">
-              {moreItems.map((item) => (
-                <button
-                  aria-current={page === item.id ? "page" : undefined}
-                  className={cn(
-                    "flex min-w-0 items-center gap-2 rounded-md border px-3 py-2.5 text-left transition-colors",
-                    page === item.id
-                      ? "border-primary/50 bg-primary/10 text-foreground"
-                      : "border-border/80 bg-background/55 text-muted-foreground hover:bg-muted/65 hover:text-foreground",
-                  )}
-                  key={item.id}
-                  onClick={() => navigate(item.id)}
-                  type="button"
-                >
-                  <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/70 [&_svg]:size-4">{item.icon}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">{item.label}</span>
-                    <span className="block truncate text-[11px]">{item.hint}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       <nav
         className={cn(
-          "panel app-mobile-nav fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 gap-1 rounded-none border-x-0 border-b-0 px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-none lg:hidden",
+          "panel app-mobile-nav fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 gap-1 rounded-none border-x-0 border-b-0 px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-none lg:hidden",
           !isVisible && "mobile-nav-hidden",
         )}
         aria-label={copy.navigation}
@@ -1977,18 +2023,6 @@ function MobileNav({
             <span className="max-w-full truncate">{item.label}</span>
           </button>
         ))}
-        <button
-          aria-expanded={isMoreOpen}
-          className={cn(
-            "nav-item flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold transition-colors",
-            isMoreActive || isMoreOpen ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground",
-          )}
-          onClick={() => setIsMoreOpen((current) => !current)}
-          type="button"
-        >
-          <Menu className="size-4" />
-          <span className="max-w-full truncate">{moreLabel}</span>
-        </button>
       </nav>
       <button
         aria-label={showNavLabel}
