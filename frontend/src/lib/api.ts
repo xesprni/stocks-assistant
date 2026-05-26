@@ -14,8 +14,11 @@ import type {
   ClawHubInstallResponse,
   ClawHubSearchResponse,
   ClawHubSkillDetail,
+  DashboardMarketModule,
+  DashboardPortfolioModule,
   Conversation,
   DashboardResponse,
+  DashboardWatchlistModule,
   FinancialReportKind,
   FinancialReportPeriod,
   FinancialReportsResponse,
@@ -644,8 +647,21 @@ export function getStockQuotes(category?: string) {
   return request<MarketQuotesResponse>(`/api/v1/market/stock-quotes${params}`);
 }
 
-export function getDashboard() {
-  return request<DashboardResponse>("/api/v1/dashboard");
+export function getDashboard(mode: "bootstrap" | "full" = "full", init?: RequestInit) {
+  const params = mode === "full" ? "" : "?mode=bootstrap";
+  return request<DashboardResponse>(`/api/v1/dashboard${params}`, init);
+}
+
+export function getDashboardMarket(init?: RequestInit) {
+  return request<DashboardMarketModule>("/api/v1/dashboard/market", init);
+}
+
+export function getDashboardWatchlist(init?: RequestInit) {
+  return request<DashboardWatchlistModule>("/api/v1/dashboard/watchlist", init);
+}
+
+export function getDashboardPortfolio(init?: RequestInit) {
+  return request<DashboardPortfolioModule>("/api/v1/dashboard/portfolio", init);
 }
 
 export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", count = 200) {
@@ -665,9 +681,9 @@ export function getMarketTemperature(market: string = "US") {
 
 // ── News ────────────────────────────────────────────────────────────────────
 
-export function getSecurityNews(symbol: string, limit = 50) {
+export function getSecurityNews(symbol: string, limit = 50, init?: RequestInit) {
   const params = new URLSearchParams({ symbol, limit: String(limit) });
-  return request<SecurityNewsResponse>(`/api/v1/news?${params.toString()}`);
+  return request<SecurityNewsResponse>(`/api/v1/news?${params.toString()}`, init);
 }
 
 // ── Fundamentals ─────────────────────────────────────────────────────────────

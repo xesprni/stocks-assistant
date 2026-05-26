@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -26,13 +26,15 @@ import { MarketPulse } from "@/components/MarketPulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getDashboard, getSecurityNews } from "@/lib/api";
+import { getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist, getSecurityNews } from "@/lib/api";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
   AppConfig,
-  DashboardPortfolioMarket,
+  DashboardMarketModule,
+  DashboardModuleSource,
   DashboardPortfolioModule,
+  DashboardPortfolioMarket,
   DashboardPortfolioPosition,
   DashboardResponse,
   DashboardWatchlistModule,
@@ -46,9 +48,64 @@ import type {
 
 const WATCHLIST_FILTERS: Array<"ALL" | WatchlistCategory> = ["ALL", "US", "A", "H"];
 const WATCHLIST_VIEWS: DashboardWatchlistView[] = ["movers", "gainers", "losers", "active"];
+const DASHBOARD_SNAPSHOT_KEY = "stocks_assistant_dashboard_snapshot_v1";
+const DASHBOARD_SNAPSHOT_MAX_AGE_MS = 10_000;
+
+const EMPTY_MARKET_MODULE: DashboardMarketModule = {
+  available: true,
+  error: null,
+  fetched_at: null,
+  stale: false,
+  source: "local",
+  indices: [],
+};
+
+const EMPTY_WATCHLIST_MODULE: DashboardWatchlistModule = {
+  available: true,
+  error: null,
+  fetched_at: null,
+  stale: false,
+  source: "local",
+  items: [],
+  views: { movers: [], gainers: [], losers: [], active: [] },
+  counts_by_category: { US: 0, A: 0, H: 0 },
+  total: 0,
+  quote_error: null,
+};
+
+const EMPTY_PORTFOLIO_MODULE: DashboardPortfolioModule = {
+  available: true,
+  error: null,
+  fetched_at: null,
+  stale: false,
+  source: "local",
+  markets: [],
+};
+
+const EMPTY_DASHBOARD: DashboardResponse = {
+  market: EMPTY_MARKET_MODULE,
+  watchlist: EMPTY_WATCHLIST_MODULE,
+  portfolio: EMPTY_PORTFOLIO_MODULE,
+};
 
 type SymbolRow = DashboardWatchlistRow;
 type Tone = "up" | "down" | "flat";
+type DashboardModuleKey = "market" | "watchlist" | "portfolio";
+const DASHBOARD_MODULE_KEYS: DashboardModuleKey[] = ["market", "watchlist", "portfolio"];
+
+type ModuleStatus = {
+  loading: boolean;
+  refreshing: boolean;
+  error: string;
+  lastUpdated: string;
+  stale: boolean;
+  source: DashboardModuleSource | null;
+};
+
+type DashboardSnapshot = {
+  savedAt: number;
+  data: DashboardResponse;
+};
 
 type DashboardPageProps = {
   canPermission: (permission: string) => boolean;
@@ -63,6 +120,7 @@ type DashboardPageProps = {
   onOpenPortfolio: () => void;
   onOpenWatchlist: () => void;
   onPrompt: (value: string) => void;
+  refreshInterval: number;
 };
 
 function parseNumber(value: string | null | undefined): number | null {
@@ -139,6 +197,91 @@ function chunkRows<T>(rows: T[], size: number): T[][] {
     pages.push(rows.slice(index, index + size));
   }
   return pages;
+}
+
+function readDashboardSnapshot(): DashboardResponse | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw) as DashboardSnapshot;
+    if (!snapshot?.data || Date.now() - snapshot.savedAt > DASHBOARD_SNAPSHOT_MAX_AGE_MS) return null;
+    return snapshot.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeDashboardSnapshot(data: DashboardResponse) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(DASHBOARD_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {
+    // Snapshot cache is only a render accelerator; quota failures can be ignored.
+  }
+}
+
+function moduleStatusFromModule(
+  module: { error?: string | null; fetched_at?: string | null; stale?: boolean; source?: DashboardModuleSource | null } | null | undefined,
+  loading = false,
+): ModuleStatus {
+  return {
+    loading,
+    refreshing: false,
+    error: module?.error || "",
+    lastUpdated: module?.fetched_at || "",
+    stale: Boolean(module?.stale),
+    source: module?.source ?? null,
+  };
+}
+
+function initialModuleStatuses(snapshot: DashboardResponse | null): Record<DashboardModuleKey, ModuleStatus> {
+  const loading = !snapshot;
+  return {
+    market: moduleStatusFromModule(snapshot?.market, loading),
+    watchlist: moduleStatusFromModule(snapshot?.watchlist, loading),
+    portfolio: moduleStatusFromModule(snapshot?.portfolio, loading),
+  };
+}
+
+function mergeDashboard(prev: DashboardResponse | null, patch: Partial<DashboardResponse>): DashboardResponse {
+  return {
+    market: patch.market ?? prev?.market ?? EMPTY_DASHBOARD.market,
+    watchlist: patch.watchlist ?? prev?.watchlist ?? EMPTY_DASHBOARD.watchlist,
+    portfolio: patch.portfolio ?? prev?.portfolio ?? EMPTY_DASHBOARD.portfolio,
+  };
+}
+
+function dashboardHasModuleData(data: DashboardResponse | null, key: DashboardModuleKey): boolean {
+  if (!data) return false;
+  if (key === "market") return data.market.indices.length > 0;
+  if (key === "watchlist") return data.watchlist.total > 0 || data.watchlist.items.length > 0;
+  return data.portfolio.markets.length > 0;
+}
+
+function formatModuleTime(value: string, language: AppLanguage): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function moduleStatusLabel(status: ModuleStatus, language: AppLanguage): string {
+  const sourceLabels: Record<DashboardModuleSource, string> = language === "en"
+    ? { local: "local", cache: "cached", live: "live" }
+    : { local: "本地", cache: "缓存", live: "实时" };
+  const parts: string[] = [];
+  if (status.refreshing) parts.push(language === "en" ? "refreshing" : "刷新中");
+  const updatedAt = formatModuleTime(status.lastUpdated, language);
+  if (updatedAt) parts.push(updatedAt);
+  if (status.source) parts.push(sourceLabels[status.source]);
+  if (status.stale) parts.push(language === "en" ? "stale" : "可能过期");
+  return parts.join(" · ");
+}
+
+function sectionSubtitle(base: string, status: ModuleStatus, language: AppLanguage): string {
+  const meta = moduleStatusLabel(status, language);
+  return meta ? `${base} · ${meta}` : base;
 }
 
 function FinanceSection({
@@ -338,19 +481,21 @@ function MarketSnapshot({
   language,
   loading,
   onOpenMarket,
+  subtitle,
 }: {
   error: string;
   indices: QuoteItem[];
   language: AppLanguage;
   loading: boolean;
   onOpenMarket: () => void;
+  subtitle?: string;
 }) {
   const copy = i18n[language].overview;
   return (
     <FinanceSection
       action={<Button size="sm" variant="ghost" onClick={onOpenMarket}>{copy.viewMarket}<ArrowRight /></Button>}
       icon={<BarChart2 />}
-      subtitle={copy.marketSnapshotSubtitle}
+      subtitle={subtitle ?? copy.marketSnapshotSubtitle}
       title={copy.marketSnapshot}
     >
       {loading && indices.length === 0 ? (
@@ -360,10 +505,13 @@ function MarketSnapshot({
       ) : indices.length === 0 ? (
         <InlineState>{copy.emptyMarket}</InlineState>
       ) : (
-        <div className="finance-index-strip -mx-2 flex overflow-x-auto sm:mx-0">
-          {indices.slice(0, 8).map((quote) => (
-            <MarketPill language={language} key={quote.symbol} quote={quote} />
-          ))}
+        <div className="space-y-2">
+          {error ? <InlineState>{error}</InlineState> : null}
+          <div className="finance-index-strip -mx-2 flex overflow-x-auto sm:mx-0">
+            {indices.slice(0, 8).map((quote) => (
+              <MarketPill language={language} key={quote.symbol} quote={quote} />
+            ))}
+          </div>
         </div>
       )}
     </FinanceSection>
@@ -379,6 +527,7 @@ function WatchlistMovers({
   onOpenWatchlist,
   onSelectNewsSymbol,
   selectedNewsSymbol,
+  subtitle,
 }: {
   error: string;
   language: AppLanguage;
@@ -388,6 +537,7 @@ function WatchlistMovers({
   onOpenWatchlist: () => void;
   onSelectNewsSymbol: (symbol: string) => void;
   selectedNewsSymbol: string;
+  subtitle?: string;
 }) {
   const copy = i18n[language].overview;
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -446,7 +596,7 @@ function WatchlistMovers({
     <FinanceSection
       action={<Button size="sm" variant="ghost" onClick={onOpenWatchlist}>{copy.viewWatchlist}<ArrowRight /></Button>}
       icon={<Star />}
-      subtitle={copy.watchlistMoversSubtitle}
+      subtitle={subtitle ?? copy.watchlistMoversSubtitle}
       title={copy.watchlistMovers}
     >
       {loading && total === 0 ? (
@@ -497,6 +647,7 @@ function WatchlistMovers({
               </button>
             ))}
           </div>
+          {moduleError ? <InlineState>{moduleError}</InlineState> : null}
           {module?.quote_error ? <InlineState>{module.quote_error}</InlineState> : null}
           {rows.length === 0 ? (
             <InlineState>{copy.emptyMovers}</InlineState>
@@ -580,12 +731,14 @@ function PortfolioSummary({
   loading,
   module,
   onOpenPortfolio,
+  subtitle,
 }: {
   error: string;
   language: AppLanguage;
   loading: boolean;
   module: DashboardPortfolioModule | null | undefined;
   onOpenPortfolio: () => void;
+  subtitle?: string;
 }) {
   const copy = i18n[language].overview;
   const markets = module?.markets ?? [];
@@ -599,7 +752,7 @@ function PortfolioSummary({
     <FinanceSection
       action={<Button size="sm" variant="ghost" onClick={onOpenPortfolio}>{copy.viewPortfolio}<ArrowRight /></Button>}
       icon={<BriefcaseBusiness />}
-      subtitle={copy.portfolioSubtitle}
+      subtitle={subtitle ?? copy.portfolioSubtitle}
       title={copy.portfolioTitle}
     >
       {loading && markets.length === 0 ? (
@@ -610,6 +763,7 @@ function PortfolioSummary({
         <InlineState>{copy.emptyPortfolio}</InlineState>
       ) : (
         <div className="space-y-4">
+          {moduleError ? <InlineState>{moduleError}</InlineState> : null}
           <div className="grid divide-y divide-border/55 border-y border-border/55 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             {markets.map((market) => (
               <PortfolioMarketSummary key={market.market} language={language} market={market} />
@@ -857,40 +1011,157 @@ export function DashboardPage({
   onOpenPortfolio,
   onOpenWatchlist,
   onPrompt,
+  refreshInterval,
 }: DashboardPageProps) {
   const copy = i18n[language].overview;
   const canMarket = canPermission("market:read");
   const canPortfolio = canPermission("portfolio:read");
   const canWatchlist = canPermission("watchlist:read");
 
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const initialSnapshotRef = useRef<DashboardResponse | null | undefined>(undefined);
+  if (initialSnapshotRef.current === undefined) {
+    initialSnapshotRef.current = readDashboardSnapshot();
+  }
+  const [dashboard, setDashboard] = useState<DashboardResponse | null>(() => initialSnapshotRef.current ?? null);
+  const [moduleStatus, setModuleStatus] = useState<Record<DashboardModuleKey, ModuleStatus>>(() =>
+    initialModuleStatuses(initialSnapshotRef.current ?? null),
+  );
   const [dashboardError, setDashboardError] = useState("");
   const [news, setNews] = useState<SecurityNewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState("");
   const [selectedNewsSymbol, setSelectedNewsSymbol] = useState("");
+  const dashboardRef = useRef<DashboardResponse | null>(dashboard);
+  const modulesAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-    setDashboardLoading(true);
+    dashboardRef.current = dashboard;
+    if (dashboard) writeDashboardSnapshot(dashboard);
+  }, [dashboard]);
+
+  const refreshModules = useCallback((quiet = true) => {
+    modulesAbortRef.current?.abort();
+    const controller = new AbortController();
+    modulesAbortRef.current = controller;
+    const signal = controller.signal;
+    const loaders: Array<[DashboardModuleKey, () => Promise<DashboardResponse[DashboardModuleKey]>]> = [
+      ["market", () => getDashboardMarket({ signal })],
+      ["watchlist", () => getDashboardWatchlist({ signal })],
+      ["portfolio", () => getDashboardPortfolio({ signal })],
+    ];
+
+    const tasks = loaders.map(async ([key, loader]) => {
+      const hasData = dashboardHasModuleData(dashboardRef.current, key);
+      setModuleStatus((previous) => ({
+        ...previous,
+        [key]: {
+          ...previous[key],
+          loading: !quiet && !hasData,
+          refreshing: quiet || hasData,
+          error: quiet ? previous[key].error : "",
+        },
+      }));
+
+      try {
+        const module = await loader();
+        if (signal.aborted) return;
+        setDashboardError("");
+        setDashboard((previous) => mergeDashboard(previous, { [key]: module } as Partial<DashboardResponse>));
+        setModuleStatus((previous) => ({
+          ...previous,
+          [key]: moduleStatusFromModule(module),
+        }));
+      } catch (caught) {
+        if (signal.aborted) return;
+        const message = caught instanceof Error ? caught.message : copy.loadFailed;
+        setModuleStatus((previous) => ({
+          ...previous,
+          [key]: {
+            ...previous[key],
+            loading: false,
+            refreshing: false,
+            error: message,
+            stale: true,
+          },
+        }));
+      }
+    });
+
+    return Promise.allSettled(tasks).finally(() => {
+      if (modulesAbortRef.current === controller) modulesAbortRef.current = null;
+    });
+  }, [copy.loadFailed]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setDashboardError("");
-    getDashboard()
+    setModuleStatus((previous) => {
+      const next = { ...previous };
+      for (const key of DASHBOARD_MODULE_KEYS) {
+        const hasData = dashboardHasModuleData(dashboardRef.current, key);
+        next[key] = { ...next[key], loading: !hasData, refreshing: hasData, error: "" };
+      }
+      return next;
+    });
+
+    getDashboard("bootstrap", { signal: controller.signal })
       .then((response) => {
-        if (mounted) setDashboard(response);
+        if (controller.signal.aborted) return;
+        setDashboardError("");
+        setDashboard((previous) => mergeDashboard(previous, response));
+        setModuleStatus({
+          market: moduleStatusFromModule(response.market),
+          watchlist: moduleStatusFromModule(response.watchlist),
+          portfolio: moduleStatusFromModule(response.portfolio),
+        });
       })
       .catch((caught) => {
-        if (!mounted) return;
-        setDashboard(null);
-        setDashboardError(caught instanceof Error ? caught.message : copy.loadFailed);
+        if (controller.signal.aborted) return;
+        const message = caught instanceof Error ? caught.message : copy.loadFailed;
+        setDashboardError(message);
+        setModuleStatus((previous) => {
+          const next = { ...previous };
+          for (const key of DASHBOARD_MODULE_KEYS) {
+            next[key] = {
+              ...next[key],
+              loading: false,
+              refreshing: false,
+              error: dashboardHasModuleData(dashboardRef.current, key) ? next[key].error : message,
+            };
+          }
+          return next;
+        });
       })
       .finally(() => {
-        if (mounted) setDashboardLoading(false);
+        if (!controller.signal.aborted) void refreshModules(true);
       });
+
     return () => {
-      mounted = false;
+      controller.abort();
     };
-  }, [copy.loadFailed]);
+  }, [copy.loadFailed, refreshModules]);
+
+  useEffect(() => () => modulesAbortRef.current?.abort(), []);
+
+  const refreshMs = useMemo(() => Math.max(8, Number(refreshInterval) || 60) * 1000, [refreshInterval]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void refreshModules(true);
+    }, refreshMs);
+    return () => window.clearInterval(timer);
+  }, [refreshModules, refreshMs]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const handleVisibilityChange = () => {
+      if (!document.hidden) void refreshModules(true);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [refreshModules]);
 
   const marketModule = dashboard?.market;
   const watchlistModule = dashboard?.watchlist;
@@ -915,21 +1186,21 @@ export function DashboardPage({
       setNews([]);
       return undefined;
     }
-    let mounted = true;
+    const controller = new AbortController();
     setNewsLoading(true);
     setNewsError("");
-    getSecurityNews(newsSourceSymbol)
+    getSecurityNews(newsSourceSymbol, 50, { signal: controller.signal })
       .then((response) => {
-        if (mounted) setNews(response.news);
+        if (!controller.signal.aborted) setNews(response.news);
       })
       .catch((caught) => {
-        if (mounted) setNewsError(caught instanceof Error ? caught.message : copy.loadFailed);
+        if (!controller.signal.aborted) setNewsError(caught instanceof Error ? caught.message : copy.loadFailed);
       })
       .finally(() => {
-        if (mounted) setNewsLoading(false);
+        if (!controller.signal.aborted) setNewsLoading(false);
       });
     return () => {
-      mounted = false;
+      controller.abort();
     };
   }, [canMarket, copy.loadFailed, newsSourceSymbol]);
 
@@ -941,11 +1212,12 @@ export function DashboardPage({
         <main className="dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 2xl:col-start-1 2xl:row-start-1">
           {canMarket ? (
             <MarketSnapshot
-              error={marketModule?.error || dashboardError}
+              error={moduleStatus.market.error || marketModule?.error || dashboardError}
               indices={marketModule?.indices ?? []}
               language={language}
-              loading={dashboardLoading}
+              loading={moduleStatus.market.loading}
               onOpenMarket={onOpenMarket}
+              subtitle={sectionSubtitle(copy.marketSnapshotSubtitle, moduleStatus.market, language)}
             />
           ) : (
             <PermissionHidden>{copy.marketHidden}</PermissionHidden>
@@ -953,14 +1225,15 @@ export function DashboardPage({
 
           {canWatchlist ? (
             <WatchlistMovers
-              error={watchlistModule?.error || dashboardError}
+              error={moduleStatus.watchlist.error || watchlistModule?.error || dashboardError}
               language={language}
-              loading={dashboardLoading}
+              loading={moduleStatus.watchlist.loading}
               module={watchlistModule}
               onOpenChart={canMarket ? onOpenChart : undefined}
               onOpenWatchlist={onOpenWatchlist}
               onSelectNewsSymbol={setSelectedNewsSymbol}
               selectedNewsSymbol={newsSourceSymbol}
+              subtitle={sectionSubtitle(copy.watchlistMoversSubtitle, moduleStatus.watchlist, language)}
             />
           ) : (
             <PermissionHidden>{copy.watchlistHidden}</PermissionHidden>
@@ -970,11 +1243,12 @@ export function DashboardPage({
         <section className="dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-2 2xl:col-start-2 2xl:row-start-1">
           {canPortfolio ? (
             <PortfolioSummary
-              error={portfolioModule?.error || dashboardError}
+              error={moduleStatus.portfolio.error || portfolioModule?.error || dashboardError}
               language={language}
-              loading={dashboardLoading}
+              loading={moduleStatus.portfolio.loading}
               module={portfolioModule}
               onOpenPortfolio={onOpenPortfolio}
+              subtitle={sectionSubtitle(copy.portfolioSubtitle, moduleStatus.portfolio, language)}
             />
           ) : (
             <PermissionHidden>{copy.portfolioHidden}</PermissionHidden>

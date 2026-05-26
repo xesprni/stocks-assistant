@@ -28,6 +28,10 @@ class FakeMarketService:
     def __init__(self, quotes=None, fail_quotes=False):
         self.quotes = quotes or []
         self.fail_quotes = fail_quotes
+        self.quote_calls = 0
+
+    def get_config(self, user_id=None):
+        return {"indices": [{"symbol": ".SPX.US", "name": "S&P 500", "enabled": True}], "refresh_interval": 60}
 
     def get_index_quotes(self, user_id=None, settings=None):
         return [{"symbol": ".SPX.US", "name": "S&P 500", "category": "US", "last_done": "5000"}]
@@ -36,6 +40,13 @@ class FakeMarketService:
         if self.fail_quotes:
             raise LongbridgeUnavailableError("Longbridge credentials are not configured")
         return self.quotes
+
+    def _fetch_quotes(self, symbols, name_map=None, category_map=None, settings=None):
+        self.quote_calls += 1
+        if self.fail_quotes:
+            raise LongbridgeUnavailableError("Longbridge credentials are not configured")
+        wanted = set(symbols)
+        return [quote for quote in self.quotes if quote["symbol"] in wanted]
 
 
 class FakePortfolioService:
@@ -193,6 +204,51 @@ class DashboardServiceTest(unittest.TestCase):
         self.assertFalse(payload["watchlist"]["available"])
         self.assertFalse(payload["portfolio"]["available"])
         self.assertTrue(payload["market"]["available"])
+
+    def test_bootstrap_does_not_call_longbridge_quotes(self):
+        items = [watchlist_item(index) for index in range(2)]
+        market_service = FakeMarketService(
+            [
+                {
+                    "symbol": "SYM0.US",
+                    "name": "Quote 0",
+                    "category": "US",
+                    "last_done": "100",
+                    "change_rate": "1.00%",
+                    "change_value": "1",
+                }
+            ]
+        )
+        service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
+
+        payload = service.build(user=FakeUser(), settings=None, mode="bootstrap")
+
+        self.assertEqual(market_service.quote_calls, 0)
+        self.assertEqual(payload["watchlist"]["source"], "local")
+        self.assertEqual(payload["watchlist"]["items"][0]["last_done"], None)
+
+    def test_quote_cache_reuses_recent_full_refresh(self):
+        items = [watchlist_item(100)]
+        quotes = [
+            {
+                "symbol": "SYM100.US",
+                "name": "Quote 100",
+                "category": "US",
+                "last_done": "120",
+                "change_rate": "2.00%",
+                "change_value": "2",
+            }
+        ]
+        market_service = FakeMarketService(quotes)
+        service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
+        user = FakeUser()
+
+        first = service.watchlist(user=user, settings=None)
+        second = service.watchlist(user=user, settings=None)
+
+        self.assertEqual(market_service.quote_calls, 1)
+        self.assertEqual(first["items"][0]["last_done"], "120")
+        self.assertEqual(second["source"], "cache")
 
 
 if __name__ == "__main__":

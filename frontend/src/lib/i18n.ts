@@ -1,10 +1,7 @@
-import type { ChatMessage } from "@/types/app";
-
 export type AppLanguage = "zh" | "en";
 
 export const i18n = {
   zh: {
-    initialMessage: "控制台已就绪。可以直接询问行情、策略、知识库内容，或让 Agent 调用工具完成分析任务。",
     quickPrompts: [
       "总结今天值得关注的美股科技股信号",
       "帮我制定一份低波动组合观察清单",
@@ -88,10 +85,6 @@ export const i18n = {
       deleteConversation: "删除对话",
       clearAllHistory: "清空全部",
       clearAllHistoryConfirmDescription: "这会删除当前用户的全部聊天历史，并同步清除这些会话对应的 Tracing 记录。",
-      contextUsage: "上下文消耗",
-      contextUsed: "已用",
-      contextTotal: "总量",
-      contextTokens: "tokens",
     },
     watchlist: {
       title: "Watchlist",
@@ -477,7 +470,6 @@ export const i18n = {
     },
   },
   en: {
-    initialMessage: "Console is ready. Ask about markets, strategies, knowledge base content, or let the Agent use tools to complete analysis tasks.",
     quickPrompts: [
       "Summarize notable US tech stock signals today",
       "Help me build a low-volatility watchlist",
@@ -561,10 +553,6 @@ export const i18n = {
       deleteConversation: "Delete conversation",
       clearAllHistory: "Clear all",
       clearAllHistoryConfirmDescription: "This deletes all chat history for the current user and also clears the tracing records attached to those sessions.",
-      contextUsage: "Context usage",
-      contextUsed: "Used",
-      contextTotal: "Total",
-      contextTokens: "tokens",
     },
     watchlist: {
       title: "Watchlist",
@@ -961,13 +949,4 @@ export function localeFor(language: AppLanguage) {
 
 export function formatTemplate(text: string, values: Record<string, string | number>) {
   return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
-}
-
-export function createInitialMessages(language: AppLanguage): ChatMessage[] {
-  return [{
-    id: "welcome",
-    role: "assistant",
-    content: i18n[language].initialMessage,
-    createdAt: new Date().toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit" }),
-  }];
 }

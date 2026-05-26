@@ -413,10 +413,14 @@ export interface MarketQuotesResponse {
 // ── Dashboard aggregate ────────────────────────────────────────────────────
 
 export type DashboardWatchlistView = "movers" | "gainers" | "losers" | "active";
+export type DashboardModuleSource = "local" | "cache" | "live";
 
 export interface DashboardModule {
   available: boolean;
   error: string | null;
+  fetched_at?: string | null;
+  stale?: boolean;
+  source?: DashboardModuleSource | null;
 }
 
 export type DashboardWatchlistRow = QuoteItem;

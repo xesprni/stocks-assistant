@@ -15,6 +15,9 @@ class DashboardModule(BaseModel):
 
     available: bool = True
     error: Optional[str] = None
+    fetched_at: Optional[str] = None
+    stale: bool = False
+    source: Optional[Literal["local", "cache", "live"]] = None
 
 
 class DashboardMarketModule(DashboardModule):

@@ -50,7 +50,7 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { parseJsonObject } from "@/lib/json";
-import { createInitialMessages, formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
+import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
 import { CHAT_AUTO_SCROLL_THRESHOLD, useConversations } from "@/hooks/useConversations";
 import type { AppLanguage } from "@/lib/i18n";
 import type { EffectiveTheme, Page, Theme } from "@/types/ui";
@@ -601,9 +601,7 @@ function ConsoleApp() {
   const ui = i18n[language];
   const quickPrompts = ui.quickPrompts;
 
-  const messages = chatHistory.activeConversation?.messages.length
-    ? chatHistory.activeConversation.messages
-    : createInitialMessages(language);
+  const messages = chatHistory.activeConversation?.messages ?? [];
   const activeConvId = chatHistory.activeId;
   const pagePermissions = auth.user?.page_permissions ?? DEFAULT_PAGE_PERMISSION;
   const canPage = (target: Page) => {
@@ -1507,6 +1505,7 @@ function ConsoleApp() {
                   onPrompt={(value) => {
                     void handleSend(undefined, value, { forceNewSession: true });
                   }}
+                  refreshInterval={marketConfig.refresh_interval}
                 />
               ) : null}
 
@@ -1525,9 +1524,6 @@ function ConsoleApp() {
                 prompt={prompt}
                 quickPrompts={quickPrompts}
                 chatHistory={chatHistory}
-                contextTokenLimit={config?.agent_max_context_tokens ?? 0}
-                contextTurnLimit={config?.agent_max_context_turns ?? 20}
-                setPage={setPage}
                 setPrompt={setPrompt}
               />
             ) : null}
