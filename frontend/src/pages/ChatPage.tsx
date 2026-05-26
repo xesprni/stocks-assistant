@@ -390,7 +390,7 @@ export function ChatPage({
 
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
-      <section className="panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg">
+      <section className="panel finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg">
         <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">

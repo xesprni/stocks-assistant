@@ -58,8 +58,8 @@ export function MarketPulse() {
 
   if (error && !hasData) {
     return (
-      <div className="overflow-hidden rounded-lg border border-border/80 bg-background/50">
-        <div className="flex items-center justify-between border-b border-border/70 px-3 py-2">
+      <div className="overflow-hidden rounded-md bg-muted/20">
+        <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <CandlestickChart className="size-4 text-primary" />
             MARKET PULSE
@@ -76,8 +76,8 @@ export function MarketPulse() {
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/80 bg-background/50">
-      <div className="flex items-center justify-between border-b border-border/70 px-3 py-2">
+    <div className="overflow-hidden rounded-md bg-muted/20">
+      <div className="flex items-center justify-between border-b border-border/45 px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <CandlestickChart className="size-4 text-primary" />
           MARKET PULSE
@@ -93,7 +93,7 @@ export function MarketPulse() {
       </div>
 
       {/* Market tabs */}
-      <div className="flex border-b border-border/70">
+      <div className="flex border-b border-border/45">
         {markets.map((m) => (
           <button
             key={m.key}
@@ -164,7 +164,7 @@ export function MarketPulse() {
       </div>
 
       {/* Bottom bar — mini sparkline for each market */}
-      <div className="flex items-center gap-1 border-t border-border/70 px-3 py-2">
+      <div className="flex items-center gap-1 border-t border-border/45 px-3 py-2">
         <Gauge className="mb-1 size-4 text-muted-foreground" />
         {markets.map((m) => {
           const d = data[m.key];

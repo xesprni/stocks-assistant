@@ -134,7 +134,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
   );
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
+    <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -154,9 +154,9 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden lg:p-4">
-        <aside className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="space-y-3 border-b border-border/80 p-3">
+      <div className="grid min-h-0 flex-1 gap-6 py-3 lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
+        <aside className="finance-module flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
+          <div className="finance-module-header space-y-3 p-3">
             <div className="grid grid-cols-2 gap-2">
               <Button
                 size="sm"
@@ -220,20 +220,20 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
             {sourceMode === "watchlist" ? (
               <div className="space-y-2">
                 {isLoadingWatchlist ? (
-                  <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-8 text-center text-sm text-muted-foreground">
+                  <div className="finance-soft-state rounded-md border border-border/80 bg-muted/20 px-3 py-8 text-center text-sm text-muted-foreground">
                     <Loader2 className="mx-auto mb-2 size-5 animate-spin" />
                     {common.loading}
                   </div>
                 ) : null}
                 {!isLoadingWatchlist && watchlist.length === 0 ? (
-                  <div className="rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+                  <div className="finance-soft-state rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
                     {copy.emptyWatchlist}
                   </div>
                 ) : null}
                 {watchlist.map((item) => (
                   <button
                     className={cn(
-                      "w-full rounded-md border p-3 text-left transition-colors",
+                      "finance-row-card w-full rounded-md border p-3 text-left transition-colors",
                       selectedSymbol === item.symbol
                         ? "border-primary/60 bg-primary/10"
                         : "border-border/80 bg-card/70 hover:border-primary/45",
@@ -253,7 +253,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
                 ))}
               </div>
             ) : (
-              <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-3 text-sm">
+              <div className="finance-soft-state rounded-md border border-border/80 bg-muted/20 px-3 py-3 text-sm">
                 <p className="font-semibold">{selectedSymbol || "-"}</p>
                 <p className="mt-1 text-xs text-muted-foreground">{copy.latestNews}</p>
               </div>
@@ -261,8 +261,8 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
           </div>
         </aside>
 
-        <main className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="flex items-center justify-between gap-3 border-b border-border/80 p-3">
+        <main className="finance-module flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
+          <div className="finance-module-header flex items-center justify-between gap-3 p-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">{copy.latestNews}</p>
               <p className="truncate text-xs text-muted-foreground">
@@ -274,13 +274,13 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
 
           <div className="min-h-0 flex-1 p-3 lg:overflow-y-auto">
             {message ? (
-              <div className="mb-3 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <div className="finance-soft-state mb-3 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 {message}
               </div>
             ) : null}
 
             {!selectedSymbol ? (
-              <div className="grid h-full min-h-64 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
+              <div className="finance-soft-state grid h-full min-h-64 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
                 <div>
                   <Newspaper className="mx-auto mb-3 size-8 text-muted-foreground" />
                   <p className="text-sm font-medium">{copy.selectSymbol}</p>
@@ -289,7 +289,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
             ) : null}
 
             {selectedSymbol && isLoadingNews && news.length === 0 ? (
-              <div className="grid h-full min-h-64 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
+              <div className="finance-soft-state grid h-full min-h-64 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
                 <div className="text-sm text-muted-foreground">
                   <Loader2 className="mx-auto mb-3 size-7 animate-spin" />
                   {common.loading}
@@ -298,7 +298,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
             ) : null}
 
             {selectedSymbol && !isLoadingNews && news.length === 0 ? (
-              <div className="grid h-full min-h-64 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
+              <div className="finance-soft-state grid h-full min-h-64 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
                 <div>
                   <Newspaper className="mx-auto mb-3 size-8 text-muted-foreground" />
                   <p className="text-sm font-medium">{copy.emptyNews}</p>
@@ -323,7 +323,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
 function NewsCard({ item, language }: { item: SecurityNewsItem; language: AppLanguage }) {
   const copy = i18n[language].newsPage;
   return (
-    <article className="rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/45">
+    <article className="finance-row-card rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/45">
       <div className="flex min-h-0 flex-col gap-3">
         <div className="min-w-0">
           <p className="line-clamp-2 text-sm font-semibold leading-5">{item.title || "-"}</p>

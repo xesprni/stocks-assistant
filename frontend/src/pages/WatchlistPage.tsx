@@ -54,7 +54,7 @@ function SortableWatchlistItem({
     <div
       ref={setNodeRef}
       style={style}
-      className="message-bubble rounded-md border border-border/80 bg-card/80 p-2 transition-colors hover:border-primary/50 sm:p-3"
+      className="finance-row-card message-bubble rounded-md border border-border/80 bg-card/80 p-2 transition-colors hover:border-primary/50 sm:p-3"
     >
       <div className="flex items-center gap-2 sm:gap-3">
         <button
@@ -265,7 +265,7 @@ export function WatchlistPage({
   const symbolSet = new Set(items.map((item) => item.symbol));
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
+    <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -302,9 +302,9 @@ export function WatchlistPage({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden lg:p-4">
-        <div className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="flex items-center justify-between border-b border-border/80 p-2 sm:p-3">
+      <div className="grid min-h-0 flex-1 gap-6 py-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden lg:py-4">
+        <div className="finance-module flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
+          <div className="finance-module-header flex items-center justify-between p-2 sm:p-3">
             <div>
               <p className="text-sm font-semibold">
                 {formatTemplate(copy.listTitle, { label: watchlistCategories.find((item) => item.id === category)?.label ?? category })}
@@ -346,7 +346,7 @@ export function WatchlistPage({
                 </SortableContext>
               </DndContext>
             ) : (
-              <div className="grid h-full min-h-56 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
+              <div className="finance-soft-state grid h-full min-h-56 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center">
                 <div>
                   <Star className="mx-auto mb-3 size-8 text-muted-foreground" />
                   <p className="text-sm font-medium">{copy.emptyTitle}</p>
@@ -357,8 +357,8 @@ export function WatchlistPage({
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="border-b border-border/80 p-3">
+        <aside className="finance-module flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
+          <div className="finance-module-header p-3">
             <form className="flex gap-2" onSubmit={handleSearch}>
               <Input
                 placeholder={watchlistCategories.find((item) => item.id === category)?.placeholder}
@@ -371,7 +371,7 @@ export function WatchlistPage({
               </Button>
             </form>
             {message ? (
-              <div className="mt-3 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <div className="finance-soft-state mt-3 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 {message}
               </div>
             ) : null}
@@ -382,7 +382,7 @@ export function WatchlistPage({
               {results.map((result) => {
                 const exists = symbolSet.has(result.symbol);
                 return (
-                  <div className="rounded-md border border-border/80 bg-card/80 p-3" key={result.symbol}>
+                  <div className="finance-row-card rounded-md border border-border/80 bg-card/80 p-3" key={result.symbol}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{result.symbol}</p>
@@ -402,7 +402,7 @@ export function WatchlistPage({
                 );
               })}
               {results.length === 0 ? (
-                <div className="rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+                <div className="finance-soft-state rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
                   {copy.inputHint}
                 </div>
               ) : null}
@@ -417,7 +417,7 @@ export function WatchlistPage({
 
 function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "down" | "flat"; value: string }) {
   return (
-    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+    <div className="rounded-md bg-muted/20 px-2 py-1.5">
       <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
       <p
         className={cn(

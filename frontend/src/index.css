@@ -254,30 +254,22 @@
   }
 
   .app-header {
-    background: var(--app-header-bg);
-    backdrop-filter: none;
+    background: hsl(var(--background) / 0.94);
+    backdrop-filter: blur(14px);
   }
 
   .app-main-grid {
-    background: var(--app-grid-bg);
-  }
-
-  .app-sidebar-surface {
-    background: var(--app-sidebar-bg);
-    backdrop-filter: none;
+    background: hsl(var(--background));
   }
 
   .app-mobile-nav {
-    background: var(--app-mobile-nav-bg);
-    backdrop-filter: none;
+    background: hsl(var(--background) / 0.94);
+    backdrop-filter: blur(14px);
   }
 
   .app-main-stage {
-    background: var(--app-stage-bg), hsl(var(--background));
-    background-size:
-      auto,
-      34px 34px,
-      34px 34px;
+    background: hsl(var(--background));
+    background-size: auto;
   }
 
   .app-main-stage > .page-enter {
@@ -286,14 +278,16 @@
 
   .app-main-stage > .panel,
   .app-main-stage > .page-enter > .panel {
-    box-shadow: var(--panel-shadow);
+    box-shadow: none;
+    border-color: transparent;
+    background: transparent;
   }
 
   .panel {
-    @apply rounded-lg border backdrop-blur-xl;
-    border-color: hsl(var(--border) / 0.9);
-    background: var(--panel-bg);
-    box-shadow: var(--panel-shadow);
+    @apply rounded-lg border;
+    border-color: hsl(var(--border) / 0.58);
+    background: hsl(var(--card) / 0.66);
+    box-shadow: 0 1px 0 hsl(var(--foreground) / 0.04);
     transition:
       border-color 180ms ease,
       background-color 180ms ease,
@@ -302,20 +296,20 @@
   }
 
   .panel.app-header {
-    background: var(--app-header-bg);
-  }
-
-  .panel.app-sidebar-surface {
-    background: var(--app-sidebar-bg);
+    border-color: hsl(var(--border) / 0.46);
+    background: hsl(var(--background) / 0.94);
+    box-shadow: none;
   }
 
   .panel.app-mobile-nav {
-    background: var(--app-mobile-nav-bg);
+    border-color: hsl(var(--border) / 0.48);
+    background: hsl(var(--background) / 0.94);
+    box-shadow: 0 -1px 0 hsl(var(--foreground) / 0.04);
   }
 
   .panel-header {
-    @apply border-b border-border/80 px-4 py-3;
-    background: linear-gradient(180deg, hsl(var(--card) / 0.58), hsl(var(--card) / 0.14));
+    @apply border-b border-border/45 px-4 py-3;
+    background: transparent;
   }
 
   .panel-body {
@@ -323,9 +317,9 @@
   }
 
   .metric-tile {
-    @apply rounded-md border border-border/80 px-3 py-2;
-    background: var(--tile-bg);
-    box-shadow: var(--control-shadow);
+    @apply rounded-md border border-border/45 px-3 py-2;
+    background: hsl(var(--muted) / 0.22);
+    box-shadow: none;
     transition:
       border-color 180ms ease,
       background-color 180ms ease,
@@ -334,9 +328,181 @@
   }
 
   .metric-tile:hover {
-    border-color: hsl(var(--primary) / 0.38);
-    box-shadow: var(--control-shadow-hover);
-    transform: translateY(-1px);
+    border-color: hsl(var(--primary) / 0.24);
+    box-shadow: none;
+    transform: none;
+  }
+
+  .finance-top-nav {
+    border-bottom: 1px solid hsl(var(--border) / 0.48);
+    background: hsl(var(--background) / 0.92);
+    backdrop-filter: blur(14px);
+    position: relative;
+    z-index: 40;
+  }
+
+  .finance-top-nav-item {
+    align-items: center;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.85rem;
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
+  }
+
+  .finance-top-nav-item:hover {
+    background: hsl(var(--muted) / 0.45);
+    color: hsl(var(--foreground));
+  }
+
+  .finance-top-nav-item-active {
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+  }
+
+  .dashboard-hero {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .finance-section {
+    border-top: 1px solid hsl(var(--border) / 0.54);
+    padding: 1.25rem 0;
+  }
+
+  .finance-flat-page {
+    border-color: transparent !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .finance-flat-page > .panel-header {
+    border-bottom-color: hsl(var(--border) / 0.5);
+    padding-inline: 0;
+  }
+
+  .finance-flat-page > .panel-body {
+    padding-inline: 0;
+  }
+
+  .app-main-stage > .page-enter.panel > .panel-header {
+    border-bottom-color: hsl(var(--border) / 0.5);
+    padding-inline: 0;
+  }
+
+  .app-main-stage > .page-enter.panel > .panel-body {
+    padding-inline: 0;
+  }
+
+  .finance-module {
+    border-top: 1px solid hsl(var(--border) / 0.54);
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    border-left: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .finance-module-header {
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  .finance-row-card,
+  .finance-data-card {
+    border-color: transparent !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .finance-row-card {
+    border-bottom: 1px solid hsl(var(--border) / 0.46) !important;
+  }
+
+  .finance-row-card:last-child {
+    border-bottom-color: transparent !important;
+  }
+
+  .finance-row-card:hover,
+  .finance-data-card:hover {
+    background: hsl(var(--muted) / 0.24) !important;
+  }
+
+  .finance-data-card {
+    border-top: 1px solid hsl(var(--border) / 0.5) !important;
+  }
+
+  .finance-soft-state {
+    border-color: transparent !important;
+    border-radius: 0.5rem !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .app-main-stage > .page-enter.panel [class*="bg-background/45"][class*="border-border"],
+  .app-main-stage > .page-enter.panel [class*="bg-background/50"][class*="border-border"],
+  .app-main-stage > .page-enter.panel [class*="bg-background/60"][class*="border-border"],
+  .app-main-stage > .page-enter.panel [class*="bg-card/80"][class*="border-border"] {
+    border-color: transparent !important;
+    border-top: 1px solid hsl(var(--border) / 0.5) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .app-main-stage > .page-enter.panel [class*="bg-background/45"][class*="border-border"]:hover,
+  .app-main-stage > .page-enter.panel [class*="bg-background/50"][class*="border-border"]:hover,
+  .app-main-stage > .page-enter.panel [class*="bg-background/60"][class*="border-border"]:hover,
+  .app-main-stage > .page-enter.panel [class*="bg-card/80"][class*="border-border"]:hover {
+    background: hsl(var(--muted) / 0.22) !important;
+  }
+
+  .app-main-stage > .page-enter.panel [class*="border-dashed"][class*="bg-muted/20"],
+  .app-main-stage > .page-enter.panel [class*="bg-muted/30"][class*="border-border"] {
+    border-color: transparent !important;
+    border-radius: 0.5rem !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .finance-index-strip {
+    border-bottom: 1px solid hsl(var(--border) / 0.54);
+    border-top: 1px solid hsl(var(--border) / 0.54);
+    scrollbar-width: thin;
+  }
+
+  .finance-index-item {
+    border-right: 1px solid hsl(var(--border) / 0.46);
+  }
+
+  .finance-index-item:last-child {
+    border-right: 0;
+  }
+
+  .finance-right-rail {
+    border-top: 1px solid hsl(var(--border) / 0.54);
+  }
+
+  @media (min-width: 1280px) {
+    .finance-right-rail {
+      border-left: 1px solid hsl(var(--border) / 0.54);
+      border-top: 0;
+      padding-left: 1.5rem;
+    }
+
+    .finance-right-rail .finance-section:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
   }
 
   .ticker-line {
@@ -565,10 +731,7 @@
 
 @media (max-width: 767px) {
   .app-main-stage {
-    background-size:
-      auto,
-      28px 28px,
-      28px 28px;
+    background-size: auto;
     -webkit-overflow-scrolling: touch;
   }
 
@@ -626,6 +789,16 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     border-left-width: 0;
+  }
+
+  .app-main-stage.mobile-header-spacer {
+    padding-top: calc(3.25rem + env(safe-area-inset-top));
+  }
+
+  @media (min-width: 640px) {
+    .app-main-stage.mobile-header-spacer {
+      padding-top: calc(3.75rem + env(safe-area-inset-top));
+    }
   }
 
   .app-header {
@@ -710,7 +883,7 @@
 
   .panel {
     border-radius: 0.625rem;
-    box-shadow: 0 8px 22px hsl(222 44% 20% / 0.08);
+    box-shadow: none;
   }
 
   .panel-header {

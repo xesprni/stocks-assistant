@@ -320,7 +320,7 @@ function SortablePortfolioHeader({
 
 function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "down" | "flat"; value: string }) {
   return (
-    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+    <div className="rounded-md bg-muted/20 px-2 py-1.5">
       <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
       <p
         className={cn(
@@ -683,7 +683,7 @@ export function PortfolioPage({
   }
 
   const emptyState = (
-    <div className="grid min-h-56 place-items-center rounded-lg border border-dashed border-border/80 bg-muted/15 px-4 text-center text-sm text-muted-foreground">
+    <div className="finance-soft-state grid min-h-56 place-items-center rounded-lg border border-dashed border-border/80 bg-muted/15 px-4 text-center text-sm text-muted-foreground">
       {isLoading ? (
         <Loader2 className="size-6 animate-spin" />
       ) : (
@@ -697,7 +697,7 @@ export function PortfolioPage({
   );
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
+    <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <div className="min-w-0">
@@ -716,12 +716,12 @@ export function PortfolioPage({
         <div className="flex w-full flex-col gap-2 md:flex-row md:items-center xl:w-auto">
           <div className="hidden overflow-x-auto md:block md:w-fit">{renderMarketSwitcher()}</div>
           <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
-            <label className="flex h-7 min-w-0 items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-2 text-xs text-muted-foreground">
+            <label className="flex h-7 min-w-0 items-center gap-2 rounded-md bg-muted/25 px-2 text-xs text-muted-foreground">
               <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
               <span className="hidden whitespace-nowrap sm:inline">{copy.realtimeRefresh}</span>
             </label>
             {autoRefresh ? (
-              <div className="hidden h-7 items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 text-xs text-muted-foreground sm:flex">
+              <div className="hidden h-7 items-center gap-1.5 rounded-md bg-muted/25 px-2 text-xs text-muted-foreground sm:flex">
                 <Activity className="size-3 animate-pulse text-[var(--color-up)]" />
                 <span className="whitespace-nowrap">{formatTemplate(copy.refreshCountdown, { seconds: countdown })}</span>
               </div>
@@ -801,7 +801,7 @@ export function PortfolioPage({
         </div>
 
         {message || quoteError ? (
-          <div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             {message || formatTemplate(copy.quoteUnavailable, { message: quoteError })}
           </div>
         ) : null}
@@ -898,7 +898,7 @@ export function PortfolioPage({
                   <button
                     key={result.symbol}
                     type="button"
-                    className="rounded-md border border-border/80 bg-muted/25 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-primary/50 hover:text-foreground"
+                    className="rounded-md bg-muted/20 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted/45 hover:text-foreground"
                     onClick={() => selectSearchResult(result)}
                   >
                     <span className="font-semibold">{result.symbol}</span>
@@ -931,7 +931,7 @@ export function PortfolioPage({
         ) : (
           <div className="grid gap-1.5 lg:hidden">
             {sortedItems.map((item) => (
-              <article key={item.id} className="rounded-md border border-border/80 bg-background/60 px-2.5 py-2">
+              <article key={item.id} className="finance-row-card rounded-md border border-border/80 bg-background/60 px-2.5 py-2">
                 <div className="grid grid-cols-[minmax(82px,1fr)_minmax(68px,0.65fr)_minmax(70px,0.7fr)_auto] items-center gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold leading-5">{item.symbol}</p>
@@ -972,7 +972,7 @@ export function PortfolioPage({
           </div>
         )}
 
-        <div className="hidden min-h-0 flex-1 overflow-auto rounded-lg border border-border/80 bg-background/45 lg:block">
+        <div className="finance-module hidden min-h-0 flex-1 overflow-auto rounded-lg border border-border/80 bg-background/45 lg:block">
           <table className="w-full min-w-[1080px] border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-card">
               <tr className="border-b border-border/80 text-left text-xs text-muted-foreground">

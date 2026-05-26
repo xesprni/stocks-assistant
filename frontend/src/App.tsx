@@ -7,14 +7,11 @@ import {
   BrainCircuit,
   BriefcaseBusiness,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   CheckCircle2,
   CircleAlert,
   Clock,
   Cpu,
-  Database,
   FileText,
   Home,
   Loader2,
@@ -25,7 +22,6 @@ import {
   Moon,
   Newspaper,
   Plug,
-  RefreshCw,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -33,14 +29,11 @@ import {
   Sun,
   TrendingUp,
   UserCog,
-  WandSparkles,
   X,
   Zap,
 } from "lucide-react";
 
-import { MarketPulse } from "@/components/MarketPulse";
 import { ReauthDialog } from "@/components/ReauthDialog";
-import { StatusTile } from "@/components/common/StatusTile";
 import { useConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,6 +66,7 @@ import type {
 const ChatPage = lazy(() => import("@/pages/ChatPage").then((module) => ({ default: module.ChatPage })));
 const AuthPage = lazy(() => import("@/pages/AuthPage").then((module) => ({ default: module.AuthPage })));
 const ConfigPage = lazy(() => import("@/pages/ConfigPage").then((module) => ({ default: module.ConfigPage })));
+const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
 const MarketConfigPage = lazy(() => import("@/components/MarketConfigPage").then((module) => ({ default: module.MarketConfigPage })));
@@ -95,7 +89,7 @@ type NavGroup = { id: string; label: string; items: NavItem[] };
 type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
 type TouchPoint = { x: number; y: number };
 
-const MOBILE_PRIMARY_PAGES: Page[] = ["chat", "market", "watchlist", "portfolio"];
+const MOBILE_PRIMARY_PAGES: Page[] = ["overview", "chat", "portfolio"];
 const MOBILE_GESTURE_DELTA = 28;
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
 const MOBILE_NAV_VISIBLE_KEY = "stocks-assistant-mobile-nav-visible";
@@ -323,6 +317,48 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
   ];
 }
 
+function getDesktopMoreGroups(language: AppLanguage): NavGroup[] {
+  const groups = i18n[language].groups;
+  return [
+    {
+      id: "analysis",
+      label: groups.analysis,
+      items: [
+        navItem(language, "chart", <TrendingUp />),
+        navItem(language, "fundamentals", <FileText />),
+        navItem(language, "tracing", <Cpu />),
+      ],
+    },
+    {
+      id: "workspace",
+      label: groups.workspace,
+      items: [
+        navItem(language, "memory", <BrainCircuit />),
+        navItem(language, "knowledge", <BookOpen />),
+        navItem(language, "skills", <Zap />),
+        navItem(language, "subagents", <Bot />),
+        navItem(language, "mcp", <Plug />),
+      ],
+    },
+    {
+      id: "automation",
+      label: groups.automation,
+      items: [
+        navItem(language, "scheduler", <Clock />),
+      ],
+    },
+    {
+      id: "system",
+      label: groups.system,
+      items: [
+        navItem(language, "security", <ShieldCheck />),
+        navItem(language, "users", <UserCog />),
+        navItem(language, "config", <Settings2 />),
+      ],
+    },
+  ];
+}
+
 function getNavItems(language: AppLanguage) {
   return [...getPinnedNavItems(language), ...getNavGroups(language).flatMap((group) => group.items)];
 }
@@ -527,15 +563,6 @@ function ConsoleApp() {
   const [systemPreference, setSystemPreference] = useState<EffectiveTheme>(() => systemTheme());
   const [prompt, setPrompt] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [isNavCollapsed, setIsNavCollapsed] = useState(() => {
-    const defaultExpandedKey = "stocks-assistant-nav-default-expanded-v2";
-    if (window.localStorage.getItem(defaultExpandedKey) !== "true") {
-      window.localStorage.setItem(defaultExpandedKey, "true");
-      window.localStorage.setItem("stocks-assistant-nav-collapsed", "false");
-      return false;
-    }
-    return window.localStorage.getItem("stocks-assistant-nav-collapsed") === "true";
-  });
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
   const [health, setHealth] = useState<"checking" | "online" | "offline">("checking");
@@ -737,10 +764,6 @@ function ConsoleApp() {
     document.documentElement.style.colorScheme = resolvedTheme;
     window.localStorage.setItem("stocks-assistant-theme", theme);
   }, [resolvedTheme, theme]);
-
-  useEffect(() => {
-    window.localStorage.setItem("stocks-assistant-nav-collapsed", String(isNavCollapsed));
-  }, [isNavCollapsed]);
 
   useEffect(() => {
     window.localStorage.setItem(MOBILE_HEADER_VISIBLE_KEY, String(isMobileHeaderVisible));
@@ -1405,6 +1428,12 @@ function ConsoleApp() {
           theme={theme}
           username={auth.user?.username ?? ""}
         />
+        <DesktopTopNav
+          canPage={canPage}
+          language={language}
+          page={page}
+          setPage={handleNavigate}
+        />
         <MobileNav
           canPage={canPage}
           isVisible={isMobileNavVisible}
@@ -1420,23 +1449,12 @@ function ConsoleApp() {
         />
 
         <div
-          className={cn(
-            "app-main-grid grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-200",
-            isNavCollapsed ? "lg:grid-cols-[64px_minmax(0,1fr)]" : "lg:grid-cols-[220px_minmax(0,1fr)]",
-          )}
+          className="app-main-grid flex min-h-0 flex-1"
         >
-          <DesktopNav
-            collapsed={isNavCollapsed}
-            language={language}
-            onToggleCollapsed={() => setIsNavCollapsed((current) => !current)}
-            page={page}
-            canPage={canPage}
-            setPage={handleNavigate}
-          />
-
           <main
             className={cn(
-              "app-main-stage flex min-h-0 min-w-0 flex-col overflow-y-auto border-l border-border/80 bg-background/70 p-2 sm:p-4 lg:overflow-hidden lg:pb-4",
+              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background/70 p-2 sm:p-4 lg:overflow-y-auto lg:pb-4",
+              isMobileHeaderVisible && "mobile-header-spacer",
               isMobileNavVisible
                 ? "pb-[calc(4.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(5rem+env(safe-area-inset-bottom))]"
                 : "pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]",
@@ -1452,11 +1470,24 @@ function ConsoleApp() {
 
             <Suspense fallback={<PageFallback />}>
               {page === "overview" ? (
-                <OverviewPage
+                <DashboardPage
+                  canPermission={auth.can}
                   config={config}
                   enabledCount={enabledCount}
                   language={language}
+                  modelName={modelName}
+                  onOpenChart={(symbol) => {
+                    setSelectedSymbol(symbol);
+                    setPage("chart");
+                  }}
                   onOpenConfig={() => setPage("config")}
+                  onOpenMarket={() => setPage("market")}
+                  onOpenNews={(symbol) => {
+                    if (symbol) setSelectedSymbol(symbol);
+                    setPage("news");
+                  }}
+                  onOpenPortfolio={() => setPage("portfolio")}
+                  onOpenWatchlist={() => setPage("watchlist")}
                   onPrompt={(value) => {
                     setPrompt(value);
                     setPage("chat");
@@ -1663,8 +1694,8 @@ function Header({
           <Sparkles className="size-4 lg:size-5" />
         </div>
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold text-foreground sm:text-base lg:text-xl">Stocks Assistant Console</h1>
-          <p className="hidden truncate text-xs text-muted-foreground lg:block lg:text-sm">Agent chat, runtime config, market intelligence</p>
+          <h1 className="truncate text-sm font-semibold text-foreground sm:text-base lg:text-xl">Stocks Assistant</h1>
+          <p className="hidden truncate text-xs text-muted-foreground lg:block lg:text-sm">Markets, research, portfolio</p>
         </div>
       </button>
       <div className="flex shrink-0 items-center gap-1.5 lg:min-w-0 lg:flex-wrap lg:gap-2">
@@ -1721,6 +1752,101 @@ function Header({
         </div>
       </div>
     </header>
+  );
+}
+
+function DesktopTopNav({
+  canPage,
+  language,
+  page,
+  setPage,
+}: {
+  canPage: (page: Page) => boolean;
+  language: AppLanguage;
+  page: Page;
+  setPage: (page: Page) => void;
+}) {
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const primaryItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
+  const moreGroups = getDesktopMoreGroups(language)
+    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
+    .filter((group) => group.items.length > 0);
+  const moreItems = moreGroups.flatMap((group) => group.items);
+  const isMoreActive = moreItems.some((item) => item.id === page);
+  const moreLabel = language === "en" ? "More" : "更多";
+
+  useEffect(() => {
+    setIsMoreOpen(false);
+  }, [page]);
+
+  function navigate(nextPage: Page) {
+    setIsMoreOpen(false);
+    setPage(nextPage);
+  }
+
+  return (
+    <nav className="finance-top-nav hidden shrink-0 lg:block" aria-label={i18n[language].shell.navigation}>
+      <div className="mx-auto flex h-11 w-full max-w-7xl items-center gap-1 px-4">
+        {primaryItems.map((item) => (
+          <button
+            aria-current={page === item.id ? "page" : undefined}
+            className={cn("finance-top-nav-item", page === item.id && "finance-top-nav-item-active")}
+            key={item.id}
+            onClick={() => navigate(item.id)}
+            type="button"
+          >
+            <span className="[&_svg]:size-3.5">{item.icon}</span>
+            <span>{item.label}</span>
+          </button>
+        ))}
+
+        {moreGroups.length > 0 ? (
+          <div className="relative ml-1">
+            <button
+              aria-expanded={isMoreOpen}
+              className={cn("finance-top-nav-item", isMoreActive && "finance-top-nav-item-active")}
+              onClick={() => setIsMoreOpen((current) => !current)}
+              type="button"
+            >
+              <Menu className="size-3.5" />
+              <span>{moreLabel}</span>
+              <ChevronDown className="size-3.5" />
+            </button>
+            {isMoreOpen ? (
+              <div className="absolute left-0 top-[calc(100%+0.5rem)] z-50 w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border/65 bg-popover/98 p-3 text-popover-foreground shadow-[0_18px_48px_hsl(var(--foreground)_/_0.13)]">
+                <div className="grid grid-cols-2 gap-3">
+                  {moreGroups.map((group) => (
+                    <div className="min-w-0" key={group.id}>
+                      <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{group.label}</p>
+                      <div className="space-y-0.5">
+                        {group.items.map((item) => (
+                          <button
+                            aria-current={page === item.id ? "page" : undefined}
+                            className={cn(
+                              "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                              page === item.id ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground",
+                            )}
+                            key={item.id}
+                            onClick={() => navigate(item.id)}
+                            type="button"
+                          >
+                            <span className="shrink-0 [&_svg]:size-4">{item.icon}</span>
+                            <span className="min-w-0">
+                              <span className="block truncate font-medium">{item.label}</span>
+                              <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </nav>
   );
 }
 
@@ -1819,7 +1945,7 @@ function MobileNav({
 
       <nav
         className={cn(
-          "panel app-mobile-nav fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 gap-1 rounded-none border-x-0 border-b-0 px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-12px_30px_hsl(222_44%_20%_/_0.12)] lg:hidden",
+          "panel app-mobile-nav fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 gap-1 rounded-none border-x-0 border-b-0 px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-none lg:hidden",
           !isVisible && "mobile-nav-hidden",
         )}
         aria-label={copy.navigation}
@@ -1841,7 +1967,7 @@ function MobileNav({
           <button
             className={cn(
               "nav-item flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold transition-colors",
-              page === item.id ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+              page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground",
             )}
             key={item.id}
             onClick={() => navigate(item.id)}
@@ -1855,7 +1981,7 @@ function MobileNav({
           aria-expanded={isMoreOpen}
           className={cn(
             "nav-item flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold transition-colors",
-            isMoreActive || isMoreOpen ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+            isMoreActive || isMoreOpen ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground",
           )}
           onClick={() => setIsMoreOpen((current) => !current)}
           type="button"
@@ -1876,230 +2002,6 @@ function MobileNav({
         <span className="app-edge-grabber" />
       </button>
     </>
-  );
-}
-
-function NavButton({
-  collapsed = false,
-  item,
-  page,
-  setPage,
-}: {
-  collapsed?: boolean;
-  item: NavItem;
-  page: Page;
-  setPage: (page: Page) => void;
-}) {
-  return (
-    <button
-      aria-label={item.label}
-      aria-current={page === item.id ? "page" : undefined}
-      className={cn(
-        "nav-item flex w-full items-center rounded-md text-xs transition-colors",
-        collapsed ? "h-8 justify-center px-0 py-0" : "h-8 gap-2 px-2.5 text-left",
-        page === item.id
-          ? "bg-primary text-primary-foreground shadow-glow"
-          : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-      )}
-      onClick={() => setPage(item.id)}
-      title={collapsed ? `${item.label} · ${item.hint}` : undefined}
-      type="button"
-    >
-      <span className="[&_svg]:size-3.5">{item.icon}</span>
-      <span className={cn("min-w-0 flex-1", collapsed && "sr-only")}>
-        <span className="block truncate font-medium leading-none">{item.label}</span>
-        <span className="hidden truncate text-[9px] leading-[10px] opacity-70">{item.hint}</span>
-      </span>
-    </button>
-  );
-}
-
-function DesktopNav({
-  canPage,
-  collapsed,
-  language,
-  onToggleCollapsed,
-  page,
-  setPage,
-}: {
-  canPage: (page: Page) => boolean;
-  collapsed: boolean;
-  language: AppLanguage;
-  onToggleCollapsed: () => void;
-  page: Page;
-  setPage: (page: Page) => void;
-}) {
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const pinnedNavItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
-  const navGroups = getNavGroups(language)
-    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
-    .filter((group) => group.items.length > 0);
-  const collapsedNavItems = [...pinnedNavItems, ...navGroups.flatMap((group) => group.items)];
-  const copy = i18n[language];
-
-  function toggleGroup(groupId: string) {
-    setOpenGroups((current) => ({ ...current, [groupId]: current[groupId] === false }));
-  }
-
-  return (
-    <aside className="hidden min-h-0 min-w-0 bg-muted/35 lg:block">
-      <div className="panel app-sidebar-surface flex h-full min-h-0 flex-col overflow-hidden rounded-none border-y-0 border-l-0 border-r shadow-none">
-        <div className={cn("flex items-center gap-2 border-b border-border/80 px-2 py-2", collapsed ? "justify-center" : "justify-between")}>
-          <div className={cn("min-w-0", collapsed && "sr-only")}>
-            <p className="text-sm font-semibold">{copy.shell.navigation}</p>
-            <p className="text-xs text-muted-foreground">{copy.shell.pageSwitch}</p>
-          </div>
-          <Button
-            aria-label={collapsed ? copy.shell.expandNavigation : copy.shell.collapseNavigation}
-            className="h-7 w-7 shrink-0"
-            onClick={onToggleCollapsed}
-            size="icon"
-            title={collapsed ? copy.shell.expandNavigation : copy.shell.collapseNavigation}
-            variant="ghost"
-          >
-            {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronLeft className="size-3.5" />}
-          </Button>
-        </div>
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5" aria-label={copy.shell.navigation}>
-          {collapsed ? (
-            <div className="space-y-1">
-              {collapsedNavItems.map((item) => (
-                <NavButton collapsed item={item} key={item.id} page={page} setPage={setPage} />
-              ))}
-            </div>
-          ) : (
-            <>
-              <div className="space-y-0.5">
-                <p className="px-2.5 pt-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">{copy.groups.pinned}</p>
-                {pinnedNavItems.map((item) => (
-                  <NavButton item={item} key={item.id} page={page} setPage={setPage} />
-                ))}
-              </div>
-
-              <div className="space-y-0.5">
-                {navGroups.map((group) => {
-                  const active = group.items.some((item) => item.id === page);
-                  const open = active || openGroups[group.id] !== false;
-                  return (
-                    <div className="rounded-md border border-border/60 bg-background/35 shadow-sm" key={group.id}>
-                      <button
-                        className="flex w-full items-center justify-between gap-2 px-2 py-1 text-left text-[9px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
-                        onClick={() => toggleGroup(group.id)}
-                        type="button"
-                      >
-                        <span>{group.label}</span>
-                        {open ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-                      </button>
-                      {open ? (
-                        <div className="space-y-0.5 px-1 pb-1">
-                          {group.items.map((item) => (
-                            <NavButton item={item} key={item.id} page={page} setPage={setPage} />
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </nav>
-      </div>
-    </aside>
-  );
-}
-
-function OverviewPage({
-  config,
-  enabledCount,
-  language,
-  onOpenConfig,
-  onPrompt,
-}: {
-  config: AppConfig | null;
-  enabledCount: number;
-  language: AppLanguage;
-  onOpenConfig: () => void;
-  onPrompt: (value: string) => void;
-}) {
-  const copy = i18n[language].overview;
-  const quickPrompts = i18n[language].quickPrompts;
-  const loading = language === "en" ? "Loading" : "加载中";
-  const modelName = getActiveLlmModel(config, i18n[language].shell.notConfigured);
-  return (
-    <div className="page-enter grid min-h-0 flex-1 gap-3 lg:h-full lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-4 lg:overflow-hidden">
-      <section className="panel motion-panel flex min-h-0 min-w-0 flex-col rounded-md">
-        <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-	            <div className="flex items-center gap-2">
-	              <ShieldCheck className="size-5 text-primary" />
-	              <p className="font-semibold">{copy.title}</p>
-	            </div>
-	            <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-	          </div>
-	          <Button size="sm" variant="outline" onClick={onOpenConfig}>
-	            <Settings2 />
-	            {copy.config}
-	          </Button>
-        </div>
-        <div className="panel-body flex-1 space-y-4 lg:overflow-y-auto">
-          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-	            <StatusTile label={copy.llmModel} value={modelName} icon={<Cpu className="size-4 text-primary" />} />
-	            <StatusTile label={copy.workspace} value={config?.workspace_dir ?? loading} icon={<Database className="size-4 text-accent" />} />
-	            <StatusTile label={copy.contextTurns} value={String(config?.agent_max_context_turns ?? "-")} icon={<Bot className="size-4 text-secondary" />} />
-	            <StatusTile label={copy.capabilities} value={`${enabledCount}/4 ON`} icon={<Sparkles className="size-4 text-primary" />} />
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-4">
-	            <CapabilityCard active={config?.memory_enabled} icon={<BrainCircuit />} label={copy.memory} />
-	            <CapabilityCard active={config?.knowledge_enabled} icon={<Database />} label={copy.knowledge} />
-	            <CapabilityCard active={config?.scheduler_enabled} icon={<RefreshCw />} label={copy.scheduler} />
-	            <CapabilityCard active={config?.tracing_enabled} icon={<Cpu />} label={copy.tracing} />
-          </div>
-
-          <div className="rounded-lg border border-border/80 bg-background/45 p-3">
-	            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-	              <WandSparkles className="size-4 text-secondary" />
-	              {copy.quickPrompts}
-	            </div>
-            <div className="grid gap-2 lg:grid-cols-3">
-              {quickPrompts.map((item) => (
-                <button
-                  className="min-h-16 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-                  key={item}
-                  onClick={() => onPrompt(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel motion-panel min-h-0 min-w-0 flex flex-col rounded-md">
-        <div className="panel-header">
-          <p className="font-semibold">Signal Deck</p>
-          <p className="text-xs text-muted-foreground">{copy.signalDeckSubtitle}</p>
-        </div>
-        <div className="panel-body min-h-0 flex-1">
-          <MarketPulse />
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function CapabilityCard({ active, icon, label }: { active?: boolean; icon: ReactNode; label: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-md border border-border/80 bg-background/50 px-3 py-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-primary [&_svg]:size-4">{icon}</div>
-        <span className="truncate text-sm font-medium">{label}</span>
-      </div>
-      <Badge variant={active ? "default" : "muted"}>{active ? "ON" : "OFF"}</Badge>
-    </div>
   );
 }
 

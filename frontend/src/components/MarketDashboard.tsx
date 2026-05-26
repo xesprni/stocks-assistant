@@ -132,7 +132,7 @@ function IndexCard({ copy, language, quote }: { copy: MarketDashboardCopy; langu
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-col gap-2 rounded-lg border bg-card/80 p-3 transition-colors hover:border-primary/40",
+        "finance-data-card flex min-w-0 flex-col gap-2 rounded-lg border bg-card/80 p-3 transition-colors hover:border-primary/40",
         tone === "up" && "border-[var(--color-up)]/30",
         tone === "down" && "border-[var(--color-down)]/30",
         tone === "flat" && "border-border/80",
@@ -234,7 +234,7 @@ function StockCard({
       onClick={() => onSelect?.(quote)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect?.(quote); }}
       className={cn(
-        "flex min-w-0 flex-col gap-2 rounded-md border bg-card/80 p-3 transition-colors hover:border-primary/40",
+        "finance-data-card flex min-w-0 flex-col gap-2 rounded-md border bg-card/80 p-3 transition-colors hover:border-primary/40",
         onSelect && "cursor-pointer",
         tone === "up" && "border-[var(--color-up)]/25",
         tone === "down" && "border-[var(--color-down)]/25",
@@ -351,7 +351,7 @@ function StockCard({
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="grid min-h-40 place-items-center rounded-lg border border-dashed border-border/70 bg-muted/10 text-sm text-muted-foreground">
+    <div className="finance-soft-state grid min-h-40 place-items-center rounded-lg border border-dashed border-border/70 bg-muted/10 text-sm text-muted-foreground">
       {text}
     </div>
   );
@@ -502,7 +502,7 @@ function StockTab({
     <div className="space-y-3">
       {/* Category filter */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
+        <div className="flex rounded-md bg-muted/25 p-1">
           {stockCategories.map((item) => (
             <button
               className={cn(
@@ -593,7 +593,7 @@ export function MarketDashboard({
   }
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
+    <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -606,7 +606,7 @@ export function MarketDashboard({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5 rounded-md bg-muted/25 px-2 py-1 text-xs text-muted-foreground">
             <Activity className="size-3 animate-pulse text-[var(--color-up)]" />
             {formatTemplate(copy.refreshCountdown, { seconds: countdown })}
           </div>
