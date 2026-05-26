@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, MouseEvent as ReactMouseEvent, RefObject } from "react";
-import ReactMarkdown from "react-markdown";
+import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, RefObject } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  BriefcaseBusiness,
   Bot,
   Check,
   CircleDot,
@@ -17,8 +18,6 @@ import {
   Send,
   Square,
   Trash2,
-  TrendingUp,
-  WandSparkles,
   X,
 } from "lucide-react";
 
@@ -69,6 +68,323 @@ function formatRelativeDate(iso: string): string {
   if (msgDate.getTime() === today.getTime()) return "今天";
   if (msgDate.getTime() === yesterday.getTime()) return "昨天";
   return "更早";
+}
+
+type FinanceChartMarker = "circle" | "square" | "triangle" | "pentagon";
+
+type FinanceChartPoint = {
+  label: string;
+  value: number;
+};
+
+type FinanceChartSeries = {
+  symbol: string;
+  name?: string;
+  color?: string;
+  marker?: FinanceChartMarker;
+  points: FinanceChartPoint[];
+};
+
+type FinanceChartRow = {
+  symbol: string;
+  name?: string;
+  price?: string;
+  change?: string;
+  changeRate?: string;
+  previousClose?: string;
+  color?: string;
+  marker?: FinanceChartMarker;
+};
+
+type FinanceChartPayload = {
+  title?: string;
+  subtitle?: string;
+  unit?: string;
+  activeRange?: string;
+  ranges?: string[];
+  series: FinanceChartSeries[];
+  rows?: FinanceChartRow[];
+};
+
+const FINANCE_CHART_COLORS = ["#5b7cfa", "#ffb45c", "#9db7ff", "#f97316", "#f8efe6", "#22c55e"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toText(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/[%,$]/g, "").trim();
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeMarker(value: unknown): FinanceChartMarker | undefined {
+  if (value === "circle" || value === "square" || value === "triangle" || value === "pentagon") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizePoint(value: unknown): FinanceChartPoint | null {
+  if (Array.isArray(value)) {
+    const numberValue = toNumber(value[1]);
+    if (numberValue === null) return null;
+    return { label: toText(value[0]) ?? "", value: numberValue };
+  }
+  if (!isRecord(value)) return null;
+  const numberValue = toNumber(value.value ?? value.close ?? value.change_rate ?? value.changeRate);
+  if (numberValue === null) return null;
+  return {
+    label: toText(value.label ?? value.date ?? value.time) ?? "",
+    value: numberValue,
+  };
+}
+
+function parseFinanceChart(raw: string): FinanceChartPayload | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || !Array.isArray(parsed.series)) return null;
+
+    const series = parsed.series
+      .map((item, index): FinanceChartSeries | null => {
+        if (!isRecord(item)) return null;
+        const symbol = toText(item.symbol ?? item.name) ?? `Series ${index + 1}`;
+        const rawPoints = Array.isArray(item.points) ? item.points : Array.isArray(item.data) ? item.data : [];
+        const points = rawPoints.map(normalizePoint).filter((point): point is FinanceChartPoint => Boolean(point));
+        if (!points.length) return null;
+        return {
+          symbol,
+          name: toText(item.name),
+          color: toText(item.color),
+          marker: normalizeMarker(item.marker),
+          points,
+        };
+      })
+      .filter((item): item is FinanceChartSeries => Boolean(item));
+
+    if (!series.length) return null;
+
+    const rows = Array.isArray(parsed.rows)
+      ? parsed.rows
+          .map((item): FinanceChartRow | null => {
+            if (!isRecord(item)) return null;
+            const symbol = toText(item.symbol ?? item.name);
+            if (!symbol) return null;
+            return {
+              symbol,
+              name: toText(item.name),
+              price: toText(item.price),
+              change: toText(item.change ?? item.changeValue),
+              changeRate: toText(item.changeRate ?? item.change_rate),
+              previousClose: toText(item.previousClose ?? item.previous_close),
+              color: toText(item.color),
+              marker: normalizeMarker(item.marker),
+            };
+          })
+          .filter((item): item is FinanceChartRow => Boolean(item))
+      : undefined;
+
+    return {
+      title: toText(parsed.title),
+      subtitle: toText(parsed.subtitle),
+      unit: toText(parsed.unit) ?? "%",
+      activeRange: toText(parsed.activeRange ?? parsed.active_range),
+      ranges: Array.isArray(parsed.ranges)
+        ? parsed.ranges.map(toText).filter((item): item is string => Boolean(item))
+        : undefined,
+      series,
+      rows,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatAxisLabel(value: number, unit: string): string {
+  const rounded = Math.abs(value) >= 100 ? Math.round(value) : Number(value.toFixed(1));
+  return unit ? `${rounded}${unit}` : String(rounded);
+}
+
+function pointLabel(point: FinanceChartPoint, index: number): string {
+  return point.label || String(index + 1);
+}
+
+function buildLinePath(points: FinanceChartPoint[], min: number, max: number, width: number, height: number, left: number, top: number) {
+  const range = max - min || 1;
+  const step = points.length > 1 ? width / (points.length - 1) : 0;
+  return points
+    .map((point, index) => {
+      const x = left + step * index;
+      const y = top + (1 - (point.value - min) / range) * height;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function markerStyle(marker: FinanceChartMarker | undefined, color: string): CSSProperties {
+  const base: CSSProperties = { backgroundColor: color };
+  if (marker === "circle") return { ...base, borderRadius: "999px" };
+  if (marker === "triangle") return { ...base, clipPath: "polygon(50% 0, 0 100%, 100% 100%)" };
+  if (marker === "pentagon") return { ...base, clipPath: "polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%)" };
+  return { ...base, borderRadius: "4px" };
+}
+
+function rowToneClass(row: FinanceChartRow): string {
+  const value = `${row.change ?? ""} ${row.changeRate ?? ""}`.trim();
+  if (value.startsWith("-") || value.includes("↓")) return "text-[var(--color-down)]";
+  if (value.startsWith("+") || value.includes("↑")) return "text-[var(--color-up)]";
+  return "text-foreground";
+}
+
+function FinanceChartBlock({ chart, language }: { chart: FinanceChartPayload; language: AppLanguage }) {
+  const allValues = chart.series.flatMap((series) => series.points.map((point) => point.value));
+  const rawMin = Math.min(...allValues, 0);
+  const rawMax = Math.max(...allValues, 0);
+  const padding = Math.max((rawMax - rawMin) * 0.08, chart.unit === "%" ? 12 : 1);
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const svgWidth = 900;
+  const svgHeight = 292;
+  const left = 58;
+  const right = 24;
+  const top = 24;
+  const bottom = 52;
+  const plotWidth = svgWidth - left - right;
+  const plotHeight = svgHeight - top - bottom;
+  const labels = language === "en"
+    ? { symbol: "Symbol", price: "Price", change: "Change", rate: "Change %", prev: "Previous close" }
+    : { symbol: "股票代码", price: "价格", change: "涨跌额", rate: "涨跌幅", prev: "昨收盘" };
+  const firstSeries = chart.series[0];
+  const tickIndexes = firstSeries.points.length > 1
+    ? Array.from(new Set([0, Math.floor((firstSeries.points.length - 1) / 4), Math.floor((firstSeries.points.length - 1) / 2), Math.floor(((firstSeries.points.length - 1) * 3) / 4), firstSeries.points.length - 1]))
+    : [0];
+  const yTicks = Array.from({ length: 5 }, (_, index) => max - ((max - min) * index) / 4);
+  const ranges = chart.ranges?.length ? chart.ranges : ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"];
+  const activeRange = chart.activeRange ?? ranges[Math.min(5, ranges.length - 1)];
+
+  return (
+    <div className="not-prose my-3 overflow-hidden rounded-2xl bg-muted/30 text-foreground ring-1 ring-border/45">
+      <div className="space-y-1 px-4 pb-2 pt-4">
+        {chart.title ? <p className="text-sm font-semibold">{chart.title}</p> : null}
+        {chart.subtitle ? <p className="text-xs text-muted-foreground">{chart.subtitle}</p> : null}
+        <div className="flex flex-wrap gap-2 pt-2">
+          {chart.series.map((series, index) => {
+            const color = series.color ?? FINANCE_CHART_COLORS[index % FINANCE_CHART_COLORS.length];
+            return (
+              <span
+                className="inline-flex h-8 items-center gap-2 rounded-full border border-border/75 bg-background/55 px-3 text-xs font-semibold text-foreground"
+                key={`${series.symbol}-${index}`}
+              >
+                <span className="size-3 shrink-0" style={markerStyle(series.marker, color)} />
+                <span className="max-w-28 truncate">{series.symbol}</span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div className="overflow-x-auto px-2 pb-1">
+        <svg className="h-[280px] min-w-[760px] text-muted-foreground" role="img" viewBox={`0 0 ${svgWidth} ${svgHeight}`}>
+          {yTicks.map((tick) => {
+            const y = top + (1 - (tick - min) / (max - min || 1)) * plotHeight;
+            return (
+              <g key={tick.toFixed(4)}>
+                <line stroke="currentColor" strokeOpacity="0.14" x1={left} x2={svgWidth - right} y1={y} y2={y} />
+                <text fill="currentColor" fontSize="15" x={left - 10} y={y + 5} textAnchor="end">
+                  {formatAxisLabel(tick, chart.unit ?? "")}
+                </text>
+              </g>
+            );
+          })}
+          {tickIndexes.map((pointIndex) => {
+            const x = left + (firstSeries.points.length > 1 ? (plotWidth * pointIndex) / (firstSeries.points.length - 1) : 0);
+            return (
+              <g key={`${pointIndex}-${pointLabel(firstSeries.points[pointIndex], pointIndex)}`}>
+                <line stroke="currentColor" strokeOpacity="0.16" x1={x} x2={x} y1={top} y2={top + plotHeight} />
+                <text fill="currentColor" fontSize="15" x={x} y={svgHeight - 18} textAnchor="middle">
+                  {pointLabel(firstSeries.points[pointIndex], pointIndex)}
+                </text>
+              </g>
+            );
+          })}
+          <line stroke="currentColor" strokeDasharray="3 8" strokeOpacity="0.5" x1={left} x2={svgWidth - right} y1={top + (1 - (0 - min) / (max - min || 1)) * plotHeight} y2={top + (1 - (0 - min) / (max - min || 1)) * plotHeight} />
+          {chart.series.map((series, index) => {
+            const color = series.color ?? FINANCE_CHART_COLORS[index % FINANCE_CHART_COLORS.length];
+            const path = buildLinePath(series.points, min, max, plotWidth, plotHeight, left, top);
+            const last = series.points[series.points.length - 1];
+            const lastX = left + (series.points.length > 1 ? plotWidth : 0);
+            const lastY = top + (1 - (last.value - min) / (max - min || 1)) * plotHeight;
+            return (
+              <g key={`${series.symbol}-line-${index}`}>
+                <path d={path} fill="none" stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+                <circle cx={lastX} cy={lastY} fill={color} r="5.5" />
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="flex overflow-x-auto border-t border-border/45 px-4 py-2 text-sm text-muted-foreground">
+        {ranges.map((range) => (
+          <span
+            className={cn(
+              "mr-2 shrink-0 rounded-full px-3 py-1.5 font-medium",
+              range === activeRange ? "bg-background/80 text-foreground shadow-sm" : "text-muted-foreground",
+            )}
+            key={range}
+          >
+            {range}
+          </span>
+        ))}
+      </div>
+      {chart.rows?.length ? (
+        <div className="overflow-x-auto border-t border-border/45">
+          <table className="w-full min-w-[680px] border-collapse text-sm">
+            <thead className="text-muted-foreground">
+              <tr className="border-b border-border/45">
+                <th className="px-4 py-3 text-left font-medium">{labels.symbol}</th>
+                <th className="px-4 py-3 text-right font-medium">{labels.price}</th>
+                <th className="px-4 py-3 text-right font-medium">{labels.change}</th>
+                <th className="px-4 py-3 text-right font-medium">{labels.rate}</th>
+                <th className="px-4 py-3 text-right font-medium">{labels.prev}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chart.rows.map((row, index) => {
+                const matchedSeries = chart.series.find((series) => series.symbol === row.symbol);
+                const color = row.color ?? matchedSeries?.color ?? FINANCE_CHART_COLORS[index % FINANCE_CHART_COLORS.length];
+                return (
+                  <tr className="border-b border-border/35 last:border-0" key={`${row.symbol}-${index}`}>
+                    <td className="px-4 py-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="size-3 shrink-0" style={markerStyle(row.marker ?? matchedSeries?.marker, color)} />
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-foreground">{row.symbol}</p>
+                          {row.name ? <p className="truncate text-xs text-muted-foreground">{row.name}</p> : null}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{row.price ?? "-"}</td>
+                    <td className={cn("px-4 py-3 text-right tabular-nums font-semibold", rowToneClass(row))}>{row.change ?? "-"}</td>
+                    <td className={cn("px-4 py-3 text-right tabular-nums font-semibold", rowToneClass(row))}>{row.changeRate ?? "-"}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{row.previousClose ?? "-"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function TraceIcon({ status }: { status: ChatTraceEvent["status"] }) {
@@ -150,10 +466,34 @@ export function ChatPage({
     : uiCopy.greetingAnonymous;
   const suggestionPrompts = quickPrompts.slice(0, 3);
   const explorePrompts = [
-    { icon: <Search className="size-5" />, label: uiCopy.exploreDeepSearch, prompt: uiCopy.exploreDeepSearch },
-    { icon: <TrendingUp className="size-5" />, label: uiCopy.exploreWatchlist, prompt: language === "en" ? "Analyze my watchlist" : "分析我的监控列表" },
-    { icon: <WandSparkles className="size-5" />, label: uiCopy.exploreAnything, prompt: uiCopy.exploreAnything },
+    {
+      icon: <BriefcaseBusiness className="size-5" />,
+      label: uiCopy.explorePortfolio,
+      prompt: language === "en" ? "Analyze my portfolio positions" : "分析我的持仓列表",
+    },
   ];
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      pre({ children }) {
+        return <div className="not-prose my-2 overflow-x-auto rounded-md bg-muted/35 p-3">{children}</div>;
+      },
+      code({ className, children, ...props }) {
+        const match = /language-([\w-]+)/.exec(className ?? "");
+        const lang = match?.[1]?.toLowerCase();
+        const raw = String(children ?? "").replace(/\n$/, "");
+        if (lang === "finance-chart" || lang === "finance_chart" || lang === "financechart") {
+          const chart = parseFinanceChart(raw);
+          if (chart) return <FinanceChartBlock chart={chart} language={language} />;
+        }
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        );
+      },
+    }),
+    [language],
+  );
 
   const grouped = useMemo(() => {
     const groups: Record<string, Conversation[]> = {};
@@ -184,6 +524,7 @@ export function ChatPage({
   }, [prompt]);
 
   function handleNew() {
+    if (isNewConversation) return;
     createConversation().catch(() => {
       // 新建失败时保留当前会话。
     });
@@ -227,8 +568,11 @@ export function ChatPage({
     });
   }
 
-  function applyPrompt(value: string) {
-    setPrompt(value);
+  function sendPrompt(value: string) {
+    const text = value.trim();
+    if (!text || isSending) return;
+    handleSend(undefined, text);
+    closeMobileComposer();
   }
 
   function renderComposer(mode: "desktop" | "mobile") {
@@ -450,7 +794,7 @@ export function ChatPage({
                         <button
                           className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-2xl bg-muted/35 px-4 py-3 text-left text-base font-medium text-foreground transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5"
                           key={item}
-                          onClick={() => applyPrompt(item)}
+                          onClick={() => sendPrompt(item)}
                           type="button"
                         >
                           <span className="min-w-0 truncate">{item}</span>
@@ -469,7 +813,7 @@ export function ChatPage({
                       <button
                         className="inline-flex min-h-11 items-center gap-2 rounded-full bg-muted/55 px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-base"
                         key={item.label}
-                        onClick={() => applyPrompt(item.prompt || uiCopy.promptPlaceholder)}
+                        onClick={() => sendPrompt(item.prompt)}
                         type="button"
                       >
                         <span className="text-muted-foreground">{item.icon}</span>
@@ -505,7 +849,7 @@ export function ChatPage({
                   {message.pending && message.status && message.content === message.status ? null : (
                     <div className="chat-message-content prose prose-sm dark:prose-invert max-w-none break-words prose-headings:my-2 prose-p:my-1 prose-p:text-inherit prose-pre:my-2 prose-pre:rounded-md prose-code:text-primary prose-strong:text-inherit prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-li:text-inherit prose-table:my-2">
                       {message.role === "assistant" ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                        <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                       ) : (
                         <p className="whitespace-pre-wrap">{message.content}</p>
                       )}
