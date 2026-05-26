@@ -6,6 +6,7 @@ import { SideDrawer } from "@/components/common/SideDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { createUser, listRoles, listUsers, savePagePermission, saveRole, updateUser } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -580,15 +581,17 @@ export function UsersPage({ language }: { language: AppLanguage }) {
                     {pagePermissionEntries.map(([page, permission]) => (
                       <label key={page} className="grid gap-1 text-xs">
                         <span className="font-semibold">{page}</span>
-                        <select
-                          className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none transition-colors focus:border-primary"
+                        <Select
+                          aria-label={`${page} ${t.permissions}`}
+                          className="w-full"
+                          onValueChange={(next) => void handleSavePagePermission(page, next)}
+                          options={permissionList.map(([key, description]) => ({
+                            value: key,
+                            label: key,
+                            description,
+                          }))}
                           value={permission}
-                          onChange={(event) => void handleSavePagePermission(page, event.target.value)}
-                        >
-                          {permissionList.map(([key, description]) => (
-                            <option key={key} value={key}>{key} · {description}</option>
-                          ))}
-                        </select>
+                        />
                       </label>
                     ))}
                   </div>

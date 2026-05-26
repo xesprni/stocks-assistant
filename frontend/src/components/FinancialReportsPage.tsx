@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getFinancialReports, listWatchlist } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,7 @@ const financialReportsCopy = {
     symbolPlaceholder: "股票代码 / Symbol",
     refresh: "刷新",
     statements: "报表",
+    reportPeriod: "报告期间",
     rows: "科目",
     source: "来源",
     searchRows: "搜索科目",
@@ -77,6 +79,7 @@ const financialReportsCopy = {
     symbolPlaceholder: "Symbol",
     refresh: "Refresh",
     statements: "Statements",
+    reportPeriod: "Report period",
     rows: "Rows",
     source: "Source",
     searchRows: "Search line items",
@@ -286,6 +289,17 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
     () => watchlistOptions.find((item) => item.symbol.toUpperCase() === draftSymbol.toUpperCase())?.symbol ?? "",
     [draftSymbol, watchlistOptions],
   );
+  const watchlistSelectOptions = useMemo(
+    () => [
+      { value: "", label: isLoadingWatchlist ? copy.loadingWatchlist : copy.selectWatchlist, disabled: true },
+      ...watchlistOptions.map((item) => ({
+        value: item.symbol,
+        label: `${item.symbol} ${item.name || item.name_cn || item.name_en || ""}`.trim(),
+        description: item.category,
+      })),
+    ],
+    [copy.loadingWatchlist, copy.selectWatchlist, isLoadingWatchlist, watchlistOptions],
+  );
 
   const activeStatement = useMemo(
     () => data?.statements.find((item) => item.code === active) ?? data?.statements[0] ?? null,
@@ -374,19 +388,15 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
         </div>
 
         <form className="flex flex-col gap-2 sm:flex-row sm:items-center" onSubmit={handleSubmit}>
-          <select
-            className="h-7 rounded-md border border-input bg-background px-2 text-xs"
-            value={selectedWatchlistSymbol}
-            onChange={(event) => handleWatchlistSelect(event.target.value)}
+          <Select
+            aria-label={copy.selectWatchlist}
+            className="sm:w-52"
             disabled={isLoadingWatchlist}
-          >
-            <option value="">{isLoadingWatchlist ? copy.loadingWatchlist : copy.selectWatchlist}</option>
-            {watchlistOptions.map((item) => (
-              <option key={`${item.category}-${item.symbol}`} value={item.symbol}>
-                {item.symbol} {item.name || item.name_cn || item.name_en || ""}
-              </option>
-            ))}
-          </select>
+            onValueChange={handleWatchlistSelect}
+            options={watchlistSelectOptions}
+            placeholder={isLoadingWatchlist ? copy.loadingWatchlist : copy.selectWatchlist}
+            value={selectedWatchlistSymbol}
+          />
           <div className="relative sm:w-40">
             <Building2 className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -396,24 +406,20 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
               placeholder={copy.symbolPlaceholder}
             />
           </div>
-          <select
-            className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+          <Select
+            aria-label={copy.statements}
+            className="sm:w-36"
+            onValueChange={(next) => setKind(next as FinancialReportKind)}
+            options={kindOptions}
             value={kind}
-            onChange={(event) => setKind(event.target.value as FinancialReportKind)}
-          >
-            {kindOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <select
-            className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+          />
+          <Select
+            aria-label={copy.reportPeriod}
+            className="sm:w-32"
+            onValueChange={(next) => setPeriod(next as FinancialReportPeriod | "")}
+            options={periodOptions}
             value={period}
-            onChange={(event) => setPeriod(event.target.value as FinancialReportPeriod | "")}
-          >
-            {periodOptions.map((option) => (
-              <option key={option.value || "default"} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          />
           <Button type="submit" disabled={isLoading || !draftSymbol.trim()}>
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {copy.refresh}
