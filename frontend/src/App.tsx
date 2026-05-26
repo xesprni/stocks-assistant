@@ -1519,6 +1519,7 @@ function ConsoleApp() {
                 handleStopStreaming={handleStopStreaming}
                 isSending={isSending}
                 language={language}
+                displayName={auth.user?.display_name || auth.user?.username || ""}
                 messages={messages}
                 mobileNavVisible={isMobileNavVisible}
                 prompt={prompt}

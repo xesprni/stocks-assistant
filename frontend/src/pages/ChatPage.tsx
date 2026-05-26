@@ -2,7 +2,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent as ReactMouseEvent, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Bot, Check, CircleDot, Copy, History, Loader2, MessageSquareText, Plus, Send, Square, Trash2, WandSparkles, X } from "lucide-react";
+import {
+  Bot,
+  Check,
+  CircleDot,
+  Copy,
+  History,
+  Loader2,
+  Maximize2,
+  MessageSquareText,
+  PencilLine,
+  Plus,
+  Search,
+  Send,
+  Square,
+  Trash2,
+  TrendingUp,
+  WandSparkles,
+  X,
+} from "lucide-react";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -93,6 +111,7 @@ export function ChatPage({
   handleStopStreaming,
   isSending,
   language,
+  displayName,
   messages,
   mobileNavVisible = true,
   prompt,
@@ -108,6 +127,7 @@ export function ChatPage({
   handleStopStreaming: () => void;
   isSending: boolean;
   language: AppLanguage;
+  displayName?: string;
   messages: ChatMessage[];
   mobileNavVisible?: boolean;
   prompt: string;
@@ -125,6 +145,15 @@ export function ChatPage({
   const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
   const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
   const isNewConversation = messages.length === 0 && !isSending;
+  const greeting = displayName
+    ? formatTemplate(uiCopy.greeting, { name: displayName })
+    : uiCopy.greetingAnonymous;
+  const suggestionPrompts = quickPrompts.slice(0, 3);
+  const explorePrompts = [
+    { icon: <Search className="size-5" />, label: uiCopy.exploreDeepSearch, prompt: uiCopy.exploreDeepSearch },
+    { icon: <TrendingUp className="size-5" />, label: uiCopy.exploreWatchlist, prompt: language === "en" ? "Analyze my watchlist" : "分析我的监控列表" },
+    { icon: <WandSparkles className="size-5" />, label: uiCopy.exploreAnything, prompt: uiCopy.exploreAnything },
+  ];
 
   const grouped = useMemo(() => {
     const groups: Record<string, Conversation[]> = {};
@@ -185,42 +214,49 @@ export function ChatPage({
     }
   }
 
+  function handleToggleFullscreen() {
+    const root = document.documentElement;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {
+        // Ignore browsers that block programmatic fullscreen exit.
+      });
+      return;
+    }
+    root.requestFullscreen?.().catch(() => {
+      // Fullscreen is a convenience action and can be blocked by the browser.
+    });
+  }
+
+  function applyPrompt(value: string) {
+    setPrompt(value);
+  }
+
   function renderComposer(mode: "desktop" | "mobile") {
     const isMobile = mode === "mobile";
+    const largeComposer = isNewConversation;
 
     return (
       <form
         className={cn(
           isMobile
-            ? "absolute inset-x-2 rounded-[26px] border border-border/80 bg-card/95 p-2.5 shadow-2xl backdrop-blur"
-            : "hidden bg-transparent px-3 pb-3 pt-1 sm:px-4 lg:block",
+            ? "absolute inset-x-2 rounded-[30px] border border-border/80 bg-card/95 p-2.5 shadow-2xl backdrop-blur"
+            : "hidden bg-transparent px-3 pb-4 pt-1 sm:px-4 lg:block",
           isMobile && (mobileNavVisible ? "bottom-[calc(4.75rem+env(safe-area-inset-bottom))]" : "bottom-[calc(0.75rem+env(safe-area-inset-bottom))]"),
         )}
         onSubmit={handleComposerSubmit}
       >
-        <div className="mr-auto w-full rounded-[26px] border border-border/80 bg-background/95 px-3 py-2 shadow-[var(--control-shadow)] transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/15">
-          {isNewConversation && quickPrompts.length > 0 ? (
-            <div className="mb-2 flex gap-2 overflow-x-auto pb-0.5">
-              {quickPrompts.map((item) => (
-                <button
-                  className="shrink-0 rounded-xl border border-border/70 bg-muted/35 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/35 hover:bg-primary/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  key={item}
-                  onClick={() => setPrompt(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="flex items-end gap-2">
-            {isNewConversation ? (
-              <span className="mb-2 grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                <WandSparkles className="size-4" />
-              </span>
-            ) : null}
+        <div
+          className={cn(
+            "mr-auto flex w-full flex-col rounded-[30px] border border-border/80 bg-background/95 px-4 py-3 shadow-[var(--control-shadow)] transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/15",
+            largeComposer ? "min-h-[150px]" : "min-h-[60px]",
+          )}
+        >
+          <div className="flex min-h-0 flex-1 items-start gap-2">
             <Textarea
-              className="max-h-[160px] min-h-10 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-2 text-[15px] leading-6 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0"
+              className={cn(
+                "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
+                largeComposer ? "min-h-[78px]" : "min-h-10 text-[15px] leading-6",
+              )}
               disabled={isSending}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
@@ -235,14 +271,27 @@ export function ChatPage({
               placeholder={uiCopy.promptPlaceholder}
               value={prompt}
             />
+          </div>
+          <div className="mt-2 flex items-end justify-between gap-3">
+            <Button
+              aria-label={common.newChat}
+              className="h-10 w-10 shrink-0 rounded-2xl text-muted-foreground hover:text-foreground"
+              onClick={handleNew}
+              size="icon"
+              title={common.newChat}
+              type="button"
+              variant="ghost"
+            >
+              <Plus className="size-5" />
+            </Button>
             {isSending ? (
-              <Button className="mb-0.5 h-9 w-9 shrink-0 rounded-xl sm:w-auto sm:px-3" onClick={handleStopStreaming} type="button" variant="destructive">
+              <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
                 <Square className="fill-current" />
                 <span className="hidden sm:inline">{chatCopy.stop}</span>
               </Button>
             ) : (
-              <Button className="mb-0.5 h-9 w-9 shrink-0 rounded-xl sm:w-auto sm:px-3" disabled={!prompt.trim()} type="submit">
-                <Send />
+              <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" disabled={!prompt.trim()} type="submit">
+                <Send className="size-5" />
                 <span className="hidden sm:inline">{common.send}</span>
               </Button>
             )}
@@ -256,38 +305,33 @@ export function ChatPage({
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
       <section className="finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent">
         <div className="shrink-0 border-b border-border/60 px-3 py-3 sm:px-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary">
-                  <Bot className="size-4" />
-                </span>
-                <p className="font-semibold">Agent Chat</p>
-              </div>
-              <p className="text-xs text-muted-foreground">{uiCopy.endpoint}</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="truncate text-3xl font-semibold tracking-normal sm:text-4xl">{uiCopy.title}</h1>
+            <div className="flex shrink-0 items-center gap-2">
               <Button
                 aria-label="新建对话"
-                variant="outline"
-                size="sm"
+                className="h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12"
                 onClick={handleNew}
+                size="icon"
+                title={common.newChat}
                 type="button"
+                variant="ghost"
               >
-                <Plus />
-                {common.newChat}
+                <PencilLine className="size-5" />
               </Button>
               <div className="relative" ref={historyMenuRef}>
                 <Button
                   aria-expanded={historyOpen}
                   aria-haspopup="menu"
-                  variant="outline"
-                  size="sm"
+                  aria-label={common.history}
+                  className="h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12"
                   onClick={() => setHistoryOpen((current) => !current)}
+                  size="icon"
+                  title={common.history}
                   type="button"
+                  variant="ghost"
                 >
-                  <History />
-                  {common.history}
+                  <History className="size-5" />
                 </Button>
                 {historyOpen ? (
                   <div className="fixed inset-x-2 top-[calc(0.75rem+env(safe-area-inset-top))] z-[60] max-h-[min(520px,72dvh)] w-auto max-w-none overflow-hidden rounded-xl border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur lg:absolute lg:inset-x-auto lg:bottom-auto lg:right-0 lg:top-[calc(100%+0.5rem)] lg:z-40 lg:max-h-none lg:w-[320px] lg:max-w-[calc(100vw-2rem)] lg:rounded-lg">
@@ -310,6 +354,17 @@ export function ChatPage({
                         </Button>
                       ) : null}
                     </div>
+                    {activeId ? (
+                      <Button
+                        className="mb-2 h-8 w-full justify-start px-2 text-xs"
+                        onClick={() => clearMessages(activeId)}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Trash2 className="size-3.5" />
+                        {uiCopy.clearCurrent}
+                      </Button>
+                    ) : null}
                     <div className="max-h-[min(410px,58dvh)] overflow-y-auto lg:max-h-[360px]">
                       {Object.entries(grouped).map(([label, convs]) => (
                         <div key={label} className="mb-1 last:mb-0">
@@ -359,9 +414,16 @@ export function ChatPage({
                   </div>
                 ) : null}
               </div>
-              <Button aria-label={common.clear} variant="outline" size="sm" onClick={() => { if (activeId) clearMessages(activeId); }}>
-                <Trash2 />
-                {common.clear}
+              <Button
+                aria-label={uiCopy.fullscreen}
+                className="h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12"
+                onClick={handleToggleFullscreen}
+                size="icon"
+                title={uiCopy.fullscreen}
+                type="button"
+                variant="ghost"
+              >
+                <Maximize2 className="size-5" />
               </Button>
             </div>
           </div>
@@ -376,6 +438,48 @@ export function ChatPage({
           ref={chatScrollRef}
         >
           <div className="mr-auto w-full space-y-4">
+            {isNewConversation ? (
+              <div className="mx-auto w-full max-w-5xl space-y-10 py-6 sm:py-10">
+                <div className="space-y-8">
+                  <h2 className="max-w-4xl text-2xl font-semibold leading-tight tracking-normal sm:text-3xl">
+                    {greeting}
+                  </h2>
+                  {suggestionPrompts.length > 0 ? (
+                    <div className="max-w-4xl space-y-2">
+                      {suggestionPrompts.map((item) => (
+                        <button
+                          className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-2xl bg-muted/35 px-4 py-3 text-left text-base font-medium text-foreground transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5"
+                          key={item}
+                          onClick={() => applyPrompt(item)}
+                          type="button"
+                        >
+                          <span className="min-w-0 truncate">{item}</span>
+                          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-background/65 text-muted-foreground transition-colors group-hover:text-primary">
+                            <Search className="size-5" />
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="space-y-4">
+                  <p className="text-lg font-semibold text-muted-foreground sm:text-xl">{uiCopy.exploreTitle}</p>
+                  <div className="flex max-w-4xl flex-wrap gap-3">
+                    {explorePrompts.map((item) => (
+                      <button
+                        className="inline-flex min-h-11 items-center gap-2 rounded-full bg-muted/55 px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-base"
+                        key={item.label}
+                        onClick={() => applyPrompt(item.prompt || uiCopy.promptPlaceholder)}
+                        type="button"
+                      >
+                        <span className="text-muted-foreground">{item.icon}</span>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {messages.map((message) => (
               <div className={cn("group flex min-w-0 gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
                 {message.role === "assistant" ? (
