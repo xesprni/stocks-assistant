@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, KeyRound, Loader2, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, KeyRound, Loader2, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench, X } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import { ToggleRow } from "@/components/common/ToggleRow";
@@ -24,6 +24,9 @@ const OPENAI_API_BASE = "https://api.openai.com/v1";
 const CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex";
 const CODEX_DEFAULT_MODEL = "gpt-5.2-codex";
 const EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
+
+type PasswordForm = { current: string; next: string; confirm: string };
+type PasswordState = "idle" | "saving" | "saved" | "error";
 
 function isCompatibleBase(value?: string | null): value is string {
   const normalized = value?.trim().replace(/\/+$/, "");
@@ -54,12 +57,14 @@ export function ConfigPage({
   setDraft: (draft: ConfigDraft) => void;
 }) {
   const copy = i18n[language].config;
+  const common = i18n[language].common;
   const [telegramTestMessage, setTelegramTestMessage] = useState(copy.telegramTestDefault);
   const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [telegramTestResult, setTelegramTestResult] = useState("");
-  const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
-  const [passwordState, setPasswordState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [passwordForm, setPasswordForm] = useState<PasswordForm>({ current: "", next: "", confirm: "" });
+  const [passwordState, setPasswordState] = useState<PasswordState>("idle");
   const [passwordMessage, setPasswordMessage] = useState("");
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [expandedMcpServers, setExpandedMcpServers] = useState<Record<string, boolean>>({});
@@ -143,7 +148,23 @@ export function ConfigPage({
     }
   }
 
-  async function handleChangePassword() {
+  function openPasswordDialog() {
+    setPasswordForm({ current: "", next: "", confirm: "" });
+    setPasswordState("idle");
+    setPasswordMessage("");
+    setIsPasswordDialogOpen(true);
+  }
+
+  function closePasswordDialog() {
+    if (passwordState === "saving") return;
+    setIsPasswordDialogOpen(false);
+    setPasswordForm({ current: "", next: "", confirm: "" });
+    setPasswordState("idle");
+    setPasswordMessage("");
+  }
+
+  async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     if (!passwordForm.current || !passwordForm.next || passwordForm.next !== passwordForm.confirm) {
       setPasswordState("error");
       setPasswordMessage(copy.passwordMismatch);
@@ -159,7 +180,11 @@ export function ConfigPage({
       setPasswordForm({ current: "", next: "", confirm: "" });
       setPasswordState("saved");
       setPasswordMessage(copy.passwordChanged);
-      window.setTimeout(() => setPasswordState("idle"), 1600);
+      window.setTimeout(() => {
+        setPasswordState("idle");
+        setPasswordMessage("");
+        setIsPasswordDialogOpen(false);
+      }, 1200);
     } catch (caught) {
       setPasswordState("error");
       setPasswordMessage(caught instanceof Error ? caught.message : copy.passwordChangeFailed);
@@ -267,57 +292,12 @@ export function ConfigPage({
             icon={<LockKeyhole className="size-4 text-secondary" />}
             title={copy.accountSecurity}
           >
-            <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto] lg:items-end">
-              <Field label={copy.currentPassword}>
-                <Input
-                  autoComplete="current-password"
-                  type="password"
-                  value={passwordForm.current}
-                  onChange={(event) => {
-                    setPasswordState("idle");
-                    setPasswordMessage("");
-                    setPasswordForm((current) => ({ ...current, current: event.target.value }));
-                  }}
-                />
-              </Field>
-              <Field label={copy.newPassword}>
-                <Input
-                  autoComplete="new-password"
-                  type="password"
-                  value={passwordForm.next}
-                  onChange={(event) => {
-                    setPasswordState("idle");
-                    setPasswordMessage("");
-                    setPasswordForm((current) => ({ ...current, next: event.target.value }));
-                  }}
-                />
-              </Field>
-              <Field label={copy.confirmPassword}>
-                <Input
-                  autoComplete="new-password"
-                  type="password"
-                  value={passwordForm.confirm}
-                  onChange={(event) => {
-                    setPasswordState("idle");
-                    setPasswordMessage("");
-                    setPasswordForm((current) => ({ ...current, confirm: event.target.value }));
-                  }}
-                />
-              </Field>
-              <Button
-                size="sm"
-                disabled={passwordState === "saving" || passwordForm.next.length < 8 || !passwordForm.current || !passwordForm.confirm}
-                onClick={handleChangePassword}
-              >
-                {passwordState === "saving" ? <Loader2 className="animate-spin" /> : passwordState === "saved" ? <Check /> : <KeyRound />}
-                {passwordState === "saving" ? copy.changingPassword : copy.changePassword}
+            <div className="flex justify-end">
+              <Button size="sm" variant="outline" onClick={openPasswordDialog}>
+                <KeyRound />
+                {copy.changePassword}
               </Button>
             </div>
-            {passwordMessage ? (
-              <p className={cn("mt-2 text-xs", passwordState === "error" ? "text-destructive" : "text-emerald-600 dark:text-emerald-300")}>
-                {passwordMessage}
-              </p>
-            ) : null}
             {canManageSystem ? (
               <div className="mt-3 grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-center">
                 <div className="flex items-start gap-2">
@@ -339,6 +319,22 @@ export function ConfigPage({
               </div>
             ) : null}
           </ConfigSection>
+
+          <PasswordChangeDialog
+            common={common}
+            copy={copy}
+            form={passwordForm}
+            isOpen={isPasswordDialogOpen}
+            message={passwordMessage}
+            onChange={(patch) => {
+              setPasswordState("idle");
+              setPasswordMessage("");
+              setPasswordForm((current) => ({ ...current, ...patch }));
+            }}
+            onClose={closePasswordDialog}
+            onSubmit={handleChangePassword}
+            state={passwordState}
+          />
 
           <Tabs defaultValue="model">
             <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5">
@@ -798,7 +794,7 @@ export function ConfigPage({
                 icon={<SlidersHorizontal className="size-4 text-primary" />}
                 title={copy.personalPreferences}
               >
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:items-end">
                   <Field label={copy.language}>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <Button
@@ -817,32 +813,7 @@ export function ConfigPage({
                       </Button>
                     </div>
                   </Field>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <ToggleRow
-                      checked={draft.memory_enabled}
-                      icon={<BrainCircuit className="size-4 text-primary" />}
-                      label={copy.memory}
-                      onCheckedChange={(checked) => patchDraft({ memory_enabled: checked })}
-                    />
-                    <ToggleRow
-                      checked={draft.knowledge_enabled}
-                      icon={<Database className="size-4 text-accent" />}
-                      label={copy.knowledge}
-                      onCheckedChange={(checked) => patchDraft({ knowledge_enabled: checked })}
-                    />
-                    <ToggleRow
-                      checked={draft.scheduler_enabled}
-                      icon={<RefreshCw className="size-4 text-secondary" />}
-                      label={copy.scheduler}
-                      onCheckedChange={(checked) => patchDraft({ scheduler_enabled: checked })}
-                    />
-                    <ToggleRow
-                      checked={draft.tracing_enabled}
-                      icon={<Cpu className="size-4 text-primary" />}
-                      label={copy.tracing}
-                      onCheckedChange={(checked) => patchDraft({ tracing_enabled: checked })}
-                    />
-                  </div>
+                  <ColorSchemeRow language={language} />
                 </div>
               </ConfigSection>
               <ConfigSection
@@ -850,7 +821,31 @@ export function ConfigPage({
                 icon={<WandSparkles className="size-4 text-primary" />}
                 title={copy.featureSection}
               >
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  <ToggleRow
+                    checked={draft.memory_enabled}
+                    icon={<BrainCircuit className="size-4 text-primary" />}
+                    label={copy.memory}
+                    onCheckedChange={(checked) => patchDraft({ memory_enabled: checked })}
+                  />
+                  <ToggleRow
+                    checked={draft.knowledge_enabled}
+                    icon={<Database className="size-4 text-accent" />}
+                    label={copy.knowledge}
+                    onCheckedChange={(checked) => patchDraft({ knowledge_enabled: checked })}
+                  />
+                  <ToggleRow
+                    checked={draft.scheduler_enabled}
+                    icon={<RefreshCw className="size-4 text-secondary" />}
+                    label={copy.scheduler}
+                    onCheckedChange={(checked) => patchDraft({ scheduler_enabled: checked })}
+                  />
+                  <ToggleRow
+                    checked={draft.tracing_enabled}
+                    icon={<Cpu className="size-4 text-primary" />}
+                    label={copy.tracing}
+                    onCheckedChange={(checked) => patchDraft({ tracing_enabled: checked })}
+                  />
                   <ToggleRow
                     checked={draft.memory_auto_curate_enabled}
                     icon={<WandSparkles className="size-4 text-primary" />}
@@ -864,13 +859,7 @@ export function ConfigPage({
                     onCheckedChange={(checked) => patchDraft({ debug: checked })}
                   />
                 </div>
-              </ConfigSection>
-              <ConfigSection
-                description={copy.memorySectionHint}
-                icon={<BrainCircuit className="size-4 text-secondary" />}
-                title={copy.memorySection}
-              >
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <Field label={copy.memoryImportanceThreshold}>
                     <Input
                       max={1}
@@ -893,13 +882,6 @@ export function ConfigPage({
                   </Field>
                 </div>
               </ConfigSection>
-              <ConfigSection
-                description={copy.appearanceSectionHint}
-                icon={<TrendingUp className="size-4 text-secondary" />}
-                title={copy.appearanceSection}
-              >
-                <ColorSchemeRow language={language} />
-              </ConfigSection>
             </TabsContent>
           </Tabs>
           </div>
@@ -912,6 +894,105 @@ export function ConfigPage({
         </div>
       )}
     </section>
+  );
+}
+
+
+function PasswordChangeDialog({
+  common,
+  copy,
+  form,
+  isOpen,
+  message,
+  onChange,
+  onClose,
+  onSubmit,
+  state,
+}: {
+  common: typeof i18n.zh.common;
+  copy: typeof i18n.zh.config;
+  form: PasswordForm;
+  isOpen: boolean;
+  message: string;
+  onChange: (patch: Partial<PasswordForm>) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  state: PasswordState;
+}) {
+  if (!isOpen) return null;
+
+  const disabled = state === "saving" || form.next.length < 8 || !form.current || !form.confirm;
+
+  return (
+    <div className="fixed inset-0 z-[75] grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
+      <button aria-label={common.close} className="absolute inset-0" onClick={onClose} type="button" />
+      <form
+        aria-labelledby="change-password-title"
+        aria-modal="true"
+        className="panel motion-panel relative w-full max-w-[440px] rounded-md p-5 shadow-2xl"
+        onSubmit={onSubmit}
+        role="dialog"
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="grid size-10 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary">
+              <KeyRound className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 id="change-password-title" className="text-base font-semibold">{copy.changePassword}</h2>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.accountSecurityHint}</p>
+            </div>
+          </div>
+          <Button aria-label={common.close} className="h-8 w-8 shrink-0" disabled={state === "saving"} onClick={onClose} size="icon" type="button" variant="ghost">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        <div className="space-y-3">
+          <Field label={copy.currentPassword}>
+            <Input
+              autoFocus
+              autoComplete="current-password"
+              type="password"
+              value={form.current}
+              onChange={(event) => onChange({ current: event.target.value })}
+            />
+          </Field>
+          <Field label={copy.newPassword}>
+            <Input
+              autoComplete="new-password"
+              type="password"
+              value={form.next}
+              onChange={(event) => onChange({ next: event.target.value })}
+            />
+          </Field>
+          <Field label={copy.confirmPassword}>
+            <Input
+              autoComplete="new-password"
+              type="password"
+              value={form.confirm}
+              onChange={(event) => onChange({ confirm: event.target.value })}
+            />
+          </Field>
+        </div>
+
+        {message ? (
+          <p className={cn("mt-3 rounded-md border px-3 py-2 text-xs", state === "error" ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")}>
+            {message}
+          </p>
+        ) : null}
+
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button disabled={state === "saving"} onClick={onClose} size="sm" type="button" variant="outline">
+            {common.cancel}
+          </Button>
+          <Button disabled={disabled} size="sm" type="submit">
+            {state === "saving" ? <Loader2 className="animate-spin" /> : state === "saved" ? <Check /> : <KeyRound />}
+            {state === "saving" ? copy.changingPassword : copy.changePassword}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
