@@ -1786,7 +1786,7 @@ function DesktopTopNav({
 
   return (
     <nav className="finance-top-nav hidden shrink-0 lg:block" aria-label={i18n[language].shell.navigation}>
-      <div className="mx-auto flex h-11 w-full max-w-7xl items-center gap-1 px-4">
+      <div className="mx-auto flex h-11 w-full max-w-[1760px] items-center gap-1 px-4">
         {primaryItems.map((item) => (
           <button
             aria-current={page === item.id ? "page" : undefined}
@@ -1813,7 +1813,7 @@ function DesktopTopNav({
               <ChevronDown className="size-3.5" />
             </button>
             {isMoreOpen ? (
-              <div className="absolute left-0 top-[calc(100%+0.5rem)] z-50 w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border/65 bg-popover/98 p-3 text-popover-foreground shadow-[0_18px_48px_hsl(var(--foreground)_/_0.13)]">
+              <div className="finance-more-menu absolute left-0 top-[calc(100%+0.5rem)] z-50 w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl p-3 text-popover-foreground">
                 <div className="grid grid-cols-2 gap-3">
                   {moreGroups.map((group) => (
                     <div className="min-w-0" key={group.id}>

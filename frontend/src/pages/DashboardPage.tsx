@@ -251,7 +251,7 @@ function HeroSearch({
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{copy.subtitle}</p>
         </div>
-        <form className="flex min-w-0 flex-1 gap-2 lg:max-w-2xl" onSubmit={submit}>
+        <form className="flex min-w-0 flex-1 gap-2 lg:max-w-3xl 2xl:max-w-4xl" onSubmit={submit}>
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -312,7 +312,7 @@ function MarketSnapshot({
         <InlineState>{copy.emptyMarket}</InlineState>
       ) : (
         <div className="finance-index-strip -mx-2 flex overflow-x-auto sm:mx-0">
-          {indices.slice(0, 4).map((quote) => (
+          {indices.slice(0, 8).map((quote) => (
             <MarketPill language={language} key={quote.symbol} quote={quote} />
           ))}
         </div>
@@ -741,44 +741,42 @@ export function DashboardPage({
   }, [canMarket, copy.loadFailed, newsSourceSymbol]);
 
   return (
-    <div className="page-enter mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-2 lg:h-full lg:overflow-y-auto">
+    <div className="page-enter mx-auto flex min-h-0 w-full max-w-[1760px] flex-1 flex-col gap-2 lg:h-full lg:overflow-y-auto 2xl:overflow-hidden">
       <HeroSearch language={language} onPrompt={onPrompt} />
 
-      <div className="grid min-h-0 gap-8 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
-        <main className="min-w-0">
+      <div className="dashboard-wide-grid grid min-h-0 gap-8 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:flex-1 2xl:grid-cols-[minmax(420px,1fr)_minmax(360px,0.86fr)_390px]">
+        <main className="dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 2xl:col-start-1 2xl:row-start-1">
           {canMarket ? (
             <MarketSnapshot error={indicesError} indices={indices} language={language} loading={indicesLoading} onOpenMarket={onOpenMarket} />
           ) : (
             <PermissionHidden>{copy.marketHidden}</PermissionHidden>
           )}
 
-          <div className="grid gap-8 lg:grid-cols-2">
-            {canMarket ? (
-              <WatchlistMovers
-                error={stockError}
-                language={language}
-                loading={stockLoading || watchlistLoading}
-                movers={moverRows}
-                onOpenChart={onOpenChart}
-                onOpenWatchlist={onOpenWatchlist}
-                watchlists={watchlists}
-              />
-            ) : null}
-            {canPortfolio ? (
-              <PortfolioSummary
-                error={portfolioError}
-                language={language}
-                loading={portfolioLoading}
-                onOpenPortfolio={onOpenPortfolio}
-                portfolios={portfolios}
-              />
-            ) : (
-              <PermissionHidden>{copy.portfolioHidden}</PermissionHidden>
-            )}
-          </div>
+          {canMarket ? (
+            <WatchlistMovers
+              error={stockError}
+              language={language}
+              loading={stockLoading || watchlistLoading}
+              movers={moverRows}
+              onOpenChart={onOpenChart}
+              onOpenWatchlist={onOpenWatchlist}
+              watchlists={watchlists}
+            />
+          ) : null}
         </main>
 
-        <aside className="finance-right-rail flex min-w-0 flex-col">
+        <section className="dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-2 2xl:col-start-2 2xl:row-start-1">
+          {canPortfolio ? (
+            <PortfolioSummary
+              error={portfolioError}
+              language={language}
+              loading={portfolioLoading}
+              onOpenPortfolio={onOpenPortfolio}
+              portfolios={portfolios}
+            />
+          ) : (
+            <PermissionHidden>{copy.portfolioHidden}</PermissionHidden>
+          )}
           {canMarket ? (
             <NewsPreview
               error={newsError}
@@ -789,6 +787,9 @@ export function DashboardPage({
               sourceSymbol={newsSourceSymbol}
             />
           ) : null}
+        </section>
+
+        <aside className="dashboard-scroll-column finance-right-rail flex min-w-0 flex-col xl:col-start-2 xl:row-span-2 xl:row-start-1 2xl:col-start-3 2xl:row-span-1 2xl:row-start-1">
           <SignalDeck language={language} />
           <SystemStatus config={config} enabledCount={enabledCount} language={language} modelName={modelName} onOpenConfig={onOpenConfig} />
         </aside>
