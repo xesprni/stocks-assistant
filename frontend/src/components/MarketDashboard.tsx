@@ -20,7 +20,7 @@ import { getCandlesticks, getIndexQuotes, getStockQuotes } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useToneClasses } from "@/lib/color-scheme";
 import { calcSupportResistance, type SupportResistanceLevel } from "@/lib/indicators";
-import type { QuoteItem, WatchlistCategory } from "@/types/app";
+import type { CandlestickItem, QuoteItem, WatchlistCategory } from "@/types/app";
 
 type AppLanguage = "zh" | "en";
 
@@ -203,6 +203,94 @@ function IndexCard({ copy, language, quote }: { copy: MarketDashboardCopy; langu
 }
 
 type LevelStatus = "idle" | "loading" | "done" | "error";
+
+const STOCK_LEVELS_CACHE_KEY = "stocks-assistant.market-dashboard.stock-levels.v1";
+const STOCK_LEVELS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface CachedStockLevelsEntry {
+  levels: SupportResistanceLevel[];
+  calculatedAt: number;
+  latestBarKey: string | null;
+}
+
+type StockLevelsCache = Record<string, CachedStockLevelsEntry>;
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSupportResistanceLevel(value: unknown): value is SupportResistanceLevel {
+  if (!isObjectRecord(value)) return false;
+  return (
+    typeof value.price === "number" &&
+    (value.type === "support" || value.type === "resistance") &&
+    typeof value.strength === "number" &&
+    typeof value.label === "string"
+  );
+}
+
+function readStockLevelsCache(): StockLevelsCache {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(STOCK_LEVELS_CACHE_KEY);
+    if (!raw) return {};
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!isObjectRecord(parsed)) return {};
+
+    const now = Date.now();
+    const cache: StockLevelsCache = {};
+    for (const [symbol, entry] of Object.entries(parsed)) {
+      if (!isObjectRecord(entry) || !Array.isArray(entry.levels) || typeof entry.calculatedAt !== "number") {
+        continue;
+      }
+      if (now - entry.calculatedAt > STOCK_LEVELS_CACHE_MAX_AGE_MS) continue;
+
+      cache[symbol] = {
+        levels: entry.levels.filter(isSupportResistanceLevel),
+        calculatedAt: entry.calculatedAt,
+        latestBarKey: typeof entry.latestBarKey === "string" ? entry.latestBarKey : null,
+      };
+    }
+    return cache;
+  } catch {
+    return {};
+  }
+}
+
+function writeStockLevelsCache(cache: StockLevelsCache) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STOCK_LEVELS_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // 忽略浏览器隐私模式或容量限制导致的缓存失败，页面内状态仍可正常使用。
+  }
+}
+
+function loadCachedStockLevelState() {
+  const cache = readStockLevelsCache();
+  const levelsMap: Record<string, SupportResistanceLevel[]> = {};
+  const statusMap: Record<string, LevelStatus> = {};
+
+  for (const [symbol, entry] of Object.entries(cache)) {
+    levelsMap[symbol] = entry.levels;
+    statusMap[symbol] = "done";
+  }
+
+  return { levelsMap, statusMap };
+}
+
+function saveStockLevelsToCache(symbol: string, entry: CachedStockLevelsEntry) {
+  writeStockLevelsCache({
+    ...readStockLevelsCache(),
+    [symbol]: entry,
+  });
+}
+
+function latestBarCacheKey(bar: CandlestickItem | undefined) {
+  if (!bar) return null;
+  return [bar.timestamp, bar.open, bar.high, bar.low, bar.close, bar.volume].join("|");
+}
 
 function StockCard({
   copy,
@@ -440,8 +528,17 @@ function StockTab({
   const [category, setCategory] = useState<WatchlistCategory | "ALL">("ALL");
   const stockCategories = getStockCategories(language);
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
-  const [levelsMap, setLevelsMap] = useState<Record<string, SupportResistanceLevel[]>>({});
-  const [levelStatusMap, setLevelStatusMap] = useState<Record<string, LevelStatus>>({});
+  const cachedLevelStateRef = useRef<ReturnType<typeof loadCachedStockLevelState> | null>(null);
+  const getCachedLevelState = () => {
+    if (!cachedLevelStateRef.current) cachedLevelStateRef.current = loadCachedStockLevelState();
+    return cachedLevelStateRef.current;
+  };
+  const [levelsMap, setLevelsMap] = useState<Record<string, SupportResistanceLevel[]>>(
+    () => getCachedLevelState().levelsMap,
+  );
+  const [levelStatusMap, setLevelStatusMap] = useState<Record<string, LevelStatus>>(
+    () => getCachedLevelState().statusMap,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const requestSeqRef = useRef(0);
@@ -461,10 +558,16 @@ function StockTab({
           volume: parseFloat(c.volume ?? "0"),
         }))
         .filter((b: { open: number }) => b.open > 0);
-      setLevelsMap((current) => ({ ...current, [symbol]: calcSupportResistance(bars) }));
+      const levels = calcSupportResistance(bars);
+      setLevelsMap((current) => ({ ...current, [symbol]: levels }));
       setLevelStatusMap((current) => ({ ...current, [symbol]: "done" }));
+      saveStockLevelsToCache(symbol, {
+        levels,
+        calculatedAt: Date.now(),
+        latestBarKey: latestBarCacheKey(candles.bars[candles.bars.length - 1]),
+      });
     } catch {
-      setLevelsMap((current) => ({ ...current, [symbol]: [] }));
+      setLevelsMap((current) => ({ ...current, [symbol]: current[symbol] ?? [] }));
       setLevelStatusMap((current) => ({ ...current, [symbol]: "error" }));
     }
   }, []);
@@ -478,8 +581,6 @@ function StockTab({
       const res = await getStockQuotes(category === "ALL" ? undefined : category);
       if (requestSeqRef.current !== requestId) return;
       setQuotes(res.quotes);
-      setLevelsMap({});
-      setLevelStatusMap({});
       setLoading(false);
     } catch (e) {
       if (requestSeqRef.current !== requestId) return;

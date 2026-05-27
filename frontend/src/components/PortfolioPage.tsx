@@ -340,6 +340,29 @@ type LoadPortfolioOptions = {
   syncCapitalDraft?: boolean;
 };
 
+const PORTFOLIO_AUTO_REFRESH_STORAGE_KEY = "stocks-assistant.portfolio.auto-refresh";
+const PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY = "stocks-assistant.portfolio.hide-sensitive";
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored == null) return fallback;
+    return stored === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredBoolean(key: string, value: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // localStorage 可能被隐私模式或浏览器策略禁用，忽略即可退回当前页面状态。
+  }
+}
+
 export function PortfolioPage({
   confirmAction,
   language,
@@ -374,8 +397,8 @@ export function PortfolioPage({
   const [isSavingCapital, setIsSavingCapital] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [hideSensitive, setHideSensitive] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(() => readStoredBoolean(PORTFOLIO_AUTO_REFRESH_STORAGE_KEY, false));
+  const [hideSensitive, setHideSensitive] = useState(() => readStoredBoolean(PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY, false));
   const [message, setMessage] = useState("");
   const [quoteError, setQuoteError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
@@ -475,6 +498,14 @@ export function PortfolioPage({
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
+
+  useEffect(() => {
+    writeStoredBoolean(PORTFOLIO_AUTO_REFRESH_STORAGE_KEY, autoRefresh);
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    writeStoredBoolean(PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY, hideSensitive);
+  }, [hideSensitive]);
 
   useEffect(() => {
     setCountdown(effectiveRefreshInterval);
