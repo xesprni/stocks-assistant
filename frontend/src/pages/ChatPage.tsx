@@ -25,13 +25,12 @@ import {
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { ChatHistoryState } from "@/hooks/useConversations";
 import type { ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
-
-const THINKING_MODE_STORAGE_KEY = "stocks-assistant-chat-thinking-enabled";
 
 function CopyButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
@@ -460,13 +459,7 @@ export function ChatPage({
   const uiCopy = i18n[language].chatUi;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
-  const [thinkingEnabled, setThinkingEnabled] = useState(() => {
-    try {
-      return window.localStorage.getItem(THINKING_MODE_STORAGE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [thinkingEnabled, setThinkingEnabled] = useState(readChatThinkingEnabled);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
   const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
@@ -537,14 +530,16 @@ export function ChatPage({
   }, [prompt]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(THINKING_MODE_STORAGE_KEY, String(thinkingEnabled));
-    } catch {
-      // 浏览器禁用本地存储时，保留当前页面内状态即可。
-    }
+    persistChatThinkingEnabled(thinkingEnabled);
   }, [thinkingEnabled]);
 
+  function resetThinkingMode() {
+    resetChatThinkingEnabled();
+    setThinkingEnabled(false);
+  }
+
   function handleNew() {
+    resetThinkingMode();
     if (isNewConversation) return;
     createConversation().catch(() => {
       // 新建失败时保留当前会话。
@@ -566,6 +561,29 @@ export function ChatPage({
 
   function closeMobileComposer() {
     setMobileComposerOpen(false);
+  }
+
+  function toggleThinkingEnabled() {
+    setThinkingEnabled((current) => {
+      const next = !current;
+      persistChatThinkingEnabled(next);
+      return next;
+    });
+  }
+
+  function handleClearCurrent() {
+    if (!activeId) return;
+    resetThinkingMode();
+    clearMessages(activeId);
+  }
+
+  function handleSwitchConversation(conversation: Conversation) {
+    const isEmptyConversation = conversation.messageCount === 0 || (conversation.messages.length === 0 && !conversation.lastMessage);
+    if (isEmptyConversation) {
+      resetThinkingMode();
+    }
+    switchConversation(conversation.id);
+    setHistoryOpen(false);
   }
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
@@ -659,7 +677,7 @@ export function ChatPage({
                     ? "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary"
                     : "text-muted-foreground hover:text-foreground",
                 )}
-                onClick={() => setThinkingEnabled((current) => !current)}
+                onClick={toggleThinkingEnabled}
                 size="icon"
                 title={thinkingLabel}
                 type="button"
@@ -741,7 +759,7 @@ export function ChatPage({
                     {activeId ? (
                       <Button
                         className="mb-2 h-8 w-full justify-start px-2 text-xs"
-                        onClick={() => clearMessages(activeId)}
+                        onClick={handleClearCurrent}
                         type="button"
                         variant="ghost"
                       >
@@ -761,14 +779,12 @@ export function ChatPage({
                                 activeId === c.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                               )}
                               onClick={() => {
-                                switchConversation(c.id);
-                                setHistoryOpen(false);
+                                handleSwitchConversation(c);
                               }}
                               onKeyDown={(event) => {
                                 if (event.key !== "Enter" && event.key !== " ") return;
                                 event.preventDefault();
-                                switchConversation(c.id);
-                                setHistoryOpen(false);
+                                handleSwitchConversation(c);
                               }}
                               role="button"
                               tabIndex={0}

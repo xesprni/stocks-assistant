@@ -47,6 +47,7 @@ import {
   streamChat,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { parseJsonObject } from "@/lib/json";
@@ -848,6 +849,9 @@ function ConsoleApp() {
     setPage("chat");
 
     const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
+    if (shouldCreateNewSession && options.thinkingEnabled !== true) {
+      resetChatThinkingEnabled();
+    }
     let convId = shouldCreateNewSession ? null : activeConvId;
     let assistantMessageId = pendingMessage.id;
     let streamedContent = "";
