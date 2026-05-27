@@ -515,16 +515,6 @@
   }
 
   @media (min-width: 1536px) {
-    .dashboard-wide-grid {
-      grid-template-rows: minmax(0, 1fr);
-    }
-
-    .dashboard-scroll-column {
-      min-height: 0;
-      overflow-y: auto;
-      padding-right: 0.25rem;
-    }
-
     .dashboard-secondary-column {
       border-left: 1px solid hsl(var(--border) / 0.54);
       padding-left: 1.5rem;
