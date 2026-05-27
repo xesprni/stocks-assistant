@@ -31,6 +31,8 @@ import { cn } from "@/lib/utils";
 import type { ChatHistoryState } from "@/hooks/useConversations";
 import type { ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
 
+const THINKING_MODE_STORAGE_KEY = "stocks-assistant-chat-thinking-enabled";
+
 function CopyButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -458,11 +460,19 @@ export function ChatPage({
   const uiCopy = i18n[language].chatUi;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
-  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem(THINKING_MODE_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
   const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
-  const thinkingLabel = language === "en" ? "Thinking mode" : "思考模式";
+  const thinkingLabel = language === "en"
+    ? `Thinking mode ${thinkingEnabled ? "on" : "off"}`
+    : `思考模式${thinkingEnabled ? "开启" : "关闭"}`;
   const isNewConversation = messages.length === 0 && !isSending;
   const greeting = displayName
     ? formatTemplate(uiCopy.greeting, { name: displayName })
@@ -525,6 +535,14 @@ export function ChatPage({
       setMobileComposerOpen(true);
     }
   }, [prompt]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(THINKING_MODE_STORAGE_KEY, String(thinkingEnabled));
+    } catch {
+      // 浏览器禁用本地存储时，保留当前页面内状态即可。
+    }
+  }, [thinkingEnabled]);
 
   function handleNew() {
     if (isNewConversation) return;
