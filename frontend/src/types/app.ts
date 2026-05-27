@@ -326,6 +326,42 @@ export interface WatchlistSearchResponse {
   total: number;
 }
 
+export type WatchlistQuoteView = "movers" | "gainers" | "losers" | "active";
+export type WatchlistOverviewSource = "local" | "cache" | "live";
+
+export interface WatchlistOverviewRow extends QuoteItem {
+  id: number;
+  category: WatchlistCategory;
+  name_cn: string;
+  name_en: string;
+  name_hk: string;
+  exchange: string;
+  currency: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WatchlistOverviewViews {
+  movers: WatchlistOverviewRow[];
+  gainers: WatchlistOverviewRow[];
+  losers: WatchlistOverviewRow[];
+  active: WatchlistOverviewRow[];
+}
+
+export interface WatchlistOverviewResponse {
+  available: boolean;
+  error: string | null;
+  fetched_at?: string | null;
+  stale?: boolean;
+  source?: WatchlistOverviewSource | null;
+  items: WatchlistOverviewRow[];
+  views: WatchlistOverviewViews;
+  counts_by_category: Record<string, number>;
+  total: number;
+  quote_error: string | null;
+}
+
 // ── Portfolio ───────────────────────────────────────────────────────────────
 
 export type PortfolioMarket = "US" | "A";

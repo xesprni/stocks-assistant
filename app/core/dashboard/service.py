@@ -68,6 +68,19 @@ def _static_quote_row(symbol: str, name: str = "", category: str = "") -> dict[s
 def _static_watchlist_row(item: dict[str, Any]) -> dict[str, Any]:
     name = item.get("name") or item.get("name_cn") or item.get("name_hk") or item.get("name_en") or ""
     row = _static_quote_row(item.get("symbol", ""), name=name, category=item.get("category", ""))
+    row.update(
+        {
+            "id": item.get("id"),
+            "name_cn": item.get("name_cn", ""),
+            "name_en": item.get("name_en", ""),
+            "name_hk": item.get("name_hk", ""),
+            "exchange": item.get("exchange", ""),
+            "currency": item.get("currency", ""),
+            "note": item.get("note", ""),
+            "created_at": item.get("created_at", ""),
+            "updated_at": item.get("updated_at", ""),
+        }
+    )
     row["last_done"] = item.get("last_done")
     row["change_value"] = item.get("change_value")
     row["change_rate"] = item.get("change_rate")

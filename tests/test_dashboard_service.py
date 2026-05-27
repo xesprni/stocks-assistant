@@ -1,5 +1,6 @@
 import unittest
 
+from app.api.watchlist import _strip_watchlist_quote_payload
 from app.core.dashboard.service import DashboardService
 from app.core.watchlist.service import LongbridgeUnavailableError
 
@@ -160,6 +161,49 @@ class DashboardServiceTest(unittest.TestCase):
         self.assertEqual(watchlist["total"], 3)
         self.assertIn("Longbridge credentials", watchlist["quote_error"])
         self.assertEqual([row["symbol"] for row in watchlist["items"]], ["SYM0.US", "SYM1.US", "SYM2.US"])
+
+    def test_watchlist_rows_preserve_management_metadata_for_overview(self):
+        items = [watchlist_item(1)]
+        items[0]["note"] = "track earnings"
+        items[0]["name_cn"] = "测试股票"
+        service = DashboardService(FakeMarketService(), FakeWatchlistService(items), FakePortfolioService())
+
+        payload = service.watchlist(user=FakeUser(), settings=None, mode="bootstrap")
+        row = payload["items"][0]
+
+        self.assertEqual(row["id"], 1)
+        self.assertEqual(row["name_cn"], "测试股票")
+        self.assertEqual(row["note"], "track earnings")
+        self.assertEqual(row["created_at"], "2026-01-01T00:00:00")
+
+    def test_watchlist_overview_permission_strip_removes_quote_fields(self):
+        row = {
+            **watchlist_item(1),
+            "prev_close": "99",
+            "open": "100",
+            "high": "120",
+            "low": "90",
+            "volume": "1000",
+            "turnover": "9000",
+            "last_done": "110",
+            "change_value": "10",
+            "change_rate": "10.10%",
+        }
+
+        payload = _strip_watchlist_quote_payload(
+            {
+                "items": [row],
+                "views": {"movers": [row], "gainers": [row], "losers": [row], "active": [row]},
+                "source": "cache",
+                "stale": True,
+            }
+        )
+
+        self.assertEqual(payload["source"], "local")
+        self.assertFalse(payload["stale"])
+        self.assertIsNone(payload["items"][0]["last_done"])
+        self.assertIsNone(payload["views"]["movers"][0]["turnover"])
+        self.assertEqual(payload["items"][0]["id"], 1)
 
     def test_portfolio_summary_calculates_per_market_values(self):
         service = DashboardService(

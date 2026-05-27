@@ -62,6 +62,7 @@ import type {
   WatchlistCategory,
   WatchlistItem,
   WatchlistListResponse,
+  WatchlistOverviewResponse,
   WatchlistSearchResponse,
 } from "@/types/app";
 
@@ -562,13 +563,17 @@ export function getSessionTraces(sessionId: string, limit = 20) {
   return request<TraceSessionResponse>(`/api/v1/tracing/sessions/${sessionId}?${params.toString()}`);
 }
 
-export function listWatchlist(category: WatchlistCategory) {
-  return request<WatchlistListResponse>(`/api/v1/watchlist?category=${category}`);
+export function listWatchlist(category: WatchlistCategory, init?: RequestInit) {
+  return request<WatchlistListResponse>(`/api/v1/watchlist?category=${category}`, init);
 }
 
-export function searchWatchlist(query: string, category: WatchlistCategory) {
+export function getWatchlistOverview(init?: RequestInit) {
+  return request<WatchlistOverviewResponse>("/api/v1/watchlist/overview", init);
+}
+
+export function searchWatchlist(query: string, category: WatchlistCategory, init?: RequestInit) {
   const params = new URLSearchParams({ q: query, category, limit: "10" });
-  return request<WatchlistSearchResponse>(`/api/v1/watchlist/search?${params.toString()}`);
+  return request<WatchlistSearchResponse>(`/api/v1/watchlist/search?${params.toString()}`, init);
 }
 
 export function addWatchlistItem(item: Omit<WatchlistItem, "id" | "note" | "created_at" | "updated_at">) {
