@@ -396,13 +396,14 @@ function mapConversation(session: ChatSessionSummary | ChatSessionDetail): Conve
   };
 }
 
-export function sendChat(message: string, sessionId?: string | null, clearHistory = false) {
+export function sendChat(message: string, sessionId?: string | null, clearHistory = false, thinkingEnabled = false) {
   return request<ChatResponse>("/api/v1/agent/chat", {
     method: "POST",
     body: JSON.stringify({
       message,
       session_id: sessionId ?? undefined,
       clear_history: clearHistory,
+      thinking_enabled: thinkingEnabled,
     }),
   });
 }
@@ -424,6 +425,7 @@ async function streamChatOnce(
   onEvent: (event: ChatStreamEvent) => void,
   clearHistory = false,
   signal?: AbortSignal,
+  thinkingEnabled = false,
 ) {
   const response = await fetch(`${API_BASE}/api/v1/agent/stream`, {
     method: "POST",
@@ -433,6 +435,7 @@ async function streamChatOnce(
       message,
       session_id: sessionId ?? undefined,
       clear_history: clearHistory,
+      thinking_enabled: thinkingEnabled,
     }),
   });
 
@@ -479,9 +482,10 @@ export async function streamChat(
   onEvent: (event: ChatStreamEvent) => void,
   clearHistory = false,
   signal?: AbortSignal,
+  thinkingEnabled = false,
 ) {
   try {
-    await streamChatOnce(message, sessionId, onEvent, clearHistory, signal);
+    await streamChatOnce(message, sessionId, onEvent, clearHistory, signal, thinkingEnabled);
   } catch (error) {
     if (error instanceof Error && /Authentication|required|expired|invalid/i.test(error.message)) {
       try {
@@ -493,7 +497,7 @@ export async function streamChat(
           throw refreshError;
         }
       }
-      await streamChatOnce(message, sessionId, onEvent, clearHistory, signal);
+      await streamChatOnce(message, sessionId, onEvent, clearHistory, signal, thinkingEnabled);
       return;
     }
     throw error;

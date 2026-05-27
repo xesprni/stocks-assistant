@@ -78,6 +78,7 @@ class AgentStreamExecutor:
         messages: Optional[List[Dict]] = None,
         max_context_turns: int = 30,
         cancel_event=None,
+        thinking_enabled: bool = False,
     ):
         self.agent = agent
         self.model = model
@@ -88,6 +89,7 @@ class AgentStreamExecutor:
         self.max_context_turns = max_context_turns
         self.messages = messages if messages is not None else []
         self.cancel_event = cancel_event
+        self.thinking_enabled = thinking_enabled
         self.tool_failure_history = []  # 工具执行历史（用于失败重试保护）
 
     def _raise_if_cancelled(self):
@@ -383,6 +385,8 @@ class AgentStreamExecutor:
         request = LLMRequest(
             messages=messages, temperature=0, stream=True,
             tools=tools_schema, system=self.system_prompt,
+            thinking_enabled=self.thinking_enabled,
+            reasoning_effort="medium" if self.thinking_enabled else None,
         )
 
         llm_call_id = f"llm_{uuid.uuid4().hex[:12]}"
@@ -403,6 +407,7 @@ class AgentStreamExecutor:
                 "system": request.system,
                 "messages": messages,
                 "tools": tools_summary,
+                "thinking_enabled": self.thinking_enabled,
             },
         })
         self._emit_event("message_start", {"role": "assistant"})

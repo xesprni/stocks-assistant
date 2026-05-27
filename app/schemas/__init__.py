@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None  # 会话 ID；为空时创建新会话
     user_id: Optional[str] = None  # 用户 ID
     clear_history: bool = False  # 是否清空历史记录
+    thinking_enabled: bool = False  # 是否启用模型推理/思考模式
     skill_filter: Optional[List[str]] = None  # 技能过滤列表
     history: Optional[List[Dict[str, str]]] = None  # 前端传入的对话历史 [{"role": "user"/"assistant", "content": "..."}]
 

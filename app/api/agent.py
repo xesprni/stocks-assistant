@@ -256,6 +256,7 @@ async def chat(request: ChatRequest, current_user: CurrentUser = Depends(require
             on_event=recorder.handle_event if recorder else None,
             clear_history=False,
             skill_filter=request.skill_filter,
+            thinking_enabled=request.thinking_enabled,
         )
         user_message_id, message_id = _persist_exchange(session_id, request.message, response, was_empty=len(history_messages) == 0)
         _finish_trace(
@@ -335,6 +336,7 @@ async def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(
                     clear_history=False,
                     skill_filter=request.skill_filter,
                     cancel_event=cancel_event,
+                    thinking_enabled=request.thinking_enabled,
                 )
                 user_message_id, message_id = _persist_exchange(session_id, request.message, response, was_empty=len(history_messages) == 0)
                 _finish_trace(

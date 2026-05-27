@@ -145,6 +145,8 @@ class OpenAICompatibleProvider(LLMModel):
             payload["tools"] = [
                 {"type": "function", "function": t} for t in request.tools
             ]
+        if getattr(request, "thinking_enabled", False):
+            payload["reasoning_effort"] = getattr(request, "reasoning_effort", None) or "medium"
         return payload
 
     def _convert_messages_to_openai(self, messages: List[dict]) -> List[dict]:
@@ -315,6 +317,11 @@ class OpenAIResponsesProvider(LLMModel):
                 for t in request.tools
             ]
             payload["parallel_tool_calls"] = True
+        if getattr(request, "thinking_enabled", False):
+            payload["reasoning"] = {
+                "effort": getattr(request, "reasoning_effort", None) or "medium",
+                "summary": "auto",
+            }
         if request.temperature is not None and not self._model_prefers_default_temperature(request.model or self.model):
             payload["temperature"] = request.temperature
         return payload

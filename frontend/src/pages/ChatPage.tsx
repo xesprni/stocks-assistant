@@ -3,6 +3,7 @@ import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, RefObject
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  BrainCircuit,
   BriefcaseBusiness,
   Bot,
   Check,
@@ -438,7 +439,7 @@ export function ChatPage({
   chatScrollRef: RefObject<HTMLDivElement | null>;
   confirmAction: ConfirmFn;
   endRef: RefObject<HTMLDivElement | null>;
-  handleSend: (event?: { preventDefault: () => void }, value?: string, options?: { forceNewSession?: boolean; newSession?: boolean }) => void;
+  handleSend: (event?: { preventDefault: () => void }, value?: string, options?: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean }) => void;
   handleChatScroll: () => void;
   handleStopStreaming: () => void;
   isSending: boolean;
@@ -457,9 +458,11 @@ export function ChatPage({
   const uiCopy = i18n[language].chatUi;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
   const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
+  const thinkingLabel = language === "en" ? "Thinking mode" : "思考模式";
   const isNewConversation = messages.length === 0 && !isSending;
   const greeting = displayName
     ? formatTemplate(uiCopy.greeting, { name: displayName })
@@ -549,7 +552,7 @@ export function ChatPage({
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     const shouldClose = Boolean(prompt.trim()) && !isSending;
-    handleSend(event);
+    handleSend(event, undefined, { thinkingEnabled });
     if (shouldClose) {
       closeMobileComposer();
     }
@@ -571,7 +574,7 @@ export function ChatPage({
   function sendPrompt(value: string) {
     const text = value.trim();
     if (!text || isSending) return;
-    handleSend(undefined, text);
+    handleSend(undefined, text, { thinkingEnabled });
     closeMobileComposer();
   }
 
@@ -606,7 +609,7 @@ export function ChatPage({
               onKeyDown={(event) => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                   const shouldClose = Boolean(prompt.trim()) && !isSending;
-                  handleSend(event);
+                  handleSend(event, undefined, { thinkingEnabled });
                   if (shouldClose) {
                     closeMobileComposer();
                   }
@@ -617,17 +620,36 @@ export function ChatPage({
             />
           </div>
           <div className="mt-2 flex items-end justify-between gap-3">
-            <Button
-              aria-label={common.newChat}
-              className="h-10 w-10 shrink-0 rounded-2xl text-muted-foreground hover:text-foreground"
-              onClick={handleNew}
-              size="icon"
-              title={common.newChat}
-              type="button"
-              variant="ghost"
-            >
-              <Plus className="size-5" />
-            </Button>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                aria-label={common.newChat}
+                className="h-10 w-10 shrink-0 rounded-2xl text-muted-foreground hover:text-foreground"
+                onClick={handleNew}
+                size="icon"
+                title={common.newChat}
+                type="button"
+                variant="ghost"
+              >
+                <Plus className="size-5" />
+              </Button>
+              <Button
+                aria-label={thinkingLabel}
+                aria-pressed={thinkingEnabled}
+                className={cn(
+                  "h-10 w-10 shrink-0 rounded-2xl transition-colors",
+                  thinkingEnabled
+                    ? "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => setThinkingEnabled((current) => !current)}
+                size="icon"
+                title={thinkingLabel}
+                type="button"
+                variant="ghost"
+              >
+                <BrainCircuit className="size-5" />
+              </Button>
+            </div>
             {isSending ? (
               <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
                 <Square className="fill-current" />

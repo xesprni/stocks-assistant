@@ -60,6 +60,26 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
         self.assertEqual(payload["input"][3]["type"], "function_call_output")
         self.assertEqual(payload["input"][3]["call_id"], "call_123")
 
+    def test_responses_payload_enables_reasoning_when_requested(self):
+        provider = OpenAIResponsesProvider(api_key="test-key", model="gpt-5.2-codex")
+
+        payload = provider._build_payload(
+            LLMRequest(messages=[], thinking_enabled=True, reasoning_effort="medium"),
+            stream=True,
+        )
+
+        self.assertEqual(payload["reasoning"], {"effort": "medium", "summary": "auto"})
+
+    def test_chat_completions_payload_enables_reasoning_when_requested(self):
+        provider = OpenAICompatibleProvider(api_key="test-key", model="gpt-5")
+
+        payload = provider._build_payload(
+            LLMRequest(messages=[], thinking_enabled=True, reasoning_effort="medium"),
+            stream=True,
+        )
+
+        self.assertEqual(payload["reasoning_effort"], "medium")
+
     def test_codex_oauth_headers_and_store_flag_are_applied(self):
         provider = OpenAIResponsesProvider(
             api_key="oauth-token",

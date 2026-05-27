@@ -810,7 +810,7 @@ function ConsoleApp() {
   async function handleSend(
     event?: { preventDefault: () => void },
     value = prompt,
-    options: { forceNewSession?: boolean; newSession?: boolean } = {},
+    options: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean } = {},
   ) {
     event?.preventDefault();
     const text = value.trim();
@@ -1068,7 +1068,7 @@ function ConsoleApp() {
             createdAt: chatTime(language),
           });
         }
-      }, false, abortController.signal);
+      }, false, abortController.signal, options.thinkingEnabled === true);
 
       if (!sawAgentEnd) {
         trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
@@ -1134,7 +1134,7 @@ function ConsoleApp() {
 
           currentStatus = ui.chat.streamRetrying;
           commitStreamState();
-          const recovered = await sendChat(text, convId);
+          const recovered = await sendChat(text, convId, false, options.thinkingEnabled === true);
           streamedContent = recovered.response || ui.chat.empty;
           trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
           updateAssistant({

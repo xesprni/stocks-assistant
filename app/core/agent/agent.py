@@ -260,7 +260,7 @@ Available sub-agent roles:
         return action
 
     def run_stream(self, user_message: str, on_event=None, clear_history: bool = False,
-                   skill_filter=None, cancel_event=None) -> str:
+                   skill_filter=None, cancel_event=None, thinking_enabled: bool = False) -> str:
         """执行一次流式对话
 
         完整流程：
@@ -275,6 +275,7 @@ Available sub-agent roles:
             on_event: 事件回调（用于 SSE 流式输出）
             clear_history: 是否清空历史记录
             skill_filter: 技能过滤列表
+            thinking_enabled: 是否向模型请求推理/思考模式
 
         Returns:
             Agent 最终回复文本
@@ -307,6 +308,7 @@ Available sub-agent roles:
             messages=messages_copy,
             max_context_turns=self.max_context_turns,
             cancel_event=cancel_event,
+            thinking_enabled=thinking_enabled,
         )
 
         try:
