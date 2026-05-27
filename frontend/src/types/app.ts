@@ -6,6 +6,8 @@ export type ColorScheme = "intl" | "cn";
 export type ChatRole = "assistant" | "user";
 
 export type ChatTraceStatus = "info" | "running" | "done" | "error";
+export type LlmReasoningEffort = "minimal" | "low" | "medium" | "high";
+export type LlmToolChoice = "auto" | "none" | "required";
 
 export interface ChatTraceEvent {
   id: string;
@@ -156,6 +158,10 @@ export interface AppConfig {
   llm_codex_auth_file: string;
   llm_codex_api_base: string;
   llm_codex_model: string;
+  llm_temperature: number;
+  llm_max_output_tokens: number;
+  llm_reasoning_effort: LlmReasoningEffort | string;
+  llm_tool_choice: LlmToolChoice | string;
   has_codex_oauth: boolean;
   codex_oauth_account_id_masked: string;
   codex_oauth_error: string;

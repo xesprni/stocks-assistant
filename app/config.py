@@ -89,6 +89,10 @@ USER_CONFIG_KEYS = {
     "llm_codex_auth_file",
     "llm_codex_api_base",
     "llm_codex_model",
+    "llm_temperature",
+    "llm_max_output_tokens",
+    "llm_reasoning_effort",
+    "llm_tool_choice",
     "embedding_auth_mode",
     "embedding_api_key",
     "embedding_api_base",
@@ -212,6 +216,10 @@ class Settings(BaseSettings):
     llm_codex_auth_file: str = ""  # Codex OAuth 登录态文件；为空时读取 $CODEX_HOME/auth.json 或 ~/.codex/auth.json
     llm_codex_api_base: str = CODEX_OAUTH_API_BASE  # Codex OAuth API 地址
     llm_codex_model: str = CODEX_DEFAULT_MODEL  # Codex OAuth 模型名称
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)  # 主 Agent 生成温度
+    llm_max_output_tokens: int = Field(default=0, ge=0)  # 主 Agent 单次回复上限；0 表示使用模型默认
+    llm_reasoning_effort: str = "medium"  # 思考模式强度：minimal / low / medium / high
+    llm_tool_choice: str = "auto"  # 工具选择策略：auto / none / required
 
     # ---- Embedding 向量化配置 ----
     embedding_auth_mode: str = "api_key"  # api_key / codex
@@ -345,6 +353,24 @@ class Settings(BaseSettings):
         if normalized in {"codex", "chatgpt", "chatgpt_oauth", "codex_oauth", "oauth"}:
             return "codex"
         return "api_key"
+
+    @field_validator("llm_reasoning_effort", mode="before")
+    @classmethod
+    def validate_llm_reasoning_effort(cls, value):
+        normalized = str(value or "medium").strip().lower().replace("-", "_")
+        if normalized in {"minimal", "low", "medium", "high"}:
+            return normalized
+        return "medium"
+
+    @field_validator("llm_tool_choice", mode="before")
+    @classmethod
+    def validate_llm_tool_choice(cls, value):
+        normalized = str(value or "auto").strip().lower().replace("-", "_")
+        if normalized in {"auto", "none", "required"}:
+            return normalized
+        if normalized in {"any", "force", "forced"}:
+            return "required"
+        return "auto"
 
     @field_validator("embedding_auth_mode", mode="before")
     @classmethod

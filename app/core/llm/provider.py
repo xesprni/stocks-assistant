@@ -71,6 +71,13 @@ def _raise_for_llm_status(resp: httpx.Response, provider: str) -> None:
     )
 
 
+def _normalize_tool_choice(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"auto", "none", "required"}:
+        return normalized
+    return None
+
+
 class OpenAICompatibleProvider(LLMModel):
     """OpenAI 兼容 LLM 提供商
 
@@ -145,6 +152,9 @@ class OpenAICompatibleProvider(LLMModel):
             payload["tools"] = [
                 {"type": "function", "function": t} for t in request.tools
             ]
+            tool_choice = _normalize_tool_choice(getattr(request, "tool_choice", None))
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
         if getattr(request, "thinking_enabled", False):
             payload["reasoning_effort"] = getattr(request, "reasoning_effort", None) or "medium"
         return payload
@@ -317,6 +327,9 @@ class OpenAIResponsesProvider(LLMModel):
                 for t in request.tools
             ]
             payload["parallel_tool_calls"] = True
+            tool_choice = _normalize_tool_choice(getattr(request, "tool_choice", None))
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
         if getattr(request, "thinking_enabled", False):
             payload["reasoning"] = {
                 "effort": getattr(request, "reasoning_effort", None) or "medium",

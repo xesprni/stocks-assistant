@@ -24,6 +24,8 @@ const OPENAI_API_BASE = "https://api.openai.com/v1";
 const CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex";
 const CODEX_DEFAULT_MODEL = "gpt-5.2-codex";
 const EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
+const REASONING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"] as const;
+const TOOL_CHOICE_OPTIONS = ["auto", "none", "required"] as const;
 
 type PasswordForm = { current: string; next: string; confirm: string };
 type PasswordState = "idle" | "saving" | "saved" | "error";
@@ -94,6 +96,17 @@ export function ConfigPage({
   const llmProvider = draft?.llm_provider === "openai_responses" ? "openai_responses" : "openai_compatible";
   const isCodexOAuth = llmProvider === "openai_responses" && draft?.llm_auth_mode === "codex";
   const isEmbeddingCodexOAuth = draft?.embedding_auth_mode === "codex";
+  const reasoningEffortLabels = {
+    minimal: copy.reasoningEffortMinimal,
+    low: copy.reasoningEffortLow,
+    medium: copy.reasoningEffortMedium,
+    high: copy.reasoningEffortHigh,
+  };
+  const toolChoiceLabels = {
+    auto: copy.toolChoiceAuto,
+    none: copy.toolChoiceNone,
+    required: copy.toolChoiceRequired,
+  };
 
   useEffect(() => {
     setTelegramTestMessage((current) => (
@@ -565,6 +578,60 @@ export function ConfigPage({
                       value={draft.agent_max_context_turns}
                       onChange={(event) => patchDraft({ agent_max_context_turns: Number(event.target.value) })}
                     />
+                  </Field>
+                </div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-4">
+                  <Field label={copy.temperature}>
+                    <Input
+                      max={2}
+                      min={0}
+                      step={0.1}
+                      type="number"
+                      value={draft.llm_temperature}
+                      onChange={(event) => patchDraft({ llm_temperature: Number(event.target.value) })}
+                    />
+                  </Field>
+                  <Field label={copy.maxOutputTokens}>
+                    <Input
+                      min={0}
+                      step={1024}
+                      type="number"
+                      value={draft.llm_max_output_tokens}
+                      onChange={(event) => patchDraft({ llm_max_output_tokens: Number(event.target.value) })}
+                    />
+                    <p className="text-xs leading-5 text-muted-foreground">{copy.maxOutputTokensHint}</p>
+                  </Field>
+                  <Field label={copy.reasoningEffort}>
+                    <div className="grid grid-cols-2 gap-1 rounded-md border border-border/60 bg-muted/30 p-1">
+                      {REASONING_EFFORT_OPTIONS.map((effort) => (
+                        <Button
+                          className="min-w-0"
+                          key={effort}
+                          size="sm"
+                          type="button"
+                          variant={draft.llm_reasoning_effort === effort ? "default" : "ghost"}
+                          onClick={() => patchDraft({ llm_reasoning_effort: effort })}
+                        >
+                          {reasoningEffortLabels[effort]}
+                        </Button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label={copy.toolChoice}>
+                    <div className="grid grid-cols-3 gap-1 rounded-md border border-border/60 bg-muted/30 p-1">
+                      {TOOL_CHOICE_OPTIONS.map((choice) => (
+                        <Button
+                          className="min-w-0"
+                          key={choice}
+                          size="sm"
+                          type="button"
+                          variant={draft.llm_tool_choice === choice ? "default" : "ghost"}
+                          onClick={() => patchDraft({ llm_tool_choice: choice })}
+                        >
+                          {toolChoiceLabels[choice]}
+                        </Button>
+                      ))}
+                    </div>
                   </Field>
                 </div>
               </ConfigSection>

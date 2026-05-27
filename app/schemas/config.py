@@ -18,6 +18,10 @@ class AppConfig(BaseModel):
     llm_codex_auth_file: str = ""
     llm_codex_api_base: str = ""
     llm_codex_model: str = ""
+    llm_temperature: float = 0.0
+    llm_max_output_tokens: int = 0
+    llm_reasoning_effort: str = "medium"
+    llm_tool_choice: str = "auto"
     has_codex_oauth: bool = False
     codex_oauth_account_id_masked: str = ""
     codex_oauth_error: str = ""
@@ -97,6 +101,10 @@ class ConfigUpdate(BaseModel):
     llm_codex_auth_file: Optional[str] = None
     llm_codex_api_base: Optional[str] = None
     llm_codex_model: Optional[str] = None
+    llm_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    llm_max_output_tokens: Optional[int] = Field(default=None, ge=0)
+    llm_reasoning_effort: Optional[str] = None
+    llm_tool_choice: Optional[str] = None
 
     embedding_auth_mode: Optional[str] = None
     embedding_api_key: Optional[str] = None
@@ -146,6 +154,28 @@ class ConfigUpdate(BaseModel):
     longbridge_access_token: Optional[str] = None
     longbridge_http_url: Optional[str] = None
     longbridge_quote_ws_url: Optional[str] = None
+
+    @field_validator("llm_reasoning_effort", mode="before")
+    @classmethod
+    def validate_llm_reasoning_effort(cls, value):
+        if value is None:
+            return value
+        normalized = str(value or "medium").strip().lower().replace("-", "_")
+        if normalized in {"minimal", "low", "medium", "high"}:
+            return normalized
+        return "medium"
+
+    @field_validator("llm_tool_choice", mode="before")
+    @classmethod
+    def validate_llm_tool_choice(cls, value):
+        if value is None:
+            return value
+        normalized = str(value or "auto").strip().lower().replace("-", "_")
+        if normalized in {"auto", "none", "required"}:
+            return normalized
+        if normalized in {"any", "force", "forced"}:
+            return "required"
+        return "auto"
 
     @field_validator("mcp_servers", mode="before")
     @classmethod

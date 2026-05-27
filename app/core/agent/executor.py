@@ -96,6 +96,36 @@ class AgentStreamExecutor:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise AgentCancelledError("Agent run cancelled")
 
+    def _runtime_llm_params(self) -> Dict[str, Any]:
+        """读取当前用户的主 Agent LLM 运行参数。"""
+        settings = getattr(self.agent, "settings", None)
+
+        try:
+            temperature = float(getattr(settings, "llm_temperature", 0.0))
+        except (TypeError, ValueError):
+            temperature = 0.0
+        temperature = max(0.0, min(2.0, temperature))
+
+        try:
+            max_output_tokens = int(getattr(settings, "llm_max_output_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            max_output_tokens = 0
+
+        reasoning_effort = str(getattr(settings, "llm_reasoning_effort", "medium") or "medium").strip().lower()
+        if reasoning_effort not in {"minimal", "low", "medium", "high"}:
+            reasoning_effort = "medium"
+
+        tool_choice = str(getattr(settings, "llm_tool_choice", "auto") or "auto").strip().lower()
+        if tool_choice not in {"auto", "none", "required"}:
+            tool_choice = "auto"
+
+        return {
+            "temperature": temperature,
+            "max_tokens": max_output_tokens if max_output_tokens > 0 else None,
+            "reasoning_effort": reasoning_effort,
+            "tool_choice": tool_choice,
+        }
+
     def _emit_event(self, event_type: str, data: dict = None):
         """发射事件到回调函数（用于 SSE 流式输出）"""
         if self.on_event:
@@ -382,11 +412,16 @@ class AgentStreamExecutor:
                     "parameters": tool.params,
                 })
 
+        runtime_params = self._runtime_llm_params()
         request = LLMRequest(
-            messages=messages, temperature=0, stream=True,
+            messages=messages,
+            temperature=runtime_params["temperature"],
+            max_tokens=runtime_params["max_tokens"],
+            stream=True,
             tools=tools_schema, system=self.system_prompt,
             thinking_enabled=self.thinking_enabled,
-            reasoning_effort="medium" if self.thinking_enabled else None,
+            reasoning_effort=runtime_params["reasoning_effort"] if self.thinking_enabled else None,
+            tool_choice=runtime_params["tool_choice"],
         )
 
         llm_call_id = f"llm_{uuid.uuid4().hex[:12]}"
@@ -403,11 +438,14 @@ class AgentStreamExecutor:
             "request": {
                 "model": request.model or getattr(self.model, "model", None),
                 "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
                 "stream": request.stream,
                 "system": request.system,
                 "messages": messages,
                 "tools": tools_summary,
                 "thinking_enabled": self.thinking_enabled,
+                "reasoning_effort": getattr(request, "reasoning_effort", None),
+                "tool_choice": getattr(request, "tool_choice", None),
             },
         })
         self._emit_event("message_start", {"role": "assistant"})

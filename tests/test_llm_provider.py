@@ -42,6 +42,7 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
                 }
             ],
             max_tokens=500,
+            tool_choice="required",
         )
 
         payload = provider._build_payload(request, stream=True)
@@ -50,6 +51,7 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
         self.assertEqual(payload["instructions"], "You are helpful.")
         self.assertTrue(payload["stream"])
         self.assertEqual(payload["max_output_tokens"], 500)
+        self.assertEqual(payload["tool_choice"], "required")
         self.assertNotIn("temperature", payload)
         self.assertEqual(payload["tools"][0]["type"], "function")
         self.assertEqual(payload["tools"][0]["name"], "get_quote")
@@ -79,6 +81,24 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
         )
 
         self.assertEqual(payload["reasoning_effort"], "medium")
+
+    def test_chat_completions_payload_applies_runtime_parameters(self):
+        provider = OpenAICompatibleProvider(api_key="test-key", model="gpt-4o")
+
+        payload = provider._build_payload(
+            LLMRequest(
+                messages=[],
+                temperature=0.3,
+                max_tokens=1200,
+                tools=[{"name": "read_file", "description": "Read file.", "parameters": {"type": "object"}}],
+                tool_choice="none",
+            ),
+            stream=True,
+        )
+
+        self.assertEqual(payload["temperature"], 0.3)
+        self.assertEqual(payload["max_tokens"], 1200)
+        self.assertEqual(payload["tool_choice"], "none")
 
     def test_codex_oauth_headers_and_store_flag_are_applied(self):
         provider = OpenAIResponsesProvider(
