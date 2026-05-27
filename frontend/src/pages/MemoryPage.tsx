@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { addMemory, deleteMemoryFile, deleteMemoryIndex, getMemoryFile, getMemoryStatus, listMemoryFiles, searchMemory, syncMemory } from "@/lib/api";
+import { addMemory, clearMemory, deleteMemoryFile, deleteMemoryIndex, getMemoryFile, getMemoryStatus, listMemoryFiles, searchMemory, syncMemory } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,8 @@ const memoryPageCopy = {
     memoryFiles: "{count} memory files",
     indexed: "Indexed",
     deleteMemory: "删除记忆",
+    clearMemory: "清除记忆",
+    clearMemoryConfirm: "确定清除当前账号的全部长期记忆？这会删除记忆文件并移除长期记忆索引。",
     loading: "Loading...",
     emptyTitle: "暂无记忆文件",
     emptyHint: "通过对话或手动添加积累记忆。",
@@ -51,6 +53,7 @@ const memoryPageCopy = {
     deleteIndexConfirm: "确定删除该索引记忆？这会从长期记忆搜索中移除。",
     deleteFileConfirm: "确定删除该记忆文件及其索引？",
     deleteFailed: "删除失败",
+    clearFailed: "清除失败",
   },
   en: {
     title: "Long-term Memory",
@@ -75,6 +78,8 @@ const memoryPageCopy = {
     memoryFiles: "{count} memory files",
     indexed: "Indexed",
     deleteMemory: "Delete memory",
+    clearMemory: "Clear memory",
+    clearMemoryConfirm: "Clear all long-term memory for the current account? This deletes memory files and removes long-term memory indexes.",
     loading: "Loading...",
     emptyTitle: "No memory files",
     emptyHint: "Build memory through conversations or manual additions.",
@@ -85,6 +90,7 @@ const memoryPageCopy = {
     deleteIndexConfirm: "Delete this indexed memory? This removes it from long-term memory search.",
     deleteFileConfirm: "Delete this memory file and its index?",
     deleteFailed: "Delete failed",
+    clearFailed: "Clear failed",
   },
 } as const;
 
@@ -104,6 +110,7 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
   const [addContent, setAddContent] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -204,6 +211,31 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
     }
   }
 
+  async function handleClearMemory() {
+    const confirmed = await confirmAction({
+      cancelText: common.cancel,
+      confirmText: common.delete,
+      description: copy.clearMemoryConfirm,
+      destructive: true,
+      title: copy.clearMemory,
+    });
+    if (!confirmed) return;
+
+    setIsClearing(true);
+    setError("");
+    try {
+      await clearMemory();
+      setExpandedPath(null);
+      setFileContent(null);
+      setResults([]);
+      await refreshMemory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : copy.clearFailed);
+    } finally {
+      setIsClearing(false);
+    }
+  }
+
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -218,6 +250,10 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
           <Button variant="outline" size="sm" onClick={handleSync} disabled={isSyncing}>
             {isSyncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {copy.sync}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleClearMemory} disabled={isClearing}>
+            {isClearing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            {copy.clearMemory}
           </Button>
           <Button size="sm" onClick={() => setShowAddForm(true)} disabled={showAddForm}>
             <Plus />

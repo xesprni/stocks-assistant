@@ -29,7 +29,7 @@ class MemoryAddRequest(BaseModel):
     """添加记忆请求"""
     content: str  # 记忆内容
     user_id: Optional[str] = None  # 用户 ID
-    scope: str = "shared"  # 作用域：shared / user
+    scope: str = "user"  # 作用域：shared / user
     source: str = "memory"  # 来源标识
     path: Optional[str] = None  # 文件路径（自动生成）
     metadata: Optional[Dict[str, Any]] = None  # 额外元数据

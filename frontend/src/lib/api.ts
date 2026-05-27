@@ -779,12 +779,19 @@ export function searchMemory(query: string, options?: { limit?: number; min_scor
 export function addMemory(content: string, options?: { scope?: string; source?: string }) {
   return request<{ status: string }>("/api/v1/memory/add", {
     method: "POST",
-    body: JSON.stringify({ content, scope: options?.scope ?? "shared", source: options?.source ?? "manual" }),
+    body: JSON.stringify({ content, scope: options?.scope ?? "user", source: options?.source ?? "manual" }),
   });
 }
 
 export function syncMemory() {
   return request<{ status: string }>("/api/v1/memory/sync", { method: "POST" });
+}
+
+export function clearMemory() {
+  return request<{ status: string; deleted_files: number; deleted_chunks: number; deleted_index_files: number }>(
+    "/api/v1/memory/clear",
+    { method: "DELETE" },
+  );
 }
 
 export function getMemoryStatus() {

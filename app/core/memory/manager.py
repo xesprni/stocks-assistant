@@ -141,51 +141,32 @@ class MemoryManager:
         path: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        """添加新的记忆内容（自动分块、向量化、存储）"""
+        """添加新的记忆内容（追加到固定文件后重新索引）"""
         if not content.strip():
             return
 
         if not path:
-            content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()[:8]
             if user_id and scope == "user":
-                path = f"memory/users/{user_id}/memory_{content_hash}.md"
+                path = f"memory/users/{user_id}/MEMORY.md"
             else:
-                path = f"memory/shared/memory_{content_hash}.md"
+                path = "MEMORY.md"
 
         workspace_dir = self.config.get_workspace().resolve()
         file_path = (workspace_dir / path).resolve()
         if not str(file_path).startswith(str(workspace_dir.resolve())):
             raise ValueError("Memory path outside workspace")
-        stored_content = content if content.endswith("\n") else f"{content}\n"
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(stored_content, encoding="utf-8")
-        rel_path = str(file_path.relative_to(workspace_dir))
 
-        chunks = self.chunker.chunk_text(stored_content)
-        texts = [chunk.text for chunk in chunks]
-        if self.embedding_provider:
-            embeddings = self.embedding_provider.embed_batch(texts)
-        else:
-            embeddings = [None] * len(texts)
+        existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"## {timestamp}\n\n{content.strip()}\n"
+        separator = "\n" if existing.strip() else ""
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        file_path.write_text(f"{existing}{separator}{entry}", encoding="utf-8")
 
-        memory_chunks = []
-        for chunk, embedding in zip(chunks, embeddings):
-            chunk_id = self._generate_chunk_id(rel_path, chunk.start_line, chunk.end_line)
-            chunk_hash = MemoryStorage.compute_hash(chunk.text)
-            memory_chunks.append(MemoryChunk(
-                id=chunk_id, user_id=user_id, scope=scope, source=source,
-                path=rel_path, start_line=chunk.start_line, end_line=chunk.end_line,
-                text=chunk.text, embedding=embedding, hash=chunk_hash, metadata=metadata,
-            ))
-
-        self.storage.save_chunks_batch(memory_chunks)
-
-        stat = file_path.stat()
-        file_hash = self._index_hash(stored_content)
-        self.storage.update_file_metadata(
-            path=rel_path, source=source, file_hash=file_hash,
-            mtime=int(stat.st_mtime), size=stat.st_size,
-        )
+        # 同一文件追加后整文件重建索引，避免旧 chunk 行号与新内容失配。
+        await self._sync_file(file_path, source, scope, user_id, metadata=metadata)
 
     async def sync(self, force: bool = False):
         """同步记忆文件到索引
@@ -242,7 +223,14 @@ class MemoryManager:
 
         self._dirty = False
 
-    async def _sync_file(self, file_path: Path, source: str, scope: str, user_id: Optional[str]):
+    async def _sync_file(
+        self,
+        file_path: Path,
+        source: str,
+        scope: str,
+        user_id: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
         """同步单个文件到索引（基于哈希的增量更新）"""
         file_path = file_path.resolve()
         content = file_path.read_text(encoding='utf-8')
@@ -273,7 +261,7 @@ class MemoryManager:
             memory_chunks.append(MemoryChunk(
                 id=chunk_id, user_id=user_id, scope=scope, source=source,
                 path=rel_path, start_line=chunk.start_line, end_line=chunk.end_line,
-                text=chunk.text, embedding=embedding, hash=chunk_hash, metadata=None,
+                text=chunk.text, embedding=embedding, hash=chunk_hash, metadata=metadata,
             ))
 
         self.storage.save_chunks_batch(memory_chunks)
@@ -339,6 +327,41 @@ class MemoryManager:
         deleted_index = self.storage.delete_indexed_file(path)
         self._dirty = False
         return {"deleted_file": deleted_file, **deleted_index}
+
+    def clear_user_memory(self, user_id: str) -> Dict[str, int]:
+        """Clear all markdown memory files and indexed chunks for one user."""
+        if not user_id:
+            raise ValueError("user_id is required")
+
+        workspace_dir = self.config.get_workspace().resolve()
+        user_prefix = f"memory/users/{user_id}/"
+        user_dir = (workspace_dir / user_prefix).resolve()
+        if not str(user_dir).startswith(str(workspace_dir)):
+            raise ValueError("Memory path outside workspace")
+
+        deleted_files = 0
+        if user_dir.exists():
+            for file_path in user_dir.rglob("*.md"):
+                if file_path.is_file():
+                    file_path.unlink()
+                    deleted_files += 1
+
+        deleted_chunks = 0
+        deleted_index_files = 0
+        for row in self.storage.list_indexed_files():
+            path = str(row["path"])
+            if not path.startswith(user_prefix):
+                continue
+            result = self.storage.delete_indexed_file(path)
+            deleted_chunks += result["deleted_chunks"]
+            deleted_index_files += result["deleted_index_files"]
+
+        self._dirty = False
+        return {
+            "deleted_files": deleted_files,
+            "deleted_chunks": deleted_chunks,
+            "deleted_index_files": deleted_index_files,
+        }
 
     def close(self):
         self.storage.close()

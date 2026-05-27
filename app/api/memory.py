@@ -89,6 +89,17 @@ async def memory_status(current_user: CurrentUser = Depends(require_permissions(
     return MemoryStatusResponse(**mgr.get_status())
 
 
+@router.delete("/clear")
+async def clear_memory(current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+    mgr = get_memory_manager_for_user(current_user.id)
+    try:
+        # 一键清除只作用于当前账号的用户记忆，避免误删共享记忆或其他用户数据。
+        result = mgr.clear_user_memory(current_user.id)
+        return {"status": "ok", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/files")
 async def list_memory_files(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
     from pathlib import Path
