@@ -185,6 +185,9 @@ export const i18n = {
       guardianTranslated: "已翻译",
       guardianTranslation: "中文翻译",
       guardianTranslateFailed: "翻译失败",
+      fontSmall: "Small",
+      fontMedium: "Medium",
+      fontLarge: "Large",
     },
     overview: {
       title: "Dashboard",
@@ -718,6 +721,9 @@ export const i18n = {
       guardianTranslated: "Translated",
       guardianTranslation: "Chinese translation",
       guardianTranslateFailed: "Translation failed",
+      fontSmall: "Small",
+      fontMedium: "Medium",
+      fontLarge: "Large",
     },
     overview: {
       title: "Dashboard",

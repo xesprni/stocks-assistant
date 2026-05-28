@@ -12,8 +12,16 @@ import type { GuardianArticleResponse, GuardianFeedItem, SecurityNewsItem, Watch
 
 type NewsMode = "security" | "guardian";
 type SourceMode = "watchlist" | "symbol";
+type ArticleFontSize = "small" | "medium" | "large";
 
 const DEFAULT_GUARDIAN_URL = "https://www.theguardian.com";
+const GUARDIAN_ARTICLE_FONT_SIZE_KEY = "stocks_assistant_guardian_article_font_size";
+const ARTICLE_FONT_SIZES: ArticleFontSize[] = ["small", "medium", "large"];
+const ARTICLE_FONT_CLASS: Record<ArticleFontSize, string> = {
+  small: "text-sm leading-7",
+  medium: "text-base leading-8",
+  large: "text-lg leading-9",
+};
 
 function getWatchlistCategories(language: AppLanguage): Array<{ id: WatchlistCategory; label: string; hint: string }> {
   const markets = i18n[language].markets;
@@ -34,6 +42,16 @@ function getGuardianSources(language: AppLanguage) {
     { label: copy.guardianTechnology, url: "https://www.theguardian.com/technology" },
     { label: copy.guardianMoney, url: "https://www.theguardian.com/money" },
   ];
+}
+
+function readArticleFontSize(): ArticleFontSize {
+  if (typeof window === "undefined") return "medium";
+  try {
+    const value = window.localStorage.getItem(GUARDIAN_ARTICLE_FONT_SIZE_KEY);
+    return ARTICLE_FONT_SIZES.includes(value as ArticleFontSize) ? value as ArticleFontSize : "medium";
+  } catch {
+    return "medium";
+  }
 }
 
 export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; language: AppLanguage }) {
@@ -68,6 +86,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [translationMessage, setTranslationMessage] = useState("");
   const [isTranslating, setIsTranslating] = useState(false);
+  const [articleFontSize, setArticleFontSize] = useState<ArticleFontSize>(() => readArticleFontSize());
 
   useEffect(() => {
     const next = (initialSymbol ?? "").trim().toUpperCase();
@@ -256,6 +275,15 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     }
   }
 
+  function updateArticleFontSize(next: ArticleFontSize) {
+    setArticleFontSize(next);
+    try {
+      window.localStorage.setItem(GUARDIAN_ARTICLE_FONT_SIZE_KEY, next);
+    } catch {
+      // 本地缓存失败不影响阅读体验。
+    }
+  }
+
   const selectedWatchlistItem = useMemo(
     () => watchlist.find((item) => item.symbol === selectedSymbol),
     [selectedSymbol, watchlist],
@@ -357,6 +385,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
       <SideDrawer
         closeLabel={copy.closeArticle}
         open={Boolean(selectedGuardianItem)}
+        panelClassName="lg:max-w-[680px]"
         onClose={() => {
           setSelectedGuardianItem(null);
           setGuardianArticle(null);
@@ -394,7 +423,21 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
                 {guardianArticle.author ? <Badge variant="muted">{guardianArticle.author}</Badge> : null}
               </div>
               {guardianArticle.description ? <p className="text-sm leading-6 text-muted-foreground">{guardianArticle.description}</p> : null}
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 p-1">
+                  {ARTICLE_FONT_SIZES.map((size) => (
+                    <Button
+                      key={size}
+                      size="sm"
+                      type="button"
+                      variant={articleFontSize === size ? "default" : "ghost"}
+                      onClick={() => updateArticleFontSize(size)}
+                    >
+                      {fontSizeLabel(size, copy)}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
                 {guardianArticle.url ? (
                   <SourceLink href={guardianArticle.url} label={copy.openSource} />
                 ) : null}
@@ -407,8 +450,9 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
                   {isTranslating ? <Loader2 className="animate-spin" /> : <Languages />}
                   {selectedTranslation ? copy.guardianTranslated : copy.guardianTranslate}
                 </Button>
+                </div>
               </div>
-              <article className="whitespace-pre-line rounded-md border border-border/80 bg-background/50 p-3 text-sm leading-7">
+              <article className={cn("whitespace-pre-line rounded-md border border-border/80 bg-background/50 p-3", ARTICLE_FONT_CLASS[articleFontSize])}>
                 {guardianArticle.body_text || copy.guardianNoBody}
               </article>
               {translationMessage ? (
@@ -422,7 +466,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
                     <Languages className="size-3.5" />
                     {copy.guardianTranslation}
                   </div>
-                  <p className="whitespace-pre-line text-sm leading-7">{selectedTranslation}</p>
+                  <p className={cn("whitespace-pre-line", ARTICLE_FONT_CLASS[articleFontSize])}>{selectedTranslation}</p>
                 </div>
               ) : null}
             </>
@@ -802,6 +846,12 @@ function SourceLink({ href, label }: { href: string; label: string }) {
       {label}
     </a>
   );
+}
+
+function fontSizeLabel(size: ArticleFontSize, copy: typeof i18n.zh.newsPage) {
+  if (size === "small") return copy.fontSmall;
+  if (size === "large") return copy.fontLarge;
+  return copy.fontMedium;
 }
 
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: number | null }) {

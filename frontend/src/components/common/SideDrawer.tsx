@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Loader2, Save, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export function SideDrawer({
   cancelText,
@@ -13,6 +14,7 @@ export function SideDrawer({
   isSaving = false,
   onClose,
   open,
+  panelClassName,
   saveDisabled = false,
   saveText,
   subtitle,
@@ -26,6 +28,7 @@ export function SideDrawer({
   isSaving?: boolean;
   onClose: () => void;
   open: boolean;
+  panelClassName?: string;
   saveDisabled?: boolean;
   saveText?: string;
   subtitle?: string;
@@ -54,7 +57,10 @@ export function SideDrawer({
         onClick={onClose}
         type="button"
       />
-      <aside className="absolute inset-x-0 bottom-0 flex max-h-[86dvh] w-full flex-col overflow-hidden rounded-t-xl border-t border-border bg-card shadow-2xl lg:inset-x-auto lg:right-0 lg:top-0 lg:h-[100dvh] lg:max-h-none lg:max-w-[520px] lg:rounded-none lg:border-l lg:border-t-0">
+      <aside className={cn(
+        "absolute inset-x-0 bottom-0 flex max-h-[86dvh] w-full flex-col overflow-hidden rounded-t-xl border-t border-border bg-card shadow-2xl lg:inset-x-auto lg:right-0 lg:top-0 lg:h-[100dvh] lg:max-h-none lg:max-w-[520px] lg:rounded-none lg:border-l lg:border-t-0",
+        panelClassName,
+      )}>
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/80 px-4 py-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{title}</p>
