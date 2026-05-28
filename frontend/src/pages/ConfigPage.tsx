@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, KeyRound, Loader2, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench, X } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, Globe2, KeyRound, Loader2, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench, X } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import { ToggleRow } from "@/components/common/ToggleRow";
@@ -768,6 +768,25 @@ export function ConfigPage({
                       onChange={(event) => patchDraft({ longbridge_quote_ws_url: event.target.value })}
                     />
                   </Field>
+                </div>
+              </ConfigSection>
+              <ConfigSection
+                description={copy.guardianSectionHint}
+                icon={<Globe2 className="size-4 text-primary" />}
+                title={copy.guardianSection}
+              >
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+                  <Field label={copy.guardianApiKey}>
+                    <Input
+                      placeholder={draft.has_guardian_api_key ? draft.guardian_api_key_masked : "Guardian Open Platform API key"}
+                      type="password"
+                      value={draft.guardian_api_key}
+                      onChange={(event) => patchDraft({ guardian_api_key: event.target.value })}
+                    />
+                  </Field>
+                  <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                    {copy.guardianApiKeyHint}
+                  </div>
                 </div>
               </ConfigSection>
             </TabsContent>

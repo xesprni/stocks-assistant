@@ -37,6 +37,7 @@ class AppStoreSecurityTest(unittest.TestCase):
                 "longbridge_app_key": "lb-app-key",
                 "longbridge_app_secret": "lb-app-secret",
                 "longbridge_access_token": "lb-access-token",
+                "guardian_api_key": "guardian-api-secret",
                 "mcp_servers": {
                     "remote": {
                         "transport": "streamable_http",
@@ -55,6 +56,7 @@ class AppStoreSecurityTest(unittest.TestCase):
             "lb-app-key",
             "lb-app-secret",
             "lb-access-token",
+            "guardian-api-secret",
             "Bearer server-token",
             "mcp-header-secret",
         ):
@@ -64,6 +66,7 @@ class AppStoreSecurityTest(unittest.TestCase):
         self.assertEqual(config["llm_api_key"], "sk-live-secret")
         self.assertEqual(config["telegram_bot_token"], "telegram-bot-secret")
         self.assertEqual(config["longbridge_access_token"], "lb-access-token")
+        self.assertEqual(config["guardian_api_key"], "guardian-api-secret")
         self.assertEqual(config["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token")
         self.assertEqual(config["mcp_servers"]["remote"]["auth"]["value"], "mcp-header-secret")
 

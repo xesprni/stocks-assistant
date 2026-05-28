@@ -111,6 +111,8 @@ def _settings_to_response(
         has_longbridge_access_token=(show_all or owns("longbridge_access_token")) and bool(settings.longbridge_access_token),
         longbridge_http_url=settings.longbridge_http_url if show_all or owns("longbridge_http_url") else "",
         longbridge_quote_ws_url=settings.longbridge_quote_ws_url if show_all or owns("longbridge_quote_ws_url") else "",
+        guardian_api_key_masked=_mask_secret(settings.guardian_api_key) if show_all or owns("guardian_api_key") else "",
+        has_guardian_api_key=(show_all or owns("guardian_api_key")) and bool(settings.guardian_api_key),
         personal_config_keys=sorted(personal_keys),
     )
 

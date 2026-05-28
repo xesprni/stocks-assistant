@@ -22,6 +22,10 @@ import type {
   FinancialReportKind,
   FinancialReportPeriod,
   FinancialReportsResponse,
+  GuardianArticleResponse,
+  GuardianFeedResponse,
+  GuardianTranslateRequest,
+  GuardianTranslateResponse,
   IntradayResponse,
   KnowledgeFileContent,
   KnowledgeGraph,
@@ -693,6 +697,24 @@ export function getMarketTemperature(market: string = "US") {
 export function getSecurityNews(symbol: string, limit = 50, init?: RequestInit) {
   const params = new URLSearchParams({ symbol, limit: String(limit) });
   return request<SecurityNewsResponse>(`/api/v1/news?${params.toString()}`, init);
+}
+
+export function getGuardianFeed(url: string, limit = 30, init?: RequestInit) {
+  const params = new URLSearchParams({ url, limit: String(limit) });
+  return request<GuardianFeedResponse>(`/api/v1/news/guardian/feed?${params.toString()}`, init);
+}
+
+export function getGuardianArticle(url: string, init?: RequestInit) {
+  const params = new URLSearchParams({ url });
+  return request<GuardianArticleResponse>(`/api/v1/news/guardian/article?${params.toString()}`, init);
+}
+
+export function translateGuardianArticle(payload: GuardianTranslateRequest, init?: RequestInit) {
+  return request<GuardianTranslateResponse>("/api/v1/news/guardian/translate", {
+    ...init,
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 // ── Fundamentals ─────────────────────────────────────────────────────────────

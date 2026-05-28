@@ -202,6 +202,7 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   longbridge_access_token: ["longbridge_access_token"],
   longbridge_http_url: ["longbridge_http_url"],
   longbridge_quote_ws_url: ["longbridge_quote_ws_url"],
+  guardian_api_key: ["guardian_api_key"],
   debug: ["debug"],
 };
 
@@ -238,6 +239,7 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "longbridge_access_token",
   "longbridge_http_url",
   "longbridge_quote_ws_url",
+  "guardian_api_key",
   "app_language",
   "agent_max_steps",
   "agent_max_context_tokens",
@@ -1283,6 +1285,9 @@ function ConsoleApp() {
     }
     if (source.longbridge_access_token.trim()) {
       payload.longbridge_access_token = source.longbridge_access_token.trim();
+    }
+    if (source.guardian_api_key.trim()) {
+      payload.guardian_api_key = source.guardian_api_key.trim();
     }
     return Object.fromEntries(
       Object.entries(payload).filter(([key]) => shouldInclude(key)),

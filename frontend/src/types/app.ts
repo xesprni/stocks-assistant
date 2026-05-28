@@ -218,6 +218,8 @@ export interface AppConfig {
   has_longbridge_access_token?: boolean;
   longbridge_http_url?: string;
   longbridge_quote_ws_url?: string;
+  guardian_api_key_masked?: string;
+  has_guardian_api_key?: boolean;
   personal_config_keys?: string[];
 }
 
@@ -228,6 +230,7 @@ export interface ConfigDraft extends AppConfig {
   longbridge_app_key: string;
   longbridge_app_secret: string;
   longbridge_access_token: string;
+  guardian_api_key: string;
   mcp_servers_text: string;
 }
 
@@ -532,6 +535,51 @@ export interface SecurityNewsResponse {
   symbol: string;
   news: SecurityNewsItem[];
   total: number;
+}
+
+export interface GuardianFeedItem {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  published_at: string | null;
+  published_at_ts: number | null;
+  author: string;
+  categories: string[];
+}
+
+export interface GuardianFeedResponse {
+  url: string;
+  feed_url: string;
+  title: string;
+  items: GuardianFeedItem[];
+  total: number;
+}
+
+export interface GuardianArticleResponse {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  api_url: string;
+  published_at: string | null;
+  published_at_ts: number | null;
+  author: string;
+  thumbnail: string;
+  body_html: string;
+  body_text: string;
+}
+
+export interface GuardianTranslateRequest {
+  text: string;
+  target_language?: string;
+}
+
+export interface GuardianTranslateResponse {
+  target_language: string;
+  translation: string;
+  source_length: number;
+  model: string;
 }
 
 // ── MCP servers ────────────────────────────────────────────────────────────────

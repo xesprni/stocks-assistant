@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -464,6 +465,7 @@ class AuthSecurityTest(unittest.TestCase):
                 "llm_model": "system-model",
                 "telegram_bot_token": "telegram-system-secret",
                 "longbridge_access_token": "longbridge-system-secret",
+                "guardian_api_key": "guardian-system-secret",
                 "mcp_servers": {
                     "system": {
                         "transport": "streamable_http",
@@ -499,6 +501,7 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertEqual(inherited_body["mcp_servers"], {})
         self.assertFalse(inherited_body["has_telegram_bot_token"])
         self.assertFalse(inherited_body["has_longbridge_access_token"])
+        self.assertFalse(inherited_body["has_guardian_api_key"])
 
         personal_mcp = {
             "mine": {
@@ -520,6 +523,7 @@ class AuthSecurityTest(unittest.TestCase):
                 "multi_agent_enabled": False,
                 "memory_auto_curate_enabled": False,
                 "memory_curator_min_importance": 0.55,
+                "guardian_api_key": "guardian-personal-secret",
                 "debug": True,
             },
             headers=user_headers,
@@ -541,6 +545,7 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertIn("mcp_servers", body["personal_config_keys"])
         self.assertIn("agent_max_steps", body["personal_config_keys"])
         self.assertIn("memory_auto_curate_enabled", body["personal_config_keys"])
+        self.assertIn("guardian_api_key", body["personal_config_keys"])
 
         self.assertEqual(self.store.get_config()["llm_model"], "system-model")
         personal_config = self.store.get_user_config(user_id)
@@ -550,6 +555,7 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertFalse(personal_config["multi_agent_enabled"])
         self.assertFalse(personal_config["memory_auto_curate_enabled"])
         self.assertEqual(personal_config["mcp_servers"]["mine"]["headers"]["Authorization"], "Bearer personal-token")
+        self.assertEqual(personal_config["guardian_api_key"], "guardian-personal-secret")
 
         denied = self.client.patch(
             "/api/v1/config",
@@ -565,6 +571,7 @@ class AuthSecurityTest(unittest.TestCase):
                 "llm_api_key": "sk-live-secret",
                 "telegram_bot_token": "telegram-bot-secret",
                 "longbridge_access_token": "lb-access-token",
+                "guardian_api_key": "guardian-api-secret",
                 "mcp_servers": {
                     "remote": {
                         "transport": "streamable_http",
@@ -585,11 +592,12 @@ class AuthSecurityTest(unittest.TestCase):
         body = response.json()
         serialized = json.dumps(body, ensure_ascii=False)
 
-        for secret in ("sk-live-secret", "telegram-bot-secret", "lb-access-token", "Bearer server-token", "mcp-header-secret"):
+        for secret in ("sk-live-secret", "telegram-bot-secret", "lb-access-token", "guardian-api-secret", "Bearer server-token", "mcp-header-secret"):
             self.assertNotIn(secret, serialized)
         self.assertTrue(body["has_llm_api_key"])
         self.assertTrue(body["has_telegram_bot_token"])
         self.assertTrue(body["has_longbridge_access_token"])
+        self.assertTrue(body["has_guardian_api_key"])
         self.assertNotEqual(body["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token")
 
         patched = self.client.patch(
@@ -601,6 +609,30 @@ class AuthSecurityTest(unittest.TestCase):
         stored = self.store.get_config()["mcp_servers"]["remote"]
         self.assertEqual(stored["headers"]["Authorization"], "Bearer server-token")
         self.assertEqual(stored["auth"]["value"], "mcp-header-secret")
+
+    def test_guardian_translate_api_uses_current_user_model(self):
+        tokens = self.setup_admin()
+
+        class FakeProvider:
+            model = "fake-news-translator"
+
+            def call(self, request):
+                self.request = request
+                return {"choices": [{"message": {"content": "中文译文"}}]}
+
+        provider = FakeProvider()
+        with patch("app.api.news.create_llm_provider", return_value=provider):
+            response = self.client.post(
+                "/api/v1/news/guardian/translate",
+                json={"text": "Original Guardian article", "target_language": "zh-CN"},
+                headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["translation"], "中文译文")
+        self.assertEqual(body["model"], "fake-news-translator")
+        self.assertIn("Original Guardian article", provider.request.messages[0]["content"])
 
 
 if __name__ == "__main__":

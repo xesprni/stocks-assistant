@@ -113,6 +113,7 @@ USER_CONFIG_KEYS = {
     "longbridge_access_token",
     "longbridge_http_url",
     "longbridge_quote_ws_url",
+    "guardian_api_key",
     "app_language",
     "agent_max_steps",
     "agent_max_context_tokens",
@@ -283,6 +284,9 @@ class Settings(BaseSettings):
     longbridge_access_token: str = ""
     longbridge_http_url: str = ""
     longbridge_quote_ws_url: str = ""
+
+    # ---- Guardian Open Platform 配置 ----
+    guardian_api_key: str = ""  # 获取 Guardian 正文时使用；RSS 列表无需配置
 
     # ---- 系统提示词 ----
     system_prompt: str = DEFAULT_SYSTEM_PROMPT

@@ -84,6 +84,8 @@ class AppConfig(BaseModel):
     has_longbridge_access_token: bool = False
     longbridge_http_url: str = ""
     longbridge_quote_ws_url: str = ""
+    guardian_api_key_masked: str = ""
+    has_guardian_api_key: bool = False
     personal_config_keys: list[str] = Field(default_factory=list)
 
 
@@ -154,6 +156,7 @@ class ConfigUpdate(BaseModel):
     longbridge_access_token: Optional[str] = None
     longbridge_http_url: Optional[str] = None
     longbridge_quote_ws_url: Optional[str] = None
+    guardian_api_key: Optional[str] = None
 
     @field_validator("llm_reasoning_effort", mode="before")
     @classmethod
