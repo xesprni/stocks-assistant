@@ -387,7 +387,7 @@ function ConfigSaveToast({ onClose, toast }: { onClose: () => void; toast: Confi
     <div
       className={cn(
         "config-toast",
-        "fixed right-4 top-4 z-50 flex w-[min(360px,calc(100vw-2rem))] items-start gap-3 rounded-md border px-3 py-3 text-sm shadow-lg",
+        "fixed right-4 top-4 z-[1200] flex w-[min(360px,calc(100vw-2rem))] items-start gap-3 rounded-md border px-3 py-3 text-sm shadow-lg",
         "bg-popover text-popover-foreground",
         toast.kind === "success" ? "border-primary/35" : "border-destructive/45",
       )}
