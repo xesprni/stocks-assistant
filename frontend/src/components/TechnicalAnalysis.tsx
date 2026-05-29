@@ -146,7 +146,7 @@ function useNativeChartTheme(isDark: boolean, upColor: string, downColor: string
       border: cssHsl(styles, "--border"),
       grid: styles.getPropertyValue("--grid-line").trim() || cssHsl(styles, "--border", isDark ? 0.28 : 0.36),
       crosshair: cssHsl(styles, "--muted-foreground", isDark ? 0.72 : 0.62),
-      axisBackground: cssHsl(styles, "--card", 0.94),
+      axisBackground: cssHsl(styles, "--background", 0.92),
       up: upColor,
       down: downColor,
       blue: cssHsl(styles, "--primary"),
@@ -564,6 +564,7 @@ function KLineChart({
   const periodRef = useRef(period);
   const dataCountRef = useRef(200);
   const isLoadingMoreRef = useRef(false);
+  const isRefreshingLatestRef = useRef(false);
   const allDataLoadedRef = useRef(false);
 
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
@@ -599,6 +600,30 @@ function KLineChart({
         isLoadingMoreRef.current = false;
       });
   }, [bars.length, onParsedBars]);
+
+  const refreshLatest = useCallback(() => {
+    if (!symbolRef.current || isRefreshingLatestRef.current || bars.length === 0) return;
+    isRefreshingLatestRef.current = true;
+    const currentCount = Math.max(dataCountRef.current, bars.length);
+    getCandlesticks(symbolRef.current, periodRef.current, currentCount)
+      .then((res) => {
+        const nextBars = parseBars(res.bars);
+        if (nextBars.length === 0) return;
+        const currentLast = bars[bars.length - 1]?.time;
+        const nextLast = nextBars[nextBars.length - 1]?.time;
+        const currentFirst = bars[0]?.time;
+        const nextFirst = nextBars[0]?.time;
+        if (nextLast !== currentLast || nextFirst !== currentFirst || nextBars.length !== bars.length) {
+          dataCountRef.current = Math.max(currentCount, nextBars.length);
+          setBars(nextBars);
+          onParsedBars(nextBars);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        isRefreshingLatestRef.current = false;
+      });
+  }, [bars, onParsedBars]);
 
   useEffect(() => {
     if (!symbol) {
@@ -681,6 +706,7 @@ function KLineChart({
         primaryRangeSeriesId="candles"
         onVisibleRangeChange={handleVisibleRangeChange}
         onNearStart={loadMore}
+        onNearEnd={refreshLatest}
         className="min-h-[440px] flex-1 lg:min-h-0"
       />
     </div>

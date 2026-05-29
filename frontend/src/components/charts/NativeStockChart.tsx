@@ -127,12 +127,15 @@ interface NativeStockChartProps {
   primaryRangeSeriesId?: string;
   onVisibleRangeChange?: (range: NativeVisibleRange | null) => void;
   onNearStart?: () => void;
+  onNearEnd?: () => void;
   className?: string;
 }
 
-const AXIS_WIDTH = 64;
-const TIME_AXIS_HEIGHT = 24;
-const MIN_VISIBLE_BARS = 12;
+const AXIS_WIDTH = 58;
+const TIME_AXIS_HEIGHT = 22;
+const MIN_VISIBLE_BARS = 36;
+const PANE_VERTICAL_PADDING = 10;
+const EDGE_LOAD_THRESHOLD = 4;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -152,6 +155,15 @@ function viewportCount(viewport: NativeChartViewport) {
   return Math.max(1, viewport.to - viewport.from + 1);
 }
 
+function paddedBounds(layout: PaneLayout) {
+  const padding = Math.min(PANE_VERTICAL_PADDING, Math.max(3, layout.height * 0.08));
+  return {
+    top: layout.y + padding,
+    bottom: layout.y + layout.height - padding,
+    height: Math.max(1, layout.height - padding * 2),
+  };
+}
+
 function formatNumber(value: number) {
   const abs = Math.abs(value);
   if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
@@ -162,13 +174,25 @@ function formatNumber(value: number) {
   return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function formatTimeLabel(time: number) {
+function formatUtcDateLabel(time: number) {
   const date = new Date(time * 1000);
-  const hasIntradayTime = date.getHours() !== 0 || date.getMinutes() !== 0;
-  if (hasIntradayTime) {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${month}-${day}`;
+}
+
+function isIntradayScale(times: number[]) {
+  for (let index = 1; index < times.length; index++) {
+    const diff = Math.abs(times[index] - times[index - 1]);
+    if (diff > 0 && diff < 12 * 60 * 60) return true;
   }
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  return false;
+}
+
+function formatTimeLabel(time: number, intraday: boolean) {
+  if (!intraday) return formatUtcDateLabel(time);
+  const date = new Date(time * 1000);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function buildPaneLayouts(width: number, height: number, panes: NativeChartPane[]) {
@@ -278,7 +302,8 @@ function paneValueRange(series: CachedSeries[], paneId: string, from: number, to
 function valueToY(value: number, range: { min: number; max: number }, layout: PaneLayout) {
   const span = range.max - range.min || 1;
   const ratio = (value - range.min) / span;
-  return layout.y + layout.height - ratio * layout.height;
+  const bounds = paddedBounds(layout);
+  return bounds.bottom - ratio * bounds.height;
 }
 
 function createXMapper(layout: PaneLayout, viewport: NativeChartViewport) {
@@ -412,16 +437,11 @@ function drawTextPill(
 ) {
   ctx.save();
   ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-  const paddingX = 5;
+  const paddingX = 4;
   const width = ctx.measureText(text).width + paddingX * 2;
   const pillX = align === "right" ? x - width : x;
   ctx.fillStyle = theme.axisBackground;
-  ctx.strokeStyle = theme.border;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(pillX, y - 8, width, 17, 4);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fillRect(pillX, y - 8, width, 16);
   ctx.fillStyle = theme.text;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
@@ -448,6 +468,7 @@ function drawChart(
   if (times.length === 0) return layouts;
 
   const normalized = normalizeViewport(viewport, times.length);
+  const intradayScale = isIntradayScale(times);
   const from = Math.max(0, Math.floor(normalized.from) - 2);
   const to = Math.min(times.length - 1, Math.ceil(normalized.to) + 2);
   const baseMapper = createXMapper(layouts[0], normalized);
@@ -466,13 +487,14 @@ function drawChart(
     ctx.strokeStyle = theme.border;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(layout.x, layout.y + layout.height + 0.5);
-    ctx.lineTo(layout.x + layout.width + layout.axisWidth, layout.y + layout.height + 0.5);
+    ctx.moveTo(layout.x, layout.y + layout.height - 0.5);
+    ctx.lineTo(layout.x + layout.width + layout.axisWidth, layout.y + layout.height - 0.5);
     ctx.stroke();
 
     ctx.strokeStyle = theme.grid;
+    const bounds = paddedBounds(layout);
     for (let tick = 1; tick <= 3; tick++) {
-      const y = layout.y + (layout.height * tick) / 4;
+      const y = bounds.top + (bounds.height * tick) / 4;
       ctx.beginPath();
       ctx.moveTo(layout.x, y);
       ctx.lineTo(layout.x + layout.width, y);
@@ -486,13 +508,14 @@ function drawChart(
     ctx.textAlign = "left";
     for (let tick = 0; tick <= 4; tick++) {
       const value = range.max - ((range.max - range.min) * tick) / 4;
-      const y = layout.y + (layout.height * tick) / 4;
+      const y = bounds.top + (bounds.height * tick) / 4;
       ctx.fillStyle = theme.mutedText;
       ctx.fillText(formatNumber(value), layout.axisX + 7, y);
     }
   }
 
-  const verticalTicks = Math.max(2, Math.floor(width / 110));
+  const targetGridPx = clamp(baseMapper.spacing * 6, 54, 120);
+  const verticalTicks = clamp(Math.round(layouts[0].width / targetGridPx), 2, 12);
   ctx.strokeStyle = theme.grid;
   for (let tick = 0; tick <= verticalTicks; tick++) {
     const logical = normalized.from + ((viewportCount(normalized) - 1) * tick) / verticalTicks;
@@ -506,7 +529,7 @@ function drawChart(
     }
     ctx.fillStyle = theme.mutedText;
     ctx.textAlign = "center";
-    ctx.fillText(formatTimeLabel(times[index]), x, height - TIME_AXIS_HEIGHT / 2);
+    ctx.fillText(formatTimeLabel(times[index], intradayScale), x, height - TIME_AXIS_HEIGHT / 2);
   }
 
   for (const item of series) {
@@ -534,7 +557,8 @@ function drawChart(
     if (activeLayout) {
       const range = paneRanges.get(activeLayout.id);
       if (range) {
-        const y = clamp(crosshair.y, activeLayout.y, activeLayout.y + activeLayout.height);
+        const bounds = paddedBounds(activeLayout);
+        const y = clamp(crosshair.y, bounds.top, bounds.bottom);
         ctx.strokeStyle = theme.crosshair;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
@@ -542,13 +566,13 @@ function drawChart(
         ctx.lineTo(activeLayout.x + activeLayout.width, y);
         ctx.stroke();
         ctx.setLineDash([]);
-        const ratio = 1 - (y - activeLayout.y) / activeLayout.height;
+        const ratio = 1 - (y - bounds.top) / bounds.height;
         const value = range.min + ratio * (range.max - range.min);
         drawTextPill(ctx, formatNumber(value), activeLayout.axisX + activeLayout.axisWidth - 4, y, theme, "right");
       }
     }
 
-    drawTextPill(ctx, formatTimeLabel(times[crosshair.index]), x + 6, height - TIME_AXIS_HEIGHT / 2, theme);
+    drawTextPill(ctx, formatTimeLabel(times[crosshair.index], intradayScale), x + 6, height - TIME_AXIS_HEIGHT / 2, theme);
 
     for (const layout of layouts) {
       const values: string[] = [];
@@ -588,6 +612,7 @@ export function NativeStockChart({
   primaryRangeSeriesId,
   onVisibleRangeChange,
   onNearStart,
+  onNearEnd,
   className,
 }: NativeStockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -601,7 +626,9 @@ export function NativeStockChart({
   const lastDataRef = useRef<{ fitKey?: string | number; length: number; first?: number; last?: number }>({ length: 0 });
   const lastVisibleSignatureRef = useRef("");
   const nearStartLengthRef = useRef<number | null>(null);
-  const callbacksRef = useRef({ onVisibleRangeChange, onNearStart });
+  const nearEndLengthRef = useRef<number | null>(null);
+  const edgeLoadingEnabledRef = useRef(false);
+  const callbacksRef = useRef({ onVisibleRangeChange, onNearStart, onNearEnd });
 
   const cachedSeries = useMemo(() => cacheSeries(times, series), [times, series]);
   const dataRef = useRef({ times, panes, series: cachedSeries, theme, primaryRangeSeriesId });
@@ -611,8 +638,8 @@ export function NativeStockChart({
   }, [cachedSeries, panes, primaryRangeSeriesId, theme, times]);
 
   useEffect(() => {
-    callbacksRef.current = { onVisibleRangeChange, onNearStart };
-  }, [onVisibleRangeChange, onNearStart]);
+    callbacksRef.current = { onVisibleRangeChange, onNearStart, onNearEnd };
+  }, [onNearEnd, onNearStart, onVisibleRangeChange]);
 
   const scheduleDraw = () => {
     if (rafRef.current != null) return;
@@ -650,15 +677,25 @@ export function NativeStockChart({
         price,
       });
     }
-    if (viewport.from <= 5 && nearStartLengthRef.current !== current.times.length) {
+    if (!edgeLoadingEnabledRef.current) return;
+
+    if (viewport.from <= EDGE_LOAD_THRESHOLD && nearStartLengthRef.current !== current.times.length) {
       nearStartLengthRef.current = current.times.length;
       callbacksRef.current.onNearStart?.();
-    } else if (viewport.from > 8) {
+    } else if (viewport.from > EDGE_LOAD_THRESHOLD * 2) {
       nearStartLengthRef.current = null;
+    }
+
+    if (current.times.length - 1 - viewport.to <= EDGE_LOAD_THRESHOLD && nearEndLengthRef.current !== current.times.length) {
+      nearEndLengthRef.current = current.times.length;
+      callbacksRef.current.onNearEnd?.();
+    } else if (current.times.length - 1 - viewport.to > EDGE_LOAD_THRESHOLD * 2) {
+      nearEndLengthRef.current = null;
     }
   };
 
   const setViewport = (viewport: NativeChartViewport) => {
+    edgeLoadingEnabledRef.current = true;
     viewportRef.current = normalizeViewport(viewport, dataRef.current.times.length);
     emitVisibleRange();
     scheduleDraw();
@@ -710,6 +747,7 @@ export function NativeStockChart({
     }
 
     if (fitChanged || prev.length === 0) {
+      edgeLoadingEnabledRef.current = false;
       viewportRef.current = { from: 0, to: times.length - 1 };
     } else if (times.length !== prev.length) {
       const current = viewportRef.current;
@@ -810,11 +848,19 @@ export function NativeStockChart({
           const point = pointFromEvent(event);
           const viewport = normalizeViewport(viewportRef.current, current.times.length);
           const mapper = createXMapper(layoutsRef.current[0], viewport);
+          const horizontalBars = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+            ? event.deltaX / Math.max(1, mapper.spacing)
+            : 0;
+          if (horizontalBars !== 0) {
+            setViewport({ from: viewport.from + horizontalBars, to: viewport.to + horizontalBars });
+            updateCrosshair(point.x, point.y);
+            return;
+          }
           const center = clamp(mapper.xToIndex(point.x), 0, current.times.length - 1);
           const currentCount = viewportCount(viewport);
-          const factor = event.deltaY < 0 ? 0.82 : 1.22;
+          const factor = Math.exp(clamp(event.deltaY, -180, 180) * 0.0022);
           const nextCount = clamp(currentCount * factor, Math.min(MIN_VISIBLE_BARS, current.times.length), current.times.length);
-          const leftRatio = (center - viewport.from) / currentCount;
+          const leftRatio = clamp((center - viewport.from) / currentCount, 0, 1);
           const nextFrom = center - leftRatio * nextCount;
           setViewport({ from: nextFrom, to: nextFrom + nextCount - 1 });
           updateCrosshair(point.x, point.y);
