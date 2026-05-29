@@ -298,6 +298,39 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
   ];
 }
 
+function getMoreNavGroups(language: AppLanguage): NavGroup[] {
+  const groups = i18n[language].groups;
+  return [
+    {
+      id: "analysis",
+      label: groups.analysis,
+      items: [
+        navItem(language, "tracing", <Cpu />),
+      ],
+    },
+    {
+      id: "workspace",
+      label: groups.workspace,
+      items: [
+        navItem(language, "memory", <BrainCircuit />),
+        navItem(language, "knowledge", <BookOpen />),
+        navItem(language, "skills", <Zap />),
+        navItem(language, "subagents", <Bot />),
+        navItem(language, "mcp", <Plug />),
+      ],
+    },
+    {
+      id: "system",
+      label: groups.system,
+      items: [
+        navItem(language, "security", <ShieldCheck />),
+        navItem(language, "users", <UserCog />),
+        navItem(language, "config", <Settings2 />),
+      ],
+    },
+  ];
+}
+
 function getNavItems(language: AppLanguage) {
   return [...getPinnedNavItems(language), ...getNavGroups(language).flatMap((group) => group.items)];
 }
@@ -1396,6 +1429,7 @@ function ConsoleApp() {
           theme={theme}
           user={auth.user}
         />
+        <DesktopTopNav canPage={canPage} language={language} page={page} setPage={handleNavigate} />
         <MobileNav
           canPage={canPage}
           isVisible={isMobileNavVisible}
@@ -1766,7 +1800,7 @@ function UserAvatarMenu({
       roles: "Roles",
       lastLogin: "Last login",
       created: "Created",
-      navigation: "Navigation",
+      navigation: "More",
       logout: "Log out",
       permissions: "permissions",
       noRoles: "No roles",
@@ -1779,17 +1813,13 @@ function UserAvatarMenu({
       roles: "角色",
       lastLogin: "最近登录",
       created: "创建时间",
-      navigation: "导航",
+      navigation: "更多入口",
       logout: "退出登录",
       permissions: "项权限",
       noRoles: "暂无角色",
     };
   const navGroups = useMemo(() => {
-    const groups: NavGroup[] = [
-      { id: "pinned", label: i18n[language].groups.pinned, items: getPinnedNavItems(language) },
-      ...getNavGroups(language),
-    ];
-    return groups
+    return getMoreNavGroups(language)
       .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
       .filter((group) => group.items.length > 0);
   }, [canPage, language]);
@@ -1849,7 +1879,7 @@ function UserAvatarMenu({
       </button>
 
       {isOpen ? (
-        <div className="absolute right-0 top-[calc(100%+0.55rem)] z-50 max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 bg-popover p-3 text-popover-foreground shadow-2xl">
+        <div className="absolute right-0 top-[calc(100%+0.55rem)] z-50 max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 bg-[hsl(var(--popover))] p-3 text-popover-foreground shadow-2xl ring-1 ring-border/40">
           <div className="flex min-w-0 items-center gap-3 border-b border-border/65 pb-3">
             <AvatarVisual size="lg" user={user} />
             <div className="min-w-0 flex-1">
@@ -1942,6 +1972,41 @@ function UserAvatarMenu({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function DesktopTopNav({
+  canPage,
+  language,
+  page,
+  setPage,
+}: {
+  canPage: (page: Page) => boolean;
+  language: AppLanguage;
+  page: Page;
+  setPage: (page: Page) => void;
+}) {
+  const primaryItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
+
+  if (!primaryItems.length) return null;
+
+  return (
+    <nav className="finance-top-nav hidden shrink-0 lg:block" aria-label={i18n[language].shell.navigation}>
+      <div className="flex h-11 w-full items-center gap-1 px-4">
+        {primaryItems.map((item) => (
+          <button
+            aria-current={page === item.id ? "page" : undefined}
+            className={cn("finance-top-nav-item", page === item.id && "finance-top-nav-item-active")}
+            key={item.id}
+            onClick={() => setPage(item.id)}
+            type="button"
+          >
+            <span className="[&_svg]:size-3.5">{item.icon}</span>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
   );
 }
 

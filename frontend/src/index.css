@@ -317,6 +317,53 @@
     transform: none;
   }
 
+  .finance-top-nav {
+    border-bottom: 1px solid hsl(var(--border));
+    background: var(--app-header-bg);
+    backdrop-filter: blur(14px);
+    position: relative;
+    z-index: 40;
+  }
+
+  .finance-top-nav-item {
+    align-items: center;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.85rem;
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
+  }
+
+  .finance-top-nav-item:hover {
+    background: hsl(var(--muted) / 0.82);
+    color: hsl(var(--foreground));
+  }
+
+  .finance-top-nav-item-active {
+    background: hsl(var(--primary) / 0.09);
+    color: hsl(var(--primary));
+  }
+
+  .dark .finance-top-nav {
+    border-bottom-color: hsl(var(--border) / 0.86);
+    background: hsl(0 0% 6% / 0.96);
+  }
+
+  .dark .finance-top-nav-item:hover {
+    background: hsl(var(--muted) / 0.82);
+  }
+
+  .dark .finance-top-nav-item-active {
+    background: hsl(var(--primary) / 0.14);
+    color: hsl(var(--primary));
+  }
+
   .dashboard-hero {
     border: 0;
     background: transparent;
