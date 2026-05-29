@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Building2,
+  ChevronDown,
   Database,
   FileText,
   Loader2,
@@ -47,6 +48,8 @@ const financialReportsCopy = {
     loadFailed: "财报加载失败",
     loadingWatchlist: "加载自选股...",
     selectWatchlist: "选择自选股",
+    searchWatchlist: "搜索代码 / 名称",
+    noWatchlistMatches: "没有匹配的自选股",
     symbolPlaceholder: "股票代码 / Symbol",
     refresh: "刷新",
     statements: "报表",
@@ -76,6 +79,8 @@ const financialReportsCopy = {
     loadFailed: "Failed to load financial reports",
     loadingWatchlist: "Loading watchlist...",
     selectWatchlist: "Select watchlist",
+    searchWatchlist: "Search symbol / name",
+    noWatchlistMatches: "No matching watchlist symbols",
     symbolPlaceholder: "Symbol",
     refresh: "Refresh",
     statements: "Statements",
@@ -173,6 +178,21 @@ function rowMatches(row: FinancialReportRow, query: string) {
   return row.name.toLowerCase().includes(q) || row.field.toLowerCase().includes(q) || row.tip.toLowerCase().includes(q);
 }
 
+function watchlistItemName(item: WatchlistItem) {
+  return item.name || item.name_cn || item.name_hk || item.name_en || "";
+}
+
+function watchlistItemLabel(item: WatchlistItem) {
+  return `${item.symbol} ${watchlistItemName(item)}`.trim();
+}
+
+function watchlistItemSearchText(item: WatchlistItem) {
+  return [item.symbol, item.name, item.name_cn, item.name_hk, item.name_en, item.exchange, item.currency, item.category]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 function latestPeriod(table: FinancialStatementTable) {
   return table.columns[0]?.label ?? "—";
 }
@@ -258,6 +278,142 @@ function StatementTable({ copy, query, table }: { copy: FinancialReportsCopy; ta
   );
 }
 
+function WatchlistSearchSelect({
+  className,
+  copy,
+  disabled,
+  isLoading,
+  items,
+  onValueChange,
+  value,
+}: {
+  className?: string;
+  copy: FinancialReportsCopy;
+  disabled?: boolean;
+  isLoading: boolean;
+  items: WatchlistItem[];
+  onValueChange: (value: string) => void;
+  value: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const selected = useMemo(
+    () => items.find((item) => item.symbol.toUpperCase() === value.toUpperCase()) ?? null,
+    [items, value],
+  );
+  const filteredItems = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => watchlistItemSearchText(item).includes(query));
+  }, [items, search]);
+  const label = selected ? watchlistItemLabel(selected) : (isLoading ? copy.loadingWatchlist : copy.selectWatchlist);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    function closeOnOutside(event: PointerEvent) {
+      const path = event.composedPath();
+      if (!rootRef.current || !path.includes(rootRef.current)) setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  function selectItem(item: WatchlistItem) {
+    setOpen(false);
+    setSearch("");
+    onValueChange(item.symbol);
+  }
+
+  function handleSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (filteredItems[0]) selectItem(filteredItems[0]);
+    }
+  }
+
+  return (
+    <div className={cn("relative min-w-0", className)} ref={rootRef}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={copy.selectWatchlist}
+        className={cn(
+          "flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-background/70 px-3 py-1.5 text-left text-sm text-foreground shadow-sm transition-all",
+          "hover:border-primary/45 hover:bg-background focus-visible:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
+          open && "border-primary/60 bg-background ring-2 ring-primary/15",
+          disabled && "cursor-not-allowed opacity-50",
+        )}
+        disabled={disabled}
+        onClick={() => {
+          setOpen((current) => !current);
+          setSearch("");
+        }}
+        type="button"
+      >
+        <span className={cn("min-w-0 truncate", !selected && "text-muted-foreground")}>{label}</span>
+        <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180 text-primary")} />
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-[1000] mt-1 overflow-hidden rounded-md border border-border/80 bg-popover text-popover-foreground shadow-[0_18px_46px_hsl(var(--foreground)_/_0.16)]">
+          <div className="border-b border-border/70 p-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-8 pl-8"
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder={copy.searchWatchlist}
+                ref={inputRef}
+                value={search}
+              />
+            </div>
+          </div>
+          <div className="max-h-72 overflow-y-auto overscroll-contain p-1 [-webkit-overflow-scrolling:touch]" role="listbox">
+            {filteredItems.length ? filteredItems.map((item) => {
+              const active = item.symbol.toUpperCase() === value.toUpperCase();
+              return (
+                <button
+                  aria-selected={active}
+                  className={cn(
+                    "flex w-full min-w-0 items-center justify-between gap-2 rounded-sm px-2.5 py-2 text-left text-xs transition-colors",
+                    active ? "bg-primary/10 text-primary" : "hover:bg-muted/70",
+                  )}
+                  key={`${item.category}:${item.symbol}`}
+                  onClick={() => selectItem(item)}
+                  role="option"
+                  type="button"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{watchlistItemLabel(item)}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{item.exchange || item.currency || item.category}</span>
+                  </span>
+                  <Badge className="shrink-0" variant="outline">{item.category}</Badge>
+                </button>
+              );
+            }) : (
+              <div className="px-3 py-6 text-center text-xs text-muted-foreground">{copy.noWatchlistMatches}</div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function FinancialReportsPage({ initialSymbol, language }: FinancialReportsPageProps) {
   const copy = financialReportsCopy[language];
   const kindOptions = getKindOptions(language);
@@ -289,18 +445,6 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
     () => watchlistOptions.find((item) => item.symbol.toUpperCase() === draftSymbol.toUpperCase())?.symbol ?? "",
     [draftSymbol, watchlistOptions],
   );
-  const watchlistSelectOptions = useMemo(
-    () => [
-      { value: "", label: isLoadingWatchlist ? copy.loadingWatchlist : copy.selectWatchlist, disabled: true },
-      ...watchlistOptions.map((item) => ({
-        value: item.symbol,
-        label: `${item.symbol} ${item.name || item.name_cn || item.name_en || ""}`.trim(),
-        description: item.category,
-      })),
-    ],
-    [copy.loadingWatchlist, copy.selectWatchlist, isLoadingWatchlist, watchlistOptions],
-  );
-
   const activeStatement = useMemo(
     () => data?.statements.find((item) => item.code === active) ?? data?.statements[0] ?? null,
     [active, data?.statements],
@@ -388,13 +532,13 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
         </div>
 
         <form className="flex flex-col gap-2 sm:flex-row sm:items-center" onSubmit={handleSubmit}>
-          <Select
-            aria-label={copy.selectWatchlist}
+          <WatchlistSearchSelect
             className="sm:w-52"
+            copy={copy}
             disabled={isLoadingWatchlist}
+            isLoading={isLoadingWatchlist}
+            items={watchlistOptions}
             onValueChange={handleWatchlistSelect}
-            options={watchlistSelectOptions}
-            placeholder={isLoadingWatchlist ? copy.loadingWatchlist : copy.selectWatchlist}
             value={selectedWatchlistSymbol}
           />
           <div className="relative sm:w-40">
