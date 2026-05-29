@@ -468,10 +468,61 @@
     color: hsl(var(--foreground) / 0.78);
   }
 
+  .dashboard-quote-row {
+    isolation: isolate;
+    overflow: hidden;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dashboard-quote-row > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .dashboard-quote-row::before {
+    background: hsl(var(--primary));
+    border-radius: 999px;
+    content: "";
+    inset: 0.6rem auto 0.6rem 0.25rem;
+    opacity: 0;
+    position: absolute;
+    transform: scaleY(0.5);
+    transform-origin: center;
+    transition:
+      opacity 160ms ease,
+      transform 180ms ease;
+    width: 2px;
+    z-index: 0;
+  }
+
+  .dashboard-quote-row:hover {
+    background: var(--list-hover-bg);
+    border-color: var(--list-hover-border);
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.08);
+  }
+
+  .dashboard-quote-row[data-selected="true"] {
+    background:
+      linear-gradient(90deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.035) 48%, transparent);
+    border-color: hsl(var(--primary) / 0.34);
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.08);
+  }
+
+  .dashboard-quote-row:hover::before,
+  .dashboard-quote-row[data-selected="true"]::before {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+
   .watchlist-sortable-row {
     isolation: isolate;
     overflow: hidden;
     position: relative;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
     transition:
       background-color 160ms ease,
       border-color 160ms ease,
@@ -488,8 +539,9 @@
 
   .watchlist-sortable-row::before {
     background: hsl(var(--primary));
+    border-radius: 999px;
     content: "";
-    inset: 0 auto 0 0;
+    inset: 0.65rem auto 0.65rem 0.35rem;
     opacity: 0;
     position: absolute;
     transform: scaleY(0.45);
@@ -497,7 +549,7 @@
     transition:
       opacity 160ms ease,
       transform 180ms ease;
-    width: 3px;
+    width: 2px;
     z-index: 0;
   }
 
@@ -527,9 +579,10 @@
   }
 
   .watchlist-sortable-row[data-selected="true"] {
-    background: hsl(var(--primary) / 0.1) !important;
-    border-color: hsl(var(--primary) / 0.48) !important;
-    box-shadow: inset 3px 0 0 hsl(var(--primary)), 0 0 0 1px hsl(var(--primary) / 0.1) !important;
+    background:
+      linear-gradient(90deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.035) 48%, hsl(var(--card) / 0.2)) !important;
+    border-color: hsl(var(--primary) / 0.34) !important;
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.08) inset !important;
   }
 
   .watchlist-sortable-row[data-selected="true"]::before {
@@ -538,7 +591,8 @@
   }
 
   .watchlist-sortable-row[data-selected="true"]:hover {
-    background: hsl(var(--primary) / 0.14) !important;
+    background:
+      linear-gradient(90deg, hsl(var(--primary) / 0.18), hsl(var(--primary) / 0.055) 48%, hsl(var(--card) / 0.2)) !important;
   }
 
   .watchlist-sortable-row-dragging {
@@ -596,6 +650,26 @@
       0 8px 18px hsl(var(--foreground) / 0.12);
     color: hsl(var(--foreground));
     cursor: grabbing;
+  }
+
+  .native-stock-chart,
+  .native-stock-chart-canvas,
+  .technical-analysis-root,
+  .watchlist-analysis-shell {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .native-stock-chart {
+    contain: layout paint;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  .native-stock-chart-canvas {
+    touch-action: none;
   }
 
   .portfolio-table-row {
@@ -1116,6 +1190,85 @@
 
   .panel-body {
     padding: 0.75rem;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 560px) {
+  .watchlist-page-shell {
+    background: hsl(var(--background)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    height: 100dvh !important;
+    inset: 0;
+    min-height: 100dvh !important;
+    padding: 0 !important;
+    position: fixed;
+    width: 100vw;
+    z-index: 70;
+  }
+
+  .watchlist-page-shell > .panel-header,
+  .watchlist-list-shell {
+    display: none !important;
+  }
+
+  .watchlist-page-grid {
+    display: flex !important;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 0 !important;
+    height: 100%;
+    min-height: 0;
+    padding: 0 !important;
+  }
+
+  .watchlist-analysis-shell {
+    background: hsl(var(--background)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    height: 100%;
+    min-height: 0 !important;
+  }
+
+  .watchlist-analysis-shell .technical-analysis-root,
+  .watchlist-analysis-shell .technical-analysis-body,
+  .watchlist-analysis-shell .technical-main-content,
+  .watchlist-analysis-shell .technical-kline-layout,
+  .watchlist-analysis-shell .technical-chart-column,
+  .watchlist-analysis-shell .technical-chart-panel {
+    height: 100%;
+    min-height: 0 !important;
+    overflow: hidden;
+  }
+
+  .watchlist-analysis-shell .technical-tab-bar {
+    padding-left: calc(0.75rem + env(safe-area-inset-left));
+    padding-right: calc(0.75rem + env(safe-area-inset-right));
+  }
+
+  .watchlist-analysis-shell .technical-indicator-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    padding-left: calc(0.75rem + env(safe-area-inset-left));
+    padding-right: calc(0.75rem + env(safe-area-inset-right));
+    padding-top: 0.35rem;
+    scrollbar-width: none;
+  }
+
+  .watchlist-analysis-shell .technical-indicator-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .watchlist-analysis-shell .technical-chip-panel {
+    display: none !important;
+  }
+
+  .watchlist-analysis-shell .technical-native-chart {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0 !important;
   }
 }
 

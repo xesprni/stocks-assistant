@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -104,8 +104,79 @@ def _period_key(value: dict[str, Any], fallback: str) -> str:
     return _string(value.get("period") or value.get("label") or fallback)
 
 
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class FundamentalService:
     """Fetch and normalize Longbridge fundamental data."""
+
+    def get_security_insights(self, symbol: str, settings: Any = None) -> dict[str, Any]:
+        """Fetch Dashboard-ready Longbridge content and fundamental sections."""
+
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("symbol is required")
+
+        fundamental_ctx = None
+        quote_ctx = None
+        fundamental_error: str | None = None
+        quote_error: str | None = None
+
+        def get_fundamental_ctx():
+            nonlocal fundamental_ctx, fundamental_error
+            if fundamental_error:
+                raise LongbridgeUnavailableError(fundamental_error)
+            if fundamental_ctx is None:
+                try:
+                    fundamental_ctx = self._fundamental_context(settings=settings)
+                except LongbridgeUnavailableError as exc:
+                    fundamental_error = str(exc)
+                    raise
+            return fundamental_ctx
+
+        def get_quote_ctx():
+            nonlocal quote_ctx, quote_error
+            if quote_error:
+                raise LongbridgeUnavailableError(quote_error)
+            if quote_ctx is None:
+                try:
+                    quote_ctx = self._quote_context(settings=settings)
+                except LongbridgeUnavailableError as exc:
+                    quote_error = str(exc)
+                    raise
+            return quote_ctx
+
+        def section(fetcher, *, collection_keys: tuple[str, ...] = ("list", "items")) -> dict[str, Any]:
+            try:
+                return self._section_from_raw(fetcher(), collection_keys=collection_keys)
+            except LongbridgeUnavailableError as exc:
+                return self._error_section(str(exc))
+            except Exception as exc:
+                return self._error_section(str(exc))
+
+        # 每个板块单独捕获错误，避免某个 Longbridge 子接口失败导致 Dashboard 整列空白。
+        financial_reports = section(
+            lambda: self.get_financial_reports(
+                normalized_symbol,
+                kind="All",
+                period="Annual",
+                settings=settings,
+            ),
+            collection_keys=("statements",),
+        )
+        return {
+            "symbol": normalized_symbol,
+            "source": "Longbridge FundamentalContext + QuoteContext",
+            "fetched_at": _iso_now(),
+            "filings": section(lambda: get_quote_ctx().filings(normalized_symbol), collection_keys=("list", "items", "filings")),
+            "company": section(lambda: get_fundamental_ctx().company(normalized_symbol)),
+            "financial_reports": financial_reports,
+            "valuation": section(lambda: get_fundamental_ctx().valuation(normalized_symbol)),
+            "dividends": section(lambda: get_fundamental_ctx().dividend(normalized_symbol), collection_keys=("list", "items", "dividends")),
+            "institution_rating": section(lambda: get_fundamental_ctx().institution_rating(normalized_symbol)),
+            "corporate_actions": section(lambda: get_fundamental_ctx().corp_action(normalized_symbol), collection_keys=("items", "list", "actions")),
+        }
 
     def get_financial_reports(
         self,
@@ -141,11 +212,27 @@ class FundamentalService:
 
     def _fundamental_context(self, settings: Any = None):
         try:
-            from longbridge.openapi import Config, FundamentalContext
+            from longbridge.openapi import FundamentalContext
         except ImportError as exc:
             raise LongbridgeUnavailableError(
                 "Longbridge SDK with FundamentalContext is not installed. Upgrade longbridge to 4.1.0 or later."
             ) from exc
+
+        return FundamentalContext(self._longbridge_config(settings=settings))
+
+    def _quote_context(self, settings: Any = None):
+        try:
+            from longbridge.openapi import QuoteContext
+        except ImportError as exc:
+            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+
+        return QuoteContext(self._longbridge_config(settings=settings))
+
+    def _longbridge_config(self, settings: Any = None):
+        try:
+            from longbridge.openapi import Config
+        except ImportError as exc:
+            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
 
         if settings is None:
             from app.config import get_settings
@@ -169,10 +256,46 @@ class FundamentalService:
             except Exception as exc:
                 raise LongbridgeUnavailableError(
                     "Longbridge credentials are not configured. Set LONGBRIDGE_APP_KEY, "
-                    "LONGBRIDGE_APP_SECRET and LONGBRIDGE_ACCESS_TOKEN, or add them to config.json."
+                    "LONGBRIDGE_APP_SECRET and LONGBRIDGE_ACCESS_TOKEN, or configure them in the app."
                 ) from exc
 
-        return FundamentalContext(config)
+        return config
+
+    @staticmethod
+    def _error_section(message: str) -> dict[str, Any]:
+        return {
+            "available": False,
+            "error": message,
+            "data": {},
+            "items": [],
+            "total": 0,
+        }
+
+    @staticmethod
+    def _section_from_raw(raw: Any, *, collection_keys: tuple[str, ...] = ("list", "items")) -> dict[str, Any]:
+        plain = _plain(raw)
+        data: dict[str, Any] = {}
+        items: list[Any] = []
+
+        if isinstance(plain, list):
+            items = plain
+        elif isinstance(plain, dict):
+            data = dict(plain)
+            for key in collection_keys:
+                value = data.get(key)
+                if isinstance(value, list):
+                    items = value
+                    if key not in {"statements"}:
+                        data.pop(key, None)
+                    break
+
+        return {
+            "available": True,
+            "error": None,
+            "data": data,
+            "items": items,
+            "total": len(items),
+        }
 
     @staticmethod
     def _sdk_enum(enum_name: str, member_name: Optional[str]) -> Any:

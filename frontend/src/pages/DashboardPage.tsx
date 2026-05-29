@@ -8,9 +8,12 @@ import {
   BarChart2,
   BriefcaseBusiness,
   Building2,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Loader2,
+  Percent,
   Settings2,
   Star,
 } from "lucide-react";
@@ -23,7 +26,7 @@ import {
 } from "@/components/charts/NativeStockChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getCandlesticks, getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist, getIntraday } from "@/lib/api";
+import { getCandlesticks, getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardSymbolInsights, getDashboardWatchlist, getIntraday } from "@/lib/api";
 import { useChartColors } from "@/lib/color-scheme";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -34,6 +37,8 @@ import type {
   DashboardPortfolioModule,
   DashboardPortfolioMarket,
   DashboardResponse,
+  DashboardSymbolInsightSection,
+  DashboardSymbolInsightsResponse,
   DashboardWatchlistModule,
   DashboardWatchlistRow,
   DashboardWatchlistView,
@@ -47,6 +52,8 @@ const WATCHLIST_FILTERS: Array<"ALL" | WatchlistCategory> = ["ALL", "US", "A", "
 const WATCHLIST_VIEWS: DashboardWatchlistView[] = ["movers", "gainers", "losers", "active"];
 const DASHBOARD_SNAPSHOT_KEY = "stocks_assistant_dashboard_snapshot_v1";
 const DASHBOARD_SNAPSHOT_MAX_AGE_MS = 10_000;
+const DASHBOARD_SYMBOL_INSIGHTS_CACHE_PREFIX = "stocks_assistant_dashboard_symbol_insights_v1:";
+const DASHBOARD_SYMBOL_INSIGHTS_MAX_AGE_MS = 5 * 60_000;
 const DETAIL_CHART_RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
 
 const EMPTY_MARKET_MODULE: DashboardMarketModule = {
@@ -104,6 +111,11 @@ type ModuleStatus = {
 type DashboardSnapshot = {
   savedAt: number;
   data: DashboardResponse;
+};
+
+type DashboardSymbolInsightsSnapshot = {
+  savedAt: number;
+  data: DashboardSymbolInsightsResponse;
 };
 
 type DashboardPageProps = {
@@ -213,6 +225,32 @@ function writeDashboardSnapshot(data: DashboardResponse) {
     sessionStorage.setItem(DASHBOARD_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), data }));
   } catch {
     // Snapshot cache is only a render accelerator; quota failures can be ignored.
+  }
+}
+
+function symbolInsightsCacheKey(symbol: string) {
+  return `${DASHBOARD_SYMBOL_INSIGHTS_CACHE_PREFIX}${symbol.trim().toUpperCase()}`;
+}
+
+function readDashboardSymbolInsightsSnapshot(symbol: string): DashboardSymbolInsightsResponse | null {
+  if (typeof sessionStorage === "undefined" || !symbol) return null;
+  try {
+    const raw = sessionStorage.getItem(symbolInsightsCacheKey(symbol));
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw) as DashboardSymbolInsightsSnapshot;
+    if (!snapshot?.data || Date.now() - snapshot.savedAt > DASHBOARD_SYMBOL_INSIGHTS_MAX_AGE_MS) return null;
+    return snapshot.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeDashboardSymbolInsightsSnapshot(symbol: string, data: DashboardSymbolInsightsResponse) {
+  if (typeof sessionStorage === "undefined" || !symbol) return;
+  try {
+    sessionStorage.setItem(symbolInsightsCacheKey(symbol), JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {
+    // Detail caches are opportunistic; Longbridge data can still load on demand.
   }
 }
 
@@ -349,9 +387,9 @@ function QuoteRow({
   return (
     <div
       className={cn(
-        "group grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 transition-colors hover:bg-muted/35",
-        selected && "bg-primary/10",
+        "dashboard-quote-row group grid w-full min-w-0 select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-transparent transition-colors",
       )}
+      data-selected={selected ? "true" : undefined}
     >
       <button
         aria-pressed={selected}
@@ -732,6 +770,402 @@ function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: D
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function valueAtPath(record: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), record);
+}
+
+function insightText(value: unknown, language: AppLanguage): string {
+  if (value == null || value === "") return "";
+  if (typeof value === "boolean") {
+    return language === "en" ? (value ? "Yes" : "No") : (value ? "是" : "否");
+  }
+  if (typeof value === "number") return value.toLocaleString(localeFor(language), { maximumFractionDigits: 2 });
+  if (typeof value === "string") return value;
+  if (isRecord(value)) {
+    for (const key of ["desc", "name", "title", "value", "date_str", "target", "recommend"]) {
+      const nested = insightText(value[key], language);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+function firstInsightText(record: Record<string, unknown> | undefined, paths: string[], language: AppLanguage): string {
+  if (!record) return "";
+  for (const path of paths) {
+    const text = insightText(valueAtPath(record, path), language);
+    if (text) return text;
+  }
+  return "";
+}
+
+function insightItems(section: DashboardSymbolInsightSection): Record<string, unknown>[] {
+  return section.items.filter(isRecord);
+}
+
+function insightHasContent(section: DashboardSymbolInsightSection) {
+  return Object.keys(section.data || {}).length > 0 || section.items.length > 0;
+}
+
+function InsightMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-muted/20 px-2.5 py-2">
+      <p className="truncate text-[10px] text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate text-sm font-semibold tabular-nums">{value || "-"}</p>
+    </div>
+  );
+}
+
+function InsightCard({
+  children,
+  icon,
+  section,
+  title,
+}: {
+  children: ReactNode;
+  icon: ReactNode;
+  section: DashboardSymbolInsightSection;
+  title: string;
+}) {
+  const empty = !insightHasContent(section);
+  return (
+    <div className="rounded-md border border-border/65 bg-card/55 p-3">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <span className="text-muted-foreground [&_svg]:size-4">{icon}</span>
+        <span>{title}</span>
+      </div>
+      {section.error && empty ? (
+        <InlineState>{section.error}</InlineState>
+      ) : empty ? (
+        <InlineState>-</InlineState>
+      ) : (
+        children
+      )}
+    </div>
+  );
+}
+
+function CompanyInsight({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const labels = language === "en"
+    ? { company: "Company", sector: "Sector", market: "Market", listing: "Listed", employees: "Employees", website: "Website", profile: "Profile" }
+    : { company: "公司", sector: "行业", market: "市场", listing: "上市日期", employees: "员工", website: "官网", profile: "简介" };
+  const data = section.data;
+  const website = firstInsightText(data, ["website"], language);
+  const fields = [
+    [labels.company, firstInsightText(data, ["company_name", "name", "ticker"], language)],
+    [labels.sector, firstInsightText(data, ["sector", "category", "region"], language)],
+    [labels.market, firstInsightText(data, ["market", "ticker"], language)],
+    [labels.listing, firstInsightText(data, ["listing_date", "founded"], language)],
+    [labels.employees, firstInsightText(data, ["employees"], language)],
+  ].filter(([, value]) => value);
+  const profile = firstInsightText(data, ["profile"], language);
+
+  return (
+    <InsightCard icon={<Building2 />} section={section} title={language === "en" ? "Company Info" : "公司信息"}>
+      <div className="space-y-2">
+        {fields.map(([label, value]) => (
+          <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-3 text-sm" key={label}>
+            <span className="text-muted-foreground">{label}</span>
+            <span className="min-w-0 truncate font-medium">{value}</span>
+          </div>
+        ))}
+        {website ? (
+          <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-3 text-sm">
+            <span className="text-muted-foreground">{labels.website}</span>
+            <a className="min-w-0 truncate font-medium text-primary hover:underline" href={website} rel="noreferrer" target="_blank">
+              {website}
+            </a>
+          </div>
+        ) : null}
+        {profile ? (
+          <div className="rounded-md bg-muted/20 p-2 text-xs leading-5 text-muted-foreground">
+            <span className="font-medium text-foreground">{labels.profile}：</span>
+            {profile}
+          </div>
+        ) : null}
+      </div>
+    </InsightCard>
+  );
+}
+
+function ValuationInsight({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const labels = language === "en"
+    ? { pe: "PE", pb: "PB", ps: "PS", dvd_yld: "Dividend Yield", median: "Median", low: "Low", high: "High" }
+    : { pe: "PE", pb: "PB", ps: "PS", dvd_yld: "股息率", median: "中位", low: "低位", high: "高位" };
+  const metricValue = (key: string) => {
+    const raw = section.data[key];
+    if (!isRecord(raw)) return insightText(raw, language);
+    const primary = firstInsightText(raw, ["desc", "value", "latest"], language);
+    const spread = [
+      firstInsightText(raw, ["median"], language) ? `${labels.median} ${firstInsightText(raw, ["median"], language)}` : "",
+      firstInsightText(raw, ["low"], language) ? `${labels.low} ${firstInsightText(raw, ["low"], language)}` : "",
+      firstInsightText(raw, ["high"], language) ? `${labels.high} ${firstInsightText(raw, ["high"], language)}` : "",
+    ].filter(Boolean).join(" · ");
+    return primary || spread;
+  };
+  return (
+    <InsightCard icon={<Percent />} section={section} title={language === "en" ? "Valuation" : "估值"}>
+      <div className="grid grid-cols-2 gap-2">
+        {(["pe", "pb", "ps", "dvd_yld"] as const).map((key) => (
+          <InsightMetric key={key} label={labels[key]} value={metricValue(key)} />
+        ))}
+      </div>
+    </InsightCard>
+  );
+}
+
+function RatingInsight({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const labels = language === "en"
+    ? { recommend: "Consensus", target: "Target", rank: "Industry Rank", updated: "Updated", industry: "Industry", evaluate: "Evaluate" }
+    : { recommend: "共识", target: "目标价", rank: "行业排名", updated: "更新", industry: "行业", evaluate: "评级" };
+  const data = section.data;
+  const rank = [
+    firstInsightText(data, ["latest.industry_rank"], language),
+    firstInsightText(data, ["latest.industry_total"], language),
+  ].filter(Boolean).join(" / ");
+  return (
+    <InsightCard icon={<Activity />} section={section} title={language === "en" ? "Institution Rating" : "机构评级"}>
+      <div className="grid grid-cols-2 gap-2">
+        <InsightMetric label={labels.recommend} value={firstInsightText(data, ["summary.recommend", "summary.evaluate.recommend"], language)} />
+        <InsightMetric label={labels.target} value={firstInsightText(data, ["summary.target", "latest.target"], language)} />
+        <InsightMetric label={labels.rank} value={rank} />
+        <InsightMetric label={labels.updated} value={firstInsightText(data, ["summary.updated_at"], language)} />
+        <InsightMetric label={labels.industry} value={firstInsightText(data, ["latest.industry_name"], language)} />
+        <InsightMetric label={labels.evaluate} value={firstInsightText(data, ["latest.evaluate", "summary.evaluate"], language)} />
+      </div>
+    </InsightCard>
+  );
+}
+
+function FinancialReportsInsight({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const statementsSource = Array.isArray(section.data.statements) ? section.data.statements : section.items;
+  const statements = statementsSource.filter(isRecord);
+  const labels = language === "en" ? { period: "Period" } : { period: "期间" };
+  return (
+    <InsightCard icon={<FileText />} section={section} title={language === "en" ? "Financial Reports" : "财报"}>
+      <div className="space-y-3">
+        {statements.slice(0, 3).map((statement) => {
+          const columns = Array.isArray(statement.columns) ? statement.columns.filter(isRecord) : [];
+          const rows = Array.isArray(statement.rows) ? statement.rows.filter(isRecord) : [];
+          const column = columns[0];
+          const period = firstInsightText(column, ["label", "key", "fp_end"], language);
+          const valueRows = rows
+            .map((row) => {
+              const cells = Array.isArray(row.cells) ? row.cells.filter(isRecord) : [];
+              return {
+                name: firstInsightText(row, ["name", "field"], language),
+                value: firstInsightText(cells[0], ["value", "ratio", "yoy"], language),
+              };
+            })
+            .filter((row) => row.name && row.value)
+            .slice(0, 4);
+          return (
+            <div className="rounded-md bg-muted/20 p-2" key={firstInsightText(statement, ["code", "name", "title"], language)}>
+              <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold">{firstInsightText(statement, ["name", "title", "code"], language)}</span>
+                {period ? <span className="text-muted-foreground">{labels.period} {period}</span> : null}
+              </div>
+              <div className="space-y-1">
+                {valueRows.map((row) => (
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-xs" key={row.name}>
+                    <span className="truncate text-muted-foreground">{row.name}</span>
+                    <span className="font-medium tabular-nums">{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </InsightCard>
+  );
+}
+
+function InsightItemList({
+  emptyLabel,
+  icon,
+  language,
+  metaPaths,
+  section,
+  title,
+  titlePaths,
+}: {
+  emptyLabel: string;
+  icon: ReactNode;
+  language: AppLanguage;
+  metaPaths: string[];
+  section: DashboardSymbolInsightSection;
+  title: string;
+  titlePaths: string[];
+}) {
+  const items = insightItems(section).slice(0, 4);
+  return (
+    <InsightCard icon={icon} section={section} title={title}>
+      {items.length === 0 ? (
+        <InlineState>{emptyLabel}</InlineState>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item, index) => {
+            const itemTitle = firstInsightText(item, titlePaths, language) || `${title} ${index + 1}`;
+            const metas = metaPaths
+              .map((path) => firstInsightText(item, [path], language))
+              .filter(Boolean)
+              .slice(0, 3);
+            return (
+              <div className="rounded-md bg-muted/20 p-2" key={`${itemTitle}-${index}`}>
+                <p className="line-clamp-2 text-sm font-medium">{itemTitle}</p>
+                {metas.length > 0 ? (
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{metas.join(" · ")}</p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </InsightCard>
+  );
+}
+
+function WatchlistSymbolInsights({
+  canRead,
+  language,
+  symbol,
+}: {
+  canRead: boolean;
+  language: AppLanguage;
+  symbol: string;
+}) {
+  const [payload, setPayload] = useState<DashboardSymbolInsightsResponse | null>(() => readDashboardSymbolInsightsSnapshot(symbol));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const copy = language === "en"
+    ? {
+      title: "Longbridge Insights",
+      permission: "Missing permission: fundamentals:read",
+      loading: "Loading Longbridge data",
+      empty: "No Longbridge data",
+      filings: "Announcements / Filings",
+      dividends: "Dividends",
+      actions: "Corporate Actions",
+      noItems: "No recent items",
+    }
+    : {
+      title: "长桥资料",
+      permission: "缺少权限：fundamentals:read",
+      loading: "正在加载长桥资料",
+      empty: "暂无长桥资料",
+      filings: "公告 / 披露",
+      dividends: "分红",
+      actions: "公司行动",
+      noItems: "暂无近期项目",
+    };
+
+  useEffect(() => {
+    if (!canRead || !symbol) return undefined;
+    const cached = readDashboardSymbolInsightsSnapshot(symbol);
+    setPayload(cached);
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    getDashboardSymbolInsights(symbol, { signal: controller.signal })
+      .then((response) => {
+        setPayload(response);
+        writeDashboardSymbolInsightsSnapshot(symbol, response);
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted) {
+          setError(caught instanceof Error ? caught.message : copy.empty);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [canRead, copy.empty, symbol]);
+
+  if (!canRead) {
+    return (
+      <div className="space-y-2 border-y border-border/55 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <FileText className="size-4 text-muted-foreground" />
+          {copy.title}
+        </div>
+        <InlineState>{copy.permission}</InlineState>
+      </div>
+    );
+  }
+
+  const sections = payload
+    ? [payload.filings, payload.company, payload.financial_reports, payload.valuation, payload.dividends, payload.institution_rating, payload.corporate_actions]
+    : [];
+  const allErrored = sections.length > 0 && sections.every((section) => section.error && !insightHasContent(section));
+
+  return (
+    <div className="space-y-3 border-y border-border/55 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <FileText className="size-4 text-muted-foreground" />
+          {copy.title}
+        </div>
+        {loading ? (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            {copy.loading}
+          </span>
+        ) : null}
+      </div>
+
+      {loading && !payload ? (
+        <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{copy.loading}</InlineState>
+      ) : error && !payload ? (
+        <InlineState>{error}</InlineState>
+      ) : payload && allErrored ? (
+        <InlineState>{sections.find((section) => section.error)?.error || copy.empty}</InlineState>
+      ) : payload ? (
+        <div className="space-y-3">
+          <InsightItemList
+            emptyLabel={copy.noItems}
+            icon={<CalendarDays />}
+            language={language}
+            metaPaths={["date", "publish_date", "released_at", "url"]}
+            section={payload.filings}
+            title={copy.filings}
+            titlePaths={["title", "name", "desc", "type", "id"]}
+          />
+          <CompanyInsight language={language} section={payload.company} />
+          <FinancialReportsInsight language={language} section={payload.financial_reports} />
+          <ValuationInsight language={language} section={payload.valuation} />
+          <InsightItemList
+            emptyLabel={copy.noItems}
+            icon={<Percent />}
+            language={language}
+            metaPaths={["ex_date", "record_date", "payment_date", "symbol"]}
+            section={payload.dividends}
+            title={copy.dividends}
+            titlePaths={["desc", "id", "symbol"]}
+          />
+          <RatingInsight language={language} section={payload.institution_rating} />
+          <InsightItemList
+            emptyLabel={copy.noItems}
+            icon={<Activity />}
+            language={language}
+            metaPaths={["date_str", "date_type", "live.name", "live.status"]}
+            section={payload.corporate_actions}
+            title={copy.actions}
+            titlePaths={["action", "act_desc", "delay_content", "act_type", "date_str"]}
+          />
+        </div>
+      ) : (
+        <InlineState>{copy.empty}</InlineState>
+      )}
+    </div>
+  );
+}
+
 function DashboardHeader({ language }: { language: AppLanguage }) {
   const copy = i18n[language].overview;
   return (
@@ -1103,11 +1537,13 @@ function SymbolDetailMetric({ label, tone, value }: { label: string; tone?: Tone
 }
 
 function WatchlistSymbolDetail({
+  canReadInsights,
   language,
   onBack,
   onOpenChart,
   row,
 }: {
+  canReadInsights: boolean;
   language: AppLanguage;
   onBack: () => void;
   onOpenChart?: (symbol: string) => void;
@@ -1126,15 +1562,6 @@ function WatchlistSymbolDetail({
       low: "Low",
       volume: "Volume",
       turnover: "Turnover",
-      market: "Market",
-      exchange: "Exchange",
-      currency: "Currency",
-      securityType: "Type",
-      board: "Board",
-      lotSize: "Lot size",
-      aliases: "Names",
-      note: "Note",
-      updated: "Updated",
       openChart: "Chart",
     }
     : {
@@ -1147,29 +1574,8 @@ function WatchlistSymbolDetail({
       low: "最低",
       volume: "成交量",
       turnover: "成交额",
-      market: "市场",
-      exchange: "交易所",
-      currency: "币种",
-      securityType: "类型",
-      board: "板块",
-      lotSize: "每手股数",
-      aliases: "名称",
-      note: "备注",
-      updated: "更新时间",
       openChart: "图表",
     };
-  const alias = [row.name_cn, row.name_hk, row.name_en].filter(Boolean).join(" / ");
-  const profileRows = [
-    [labels.market, row.category ? categoryLabel(row.category as WatchlistCategory, language) : "-"],
-    [labels.exchange, row.exchange || "-"],
-    [labels.currency, row.currency || "-"],
-    [labels.securityType, row.security_type || "-"],
-    [labels.board, row.board || "-"],
-    [labels.lotSize, row.lot_size || "-"],
-    [labels.aliases, alias || row.name || "-"],
-    [labels.note, row.note || "-"],
-    [labels.updated, row.updated_at ? formatModuleTime(row.updated_at, language) || row.updated_at : "-"],
-  ];
 
   return (
     <FinanceSection
@@ -1217,18 +1623,7 @@ function WatchlistSymbolDetail({
           <SymbolDetailMetric label={labels.turnover} value={formatCompactNumeric(row.turnover, language)} />
         </div>
 
-        <div className="space-y-2 border-y border-border/55 py-3">
-          <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
-            <Building2 className="size-4 text-muted-foreground" />
-            {copy.companyProfile}
-          </div>
-          {profileRows.map(([label, value]) => (
-            <div className="grid min-w-0 grid-cols-[96px_minmax(0,1fr)] gap-3 text-sm" key={label}>
-              <span className="text-muted-foreground">{label}</span>
-              <span className="min-w-0 truncate font-medium">{value}</span>
-            </div>
-          ))}
-        </div>
+        <WatchlistSymbolInsights canRead={canReadInsights} language={language} symbol={row.symbol} />
       </div>
     </FinanceSection>
   );
@@ -1264,6 +1659,7 @@ export function DashboardPage({
 }: DashboardPageProps) {
   const copy = i18n[language].overview;
   const canMarket = canPermission("market:read");
+  const canFundamentals = canPermission("fundamentals:read");
   const canPortfolio = canPermission("portfolio:read");
   const canWatchlist = canPermission("watchlist:read");
   const canChat = canPermission("chat:read");
@@ -1461,6 +1857,7 @@ export function DashboardPage({
         >
           {selectedWatchlistRow ? (
             <WatchlistSymbolDetail
+              canReadInsights={canFundamentals}
               language={language}
               onBack={() => setSelectedWatchlistSymbol("")}
               onOpenChart={canMarket ? onOpenChart : undefined}

@@ -78,6 +78,8 @@ function SortableWatchlistItem({
     id: item.id,
   });
   const isDropTarget = over?.id === item.id && active?.id !== item.id;
+  const pressStartedAtRef = useRef(0);
+  const suppressNextClickRef = useRef(false);
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: [
@@ -95,8 +97,7 @@ function SortableWatchlistItem({
   return (
     <div
       className={cn(
-        "watchlist-sortable-row finance-row-card message-bubble rounded-md border border-border/80 bg-card/80 p-2 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary sm:p-3",
-        isSelected && "border-primary/60 bg-primary/5 shadow-[inset_2px_0_0_hsl(var(--primary))]",
+        "watchlist-sortable-row finance-row-card message-bubble select-none rounded-md border border-border/80 bg-card/80 p-2 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary sm:p-3",
         isDragging && "watchlist-sortable-row-dragging",
         isDropTarget && "watchlist-sortable-row-over",
         isSorting && !isDragging && "watchlist-sortable-row-sorting",
@@ -104,11 +105,31 @@ function SortableWatchlistItem({
       data-dragging={isDragging ? "true" : undefined}
       data-drop-target={isDropTarget ? "true" : undefined}
       data-selected={isSelected ? "true" : undefined}
-      onClick={() => onSelect(item)}
+      onClick={(event) => {
+        if (suppressNextClickRef.current) {
+          event.preventDefault();
+          suppressNextClickRef.current = false;
+          return;
+        }
+        onSelect(item);
+      }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onSelect(item);
+        }
+      }}
+      onPointerCancel={() => {
+        pressStartedAtRef.current = 0;
+        suppressNextClickRef.current = false;
+      }}
+      onPointerDown={(event) => {
+        pressStartedAtRef.current = event.timeStamp;
+        suppressNextClickRef.current = false;
+      }}
+      onPointerUp={(event) => {
+        if (event.pointerType !== "mouse" && event.timeStamp - pressStartedAtRef.current > 420) {
+          suppressNextClickRef.current = true;
         }
       }}
       role="button"
@@ -122,7 +143,7 @@ function SortableWatchlistItem({
           {...listeners}
           aria-label={copy.dragSort}
           className={cn(
-            "watchlist-drag-handle grid size-7 shrink-0 cursor-grab touch-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
+            "watchlist-drag-handle grid size-7 shrink-0 cursor-grab touch-none select-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
             (isDragging || isDropTarget) && "text-primary",
           )}
           onClick={(event) => event.stopPropagation()}
@@ -435,7 +456,7 @@ export function WatchlistPage({
   }
 
   return (
-    <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
+    <section className="watchlist-page-shell panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="panel-header flex flex-col gap-3 border-b border-border/70 bg-background/70 px-3 py-2 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -468,8 +489,8 @@ export function WatchlistPage({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 py-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
-        <aside className="finance-module flex min-h-0 flex-col overflow-hidden rounded-md border border-border/80 bg-card/45">
+      <div className="watchlist-page-grid grid min-h-0 flex-1 gap-4 py-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
+        <aside className="watchlist-list-shell finance-module flex min-h-0 flex-col overflow-hidden rounded-md border border-border/80 bg-card/45">
           <div className="finance-module-header space-y-3 border-b border-border/70 p-3">
             <div>
               <p className="text-sm font-semibold">{formatTemplate(copy.listTitle, { label: selectedCategory?.label ?? category })}</p>
@@ -564,7 +585,7 @@ export function WatchlistPage({
           </div>
         </aside>
 
-        <div className="finance-module flex min-h-[640px] min-w-0 flex-col overflow-hidden overscroll-contain rounded-md border border-border/80 bg-card/45 lg:min-h-0">
+        <div className="watchlist-analysis-shell finance-module flex min-h-[560px] min-w-0 flex-col overflow-hidden overscroll-contain rounded-md border border-border/80 bg-card/45 sm:min-h-[640px] lg:min-h-0">
           {activeSymbol ? (
             <TechnicalAnalysis
               embedded

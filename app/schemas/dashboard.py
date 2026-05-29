@@ -1,6 +1,6 @@
 """Dashboard aggregate API schemas."""
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -88,6 +88,31 @@ class DashboardPortfolioModule(DashboardModule):
     """Portfolio summary grouped by market."""
 
     markets: list[DashboardPortfolioMarket] = Field(default_factory=list)
+
+
+class DashboardSymbolInsightSection(BaseModel):
+    """One Longbridge detail section for a Dashboard symbol."""
+
+    available: bool = True
+    error: Optional[str] = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    items: list[Any] = Field(default_factory=list)
+    total: int = 0
+
+
+class DashboardSymbolInsightsResponse(BaseModel):
+    """Longbridge detail payload used by the selected Dashboard symbol panel."""
+
+    symbol: str
+    source: str = ""
+    fetched_at: str = ""
+    filings: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    company: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    financial_reports: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    valuation: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    dividends: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    institution_rating: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    corporate_actions: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
 
 
 class DashboardResponse(BaseModel):

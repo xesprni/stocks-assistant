@@ -18,6 +18,7 @@ import type {
   DashboardPortfolioModule,
   Conversation,
   DashboardResponse,
+  DashboardSymbolInsightsResponse,
   DashboardWatchlistModule,
   FinancialReportKind,
   FinancialReportPeriod,
@@ -675,6 +676,11 @@ export function getDashboardWatchlist(init?: RequestInit) {
 
 export function getDashboardPortfolio(init?: RequestInit) {
   return request<DashboardPortfolioModule>("/api/v1/dashboard/portfolio", init);
+}
+
+export function getDashboardSymbolInsights(symbol: string, init?: RequestInit) {
+  const params = new URLSearchParams({ symbol });
+  return request<DashboardSymbolInsightsResponse>(`/api/v1/dashboard/symbol-insights?${params.toString()}`, init);
 }
 
 export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", count = 200) {

@@ -3,17 +3,19 @@
 from functools import partial
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_effective_settings
 from app.core.dashboard.service import DashboardService
+from app.core.watchlist.service import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
-from app.deps import get_market_service, get_portfolio_service, get_watchlist_service
+from app.deps import get_fundamental_service, get_market_service, get_portfolio_service, get_watchlist_service
 from app.schemas.dashboard import (
     DashboardMarketModule,
     DashboardPortfolioModule,
     DashboardResponse,
+    DashboardSymbolInsightsResponse,
     DashboardWatchlistModule,
 )
 
@@ -66,3 +68,22 @@ async def get_dashboard_portfolio(current_user: CurrentUser = Depends(require_pe
         partial(_service().portfolio, user=current_user, settings=get_effective_settings(current_user.id), mode="full")
     )
     return DashboardPortfolioModule(**payload)
+
+
+@router.get("/symbol-insights", response_model=DashboardSymbolInsightsResponse)
+async def get_dashboard_symbol_insights(
+    symbol: str,
+    current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
+):
+    """Return Longbridge disclosures, company, financial, valuation and action data for one symbol."""
+
+    service = get_fundamental_service()
+    try:
+        payload = await run_in_threadpool(
+            partial(service.get_security_insights, symbol=symbol, settings=get_effective_settings(current_user.id))
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LongbridgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return DashboardSymbolInsightsResponse(**payload)

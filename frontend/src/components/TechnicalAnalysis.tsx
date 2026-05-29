@@ -664,7 +664,7 @@ function KLineChart({
   }, [onVisibleRangeChange]);
 
   return (
-    <div className="flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
+    <div className="technical-chart-panel flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-background px-3">
         <div className="flex h-8 items-center gap-1 border-b border-border/70">
           {(["1D", "1W", "1M"] as Period[]).map((p) => (
@@ -708,7 +708,7 @@ function KLineChart({
         onVisibleRangeChange={handleVisibleRangeChange}
         onNearStart={loadMore}
         onNearEnd={refreshLatest}
-        className="min-h-[440px] flex-1 lg:min-h-0"
+        className="technical-native-chart min-h-[440px] flex-1 lg:min-h-0"
       />
     </div>
   );
@@ -850,7 +850,7 @@ function IntradayCharts({
   }, [autoRefresh, load, refreshSeconds]);
 
   return (
-    <div className="flex min-h-[560px] flex-1 flex-col bg-background lg:min-h-0">
+    <div className="technical-chart-panel technical-intraday-panel flex min-h-[560px] flex-1 flex-col bg-background lg:min-h-0">
       <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
         <span className="border-l-2 border-primary/60 pl-1.5 text-[10px] font-medium text-muted-foreground">VOL</span>
         <span className="border-l-2 border-secondary/70 pl-1.5 text-[10px] font-medium text-muted-foreground">MACD</span>
@@ -892,7 +892,7 @@ function IntradayCharts({
         series={chartModel.series}
         theme={theme}
         fitKey={`${symbol}:${fitKey}`}
-        className="min-h-[500px] w-full flex-1 lg:min-h-0"
+        className="technical-native-chart min-h-[500px] w-full flex-1 lg:min-h-0"
       />
     </div>
   );
@@ -946,7 +946,7 @@ function ChipDistributionPanel({
   const lossColor = downColor;
 
   return (
-    <div className="flex h-44 w-full shrink-0 flex-col border-t border-border/70 bg-background/80 lg:h-full lg:w-40 lg:border-l lg:border-t-0">
+    <div className="technical-chip-panel flex h-44 w-full shrink-0 flex-col border-t border-border/70 bg-background/80 lg:h-full lg:w-40 lg:border-l lg:border-t-0">
       <div className="shrink-0 border-b border-border/60 bg-muted/10 px-3 py-2">
         <div className="text-[11px] font-semibold text-foreground">{copy.chipDistribution}</div>
       </div>
@@ -1067,7 +1067,7 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   const activeOverlayLabels = OVERLAY_INDICATORS.filter((i) => activeIndicators.has(i.key));
 
   return (
-    <div className="flex min-h-0 flex-col bg-background text-foreground lg:h-full lg:overflow-hidden">
+    <div className="technical-analysis-root flex min-h-0 flex-col bg-background text-foreground lg:h-full lg:overflow-hidden">
       {/* ── Header ── */}
       {!embedded ? (
         <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card/90 px-4 py-2 backdrop-blur">
@@ -1086,7 +1086,7 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
       ) : null}
 
       {/* ── Body ── */}
-      <div className={`flex min-h-0 flex-1 flex-col lg:overflow-hidden ${embedded ? "" : "md:flex-row"}`}>
+      <div className={`technical-analysis-body flex min-h-0 flex-1 flex-col lg:overflow-hidden ${embedded ? "" : "md:flex-row"}`}>
         {/* Sidebar */}
         {!embedded ? (
           <SymbolSideNav
@@ -1101,9 +1101,9 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
         ) : null}
 
         {/* Main content */}
-        <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
+        <div className="technical-main-content flex min-h-0 flex-1 flex-col lg:overflow-hidden">
           {/* Tab switch: 分时 / K线 */}
-          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+          <div className="technical-tab-bar flex shrink-0 items-center gap-2 border-b border-border bg-background px-3">
             <div className="flex h-9 items-center gap-1 border-b border-border/70">
               <button
                 onClick={() => setActiveTab("kline")}
@@ -1129,11 +1129,11 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
           </div>
 
           {activeTab === "kline" ? (
-            <div className="flex min-h-[640px] flex-1 flex-col lg:min-h-0 lg:flex-row lg:overflow-hidden">
+            <div className="technical-kline-layout flex min-h-[640px] flex-1 flex-col lg:min-h-0 lg:flex-row lg:overflow-hidden">
               {/* Left: indicator selector + chart */}
-              <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
+              <div className="technical-chart-column flex min-h-0 flex-1 flex-col lg:overflow-hidden">
                 {/* Indicator selector (above chart) */}
-                <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2">
+                <div className="technical-indicator-bar flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2">
                   <span className="mr-0.5 text-[10px] font-medium text-muted-foreground">{copy.subIndicators}</span>
                   {SUB_INDICATORS.map(({ key, label, color }) => (
                     <button

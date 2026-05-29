@@ -859,12 +859,14 @@ export function NativeStockChart({
   };
 
   return (
-    <div ref={containerRef} className={className} style={{ minWidth: 0, position: "relative" }}>
+    <div ref={containerRef} className={["native-stock-chart", className].filter(Boolean).join(" ")} style={{ minWidth: 0, position: "relative" }}>
       <canvas
         ref={canvasRef}
-        className="block h-full w-full"
+        className="native-stock-chart-canvas block h-full w-full"
         style={{ cursor: dragRef.current ? "grabbing" : "crosshair", touchAction: "none" }}
+        onContextMenu={(event) => event.preventDefault()}
         onPointerDown={(event) => {
+          event.preventDefault();
           if (dataRef.current.times.length === 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           const point = pointFromEvent(event);

@@ -524,6 +524,27 @@ export interface DashboardMarketModule extends DashboardModule {
   indices: QuoteItem[];
 }
 
+export interface DashboardSymbolInsightSection {
+  available: boolean;
+  error: string | null;
+  data: Record<string, unknown>;
+  items: unknown[];
+  total: number;
+}
+
+export interface DashboardSymbolInsightsResponse {
+  symbol: string;
+  source: string;
+  fetched_at: string;
+  filings: DashboardSymbolInsightSection;
+  company: DashboardSymbolInsightSection;
+  financial_reports: DashboardSymbolInsightSection;
+  valuation: DashboardSymbolInsightSection;
+  dividends: DashboardSymbolInsightSection;
+  institution_rating: DashboardSymbolInsightSection;
+  corporate_actions: DashboardSymbolInsightSection;
+}
+
 export interface DashboardResponse {
   market: DashboardMarketModule;
   watchlist: DashboardWatchlistModule;
