@@ -367,6 +367,7 @@ class AuthSecurityTest(unittest.TestCase):
         roles = self.client.get("/api/v1/roles", headers=admin_headers)
         self.assertEqual(roles.status_code, 200, roles.text)
         self.assertEqual(roles.json()["page_permissions"]["news"], "market:read")
+        self.assertNotIn("chat", roles.json()["page_permissions"])
         self.assertNotIn("market", roles.json()["page_permissions"])
         self.assertNotIn("market_config", roles.json()["page_permissions"])
 

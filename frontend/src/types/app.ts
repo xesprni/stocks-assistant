@@ -475,6 +475,9 @@ export interface DashboardWatchlistRow extends QuoteItem {
   name_hk?: string;
   exchange?: string;
   currency?: string;
+  lot_size?: string;
+  board?: string;
+  security_type?: string;
   note?: string;
   created_at?: string;
   updated_at?: string;

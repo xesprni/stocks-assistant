@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -11,17 +11,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
-  Search,
-  Send,
   Settings2,
-  Sparkles,
   Star,
 } from "lucide-react";
 
 import { MarketPulse } from "@/components/MarketPulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist } from "@/lib/api";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -109,7 +105,6 @@ type DashboardPageProps = {
   onOpenMarketConfig: () => void;
   onOpenPortfolio: () => void;
   onOpenWatchlist: () => void;
-  onPrompt: (value: string) => void;
   refreshInterval: number;
 };
 
@@ -406,62 +401,15 @@ function MarketPill({ language, quote }: { language: AppLanguage; quote: QuoteIt
   );
 }
 
-function HeroSearch({
-  language,
-  onPrompt,
-}: {
-  language: AppLanguage;
-  onPrompt: (value: string) => void;
-}) {
+function DashboardHeader({ language }: { language: AppLanguage }) {
   const copy = i18n[language].overview;
-  const quickPrompts = i18n[language].quickPrompts.slice(0, 3);
-  const [query, setQuery] = useState("");
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const text = query.trim();
-    if (text) onPrompt(text);
-  }
-
   return (
-    <section className="dashboard-hero min-w-0 py-4 sm:py-6">
-      <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Sparkles className="size-5 text-primary" />
-            <h1 className="text-2xl font-semibold tracking-normal sm:text-3xl">{copy.title}</h1>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <form className="flex min-w-0 flex-1 gap-2 lg:max-w-3xl 2xl:max-w-4xl" onSubmit={submit}>
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-10 rounded-full border-border/70 bg-background/80 pl-9 pr-3 text-sm shadow-none"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={copy.searchPlaceholder}
-              value={query}
-            />
-          </div>
-          <Button className="h-10 rounded-full px-3 sm:px-4" type="submit">
-            <Send />
-            <span className="hidden sm:inline">{copy.askAgent}</span>
-          </Button>
-        </form>
+    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 pb-2">
+      <div className="min-w-0">
+        <h1 className="truncate text-lg font-semibold tracking-normal">{copy.title}</h1>
+        <p className="truncate text-xs text-muted-foreground">{copy.subtitle}</p>
       </div>
-      <div className="mt-3 flex gap-2 overflow-x-auto pb-0.5">
-        {quickPrompts.map((prompt) => (
-          <button
-            className="shrink-0 rounded-full bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/65 hover:text-foreground"
-            key={prompt}
-            onClick={() => onPrompt(prompt)}
-            type="button"
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-    </section>
+    </header>
   );
 }
 
@@ -850,6 +798,9 @@ function WatchlistSymbolDetail({
       market: "Market",
       exchange: "Exchange",
       currency: "Currency",
+      securityType: "Type",
+      board: "Board",
+      lotSize: "Lot size",
       aliases: "Names",
       note: "Note",
       updated: "Updated",
@@ -868,6 +819,9 @@ function WatchlistSymbolDetail({
       market: "市场",
       exchange: "交易所",
       currency: "币种",
+      securityType: "类型",
+      board: "板块",
+      lotSize: "每手股数",
       aliases: "名称",
       note: "备注",
       updated: "更新时间",
@@ -878,6 +832,9 @@ function WatchlistSymbolDetail({
     [labels.market, row.category ? categoryLabel(row.category as WatchlistCategory, language) : "-"],
     [labels.exchange, row.exchange || "-"],
     [labels.currency, row.currency || "-"],
+    [labels.securityType, row.security_type || "-"],
+    [labels.board, row.board || "-"],
+    [labels.lotSize, row.lot_size || "-"],
     [labels.aliases, alias || row.name || "-"],
     [labels.note, row.note || "-"],
     [labels.updated, row.updated_at ? formatModuleTime(row.updated_at, language) || row.updated_at : "-"],
@@ -970,7 +927,6 @@ export function DashboardPage({
   onOpenMarketConfig,
   onOpenPortfolio,
   onOpenWatchlist,
-  onPrompt,
   refreshInterval,
 }: DashboardPageProps) {
   const copy = i18n[language].overview;
@@ -1137,8 +1093,8 @@ export function DashboardPage({
   }, [selectedWatchlistSymbol, watchlistRows]);
 
   return (
-    <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-2 xl:h-full xl:overflow-hidden">
-      <HeroSearch language={language} onPrompt={onPrompt} />
+    <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3 xl:h-full xl:overflow-hidden">
+      <DashboardHeader language={language} />
 
       <div
         className={cn(

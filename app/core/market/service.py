@@ -11,6 +11,7 @@ from app.core.market.utils import (
     canonical_symbol,
     change_rate,
     change_value,
+    enum_name,
     normalize_symbol_map,
     normalize_symbols,
     stringify,
@@ -146,6 +147,20 @@ class MarketService(LongbridgeMarketDataMixin):
         }
         return self._fetch_quotes(symbols, name_map=name_map, category_map=category_map, settings=settings)
 
+    def get_security_static_info(self, symbols: list[str], settings: Any = None) -> list[dict]:
+        """拉取 Longbridge 标的基础资料，用于 Dashboard 公司资料补全。"""
+        normalized_symbols = normalize_symbols(symbols)
+        if not normalized_symbols:
+            return []
+
+        ctx = self._quote_context(settings=settings)
+        try:
+            raw_infos = list(ctx.static_info(normalized_symbols))
+        except Exception as exc:
+            raise LongbridgeUnavailableError(str(exc)) from exc
+
+        return [self._serialize_static_info(item) for item in raw_infos]
+
     def _fetch_quotes(
         self,
         symbols: list[str],
@@ -191,3 +206,27 @@ class MarketService(LongbridgeMarketDataMixin):
                 }
             )
         return results
+
+    def _serialize_static_info(self, item: Any) -> dict:
+        def value(attr: str) -> str:
+            raw = getattr(item, attr, None)
+            if raw in (None, ""):
+                return ""
+            return enum_name(raw) or stringify(raw) or str(raw)
+
+        symbol = canonical_symbol(getattr(item, "symbol", ""))
+        name_cn = value("name_cn")
+        name_hk = value("name_hk")
+        name_en = value("name_en")
+        return {
+            "symbol": symbol,
+            "name": name_cn or name_hk or name_en or symbol,
+            "name_cn": name_cn,
+            "name_en": name_en,
+            "name_hk": name_hk,
+            "exchange": value("exchange"),
+            "currency": value("currency"),
+            "lot_size": value("lot_size"),
+            "board": value("board"),
+            "security_type": value("security_type"),
+        }

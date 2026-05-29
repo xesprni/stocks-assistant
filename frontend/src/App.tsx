@@ -16,7 +16,6 @@ import {
   Loader2,
   LogOut,
   Menu,
-  MessageSquareText,
   Monitor,
   Moon,
   Newspaper,
@@ -88,7 +87,7 @@ type NavGroup = { id: string; label: string; items: NavItem[] };
 type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
 type TouchPoint = { x: number; y: number };
 
-const MOBILE_PRIMARY_PAGES: Page[] = ["overview", "chat", "portfolio"];
+const MOBILE_PRIMARY_PAGES: Page[] = ["overview", "watchlist", "portfolio"];
 const MOBILE_GESTURE_DELTA = 28;
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
 const MOBILE_NAV_VISIBLE_KEY = "stocks-assistant-mobile-nav-visible";
@@ -96,7 +95,6 @@ const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
 
 const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   overview: "config:read",
-  chat: "chat:read",
   tracing: "tracing:read",
   security: "config:read",
   watchlist: "watchlist:read",
@@ -116,7 +114,6 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
 
 const PAGE_PATH: Record<Page, string> = {
   overview: "/dashboard",
-  chat: "/chat",
   tracing: "/tracing",
   security: "/security",
   watchlist: "/watchlist",
@@ -138,6 +135,7 @@ const PATH_PAGE = new Map<string, Page>([
   ...Object.entries(PAGE_PATH).map(([page, path]) => [path, page as Page] as const),
   ["/", "overview"],
   ["/config", "config"],
+  ["/chat", "overview"],
   ["/market", "overview"],
   ["/market/config", "config"],
   ["/overview", "overview"],
@@ -268,7 +266,6 @@ function navItem(language: AppLanguage, id: Page, icon: ReactNode): NavItem {
 function getPinnedNavItems(language: AppLanguage): NavItem[] {
   return [
     navItem(language, "overview", <Home />),
-    navItem(language, "chat", <MessageSquareText />),
     navItem(language, "watchlist", <Star />),
     navItem(language, "portfolio", <BriefcaseBusiness />),
     navItem(language, "news", <Newspaper />),
@@ -642,7 +639,7 @@ function ConsoleApp() {
 
   useEffect(() => {
     if (!canPage(page)) {
-      setPage(auth.can("chat:read") ? "chat" : "overview");
+      setPage("overview");
     }
   }, [page, auth.permissions]);
 
@@ -669,7 +666,7 @@ function ConsoleApp() {
   }, []);
 
   useEffect(() => {
-    if ((page !== "chat" && page !== "overview") || !shouldAutoScrollChatRef.current) return;
+    if (page !== "overview" || !shouldAutoScrollChatRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       if (!shouldAutoScrollChatRef.current) return;
       const element = chatScrollRef.current;
@@ -853,7 +850,7 @@ function ConsoleApp() {
     setPrompt("");
     setError("");
     setIsSending(true);
-    setPage("chat");
+    setPage("overview");
 
     const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
     if (shouldCreateNewSession && options.thinkingEnabled !== true) {
@@ -1507,7 +1504,6 @@ function ConsoleApp() {
                 ? "pb-[calc(4.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(5rem+env(safe-area-inset-bottom))]"
                 : "pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]",
               page === "overview" && "xl:overflow-hidden",
-              page === "chat" && "app-main-stage-chat overflow-hidden",
             )}
             key={page}
           >
@@ -1552,32 +1548,9 @@ function ConsoleApp() {
                   onOpenMarketConfig={() => openConfig("market")}
                   onOpenPortfolio={() => setPage("portfolio")}
                   onOpenWatchlist={() => setPage("watchlist")}
-                  onPrompt={(value) => {
-                    void handleSend(undefined, value, { forceNewSession: true });
-                  }}
                   refreshInterval={marketConfig.refresh_interval}
                 />
               ) : null}
-
-            {page === "chat" ? (
-              <ChatPage
-                chatScrollRef={chatScrollRef}
-                confirmAction={confirmDialog.confirm}
-                endRef={endRef}
-                handleSend={handleSend}
-                handleChatScroll={handleChatScroll}
-                handleStopStreaming={handleStopStreaming}
-                isSending={isSending}
-                language={language}
-                displayName={auth.user?.display_name || auth.user?.username || ""}
-                messages={messages}
-                mobileNavVisible={isMobileNavVisible}
-                prompt={prompt}
-                quickPrompts={quickPrompts}
-                chatHistory={chatHistory}
-                setPrompt={setPrompt}
-              />
-            ) : null}
 
             {page === "tracing" ? (
               <TracingPage
@@ -1592,7 +1565,7 @@ function ConsoleApp() {
                 language={language}
                 onAnalyzeStock={(symbol) => {
                   setPrompt(formatTemplate(i18n[language].watchlist.analysisPrompt, { symbol }));
-                  setPage("chat");
+                  setPage("overview");
                 }}
                 onOpenFinancials={(symbol) => {
                   setSelectedSymbol(symbol);
@@ -1614,7 +1587,7 @@ function ConsoleApp() {
                 refreshInterval={marketConfig.refresh_interval}
                 onAnalyzeStock={(symbol) => {
                   setPrompt(formatTemplate(i18n[language].portfolio.analysisPrompt, { symbol }));
-                  setPage("chat");
+                  setPage("overview");
                 }}
                 onOpenFinancials={(symbol) => {
                   setSelectedSymbol(symbol);

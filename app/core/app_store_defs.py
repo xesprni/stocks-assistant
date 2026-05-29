@@ -102,7 +102,6 @@ PERMISSION_DESCRIPTIONS: dict[str, str] = {
 
 PAGE_PERMISSION_REQUIREMENTS: dict[str, str] = {
     "overview": "config:read",
-    "chat": "chat:read",
     "tracing": "tracing:read",
     "security": "config:read",
     "watchlist": "watchlist:read",

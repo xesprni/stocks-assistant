@@ -26,10 +26,12 @@ class FakeWatchlistService:
 
 
 class FakeMarketService:
-    def __init__(self, quotes=None, fail_quotes=False):
+    def __init__(self, quotes=None, static_infos=None, fail_quotes=False):
         self.quotes = quotes or []
+        self.static_infos = static_infos or []
         self.fail_quotes = fail_quotes
         self.quote_calls = 0
+        self.static_info_calls = 0
 
     def get_config(self, user_id=None):
         return {"indices": [{"symbol": ".SPX.US", "name": "S&P 500", "enabled": True}], "refresh_interval": 60}
@@ -48,6 +50,13 @@ class FakeMarketService:
             raise LongbridgeUnavailableError("Longbridge credentials are not configured")
         wanted = set(symbols)
         return [quote for quote in self.quotes if quote["symbol"] in wanted]
+
+    def get_security_static_info(self, symbols, settings=None):
+        self.static_info_calls += 1
+        if self.fail_quotes:
+            raise LongbridgeUnavailableError("Longbridge credentials are not configured")
+        wanted = set(symbols)
+        return [info for info in self.static_infos if info["symbol"] in wanted]
 
 
 class FakePortfolioService:
@@ -80,6 +89,9 @@ def watchlist_item(index, category="US"):
         "name_hk": "",
         "exchange": "NASDAQ",
         "currency": "USD",
+        "lot_size": "",
+        "board": "",
+        "security_type": "",
         "last_done": None,
         "change_value": None,
         "change_rate": None,
@@ -176,6 +188,37 @@ class DashboardServiceTest(unittest.TestCase):
         self.assertEqual(row["note"], "track earnings")
         self.assertEqual(row["created_at"], "2026-01-01T00:00:00")
 
+    def test_watchlist_company_profile_uses_longbridge_static_info(self):
+        items = [watchlist_item(1)]
+        items[0]["name_cn"] = ""
+        market_service = FakeMarketService(
+            static_infos=[
+                {
+                    "symbol": "SYM1.US",
+                    "name": "Static Name",
+                    "name_cn": "静态名称",
+                    "name_en": "Static Name",
+                    "name_hk": "",
+                    "exchange": "NYSE",
+                    "currency": "USD",
+                    "lot_size": "1",
+                    "board": "USMain",
+                    "security_type": "Stock",
+                }
+            ]
+        )
+        service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
+
+        payload = service.watchlist(user=FakeUser(), settings=None)
+        row = payload["items"][0]
+
+        self.assertEqual(market_service.static_info_calls, 1)
+        self.assertEqual(row["name"], "Static Name")
+        self.assertEqual(row["name_cn"], "静态名称")
+        self.assertEqual(row["exchange"], "NYSE")
+        self.assertEqual(row["lot_size"], "1")
+        self.assertEqual(row["security_type"], "Stock")
+
     def test_watchlist_overview_permission_strip_removes_quote_fields(self):
         row = {
             **watchlist_item(1),
@@ -268,6 +311,7 @@ class DashboardServiceTest(unittest.TestCase):
         payload = service.build(user=FakeUser(), settings=None, mode="bootstrap")
 
         self.assertEqual(market_service.quote_calls, 0)
+        self.assertEqual(market_service.static_info_calls, 0)
         self.assertEqual(payload["watchlist"]["source"], "local")
         self.assertEqual(payload["watchlist"]["items"][0]["last_done"], None)
 

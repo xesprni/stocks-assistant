@@ -1,6 +1,5 @@
 export type Page =
   | "overview"
-  | "chat"
   | "tracing"
   | "security"
   | "watchlist"

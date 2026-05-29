@@ -76,6 +76,9 @@ def _static_watchlist_row(item: dict[str, Any]) -> dict[str, Any]:
             "name_hk": item.get("name_hk", ""),
             "exchange": item.get("exchange", ""),
             "currency": item.get("currency", ""),
+            "lot_size": item.get("lot_size", ""),
+            "board": item.get("board", ""),
+            "security_type": item.get("security_type", ""),
             "note": item.get("note", ""),
             "created_at": item.get("created_at", ""),
             "updated_at": item.get("updated_at", ""),
@@ -131,6 +134,27 @@ def _merge_quote(static_row: dict[str, Any], quote: dict[str, Any] | None) -> di
     merged["symbol"] = canonical_symbol(merged.get("symbol", static_row.get("symbol", "")))
     merged["name"] = quote.get("name") or static_row.get("name") or merged.get("name", "")
     merged["category"] = quote.get("category") or static_row.get("category") or merged.get("category", "")
+    return merged
+
+
+def _merge_static_info(row: dict[str, Any], static_info: dict[str, Any] | None) -> dict[str, Any]:
+    if not static_info:
+        return dict(row)
+    merged = dict(row)
+    for key, value in static_info.items():
+        if key == "symbol":
+            continue
+        if value not in (None, ""):
+            merged[key] = value
+    merged["symbol"] = canonical_symbol(merged.get("symbol", row.get("symbol", "")))
+    merged["name"] = (
+        static_info.get("name")
+        or static_info.get("name_cn")
+        or static_info.get("name_hk")
+        or static_info.get("name_en")
+        or row.get("name")
+        or merged.get("name", "")
+    )
     return merged
 
 
@@ -241,17 +265,23 @@ class DashboardService:
 
     def build(self, *, user: Any, settings: Any, mode: DashboardMode = "full") -> dict[str, Any]:
         context = self._load_context(user=user)
+        allow_market_remote = mode == "full" and user.can("market:read")
         quote_result = self._fetch_dashboard_quotes(
             user=user,
             settings=settings,
             symbols=context["symbols"],
             name_map=context["name_map"],
             category_map=context["category_map"],
-            allow_remote=mode == "full" and user.can("market:read"),
+            allow_remote=allow_market_remote,
+        )
+        watchlist_static_info = self._fetch_static_info(
+            settings=settings,
+            symbols=[row["symbol"] for row in context["watchlist"].get("rows", [])],
+            allow_remote=allow_market_remote,
         )
         return {
             "market": self._build_market(context["market"], quote_result),
-            "watchlist": self._build_watchlist(context["watchlist"], quote_result, user=user),
+            "watchlist": self._build_watchlist(context["watchlist"], quote_result, user=user, static_info=watchlist_static_info),
             "portfolio": self._build_portfolio(context["portfolio"], quote_result, user=user),
         }
 
@@ -271,15 +301,17 @@ class DashboardService:
     def watchlist(self, *, user: Any, settings: Any, mode: DashboardMode = "full") -> dict[str, Any]:
         context = self._watchlist_context(user=user)
         symbols = [row["symbol"] for row in context.get("rows", [])]
+        allow_market_remote = mode == "full" and user.can("market:read")
         quote_result = self._fetch_dashboard_quotes(
             user=user,
             settings=settings,
             symbols=symbols,
             name_map={row["symbol"]: row.get("name", "") for row in context.get("rows", [])},
             category_map={row["symbol"]: row.get("category", "") for row in context.get("rows", [])},
-            allow_remote=mode == "full" and user.can("market:read"),
+            allow_remote=allow_market_remote,
         )
-        return self._build_watchlist(context, quote_result, user=user)
+        static_info = self._fetch_static_info(settings=settings, symbols=symbols, allow_remote=allow_market_remote)
+        return self._build_watchlist(context, quote_result, user=user, static_info=static_info)
 
     def portfolio(self, *, user: Any, settings: Any, mode: DashboardMode = "full") -> dict[str, Any]:
         context = self._portfolio_context(user=user)
@@ -406,6 +438,19 @@ class DashboardService:
                 stale=True,
             )
 
+    def _fetch_static_info(self, *, settings: Any, symbols: list[str], allow_remote: bool) -> dict[str, dict[str, Any]]:
+        if not allow_remote or not symbols or not hasattr(self.market_service, "get_security_static_info"):
+            return {}
+        try:
+            rows = self.market_service.get_security_static_info(symbols, settings=settings)
+        except Exception:
+            return {}
+        return {
+            canonical_symbol(row.get("symbol", "")): row
+            for row in rows
+            if canonical_symbol(row.get("symbol", ""))
+        }
+
     def _market_context(self, *, user: Any) -> dict[str, Any]:
         if not user.can("market:read"):
             return {"available": False, "error": "Missing permission: market:read", "rows": []}
@@ -463,7 +508,14 @@ class DashboardService:
             "counts": counts,
         }
 
-    def _build_watchlist(self, context: dict[str, Any], quote_result: QuoteFetchResult, *, user: Any) -> dict[str, Any]:
+    def _build_watchlist(
+        self,
+        context: dict[str, Any],
+        quote_result: QuoteFetchResult,
+        *,
+        user: Any,
+        static_info: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         if not context.get("available", True):
             return self._empty_watchlist(
                 available=False,
@@ -472,7 +524,11 @@ class DashboardService:
                 source="local",
                 stale=False,
             )
-        rows = [_merge_quote(row, quote_result.quotes.get(row["symbol"])) for row in context.get("rows", [])]
+        static_info = static_info or {}
+        rows = [
+            _merge_quote(_merge_static_info(row, static_info.get(row["symbol"])), quote_result.quotes.get(row["symbol"]))
+            for row in context.get("rows", [])
+        ]
         views = _sort_watchlist_views(rows)
         quote_error = quote_result.error if rows and user.can("market:read") else None
         return self._module_meta(

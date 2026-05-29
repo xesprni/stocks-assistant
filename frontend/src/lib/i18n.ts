@@ -11,7 +11,6 @@ export const i18n = {
     ],
     nav: {
       overview: ["Dashboard", "市场首页"],
-      chat: ["对话", "Agent chat"],
       watchlist: ["自选", "美/A/H股"],
       portfolio: ["持仓", "仓位/盈亏"],
       news: ["新闻", "标的资讯"],
@@ -550,7 +549,6 @@ export const i18n = {
     ],
     nav: {
       overview: ["Dashboard", "Market home"],
-      chat: ["Chat", "Agent chat"],
       watchlist: ["Watchlist", "US/A/H shares"],
       portfolio: ["Portfolio", "Positions/P&L"],
       news: ["News", "Security news"],
