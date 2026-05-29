@@ -16,12 +16,19 @@ import {
 } from "lucide-react";
 
 import { MarketPulse } from "@/components/MarketPulse";
+import {
+  NativeStockChart,
+  type NativeChartSeries,
+  type NativeChartTheme,
+} from "@/components/charts/NativeStockChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist } from "@/lib/api";
+import { getCandlesticks, getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist, getIntraday } from "@/lib/api";
+import { useChartColors } from "@/lib/color-scheme";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
+  CandlestickItem,
   DashboardMarketModule,
   DashboardModuleSource,
   DashboardPortfolioModule,
@@ -30,6 +37,7 @@ import type {
   DashboardWatchlistModule,
   DashboardWatchlistRow,
   DashboardWatchlistView,
+  IntradayItem,
   PortfolioMarket,
   QuoteItem,
   WatchlistCategory,
@@ -39,6 +47,7 @@ const WATCHLIST_FILTERS: Array<"ALL" | WatchlistCategory> = ["ALL", "US", "A", "
 const WATCHLIST_VIEWS: DashboardWatchlistView[] = ["movers", "gainers", "losers", "active"];
 const DASHBOARD_SNAPSHOT_KEY = "stocks_assistant_dashboard_snapshot_v1";
 const DASHBOARD_SNAPSHOT_MAX_AGE_MS = 10_000;
+const DETAIL_CHART_RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
 
 const EMPTY_MARKET_MODULE: DashboardMarketModule = {
   available: true,
@@ -80,6 +89,7 @@ const EMPTY_DASHBOARD: DashboardResponse = {
 type SymbolRow = DashboardWatchlistRow;
 type Tone = "up" | "down" | "flat";
 type DashboardModuleKey = "market" | "watchlist" | "portfolio";
+type DetailChartRange = (typeof DETAIL_CHART_RANGES)[number];
 const DASHBOARD_MODULE_KEYS: DashboardModuleKey[] = ["market", "watchlist", "portfolio"];
 
 type ModuleStatus = {
@@ -396,6 +406,327 @@ function MarketPill({ language, quote }: { language: AppLanguage; quote: QuoteIt
       <div className="mt-2 flex items-baseline justify-between gap-3">
         <p className="text-lg font-semibold tabular-nums">{formatNumeric(quote.last_done, language, 3)}</p>
         <p className={cn("text-xs tabular-nums", toneClass(tone))}>{signedChange(quote.change_value, tone, language)}</p>
+      </div>
+    </div>
+  );
+}
+
+type ParsedDetailChartBar = {
+  time: number;
+  price: number;
+  volume: number;
+  open?: number;
+};
+
+function detailRangeLabel(range: DetailChartRange, language: AppLanguage) {
+  const labels: Record<DetailChartRange, string> = language === "en"
+    ? { "1D": "1D", "5D": "5D", "1M": "1M", "6M": "6M", YTD: "YTD", "1Y": "1Y", "5Y": "5Y", MAX: "Max" }
+    : { "1D": "1天", "5D": "5天", "1M": "1个月", "6M": "6个月", YTD: "年初至今", "1Y": "1年", "5Y": "5年", MAX: "最大" };
+  return labels[range];
+}
+
+function ytdDailyCount() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 1);
+  const elapsedDays = Math.ceil((now.getTime() - start.getTime()) / 86_400_000) + 5;
+  return Math.min(260, Math.max(30, elapsedDays));
+}
+
+function detailChartRequest(range: DetailChartRange): { kind: "intraday" } | { kind: "candlestick"; period: "1D" | "1W" | "1M"; count: number } {
+  if (range === "1D") return { kind: "intraday" };
+  if (range === "5D") return { kind: "candlestick", period: "1D", count: 5 };
+  if (range === "1M") return { kind: "candlestick", period: "1D", count: 30 };
+  if (range === "6M") return { kind: "candlestick", period: "1D", count: 126 };
+  if (range === "YTD") return { kind: "candlestick", period: "1D", count: ytdDailyCount() };
+  if (range === "1Y") return { kind: "candlestick", period: "1D", count: 252 };
+  if (range === "5Y") return { kind: "candlestick", period: "1W", count: 260 };
+  return { kind: "candlestick", period: "1M", count: 600 };
+}
+
+function cssHsl(styles: CSSStyleDeclaration, name: string, alpha?: number) {
+  const value = styles.getPropertyValue(name).trim();
+  if (!value) return alpha == null ? "transparent" : `rgb(0 0 0 / ${alpha})`;
+  return alpha == null ? `hsl(${value})` : `hsl(${value} / ${alpha})`;
+}
+
+function useIsDarkTheme() {
+  const [isDark, setIsDark] = useState(() =>
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark"),
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof MutationObserver === "undefined") return undefined;
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains("dark"));
+    });
+    observer.observe(document.documentElement, { attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return isDark;
+}
+
+function useDashboardChartTheme(): NativeChartTheme {
+  const isDark = useIsDarkTheme();
+  const { upColor, downColor } = useChartColors();
+
+  return useMemo(() => {
+    if (typeof window === "undefined") {
+      return {
+        background: "transparent",
+        text: "#e8eaed",
+        mutedText: "#a6adb7",
+        border: "rgb(255 255 255 / 0.14)",
+        grid: "rgb(255 255 255 / 0.08)",
+        crosshair: "rgb(255 255 255 / 0.5)",
+        axisBackground: "rgb(0 0 0 / 0.9)",
+        up: upColor,
+        down: downColor,
+        blue: "#8ab4f8",
+        orange: "#fdd663",
+        purple: "#c58af9",
+        yellow: "#fdd663",
+      };
+    }
+
+    const styles = window.getComputedStyle(document.documentElement);
+    return {
+      background: cssHsl(styles, "--card", isDark ? 0.42 : 0.58),
+      text: cssHsl(styles, "--foreground"),
+      mutedText: cssHsl(styles, "--muted-foreground"),
+      border: cssHsl(styles, "--border", isDark ? 0.62 : 0.72),
+      grid: styles.getPropertyValue("--grid-line").trim() || cssHsl(styles, "--border", isDark ? 0.24 : 0.32),
+      crosshair: cssHsl(styles, "--muted-foreground", isDark ? 0.72 : 0.62),
+      axisBackground: cssHsl(styles, "--background", isDark ? 0.94 : 0.9),
+      up: upColor,
+      down: downColor,
+      blue: cssHsl(styles, "--primary"),
+      orange: cssHsl(styles, "--secondary"),
+      purple: isDark ? "#c58af9" : "#7e57c2",
+      yellow: isDark ? "#fdd663" : "#b7791f",
+    };
+  }, [isDark, upColor, downColor]);
+}
+
+function colorWithAlpha(color: string, alpha: number) {
+  const hex = color.trim();
+  const normalized = hex.length === 4
+    ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
+    : hex;
+  const match = /^#([0-9a-f]{6})$/i.exec(normalized);
+  if (!match) return color;
+  const value = Number.parseInt(match[1], 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgb(${r} ${g} ${b} / ${alpha})`;
+}
+
+function parseDetailIntradayBars(bars: IntradayItem[]): ParsedDetailChartBar[] {
+  return bars
+    .map((bar): ParsedDetailChartBar | null => {
+      const price = parseNumber(bar.price);
+      if (price === null) return null;
+      return {
+        time: bar.timestamp,
+        price,
+        volume: parseNumber(bar.volume) ?? 0,
+      };
+    })
+    .filter((bar): bar is ParsedDetailChartBar => bar !== null)
+    .sort((a, b) => a.time - b.time);
+}
+
+function parseDetailCandlestickBars(bars: CandlestickItem[]): ParsedDetailChartBar[] {
+  return bars
+    .map((bar): ParsedDetailChartBar | null => {
+      const price = parseNumber(bar.close);
+      if (price === null) return null;
+      return {
+        time: bar.timestamp,
+        price,
+        volume: parseNumber(bar.volume) ?? 0,
+        open: parseNumber(bar.open) ?? price,
+      };
+    })
+    .filter((bar): bar is ParsedDetailChartBar => bar !== null)
+    .sort((a, b) => a.time - b.time);
+}
+
+function formatNumberValue(value: number | null | undefined, language: AppLanguage, maximumFractionDigits = 2) {
+  if (value == null || !Number.isFinite(value)) return "-";
+  return value.toLocaleString(localeFor(language), { maximumFractionDigits });
+}
+
+function formatSignedPercentValue(value: number | null | undefined, language: AppLanguage) {
+  if (value == null || !Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  const absolute = Math.abs(value).toLocaleString(localeFor(language), { maximumFractionDigits: 2 });
+  return `${sign}${absolute}%`;
+}
+
+function chartChangePercent(bars: ParsedDetailChartBar[], row: DashboardWatchlistRow, range: DetailChartRange) {
+  const rowRate = range === "1D" ? parseNumber(row.change_rate) : null;
+  if (rowRate !== null) return rowRate;
+  const first = bars[0]?.price;
+  const latest = bars[bars.length - 1]?.price;
+  if (!first || latest == null) return null;
+  return ((latest - first) / first) * 100;
+}
+
+function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: DashboardWatchlistRow }) {
+  const [range, setRange] = useState<DetailChartRange>("1D");
+  const [bars, setBars] = useState<ParsedDetailChartBar[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const theme = useDashboardChartTheme();
+  const labels = language === "en"
+    ? { price: "Price", volume: "Volume", prevClose: "Prev", loading: "Loading chart", empty: "No chart data" }
+    : { price: "价格", volume: "成交量", prevClose: "昨收", loading: "加载图表中", empty: "暂无图表数据" };
+
+  useEffect(() => {
+    let cancelled = false;
+    const request = detailChartRequest(range);
+    setLoading(true);
+    setError("");
+    setBars([]);
+
+    const loader = request.kind === "intraday"
+      ? getIntraday(row.symbol).then((response) => parseDetailIntradayBars(response.bars))
+      : getCandlesticks(row.symbol, request.period, request.count).then((response) => parseDetailCandlestickBars(response.bars));
+
+    loader
+      .then((nextBars) => {
+        if (cancelled) return;
+        setBars(nextBars);
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        setError(caught instanceof Error ? caught.message : labels.empty);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [labels.empty, range, row.symbol]);
+
+  const changePercent = chartChangePercent(bars, row, range);
+  const tone: Tone = changePercent == null || changePercent === 0 ? "flat" : changePercent > 0 ? "up" : "down";
+  const latest = bars[bars.length - 1];
+  const displayPrice = latest?.price ?? parseNumber(row.last_done);
+  const displayVolume = parseNumber(row.volume) ?? latest?.volume ?? null;
+  const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
+  const panes = useMemo(() => [
+    { id: "price", label: labels.price.toUpperCase(), heightWeight: 3 },
+    { id: "volume", label: "VOL", heightWeight: 0.72 },
+  ], [labels.price]);
+  const series = useMemo<NativeChartSeries[]>(() => {
+    if (bars.length === 0) return [];
+    const lineColor = tone === "up" ? theme.up : tone === "down" ? theme.down : theme.blue;
+    const next: NativeChartSeries[] = [];
+    const prevClose = parseNumber(row.prev_close);
+    if (prevClose !== null) {
+      next.push({
+        id: "prev-close",
+        paneId: "price",
+        type: "line",
+        title: labels.prevClose,
+        color: theme.mutedText,
+        lineWidth: 1,
+        dashed: true,
+        data: bars.map((bar) => ({ time: bar.time, value: prevClose })),
+      });
+    }
+    next.push(
+      {
+        id: "price",
+        paneId: "price",
+        type: "line",
+        title: labels.price,
+        color: lineColor,
+        lineWidth: 2,
+        data: bars.map((bar) => ({ time: bar.time, value: bar.price })),
+      },
+      {
+        id: "volume",
+        paneId: "volume",
+        type: "histogram",
+        title: "VOL",
+        data: bars.map((bar, index) => {
+          const previous = index > 0 ? bars[index - 1].price : bar.open ?? bar.price;
+          return {
+            time: bar.time,
+            value: bar.volume,
+            color: colorWithAlpha(bar.price >= previous ? theme.up : theme.down, 0.48),
+          };
+        }),
+      },
+    );
+    return next;
+  }, [bars, labels.prevClose, labels.price, row.prev_close, theme, tone]);
+
+  return (
+    <div className="overflow-hidden rounded-md border border-border/65 bg-card/70">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border/65 bg-background/55 px-2.5 py-1.5 text-sm tabular-nums">
+          <span className="text-muted-foreground">{labels.price}：</span>
+          <span className={cn("font-semibold", toneClass(tone))}>
+            {formatNumberValue(displayPrice, language, 3)} ({formatSignedPercentValue(changePercent, language)})
+          </span>
+          <span className="text-muted-foreground">{labels.volume}：</span>
+          <span className="font-medium text-foreground">{formatCompactNumeric(displayVolume == null ? null : String(displayVolume), language)}</span>
+        </div>
+        {loading && bars.length > 0 ? (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            {labels.loading}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="h-[260px] border-t border-border/45">
+        {loading && bars.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-3">
+            <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{labels.loading}</InlineState>
+          </div>
+        ) : error && bars.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-3">
+            <InlineState>{error}</InlineState>
+          </div>
+        ) : bars.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-3">
+            <InlineState>{labels.empty}</InlineState>
+          </div>
+        ) : (
+          <NativeStockChart
+            className="h-full w-full"
+            fitKey={`${row.symbol}:${range}:${bars.length}`}
+            panes={panes}
+            primaryRangeSeriesId="price"
+            series={series}
+            theme={theme}
+            times={times}
+          />
+        )}
+      </div>
+
+      <div className="grid grid-cols-4 gap-1 border-t border-border/45 bg-background/30 p-2 sm:grid-cols-8">
+        {DETAIL_CHART_RANGES.map((item) => (
+          <button
+            className={cn(
+              "h-9 rounded-md px-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
+              range === item && "bg-muted text-foreground shadow-sm",
+            )}
+            key={item}
+            onClick={() => setRange(item)}
+            type="button"
+          >
+            {detailRangeLabel(item, language)}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -853,6 +1184,8 @@ function WatchlistSymbolDetail({
       title={row.symbol}
     >
       <div className="space-y-4">
+        <WatchlistSymbolChart language={language} row={row} />
+
         <div className="rounded-md border-y border-border/55 py-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>

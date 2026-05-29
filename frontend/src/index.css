@@ -54,48 +54,48 @@
   .dark {
     --color-up: #81c995;
     --color-down: #f28b82;
-    --background: 0 0% 12%;
-    --foreground: 210 17% 92%;
-    --card: 0 0% 15%;
+    --background: 0 0% 5%;
+    --foreground: 210 17% 93%;
+    --card: 0 0% 8%;
     --card-foreground: 210 17% 92%;
-    --popover: 0 0% 16%;
+    --popover: 0 0% 9%;
     --popover-foreground: 210 17% 92%;
     --primary: 217 89% 76%;
     --primary-foreground: 217 56% 12%;
     --secondary: 45 97% 64%;
     --secondary-foreground: 42 38% 12%;
-    --muted: 0 0% 19%;
-    --muted-foreground: 216 8% 68%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 216 8% 70%;
     --accent: 217 89% 76%;
     --accent-foreground: 217 56% 12%;
     --destructive: 4 84% 74%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 25%;
-    --input: 0 0% 27%;
+    --border: 0 0% 18%;
+    --input: 0 0% 20%;
     --ring: 217 89% 76%;
-    --grid-line: rgba(232, 234, 237, 0.052);
-    --grid-line-soft: rgba(232, 234, 237, 0.034);
+    --grid-line: rgba(232, 234, 237, 0.06);
+    --grid-line-soft: rgba(232, 234, 237, 0.035);
     --shell-primary: rgba(138, 180, 248, 0.12);
     --shell-secondary: rgba(129, 201, 149, 0.1);
-    --app-header-bg: hsl(0 0% 13% / 0.96);
-    --app-grid-bg: hsl(0 0% 12%);
-    --app-sidebar-bg: hsl(0 0% 13% / 0.96);
-    --app-mobile-nav-bg: hsl(0 0% 13% / 0.96);
-    --app-stage-bg: hsl(0 0% 12%);
-    --panel-bg: hsl(0 0% 14% / 0.96);
-    --tile-bg: hsl(0 0% 17% / 0.72);
+    --app-header-bg: hsl(0 0% 6% / 0.96);
+    --app-grid-bg: hsl(0 0% 5%);
+    --app-sidebar-bg: hsl(0 0% 6% / 0.96);
+    --app-mobile-nav-bg: hsl(0 0% 6% / 0.96);
+    --app-stage-bg: hsl(0 0% 5%);
+    --panel-bg: hsl(0 0% 7% / 0.96);
+    --tile-bg: hsl(0 0% 10% / 0.76);
     --panel-shadow: none;
     --control-shadow: none;
     --control-shadow-hover: none;
     --list-hover-bg: hsl(217 89% 76% / 0.13);
     --list-hover-border: hsl(217 89% 76% / 0.56);
     --list-hover-shadow: inset 3px 0 0 hsl(217 89% 76% / 0.7), 0 0 0 1px hsl(217 89% 76% / 0.09);
-    --chat-assistant-bg: hsl(0 0% 15% / 0.96);
-    --chat-assistant-border: hsl(0 0% 25% / 0.78);
+    --chat-assistant-bg: hsl(0 0% 8% / 0.96);
+    --chat-assistant-border: hsl(0 0% 18% / 0.78);
     --chat-user-bg: hsl(var(--primary));
     --chat-user-border: hsl(var(--primary));
     --chat-user-foreground: hsl(var(--primary-foreground));
-    --chat-code-bg: hsl(0 0% 10% / 0.92);
+    --chat-code-bg: hsl(0 0% 4% / 0.94);
   }
 
   [data-color-scheme="cn"] {
@@ -180,8 +180,7 @@
   }
 
   .dark .auth-fluid-shell {
-    background:
-      linear-gradient(140deg, hsl(218 25% 8%), hsl(190 46% 13%) 38%, hsl(280 34% 14%) 68%, hsl(340 32% 13%));
+    background: hsl(0 0% 4%);
   }
 
   .auth-fluid-shell::before,
@@ -204,8 +203,8 @@
   }
 
   .dark .auth-fluid-shell::before {
-    opacity: 0.62;
-    filter: blur(42px) saturate(1.25);
+    opacity: 0.3;
+    filter: blur(42px) saturate(1.05);
   }
 
   .auth-fluid-shell::after {
@@ -218,7 +217,7 @@
   }
 
   .dark .auth-fluid-shell::after {
-    opacity: 0.32;
+    opacity: 0.18;
   }
 
   .auth-panel {
@@ -228,7 +227,7 @@
   }
 
   .dark .auth-panel {
-    background: hsl(218 18% 12% / 0.76);
+    background: hsl(0 0% 7% / 0.88);
     box-shadow:
       0 32px 80px hsl(0 0% 0% / 0.46),
       inset 0 1px 0 hsl(0 0% 100% / 0.08);
@@ -370,7 +369,7 @@
 
   .dark .finance-top-nav {
     border-bottom-color: hsl(var(--border) / 0.86);
-    background: hsl(0 0% 13% / 0.94);
+    background: hsl(0 0% 6% / 0.94);
   }
 
   .dark .finance-top-nav-item:hover {
