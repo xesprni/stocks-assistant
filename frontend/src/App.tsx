@@ -265,7 +265,9 @@ function getPinnedNavItems(language: AppLanguage): NavItem[] {
     navItem(language, "overview", <Home />),
     navItem(language, "watchlist", <Star />),
     navItem(language, "portfolio", <BriefcaseBusiness />),
+    navItem(language, "fundamentals", <FileText />),
     navItem(language, "news", <Newspaper />),
+    navItem(language, "scheduler", <Clock />),
   ];
 }
 
@@ -283,25 +285,11 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
     ],
   },
   {
-    id: "market-tools",
-    label: groups.market,
-    items: [
-      navItem(language, "fundamentals", <FileText />),
-    ],
-  },
-  {
     id: "workspace",
     label: groups.workspace,
     items: [
       navItem(language, "memory", <BrainCircuit />),
       navItem(language, "knowledge", <BookOpen />),
-    ],
-  },
-  {
-    id: "automation",
-    label: groups.automation,
-    items: [
-      navItem(language, "scheduler", <Clock />),
     ],
   },
   {
@@ -323,7 +311,6 @@ function getDesktopMoreGroups(language: AppLanguage): NavGroup[] {
       id: "analysis",
       label: groups.analysis,
       items: [
-        navItem(language, "fundamentals", <FileText />),
         navItem(language, "tracing", <Cpu />),
       ],
     },
@@ -336,13 +323,6 @@ function getDesktopMoreGroups(language: AppLanguage): NavGroup[] {
         navItem(language, "skills", <Zap />),
         navItem(language, "subagents", <Bot />),
         navItem(language, "mcp", <Plug />),
-      ],
-    },
-    {
-      id: "automation",
-      label: groups.automation,
-      items: [
-        navItem(language, "scheduler", <Clock />),
       ],
     },
     {
@@ -1803,7 +1783,7 @@ function DesktopTopNav({
 
   return (
     <nav className="finance-top-nav hidden shrink-0 lg:block" aria-label={i18n[language].shell.navigation}>
-      <div className="mx-auto flex h-11 w-full max-w-[1760px] items-center gap-1 px-4">
+      <div className="flex h-11 w-full items-center gap-1 px-4">
         {primaryItems.map((item) => (
           <button
             aria-current={page === item.id ? "page" : undefined}
