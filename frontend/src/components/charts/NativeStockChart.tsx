@@ -123,8 +123,11 @@ type ChartPoint = {
   y: number;
 };
 
+type PointerPanMode = "direct" | "scroll";
+
 type PinchState = {
   leftRatio: number;
+  panMode: PointerPanMode;
   startCenter: ChartPoint;
   startCenterIndex: number;
   startDistance: number;
@@ -174,6 +177,11 @@ function pointDistance(a: ChartPoint, b: ChartPoint) {
 
 function midpoint(a: ChartPoint, b: ChartPoint): ChartPoint {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function panDeltaBars(deltaPixels: number, spacing: number, mode: PointerPanMode) {
+  const deltaBars = deltaPixels / Math.max(1, spacing);
+  return mode === "scroll" ? deltaBars : -deltaBars;
 }
 
 function paddedBounds(layout: PaneLayout) {
@@ -702,7 +710,7 @@ export function NativeStockChart({
   const sizeRef = useRef({ width: 0, height: 0, dpr: 1 });
   const viewportRef = useRef<NativeChartViewport>({ from: 0, to: 0 });
   const crosshairRef = useRef<(NativeCrosshairState & { y: number }) | null>(null);
-  const dragRef = useRef<{ startX: number; startViewport: NativeChartViewport } | null>(null);
+  const dragRef = useRef<{ panMode: PointerPanMode; startX: number; startViewport: NativeChartViewport } | null>(null);
   const activePointersRef = useRef<Map<number, ChartPoint>>(new Map());
   const pinchRef = useRef<PinchState | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -893,6 +901,7 @@ export function NativeStockChart({
     const count = viewportCount(viewport);
     pinchRef.current = {
       leftRatio: clamp((startCenterIndex - viewport.from) / count, 0, 1),
+      panMode: "scroll",
       startCenter: center,
       startCenterIndex,
       startDistance: Math.max(1, pointDistance(a, b)),
@@ -917,8 +926,8 @@ export function NativeStockChart({
       Math.min(MIN_VISIBLE_BARS, current.times.length),
       current.times.length,
     );
-    const deltaBars = (center.x - pinch.startCenter.x) / Math.max(1, mapper.spacing);
-    const centerIndex = pinch.startCenterIndex - deltaBars;
+    const deltaBars = panDeltaBars(center.x - pinch.startCenter.x, mapper.spacing, pinch.panMode);
+    const centerIndex = pinch.startCenterIndex + deltaBars;
     const nextFrom = centerIndex - pinch.leftRatio * nextCount;
     setViewport({ from: nextFrom, to: nextFrom + nextCount - 1 });
     updateCrosshair(center.x, center.y);
@@ -956,7 +965,11 @@ export function NativeStockChart({
             return;
           }
           pinchRef.current = null;
-          dragRef.current = { startX: point.x, startViewport: viewportRef.current };
+          dragRef.current = {
+            panMode: event.pointerType === "touch" ? "scroll" : "direct",
+            startX: point.x,
+            startViewport: viewportRef.current,
+          };
           updateCrosshair(point.x, point.y);
           scheduleDraw();
         }}
@@ -974,10 +987,10 @@ export function NativeStockChart({
           const current = dataRef.current;
           if (dragRef.current && layoutsRef.current.length > 0 && current.times.length > 0) {
             const mapper = createXMapper(layoutsRef.current[0], normalizeViewport(dragRef.current.startViewport, current.times.length));
-            const deltaBars = (point.x - dragRef.current.startX) / mapper.spacing;
+            const deltaBars = panDeltaBars(point.x - dragRef.current.startX, mapper.spacing, dragRef.current.panMode);
             setViewport({
-              from: dragRef.current.startViewport.from - deltaBars,
-              to: dragRef.current.startViewport.to - deltaBars,
+              from: dragRef.current.startViewport.from + deltaBars,
+              to: dragRef.current.startViewport.to + deltaBars,
             });
           } else {
             scheduleDraw();
