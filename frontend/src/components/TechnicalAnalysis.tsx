@@ -1,6 +1,6 @@
 /**
  * TechnicalAnalysis.tsx
- * Built for lightweight-charts v5 (addSeries + pane system).
+ * Native Canvas charts tuned for the app theme.
  *
  * Layout:
  *  - Left sidebar: symbol list
@@ -10,28 +10,18 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import {
-  createChart,
-  CandlestickSeries,
-  LineSeries,
-  HistogramSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type SeriesType,
-  type LineData,
-  type HistogramData,
-  type Time,
-  type MouseEventParams,
-  ColorType,
-  CrosshairMode,
-  LineStyle,
-} from "lightweight-charts";
 import { BarChart2, RefreshCw, TrendingUp } from "lucide-react";
+import {
+  NativeStockChart,
+  type NativeChartPane,
+  type NativeChartSeries,
+  type NativeChartTheme,
+  type NativeVisibleRange,
+} from "@/components/charts/NativeStockChart";
 import { getCandlesticks, getIntraday, listWatchlist } from "@/lib/api";
 import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import type { CandlestickItem, IntradayItem, WatchlistItem } from "@/types/app";
@@ -48,7 +38,6 @@ import {
   calcDMI,
   calcOSC,
   calcChipDistribution,
-  type ChipBar,
 } from "@/lib/indicators";
 import { useChartColors } from "@/lib/color-scheme";
 
@@ -127,54 +116,6 @@ function formatTemplate(text: string, values: Record<string, string | number>) {
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
-function makeTheme(isDark: boolean, upColor: string, downColor: string) {
-  return isDark ? {
-    bg:     "#131722",
-    text:   "#d1d5db",
-    grid:   "rgba(255,255,255,0.04)",
-    border: "#2a2e39",
-    up:     upColor,
-    down:   downColor,
-    blue:   "#2962ff",
-    orange: "#ff6d00",
-    purple: "#9c27b0",
-    yellow: "#f57f17",
-  } : {
-    bg:     "#ffffff",
-    text:   "#1e222d",
-    grid:   "rgba(0,0,0,0.06)",
-    border: "#dde1eb",
-    up:     upColor,
-    down:   downColor,
-    blue:   "#2962ff",
-    orange: "#ff6d00",
-    purple: "#9c27b0",
-    yellow: "#f57f17",
-  };
-}
-
-type ChartTheme = ReturnType<typeof makeTheme>;
-
-function chartLayoutOpts(T: ChartTheme) {
-  return {
-    layout: {
-      background: { type: ColorType.Solid, color: T.bg },
-      textColor: T.text,
-    },
-    grid: {
-      vertLines: { color: T.grid },
-      horzLines: { color: T.grid },
-    },
-    timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false },
-    crosshair: { mode: CrosshairMode.Normal },
-    rightPriceScale: { borderColor: T.border },
-  };
-}
-
-function chartOpts(height: number, T: ChartTheme) {
-  return { height, ...chartLayoutOpts(T) };
-}
-
 function useIsDark() {
   const [isDark, setIsDark] = useState(() =>
     document.documentElement.classList.contains("dark")
@@ -189,11 +130,38 @@ function useIsDark() {
   return isDark;
 }
 
+function cssHsl(styles: CSSStyleDeclaration, name: string, alpha?: number) {
+  const value = styles.getPropertyValue(name).trim();
+  if (!value) return alpha == null ? "transparent" : `rgb(0 0 0 / ${alpha})`;
+  return alpha == null ? `hsl(${value})` : `hsl(${value} / ${alpha})`;
+}
+
+function useNativeChartTheme(isDark: boolean, upColor: string, downColor: string): NativeChartTheme {
+  return useMemo(() => {
+    const styles = getComputedStyle(document.documentElement);
+    return {
+      background: cssHsl(styles, "--background"),
+      text: cssHsl(styles, "--foreground"),
+      mutedText: cssHsl(styles, "--muted-foreground"),
+      border: cssHsl(styles, "--border"),
+      grid: styles.getPropertyValue("--grid-line").trim() || cssHsl(styles, "--border", isDark ? 0.28 : 0.36),
+      crosshair: cssHsl(styles, "--muted-foreground", isDark ? 0.72 : 0.62),
+      axisBackground: cssHsl(styles, "--card", 0.94),
+      up: upColor,
+      down: downColor,
+      blue: cssHsl(styles, "--primary"),
+      orange: cssHsl(styles, "--secondary"),
+      purple: isDark ? "#c58af9" : "#7e57c2",
+      yellow: isDark ? "#fdd663" : "#b7791f",
+    };
+  }, [isDark, upColor, downColor]);
+}
+
 // ── Data helpers ───────────────────────────────────────────────────────────────
 
 function parseBars(bars: CandlestickItem[]) {
   return bars.map((b) => ({
-    time: b.timestamp as Time,
+    time: b.timestamp,
     open: parseFloat(b.open),
     high: parseFloat(b.high),
     low: parseFloat(b.low),
@@ -205,7 +173,7 @@ function parseBars(bars: CandlestickItem[]) {
 function parseIntraday(bars: IntradayItem[]) {
   return bars
     .map((b) => ({
-      time: b.timestamp as Time,
+      time: b.timestamp,
       price: parseFloat(b.price),
       volume: parseFloat(b.volume),
       avg_price: parseFloat(b.avg_price),
@@ -391,20 +359,190 @@ function SymbolSideNav({
   );
 }
 
+// ── Native chart data helpers ─────────────────────────────────────────────────
+
+type ParsedKLineBar = ReturnType<typeof parseBars>[number];
+
+function colorWithAlpha(color: string, opacity: number) {
+  if (/^#[0-9a-f]{6}$/i.test(color)) {
+    return `${color}${Math.round(Math.min(1, Math.max(0, opacity)) * 255)
+      .toString(16)
+      .padStart(2, "0")}`;
+  }
+  if (color.startsWith("hsl(") && !color.includes("/")) {
+    return color.replace(/\)$/, ` / ${opacity})`);
+  }
+  return color;
+}
+
+function toLinePoints(
+  bars: { time: number }[],
+  values: (number | null)[],
+): Extract<NativeChartSeries, { type: "line" }>["data"] {
+  return bars
+    .map((bar, index) => (values[index] == null ? null : { time: bar.time, value: values[index]! }))
+    .filter((point): point is { time: number; value: number } => point != null);
+}
+
+function makeLineSeries(
+  id: string,
+  paneId: string,
+  title: string,
+  color: string,
+  bars: { time: number }[],
+  values: (number | null)[],
+  dashed = false,
+): NativeChartSeries {
+  return {
+    id,
+    paneId,
+    title,
+    type: "line",
+    color,
+    lineWidth: 1.35,
+    dashed,
+    data: toLinePoints(bars, values),
+  };
+}
+
+function makeHistogramSeries(
+  id: string,
+  paneId: string,
+  title: string,
+  bars: { time: number }[],
+  values: (number | null)[],
+  colorForValue: (value: number, index: number) => string,
+): NativeChartSeries {
+  return {
+    id,
+    paneId,
+    title,
+    type: "histogram",
+    baseline: 0,
+    data: bars
+      .map((bar, index) => {
+        const value = values[index];
+        return value == null ? null : { time: bar.time, value, color: colorForValue(value, index) };
+      })
+      .filter((point): point is { time: number; value: number; color: string } => point != null),
+  };
+}
+
+function buildKLineChartModel(
+  bars: ParsedKLineBar[],
+  activeIndicators: Set<IndicatorKey>,
+  theme: NativeChartTheme,
+): { panes: NativeChartPane[]; series: NativeChartSeries[] } {
+  const closes = bars.map((bar) => bar.close);
+  const highs = bars.map((bar) => bar.high);
+  const lows = bars.map((bar) => bar.low);
+  const panes: NativeChartPane[] = [
+    { id: "price", label: "PRICE", heightWeight: 3 },
+    { id: "volume", label: "VOL", heightWeight: 0.72 },
+  ];
+  const series: NativeChartSeries[] = [
+    {
+      id: "candles",
+      paneId: "price",
+      title: "OHLC",
+      type: "candlestick",
+      data: bars.map((bar) => ({
+        time: bar.time,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+      })),
+    },
+    makeLineSeries("ma5", "price", "MA5", theme.orange, bars, calcMA(closes, 5)),
+    makeLineSeries("ma10", "price", "MA10", theme.blue, bars, calcMA(closes, 10)),
+    makeLineSeries("ma20", "price", "MA20", theme.purple, bars, calcMA(closes, 20)),
+    makeHistogramSeries("volume", "volume", "VOL", bars, bars.map((bar) => bar.volume), (_value, index) =>
+      bars[index].close >= bars[index].open ? colorWithAlpha(theme.up, 0.36) : colorWithAlpha(theme.down, 0.36),
+    ),
+  ];
+
+  if (activeIndicators.has("BOLL")) {
+    const boll = calcBollinger(closes);
+    series.push(
+      makeLineSeries("boll-upper", "price", "BOLL U", theme.yellow, bars, boll.map((point) => point?.upper ?? null)),
+      makeLineSeries("boll-middle", "price", "BOLL M", theme.mutedText, bars, boll.map((point) => point?.middle ?? null), true),
+      makeLineSeries("boll-lower", "price", "BOLL L", theme.yellow, bars, boll.map((point) => point?.lower ?? null)),
+    );
+  }
+
+  if (activeIndicators.has("BBIBOLL")) {
+    const bbiboll = calcBBIBOLL(closes);
+    series.push(
+      makeLineSeries("bbiboll-upper", "price", "BBI U", theme.orange, bars, bbiboll.map((point) => point?.upper ?? null), true),
+      makeLineSeries("bbiboll-middle", "price", "BBI M", theme.blue, bars, bbiboll.map((point) => point?.middle ?? null)),
+      makeLineSeries("bbiboll-lower", "price", "BBI L", theme.orange, bars, bbiboll.map((point) => point?.lower ?? null), true),
+    );
+  }
+
+  if (activeIndicators.has("EMA")) {
+    series.push(
+      makeLineSeries("ema12", "price", "EMA12", theme.orange, bars, calcEMAValues(closes, 12)),
+      makeLineSeries("ema26", "price", "EMA26", theme.purple, bars, calcEMAValues(closes, 26)),
+    );
+  }
+
+  for (const key of ["MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC"] as SubIndicatorKey[]) {
+    if (!activeIndicators.has(key)) continue;
+    const paneId = key.toLowerCase();
+    panes.push({ id: paneId, label: key, heightWeight: 0.9 });
+    if (key === "MACD") {
+      const macd = calcMACD(closes);
+      series.push(
+        makeHistogramSeries("macd-hist", paneId, "HIST", bars, macd.map((point) => point?.histogram ?? null), (value) =>
+          value >= 0 ? colorWithAlpha(theme.up, 0.62) : colorWithAlpha(theme.down, 0.62),
+        ),
+        makeLineSeries("macd", paneId, "MACD", theme.blue, bars, macd.map((point) => point?.macd ?? null)),
+        makeLineSeries("macd-signal", paneId, "SIGNAL", theme.orange, bars, macd.map((point) => point?.signal ?? null)),
+      );
+    } else if (key === "KDJ") {
+      const kdj = calcKDJ(highs, lows, closes);
+      series.push(
+        makeLineSeries("kdj-k", paneId, "K", theme.blue, bars, kdj.map((point) => point?.k ?? null)),
+        makeLineSeries("kdj-d", paneId, "D", theme.orange, bars, kdj.map((point) => point?.d ?? null)),
+        makeLineSeries("kdj-j", paneId, "J", theme.purple, bars, kdj.map((point) => point?.j ?? null)),
+      );
+    } else if (key === "RSI") {
+      series.push(makeLineSeries("rsi", paneId, "RSI", theme.blue, bars, calcRSI(closes)));
+    } else if (key === "CCI") {
+      series.push(makeLineSeries("cci", paneId, "CCI", theme.orange, bars, calcCCI(highs, lows, closes)));
+    } else if (key === "WR") {
+      series.push(makeLineSeries("wr", paneId, "WR", theme.purple, bars, calcWR(highs, lows, closes)));
+    } else if (key === "DMI") {
+      const dmi = calcDMI(highs, lows, closes);
+      series.push(
+        makeLineSeries("dmi-pdi", paneId, "PDI", theme.blue, bars, dmi.map((point) => point?.pdi ?? null)),
+        makeLineSeries("dmi-mdi", paneId, "MDI", theme.orange, bars, dmi.map((point) => point?.mdi ?? null)),
+        makeLineSeries("dmi-adx", paneId, "ADX", theme.purple, bars, dmi.map((point) => point?.adx ?? null)),
+        makeLineSeries("dmi-adxr", paneId, "ADXR", theme.yellow, bars, dmi.map((point) => point?.adxr ?? null), true),
+      );
+    } else if (key === "OSC") {
+      const osc = calcOSC(closes);
+      series.push(
+        makeHistogramSeries("osc-hist", paneId, "HIST", bars, osc.map((point) => point?.histogram ?? null), (value) =>
+          value >= 0 ? colorWithAlpha(theme.up, 0.62) : colorWithAlpha(theme.down, 0.62),
+        ),
+        makeLineSeries("osc", paneId, "OSC", theme.blue, bars, osc.map((point) => point?.osc ?? null)),
+        makeLineSeries("maosc", paneId, "MAOSC", theme.orange, bars, osc.map((point) => point?.maosc ?? null)),
+      );
+    }
+  }
+
+  return { panes, series };
+}
+
 // ── K-line chart ──────────────────────────────────────────────────────────────
 
-/**
- * Pane 0: Candlestick + MA5/10/20 + optional overlay (BOLL / BBIBOLL / EMA)
- * Pane 1: Volume histogram
- * Pane 2+: Dynamic indicator panes
- */
 function KLineChart({
   symbol,
   activeIndicators,
   copy,
   isDark,
-  onCrosshairMove,
-  registerChart,
   onParsedBars,
   onVisibleRangeChange,
 }: {
@@ -412,407 +550,92 @@ function KLineChart({
   activeIndicators: Set<IndicatorKey>;
   copy: TechnicalCopy;
   isDark: boolean;
-  onCrosshairMove: (params: MouseEventParams) => void;
-  registerChart: (chart: IChartApi | null, primarySeries: ISeriesApi<SeriesType> | null) => void;
   onParsedBars: (bars: ReturnType<typeof parseBars>) => void;
   onVisibleRangeChange: (range: { min: number; max: number } | null) => void;
 }) {
   const { upColor, downColor } = useChartColors();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const ma5Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const ma10Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const ma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
-
+  const theme = useNativeChartTheme(isDark, upColor, downColor);
   const [period, setPeriod] = useState<Period>(() =>
     readStoredValue(TECHNICAL_KLINE_PERIOD_STORAGE_KEY, ["1D", "1W", "1M"], "1D"),
   );
   const [loading, setLoading] = useState(false);
-
-  const indicatorSeriesRef = useRef<Map<IndicatorKey, ISeriesApi<SeriesType>[]>>(new Map());
-  const overlaySeriesRef = useRef<ISeriesApi<SeriesType>[]>([]);
+  const [bars, setBars] = useState<ReturnType<typeof parseBars>>([]);
   const symbolRef = useRef(symbol);
   const periodRef = useRef(period);
-  const isDarkRef = useRef(isDark);
-  const upColorRef = useRef(upColor);
-  const downColorRef = useRef(downColor);
+  const dataCountRef = useRef(200);
+  const isLoadingMoreRef = useRef(false);
+  const allDataLoadedRef = useRef(false);
 
-  // Keep refs in sync with props/state
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
   useEffect(() => { periodRef.current = period; }, [period]);
   useEffect(() => {
     writeStoredValue(TECHNICAL_KLINE_PERIOD_STORAGE_KEY, period);
   }, [period]);
-  useEffect(() => { isDarkRef.current = isDark; }, [isDark]);
-  useEffect(() => { upColorRef.current = upColor; }, [upColor]);
-  useEffect(() => { downColorRef.current = downColor; }, [downColor]);
 
-  const parsedRef = useRef<ReturnType<typeof parseBars>>([]);
-  const dataCountRef = useRef(200);
-  const isLoadingMoreRef = useRef(false);
-  const allDataLoadedRef = useRef(false);
+  const chartModel = useMemo(
+    () => buildKLineChartModel(bars, activeIndicators, theme),
+    [activeIndicators, bars, theme],
+  );
+  const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
 
-  useLayoutEffect(() => {
-    if (!containerRef.current) return;
-    const T = makeTheme(isDark, upColor, downColor);
-    const height = containerRef.current.clientHeight || 400;
-    const chart = createChart(containerRef.current, {
-      ...chartOpts(height, T),
-      width: containerRef.current.clientWidth,
-    });
-    chartRef.current = chart;
-
-    const candle = chart.addSeries(CandlestickSeries, {
-      upColor: T.up,
-      downColor: T.down,
-      borderUpColor: T.up,
-      borderDownColor: T.down,
-      wickUpColor: T.up,
-      wickDownColor: T.down,
-    });
-    candleRef.current = candle;
-
-    ma5Ref.current = chart.addSeries(LineSeries, {
-      color: T.orange, lineWidth: 1, priceLineVisible: false,
-      lastValueVisible: false, crosshairMarkerVisible: false, title: "MA5",
-    });
-    ma10Ref.current = chart.addSeries(LineSeries, {
-      color: T.blue, lineWidth: 1, priceLineVisible: false,
-      lastValueVisible: false, crosshairMarkerVisible: false, title: "MA10",
-    });
-    ma20Ref.current = chart.addSeries(LineSeries, {
-      color: T.purple, lineWidth: 1, priceLineVisible: false,
-      lastValueVisible: false, crosshairMarkerVisible: false, title: "MA20",
-    });
-
-    const vol = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      color: T.blue + "55",
-    }, 1);
-    volRef.current = vol;
-    chart.panes()[1]?.setStretchFactor(0.25);
-
-    registerChart(chart, candle);
-    chart.subscribeCrosshairMove(onCrosshairMove);
-
-    // Visible price range sync for chip distribution + load more on scroll left
-    const ts = chart.timeScale();
-    ts.subscribeVisibleLogicalRangeChange((logicalRange: { from: number; to: number } | null) => {
-      if (!logicalRange) return;
-      const ts = chart.timeScale();
-
-      // Sync visible price range
-      const vr = ts.getVisibleRange();
-      if (vr && candleRef.current) {
-        const bars = parsedRef.current;
-        if (bars.length === 0) { onVisibleRangeChange(null); }
-        else {
-          const fromT = vr.from as number;
-          const toT = vr.to as number;
-          const visBars = bars.filter((b) => (b.time as number) >= fromT && (b.time as number) <= toT);
-          if (visBars.length === 0) { onVisibleRangeChange(null); }
-          else {
-            let lo = Infinity, hi = -Infinity;
-            for (const b of visBars) { if (b.low < lo) lo = b.low; if (b.high > hi) hi = b.high; }
-            onVisibleRangeChange({ min: lo, max: hi });
-          }
+  const loadMore = useCallback(() => {
+    if (!symbolRef.current || isLoadingMoreRef.current || allDataLoadedRef.current || bars.length === 0) return;
+    isLoadingMoreRef.current = true;
+    const currentCount = dataCountRef.current;
+    const nextCount = currentCount + 200;
+    getCandlesticks(symbolRef.current, periodRef.current, nextCount)
+      .then((res) => {
+        const nextBars = parseBars(res.bars);
+        if (nextBars.length <= currentCount) {
+          allDataLoadedRef.current = true;
+          return;
         }
-      } else {
-        onVisibleRangeChange(null);
-      }
-
-      // Load more when scrolled near left edge
-      if (
-        logicalRange.from < 5 &&
-        !isLoadingMoreRef.current &&
-        !allDataLoadedRef.current &&
-        parsedRef.current.length > 0
-      ) {
-        isLoadingMoreRef.current = true;
-        const currentCount = dataCountRef.current;
-        const nextCount = currentCount + 200;
-        const currentSymbol = symbolRef.current;
-        const currentPeriod = periodRef.current;
-        const T = makeTheme(isDarkRef.current, upColorRef.current, downColorRef.current);
-
-        getCandlesticks(currentSymbol, currentPeriod, nextCount)
-          .then((res) => {
-            const newBars = parseBars(res.bars);
-            if (newBars.length <= currentCount) {
-              allDataLoadedRef.current = true;
-              return;
-            }
-            parsedRef.current = newBars;
-            dataCountRef.current = nextCount;
-            onParsedBars(newBars);
-
-            const closes = newBars.map((b) => b.close);
-            candleRef.current?.setData(newBars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
-            volRef.current?.setData(newBars.map((b) => ({
-              time: b.time, value: b.volume,
-              color: b.close >= b.open ? T.up + "55" : T.down + "55",
-            })));
-            ma5Ref.current?.setData(newBars.map((b, i) => { const v = calcMA(closes, 5)[i]; return v != null ? { time: b.time, value: v } : null; }).filter((v): v is LineData => v != null));
-            ma10Ref.current?.setData(newBars.map((b, i) => { const v = calcMA(closes, 10)[i]; return v != null ? { time: b.time, value: v } : null; }).filter((v): v is LineData => v != null));
-            ma20Ref.current?.setData(newBars.map((b, i) => { const v = calcMA(closes, 20)[i]; return v != null ? { time: b.time, value: v } : null; }).filter((v): v is LineData => v != null));
-          })
-          .catch(() => {})
-          .finally(() => { isLoadingMoreRef.current = false; });
-      }
-    });
-
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) {
-        chart.applyOptions({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight,
-        });
-      }
-    });
-    ro.observe(containerRef.current);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-      chartRef.current = null;
-      candleRef.current = null;
-      volRef.current = null;
-      ma5Ref.current = null;
-      ma10Ref.current = null;
-      ma20Ref.current = null;
-      indicatorSeriesRef.current.clear();
-      overlaySeriesRef.current = [];
-      registerChart(null, null);
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Rebuild indicator panes + overlays
-  const rebuildIndicators = useCallback(() => {
-    const chart = chartRef.current;
-    if (!chart || parsedRef.current.length === 0) return;
-
-    const T = makeTheme(isDark, upColor, downColor);
-    const parsed = parsedRef.current;
-    const closes = parsed.map((b) => b.close);
-    const highs = parsed.map((b) => b.high);
-    const lows = parsed.map((b) => b.low);
-
-    // Remove existing indicator + overlay series
-    for (const seriesList of indicatorSeriesRef.current.values()) {
-      for (const s of seriesList) {
-        try { chart.removeSeries(s); } catch { /* ignore */ }
-      }
-    }
-    indicatorSeriesRef.current.clear();
-
-    for (const s of overlaySeriesRef.current) {
-      try { chart.removeSeries(s); } catch { /* ignore */ }
-    }
-    overlaySeriesRef.current = [];
-
-    // Remove indicator panes (keep pane 0 and 1)
-    while (chart.panes().length > 2) {
-      chart.removePane(chart.panes().length - 1);
-    }
-
-    // ── Overlay indicators on pane 0 ──
-    if (activeIndicators.has("BOLL")) {
-      const boll = calcBollinger(closes);
-      (["upper", "middle", "lower"] as const).forEach((k, idx) => {
-        const colors = [T.yellow, T.text, T.yellow];
-        const s = chart.addSeries(LineSeries, {
-          color: colors[idx],
-          lineWidth: 1,
-          lineStyle: k === "middle" ? LineStyle.Dashed : LineStyle.Solid,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        s.setData(
-          parsed
-            .map((b, i) => boll[i] != null ? { time: b.time, value: boll[i]![k] } : null)
-            .filter((v): v is LineData => v != null)
-        );
-        overlaySeriesRef.current.push(s);
+        dataCountRef.current = nextCount;
+        setBars(nextBars);
+        onParsedBars(nextBars);
+      })
+      .catch(() => {})
+      .finally(() => {
+        isLoadingMoreRef.current = false;
       });
-    }
-
-    if (activeIndicators.has("BBIBOLL")) {
-      const bbiboll = calcBBIBOLL(closes);
-      (["upper", "middle", "lower"] as const).forEach((k, idx) => {
-        const colors = [T.orange, T.blue, T.orange];
-        const s = chart.addSeries(LineSeries, {
-          color: colors[idx],
-          lineWidth: 1,
-          lineStyle: k === "middle" ? LineStyle.Solid : LineStyle.Dashed,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        s.setData(
-          parsed
-            .map((b, i) => bbiboll[i] != null ? { time: b.time, value: bbiboll[i]![k] } : null)
-            .filter((v): v is LineData => v != null)
-        );
-        overlaySeriesRef.current.push(s);
-      });
-    }
-
-    if (activeIndicators.has("EMA")) {
-      const ema12 = calcEMAValues(closes, 12);
-      const ema26 = calcEMAValues(closes, 26);
-      const ema12S = chart.addSeries(LineSeries, {
-        color: T.orange, lineWidth: 1, priceLineVisible: false,
-        lastValueVisible: false, crosshairMarkerVisible: false, title: "EMA12",
-      });
-      const ema26S = chart.addSeries(LineSeries, {
-        color: T.purple, lineWidth: 1, priceLineVisible: false,
-        lastValueVisible: false, crosshairMarkerVisible: false, title: "EMA26",
-      });
-      ema12S.setData(parsed.map((b, i) => ema12[i] != null ? { time: b.time, value: ema12[i]! } : null).filter((v): v is LineData => v != null));
-      ema26S.setData(parsed.map((b, i) => ema26[i] != null ? { time: b.time, value: ema26[i]! } : null).filter((v): v is LineData => v != null));
-      overlaySeriesRef.current.push(ema12S, ema26S);
-    }
-
-    // ── Sub-indicator panes ──
-    let paneIdx = 2;
-    for (const key of ["MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC"] as SubIndicatorKey[]) {
-      if (!activeIndicators.has(key)) continue;
-      const seriesList: ISeriesApi<SeriesType>[] = [];
-
-      if (key === "MACD") {
-        const macd = calcMACD(closes);
-        const hist = chart.addSeries(HistogramSeries, { priceLineVisible: false }, paneIdx);
-        const macdLine = chart.addSeries(LineSeries, {
-          color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-        }, paneIdx);
-        const signalLine = chart.addSeries(LineSeries, {
-          color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-        }, paneIdx);
-        hist.setData(
-          parsed.map((b, i) => macd[i] ? {
-            time: b.time, value: macd[i]!.histogram,
-            color: macd[i]!.histogram >= 0 ? T.up + "99" : T.down + "99",
-          } : null).filter(v => v !== null) as HistogramData[]
-        );
-        macdLine.setData(
-          parsed.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.macd } : null)
-            .filter((v): v is LineData => v != null)
-        );
-        signalLine.setData(
-          parsed.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.signal } : null)
-            .filter((v): v is LineData => v != null)
-        );
-        seriesList.push(hist, macdLine, signalLine);
-      } else if (key === "KDJ") {
-        const kdj = calcKDJ(highs, lows, closes);
-        const kS = chart.addSeries(LineSeries, { color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "K" }, paneIdx);
-        const dS = chart.addSeries(LineSeries, { color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "D" }, paneIdx);
-        const jS = chart.addSeries(LineSeries, { color: T.purple, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "J" }, paneIdx);
-        kS.setData(parsed.map((b, i) => kdj[i] ? { time: b.time, value: kdj[i]!.k } : null).filter((v): v is LineData => v != null));
-        dS.setData(parsed.map((b, i) => kdj[i] ? { time: b.time, value: kdj[i]!.d } : null).filter((v): v is LineData => v != null));
-        jS.setData(parsed.map((b, i) => kdj[i] ? { time: b.time, value: kdj[i]!.j } : null).filter((v): v is LineData => v != null));
-        seriesList.push(kS, dS, jS);
-      } else if (key === "RSI") {
-        const rsi = calcRSI(closes);
-        const rsiS = chart.addSeries(LineSeries, { color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI" }, paneIdx);
-        rsiS.setData(parsed.map((b, i) => rsi[i] != null ? { time: b.time, value: rsi[i]! } : null).filter((v): v is LineData => v != null));
-        seriesList.push(rsiS);
-      } else if (key === "CCI") {
-        const cci = calcCCI(highs, lows, closes);
-        const cciS = chart.addSeries(LineSeries, { color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "CCI" }, paneIdx);
-        cciS.setData(parsed.map((b, i) => cci[i] != null ? { time: b.time, value: cci[i]! } : null).filter((v): v is LineData => v != null));
-        seriesList.push(cciS);
-      } else if (key === "WR") {
-        const wr = calcWR(highs, lows, closes);
-        const wrS = chart.addSeries(LineSeries, { color: T.purple, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "WR" }, paneIdx);
-        wrS.setData(parsed.map((b, i) => wr[i] != null ? { time: b.time, value: wr[i]! } : null).filter((v): v is LineData => v != null));
-        seriesList.push(wrS);
-      } else if (key === "DMI") {
-        const dmi = calcDMI(highs, lows, closes);
-        const pdiS = chart.addSeries(LineSeries, { color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "PDI" }, paneIdx);
-        const mdiS = chart.addSeries(LineSeries, { color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "MDI" }, paneIdx);
-        const adxS = chart.addSeries(LineSeries, { color: T.purple, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "ADX" }, paneIdx);
-        const adxrS = chart.addSeries(LineSeries, { color: T.yellow, lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, title: "ADXR" }, paneIdx);
-        pdiS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.pdi } : null).filter((v): v is LineData => v != null));
-        mdiS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.mdi } : null).filter((v): v is LineData => v != null));
-        adxS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.adx } : null).filter((v): v is LineData => v != null));
-        adxrS.setData(parsed.map((b, i) => dmi[i] ? { time: b.time, value: dmi[i]!.adxr } : null).filter((v): v is LineData => v != null));
-        seriesList.push(pdiS, mdiS, adxS, adxrS);
-      } else if (key === "OSC") {
-        const osc = calcOSC(closes);
-        const histS = chart.addSeries(HistogramSeries, { priceLineVisible: false }, paneIdx);
-        const oscS = chart.addSeries(LineSeries, {
-          color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "OSC",
-        }, paneIdx);
-        const maoscS = chart.addSeries(LineSeries, {
-          color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "MAOSC",
-        }, paneIdx);
-        histS.setData(
-          parsed.map((b, i) => osc[i] ? {
-            time: b.time, value: osc[i]!.histogram,
-            color: osc[i]!.histogram >= 0 ? T.up + "99" : T.down + "99",
-          } : null).filter(v => v !== null) as HistogramData[]
-        );
-        oscS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.osc } : null).filter((v): v is LineData => v != null));
-        maoscS.setData(parsed.map((b, i) => osc[i] ? { time: b.time, value: osc[i]!.maosc } : null).filter((v): v is LineData => v != null));
-        seriesList.push(histS, oscS, maoscS);
-      }
-
-      chart.panes()[paneIdx]?.setStretchFactor(0.4);
-      indicatorSeriesRef.current.set(key, seriesList);
-      paneIdx++;
-    }
-  }, [activeIndicators, isDark]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bars.length, onParsedBars]);
 
   useEffect(() => {
-    rebuildIndicators();
-  }, [rebuildIndicators]);
-
-  useEffect(() => {
-    if (chartRef.current) {
-      chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark, upColor, downColor)));
+    if (!symbol) {
+      setBars([]);
+      onParsedBars([]);
+      onVisibleRangeChange(null);
+      return;
     }
-  }, [isDark, upColor, downColor]);
-
-  useEffect(() => {
-    if (!symbol) return;
-    // Reset load-more state on symbol/period change
+    let cancelled = false;
     dataCountRef.current = 200;
     allDataLoadedRef.current = false;
     setLoading(true);
     getCandlesticks(symbol, period)
       .then((res) => {
+        if (cancelled) return;
         const parsed = parseBars(res.bars);
-        parsedRef.current = parsed;
+        setBars(parsed);
         onParsedBars(parsed);
-        const closes = parsed.map((b) => b.close);
-
-        candleRef.current?.setData(
-          parsed.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }))
-        );
-        volRef.current?.setData(
-          parsed.map((b) => ({
-            time: b.time, value: b.volume,
-            color: b.close >= b.open ? makeTheme(isDark, upColor, downColor).up + "55" : makeTheme(isDark, upColor, downColor).down + "55",
-          }))
-        );
-        const ma5 = calcMA(closes, 5);
-        const ma10 = calcMA(closes, 10);
-        const ma20 = calcMA(closes, 20);
-        ma5Ref.current?.setData(parsed.map((b, i) => ma5[i] != null ? { time: b.time, value: ma5[i]! } : null).filter((v): v is LineData => v != null));
-        ma10Ref.current?.setData(parsed.map((b, i) => ma10[i] != null ? { time: b.time, value: ma10[i]! } : null).filter((v): v is LineData => v != null));
-        ma20Ref.current?.setData(parsed.map((b, i) => ma20[i] != null ? { time: b.time, value: ma20[i]! } : null).filter((v): v is LineData => v != null));
-
-        rebuildIndicators();
-        chartRef.current?.timeScale().fitContent();
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [symbol, period]); // eslint-disable-line react-hooks/exhaustive-deps
+      .catch(() => {
+        if (!cancelled) {
+          setBars([]);
+          onParsedBars([]);
+          onVisibleRangeChange(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onParsedBars, onVisibleRangeChange, period, symbol]);
+
+  const handleVisibleRangeChange = useCallback((range: NativeVisibleRange | null) => {
+    onVisibleRangeChange(range?.price ?? null);
+  }, [onVisibleRangeChange]);
 
   return (
     <div className="flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
@@ -849,12 +672,48 @@ function KLineChart({
           </span>
         )}
       </div>
-      <div ref={containerRef} className="min-h-[440px] flex-1 lg:min-h-0" />
+      <NativeStockChart
+        times={times}
+        panes={chartModel.panes}
+        series={chartModel.series}
+        theme={theme}
+        fitKey={`${symbol}:${period}`}
+        primaryRangeSeriesId="candles"
+        onVisibleRangeChange={handleVisibleRangeChange}
+        onNearStart={loadMore}
+        className="min-h-[440px] flex-1 lg:min-h-0"
+      />
     </div>
   );
 }
 
 // ── Intraday chart ────────────────────────────────────────────────────────────
+
+function buildIntradayChartModel(
+  bars: ParsedIntradayBar[],
+  theme: NativeChartTheme,
+): { panes: NativeChartPane[]; series: NativeChartSeries[] } {
+  const closes = bars.map((bar) => bar.price);
+  const macd = calcMACD(closes);
+  const panes: NativeChartPane[] = [
+    { id: "price", label: "PRICE", heightWeight: 3 },
+    { id: "volume", label: "VOL", heightWeight: 0.6 },
+    { id: "macd", label: "MACD", heightWeight: 0.75 },
+  ];
+  const series: NativeChartSeries[] = [
+    makeLineSeries("price", "price", "PRICE", theme.blue, bars, bars.map((bar) => bar.price)),
+    makeLineSeries("avg", "price", "AVG", theme.orange, bars, bars.map((bar) => bar.avg_price), true),
+    makeHistogramSeries("volume", "volume", "VOL", bars, bars.map((bar) => bar.volume), () =>
+      colorWithAlpha(theme.blue, 0.42),
+    ),
+    makeHistogramSeries("macd-hist", "macd", "HIST", bars, macd.map((point) => point?.histogram ?? null), (value) =>
+      value >= 0 ? colorWithAlpha(theme.up, 0.62) : colorWithAlpha(theme.down, 0.62),
+    ),
+    makeLineSeries("macd", "macd", "MACD", theme.blue, bars, macd.map((point) => point?.macd ?? null)),
+    makeLineSeries("signal", "macd", "SIGNAL", theme.orange, bars, macd.map((point) => point?.signal ?? null)),
+  ];
+  return { panes, series };
+}
 
 function IntradayCharts({
   symbol,
@@ -868,15 +727,7 @@ function IntradayCharts({
   isDark: boolean;
 }) {
   const { upColor, downColor } = useChartColors();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
-  const priceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const avgSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const volSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const macdSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const signalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const histSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const theme = useNativeChartTheme(isDark, upColor, downColor);
 
   const barsRef = useRef<ParsedIntradayBar[]>([]);
   const lastTimestampRef = useRef<number | null>(null);
@@ -888,6 +739,8 @@ function IntradayCharts({
   const [lastUpdated, setLastUpdated] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSeconds, setRefreshSeconds] = useState(loadStoredIntradayRefreshSeconds);
+  const [bars, setBars] = useState<ParsedIntradayBar[]>([]);
+  const [fitKey, setFitKey] = useState(0);
 
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
 
@@ -906,124 +759,6 @@ function IntradayCharts({
     }
   }, [refreshSeconds]);
 
-  useLayoutEffect(() => {
-    if (!containerRef.current) return;
-    const T = makeTheme(isDark, upColor, downColor);
-    const height = containerRef.current.clientHeight || 400;
-    const chart = createChart(containerRef.current, {
-      ...chartOpts(height, T),
-      width: containerRef.current.clientWidth,
-    });
-    chartRef.current = chart;
-
-    priceSeriesRef.current = chart.addSeries(LineSeries, {
-      color: T.blue, lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
-    });
-    avgSeriesRef.current = chart.addSeries(LineSeries, {
-      color: T.orange, lineWidth: 1, lineStyle: LineStyle.Dashed,
-      priceLineVisible: false, lastValueVisible: false,
-    });
-
-    volSeriesRef.current = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      color: T.blue + "66",
-    }, 1);
-    chart.panes()[1]?.setStretchFactor(0.2);
-
-    macdSeriesRef.current = chart.addSeries(LineSeries, {
-      color: T.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-    }, 2);
-    signalSeriesRef.current = chart.addSeries(LineSeries, {
-      color: T.orange, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-    }, 2);
-    histSeriesRef.current = chart.addSeries(HistogramSeries, { priceLineVisible: false }, 2);
-    chart.panes()[2]?.setStretchFactor(0.25);
-
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) {
-        chart.applyOptions({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight,
-        });
-      }
-    });
-    ro.observe(containerRef.current);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-      chartRef.current = null;
-      priceSeriesRef.current = null;
-      avgSeriesRef.current = null;
-      volSeriesRef.current = null;
-      macdSeriesRef.current = null;
-      signalSeriesRef.current = null;
-      histSeriesRef.current = null;
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const renderBars = useCallback((
-    bars: ParsedIntradayBar[],
-    mode: "replace" | "update",
-    changedStart = 0,
-  ) => {
-    if (!priceSeriesRef.current) return;
-    const T = makeTheme(isDark, upColor, downColor);
-    const closes = bars.map((b) => b.price);
-    const macd = calcMACD(closes);
-
-    if (mode === "replace") {
-      priceSeriesRef.current.setData(bars.map((b) => ({ time: b.time, value: b.price })) as LineData[]);
-      avgSeriesRef.current?.setData(bars.map((b) => ({ time: b.time, value: b.avg_price })) as LineData[]);
-      volSeriesRef.current?.setData(
-        bars.map((b) => ({ time: b.time, value: b.volume, color: T.blue + "66" })) as HistogramData[]
-      );
-      macdSeriesRef.current?.setData(
-        bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.macd } : null)
-          .filter((v): v is LineData => v != null)
-      );
-      signalSeriesRef.current?.setData(
-        bars.map((b, i) => macd[i] ? { time: b.time, value: macd[i]!.signal } : null)
-          .filter((v): v is LineData => v != null)
-      );
-      histSeriesRef.current?.setData(
-        bars.map((b, i) => macd[i] ? {
-          time: b.time,
-          value: macd[i]!.histogram,
-          color: macd[i]!.histogram >= 0 ? T.up + "99" : T.down + "99",
-        } : null).filter(v => v !== null) as HistogramData[]
-      );
-      chartRef.current?.timeScale().fitContent();
-      return;
-    }
-
-    for (let i = Math.max(0, changedStart); i < bars.length; i++) {
-      const bar = bars[i];
-      priceSeriesRef.current.update({ time: bar.time, value: bar.price });
-      avgSeriesRef.current?.update({ time: bar.time, value: bar.avg_price });
-      volSeriesRef.current?.update({ time: bar.time, value: bar.volume, color: T.blue + "66" });
-      const macdPoint = macd[i];
-      if (macdPoint) {
-        macdSeriesRef.current?.update({ time: bar.time, value: macdPoint.macd });
-        signalSeriesRef.current?.update({ time: bar.time, value: macdPoint.signal });
-        histSeriesRef.current?.update({
-          time: bar.time,
-          value: macdPoint.histogram,
-          color: macdPoint.histogram >= 0 ? T.up + "99" : T.down + "99",
-        });
-      }
-    }
-  }, [isDark, upColor, downColor]);
-
-  useEffect(() => {
-    if (chartRef.current) {
-      chartRef.current.applyOptions(chartLayoutOpts(makeTheme(isDark, upColor, downColor)));
-      if (barsRef.current.length > 0) {
-        renderBars(barsRef.current, "replace");
-      }
-    }
-  }, [isDark, upColor, downColor, renderBars]);
-
   const applyBars = useCallback((incoming: ParsedIntradayBar[], replaceAll: boolean) => {
     const merged = replaceAll
       ? { bars: incoming, changedStart: 0, replace: true }
@@ -1034,9 +769,13 @@ function IntradayCharts({
     lastTimestampRef.current = last ? Number(last.time) : null;
 
     if (merged.replace || merged.changedStart < merged.bars.length) {
-      renderBars(merged.bars, merged.replace ? "replace" : "update", merged.changedStart);
+      setBars(merged.bars);
+      if (replaceAll || merged.replace) setFitKey((value) => value + 1);
     }
-  }, [renderBars]);
+  }, []);
+
+  const chartModel = useMemo(() => buildIntradayChartModel(bars, theme), [bars, theme]);
+  const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
 
   const load = useCallback((mode: "full" | "incremental" = "incremental") => {
     if (!symbol) return;
@@ -1072,6 +811,7 @@ function IntradayCharts({
   useEffect(() => {
     barsRef.current = [];
     lastTimestampRef.current = null;
+    setBars([]);
     setLastUpdated("");
     load("full");
   }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1119,7 +859,14 @@ function IntradayCharts({
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
-      <div ref={containerRef} className="min-h-[500px] w-full flex-1 lg:min-h-0" />
+      <NativeStockChart
+        times={times}
+        panes={chartModel.panes}
+        series={chartModel.series}
+        theme={theme}
+        fitKey={`${symbol}:${fitKey}`}
+        className="min-h-[500px] w-full flex-1 lg:min-h-0"
+      />
     </div>
   );
 }
@@ -1274,9 +1021,6 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   const [parsedBars, setParsedBars] = useState<ReturnType<typeof parseBars>>([]);
   const [visiblePriceRange, setVisiblePriceRange] = useState<{ min: number; max: number } | null>(null);
 
-  const klineChartRef = useRef<IChartApi | null>(null);
-  const klinePrimaryRef = useRef<ISeriesApi<SeriesType> | null>(null);
-
   useEffect(() => {
     if (!displayName && symbol) setDisplayName(symbol);
   }, [symbol, displayName]);
@@ -1284,14 +1028,6 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   useEffect(() => {
     writeStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, activeTab);
   }, [activeTab]);
-
-  const registerKLine = useCallback(
-    (chart: IChartApi | null, primary: ISeriesApi<SeriesType> | null) => {
-      klineChartRef.current = chart;
-      klinePrimaryRef.current = primary;
-    },
-    []
-  );
 
   function toggleIndicator(key: IndicatorKey) {
     setActiveIndicators((prev) => {
@@ -1428,8 +1164,6 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                   activeIndicators={activeIndicators}
                   copy={copy}
                   isDark={isDark}
-                  onCrosshairMove={() => {}}
-                  registerChart={registerKLine}
                   onParsedBars={setParsedBars}
                   onVisibleRangeChange={setVisiblePriceRange}
                 />
