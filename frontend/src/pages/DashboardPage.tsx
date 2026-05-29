@@ -2,19 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import {
   Activity,
   ArrowDownRight,
+  ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   BarChart2,
-  Bot,
-  BrainCircuit,
   BriefcaseBusiness,
+  Building2,
   ChevronLeft,
   ChevronRight,
-  Cpu,
-  Database,
   Loader2,
-  Newspaper,
-  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -26,23 +22,20 @@ import { MarketPulse } from "@/components/MarketPulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist, getSecurityNews } from "@/lib/api";
+import { getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist } from "@/lib/api";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
-  AppConfig,
   DashboardMarketModule,
   DashboardModuleSource,
   DashboardPortfolioModule,
   DashboardPortfolioMarket,
-  DashboardPortfolioPosition,
   DashboardResponse,
   DashboardWatchlistModule,
   DashboardWatchlistRow,
   DashboardWatchlistView,
   PortfolioMarket,
   QuoteItem,
-  SecurityNewsItem,
   WatchlistCategory,
 } from "@/types/app";
 
@@ -109,14 +102,11 @@ type DashboardSnapshot = {
 
 type DashboardPageProps = {
   canPermission: (permission: string) => boolean;
-  config: AppConfig | null;
-  enabledCount: number;
+  chatExpanded: boolean;
+  chatPanel: ReactNode;
   language: AppLanguage;
-  modelName: string;
   onOpenChart: (symbol: string) => void;
-  onOpenConfig: () => void;
-  onOpenMarket: () => void;
-  onOpenNews: (symbol?: string) => void;
+  onOpenMarketConfig: () => void;
   onOpenPortfolio: () => void;
   onOpenWatchlist: () => void;
   onPrompt: (value: string) => void;
@@ -480,20 +470,20 @@ function MarketSnapshot({
   indices,
   language,
   loading,
-  onOpenMarket,
+  onOpenMarketConfig,
   subtitle,
 }: {
   error: string;
   indices: QuoteItem[];
   language: AppLanguage;
   loading: boolean;
-  onOpenMarket: () => void;
+  onOpenMarketConfig: () => void;
   subtitle?: string;
 }) {
   const copy = i18n[language].overview;
   return (
     <FinanceSection
-      action={<Button size="sm" variant="ghost" onClick={onOpenMarket}>{copy.viewMarket}<ArrowRight /></Button>}
+      action={<Button size="sm" variant="ghost" onClick={onOpenMarketConfig}>{copy.config}<Settings2 /></Button>}
       icon={<BarChart2 />}
       subtitle={subtitle ?? copy.marketSnapshotSubtitle}
       title={copy.marketSnapshot}
@@ -525,8 +515,8 @@ function WatchlistMovers({
   module,
   onOpenChart,
   onOpenWatchlist,
-  onSelectNewsSymbol,
-  selectedNewsSymbol,
+  onSelectSymbol,
+  selectedSymbol,
   subtitle,
 }: {
   error: string;
@@ -535,8 +525,8 @@ function WatchlistMovers({
   module: DashboardWatchlistModule | null | undefined;
   onOpenChart?: (symbol: string) => void;
   onOpenWatchlist: () => void;
-  onSelectNewsSymbol: (symbol: string) => void;
-  selectedNewsSymbol: string;
+  onSelectSymbol: (symbol: string) => void;
+  selectedSymbol: string;
   subtitle?: string;
 }) {
   const copy = i18n[language].overview;
@@ -692,9 +682,9 @@ function WatchlistMovers({
                           language={language}
                           key={`${row.category}-${row.symbol}`}
                           onOpenChart={onOpenChart}
-                          onSelect={onSelectNewsSymbol}
+                          onSelect={onSelectSymbol}
                           row={row}
-                          selected={row.symbol === selectedNewsSymbol}
+                          selected={row.symbol === selectedSymbol}
                         />
                       ))}
                     </div>
@@ -743,10 +733,6 @@ function PortfolioSummary({
   const copy = i18n[language].overview;
   const markets = module?.markets ?? [];
   const moduleError = module?.error || error;
-  const positions = markets
-    .flatMap((market) => market.top_positions.map((item) => ({ ...item, market: item.market || market.market })))
-    .sort((a, b) => (parseNumber(b.position_ratio) ?? 0) - (parseNumber(a.position_ratio) ?? 0))
-    .slice(0, 5);
 
   return (
     <FinanceSection
@@ -772,15 +758,6 @@ function PortfolioSummary({
           {markets.some((market) => market.quote_error) ? (
             <InlineState>{markets.map((market) => market.quote_error).filter(Boolean).join(" · ")}</InlineState>
           ) : null}
-          {positions.length ? (
-            <div className="divide-y divide-border/55 border-y border-border/55">
-              {positions.map((item) => (
-                <PortfolioPosition key={`${item.market}-${item.id}`} item={item} language={language} />
-              ))}
-            </div>
-          ) : (
-            <p className="rounded-md bg-muted/25 px-3 py-2 text-xs text-muted-foreground">{copy.emptyPositions}</p>
-          )}
         </div>
       )}
     </FinanceSection>
@@ -837,141 +814,128 @@ function PortfolioMarketSummary({ language, market }: { language: AppLanguage; m
   );
 }
 
-function PortfolioPosition({ item, language }: { item: DashboardPortfolioPosition; language: AppLanguage }) {
-  const copy = i18n[language].overview;
-  const tone = rateTone(item.pnl_ratio);
-  const dayTone = rateTone(item.change_rate || item.change_value);
+function SymbolDetailMetric({ label, tone, value }: { label: string; tone?: Tone; value: string }) {
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-2 py-2">
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className="truncate text-sm font-semibold">{item.symbol}</p>
-          <Badge className="h-5 px-1.5 text-[10px]" variant="outline">{item.market}</Badge>
-        </div>
-        <p className="truncate text-xs text-muted-foreground">{item.name || "-"}</p>
-      </div>
-      <div className="text-right">
-        <p className="text-sm font-semibold tabular-nums">{formatNumeric(item.current_price, language)}</p>
-        <p className={cn("text-xs font-semibold tabular-nums", toneClass(dayTone))}>
-          {formatPercent(item.change_rate, language)}
-        </p>
-        <p className="text-xs text-muted-foreground tabular-nums">
-          {formatNumeric(item.stock_value, language)} · {formatPercent(item.position_ratio, language)}
-        </p>
-        <p className={cn("text-xs font-semibold tabular-nums", toneClass(tone))}>
-          {copy.pnl}: {formatPercent(item.pnl_ratio, language)}
-        </p>
-      </div>
+    <div className="min-w-0 rounded-md bg-muted/25 px-3 py-2">
+      <p className="truncate text-[11px] text-muted-foreground">{label}</p>
+      <p className={cn("mt-1 truncate text-sm font-semibold tabular-nums", tone ? toneClass(tone) : undefined)}>{value}</p>
     </div>
   );
 }
 
-function NewsPreview({
-  error,
+function WatchlistSymbolDetail({
   language,
-  loading,
-  news,
-  onOpenNews,
-  sourceSymbol,
+  onBack,
+  onOpenChart,
+  row,
 }: {
-  error: string;
   language: AppLanguage;
-  loading: boolean;
-  news: SecurityNewsItem[];
-  onOpenNews: (symbol?: string) => void;
-  sourceSymbol: string;
+  onBack: () => void;
+  onOpenChart?: (symbol: string) => void;
+  row: DashboardWatchlistRow;
 }) {
   const copy = i18n[language].overview;
-  return (
-    <FinanceSection
-      action={<Button size="sm" variant="ghost" onClick={() => onOpenNews(sourceSymbol || undefined)}>{copy.viewNews}<ArrowRight /></Button>}
-      className="order-1 xl:order-2"
-      icon={<Newspaper />}
-      subtitle={sourceSymbol ? formatTemplate(copy.newsForSymbol, { symbol: sourceSymbol }) : copy.latestNewsSubtitle}
-      title={copy.latestNews}
-    >
-      {loading && news.length === 0 ? (
-        <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{copy.loadingNews}</InlineState>
-      ) : error && news.length === 0 ? (
-        <InlineState>{error}</InlineState>
-      ) : news.length === 0 ? (
-        <InlineState>{sourceSymbol ? copy.emptyNews : copy.emptyNewsSource}</InlineState>
-      ) : (
-        <div className="divide-y divide-border/55 border-y border-border/55">
-          {news.slice(0, 4).map((item) => (
-            <a
-              className="block px-1 py-3 transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 sm:px-2"
-              href={item.url}
-              key={item.id}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <p className="line-clamp-2 text-sm font-semibold leading-5">{item.title}</p>
-              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description || copy.noDescription}</p>
-            </a>
-          ))}
-        </div>
-      )}
-    </FinanceSection>
-  );
-}
-
-function SignalDeck({ language }: { language: AppLanguage }) {
-  const copy = i18n[language].overview;
-  return (
-    <FinanceSection className="order-2 xl:order-1" icon={<Activity />} subtitle={copy.signalDeckSubtitle} title={copy.signalDeck}>
-      <MarketPulse />
-    </FinanceSection>
-  );
-}
-
-function SystemStatus({
-  config,
-  enabledCount,
-  language,
-  modelName,
-  onOpenConfig,
-}: {
-  config: AppConfig | null;
-  enabledCount: number;
-  language: AppLanguage;
-  modelName: string;
-  onOpenConfig: () => void;
-}) {
-  const copy = i18n[language].overview;
-  const loading = language === "en" ? "Loading" : "加载中";
-  const capabilities = [
-    { active: config?.memory_enabled, icon: <BrainCircuit />, label: copy.memory },
-    { active: config?.knowledge_enabled, icon: <Database />, label: copy.knowledge },
-    { active: config?.scheduler_enabled, icon: <RefreshCw />, label: copy.scheduler },
-    { active: config?.tracing_enabled, icon: <Cpu />, label: copy.tracing },
+  const tone = rateTone(row.change_rate || row.change_value);
+  const labels = language === "en"
+    ? {
+      price: "Last",
+      change: "Change",
+      rate: "Change %",
+      open: "Open",
+      previousClose: "Prev close",
+      high: "High",
+      low: "Low",
+      volume: "Volume",
+      turnover: "Turnover",
+      market: "Market",
+      exchange: "Exchange",
+      currency: "Currency",
+      aliases: "Names",
+      note: "Note",
+      updated: "Updated",
+      openChart: "Chart",
+    }
+    : {
+      price: "最新价",
+      change: "涨跌额",
+      rate: "涨跌幅",
+      open: "开盘",
+      previousClose: "昨收",
+      high: "最高",
+      low: "最低",
+      volume: "成交量",
+      turnover: "成交额",
+      market: "市场",
+      exchange: "交易所",
+      currency: "币种",
+      aliases: "名称",
+      note: "备注",
+      updated: "更新时间",
+      openChart: "图表",
+    };
+  const alias = [row.name_cn, row.name_hk, row.name_en].filter(Boolean).join(" / ");
+  const profileRows = [
+    [labels.market, row.category ? categoryLabel(row.category as WatchlistCategory, language) : "-"],
+    [labels.exchange, row.exchange || "-"],
+    [labels.currency, row.currency || "-"],
+    [labels.aliases, alias || row.name || "-"],
+    [labels.note, row.note || "-"],
+    [labels.updated, row.updated_at ? formatModuleTime(row.updated_at, language) || row.updated_at : "-"],
   ];
 
   return (
     <FinanceSection
-      action={<Button size="sm" variant="ghost" onClick={onOpenConfig}><Settings2 />{copy.config}</Button>}
-      className="order-3"
-      icon={<Bot />}
-      subtitle={copy.systemStatusSubtitle}
-      title={copy.systemStatus}
+      action={
+        <Button size="sm" variant="ghost" onClick={onBack}>
+          <ArrowLeft />
+          {copy.backToDashboard}
+        </Button>
+      }
+      icon={<Building2 />}
+      subtitle={row.name || copy.companyProfile}
+      title={row.symbol}
     >
-      <div className="space-y-3">
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-          <StatusLine icon={<Cpu />} label={copy.llmModel} value={modelName} />
-          <StatusLine icon={<Sparkles />} label={copy.capabilities} value={formatTemplate(copy.capabilitiesOn, { count: enabledCount })} />
-          <StatusLine icon={<Bot />} label={copy.contextTurns} value={String(config?.agent_max_context_turns ?? "-")} />
-          <StatusLine icon={<Database />} label={copy.workspace} value={config?.workspace_dir ?? loading} />
+      <div className="space-y-4">
+        <div className="rounded-md border-y border-border/55 py-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground">{row.name || copy.companyProfile}</p>
+              <p className="mt-1 text-3xl font-semibold tabular-nums">{formatNumeric(row.last_done, language, 3)}</p>
+            </div>
+            <div className={cn("text-right font-semibold tabular-nums", toneClass(tone))}>
+              <p className="text-base">{signedChange(row.change_value, tone, language)}</p>
+              <p className="text-sm">{formatPercent(row.change_rate, language)}</p>
+            </div>
+          </div>
+          {onOpenChart ? (
+            <Button className="mt-4" size="sm" variant="outline" onClick={() => onOpenChart(row.symbol)}>
+              <BarChart2 />
+              {labels.openChart}
+            </Button>
+          ) : null}
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {capabilities.map((item) => (
-            <div className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-muted/25 px-2 py-2" key={item.label}>
-              <div className="flex min-w-0 items-center gap-2 text-muted-foreground [&_svg]:size-3.5">
-                {item.icon}
-                <span className="truncate text-xs">{item.label}</span>
-              </div>
-              <Badge className="h-5 px-1.5 text-[10px]" variant={item.active ? "default" : "muted"}>
-                {item.active ? "ON" : "OFF"}
-              </Badge>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <SymbolDetailMetric label={labels.price} value={formatNumeric(row.last_done, language, 3)} />
+          <SymbolDetailMetric label={labels.change} tone={tone} value={signedChange(row.change_value, tone, language)} />
+          <SymbolDetailMetric label={labels.rate} tone={tone} value={formatPercent(row.change_rate, language)} />
+          <SymbolDetailMetric label={labels.open} value={formatNumeric(row.open, language, 3)} />
+          <SymbolDetailMetric label={labels.previousClose} value={formatNumeric(row.prev_close, language, 3)} />
+          <SymbolDetailMetric label={labels.high} value={formatNumeric(row.high, language, 3)} />
+          <SymbolDetailMetric label={labels.low} value={formatNumeric(row.low, language, 3)} />
+          <SymbolDetailMetric label={labels.volume} value={formatCompactNumeric(row.volume, language)} />
+          <SymbolDetailMetric label={labels.turnover} value={formatCompactNumeric(row.turnover, language)} />
+        </div>
+
+        <div className="space-y-2 border-y border-border/55 py-3">
+          <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+            <Building2 className="size-4 text-muted-foreground" />
+            {copy.companyProfile}
+          </div>
+          {profileRows.map(([label, value]) => (
+            <div className="grid min-w-0 grid-cols-[96px_minmax(0,1fr)] gap-3 text-sm" key={label}>
+              <span className="text-muted-foreground">{label}</span>
+              <span className="min-w-0 truncate font-medium">{value}</span>
             </div>
           ))}
         </div>
@@ -980,13 +944,12 @@ function SystemStatus({
   );
 }
 
-function StatusLine({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function SignalDeck({ language }: { language: AppLanguage }) {
+  const copy = i18n[language].overview;
   return (
-    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-md bg-background/35 px-2 py-2">
-      <div className="row-span-2 mt-0.5 text-primary [&_svg]:size-3.5">{icon}</div>
-      <p className="truncate text-[11px] text-muted-foreground">{label}</p>
-      <p className="truncate text-xs font-semibold">{value}</p>
-    </div>
+    <FinanceSection icon={<Activity />} subtitle={copy.signalDeckSubtitle} title={copy.signalDeck}>
+      <MarketPulse />
+    </FinanceSection>
   );
 }
 
@@ -1000,14 +963,11 @@ function PermissionHidden({ children }: { children: ReactNode }) {
 
 export function DashboardPage({
   canPermission,
-  config,
-  enabledCount,
+  chatExpanded,
+  chatPanel,
   language,
-  modelName,
   onOpenChart,
-  onOpenConfig,
-  onOpenMarket,
-  onOpenNews,
+  onOpenMarketConfig,
   onOpenPortfolio,
   onOpenWatchlist,
   onPrompt,
@@ -1017,6 +977,7 @@ export function DashboardPage({
   const canMarket = canPermission("market:read");
   const canPortfolio = canPermission("portfolio:read");
   const canWatchlist = canPermission("watchlist:read");
+  const canChat = canPermission("chat:read");
 
   const initialSnapshotRef = useRef<DashboardResponse | null | undefined>(undefined);
   if (initialSnapshotRef.current === undefined) {
@@ -1027,10 +988,7 @@ export function DashboardPage({
     initialModuleStatuses(initialSnapshotRef.current ?? null),
   );
   const [dashboardError, setDashboardError] = useState("");
-  const [news, setNews] = useState<SecurityNewsItem[]>([]);
-  const [newsLoading, setNewsLoading] = useState(false);
-  const [newsError, setNewsError] = useState("");
-  const [selectedNewsSymbol, setSelectedNewsSymbol] = useState("");
+  const [selectedWatchlistSymbol, setSelectedWatchlistSymbol] = useState("");
   const dashboardRef = useRef<DashboardResponse | null>(dashboard);
   const modulesAbortRef = useRef<AbortController | null>(null);
 
@@ -1167,62 +1125,28 @@ export function DashboardPage({
   const watchlistModule = dashboard?.watchlist;
   const portfolioModule = dashboard?.portfolio;
   const watchlistRows = watchlistModule?.items ?? [];
-  const marketRows = marketModule?.indices ?? [];
-  const defaultNewsSourceSymbol = watchlistRows[0]?.symbol || marketRows[0]?.symbol || "";
-  const availableNewsSymbols = useMemo(
-    () => new Set([...watchlistRows.map((item) => item.symbol), ...marketRows.map((quote) => quote.symbol)]),
-    [marketRows, watchlistRows],
+  const selectedWatchlistRow = useMemo(
+    () => watchlistRows.find((row) => row.symbol === selectedWatchlistSymbol) ?? null,
+    [selectedWatchlistSymbol, watchlistRows],
   );
-  const newsSourceSymbol = selectedNewsSymbol || defaultNewsSourceSymbol;
 
   useEffect(() => {
-    if (selectedNewsSymbol && !availableNewsSymbols.has(selectedNewsSymbol)) {
-      setSelectedNewsSymbol("");
+    if (selectedWatchlistSymbol && !watchlistRows.some((row) => row.symbol === selectedWatchlistSymbol)) {
+      setSelectedWatchlistSymbol("");
     }
-  }, [availableNewsSymbols, selectedNewsSymbol]);
-
-  useEffect(() => {
-    if (!canMarket || !newsSourceSymbol) {
-      setNews([]);
-      return undefined;
-    }
-    const controller = new AbortController();
-    setNewsLoading(true);
-    setNewsError("");
-    getSecurityNews(newsSourceSymbol, 50, { signal: controller.signal })
-      .then((response) => {
-        if (!controller.signal.aborted) setNews(response.news);
-      })
-      .catch((caught) => {
-        if (!controller.signal.aborted) setNewsError(caught instanceof Error ? caught.message : copy.loadFailed);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setNewsLoading(false);
-      });
-    return () => {
-      controller.abort();
-    };
-  }, [canMarket, copy.loadFailed, newsSourceSymbol]);
+  }, [selectedWatchlistSymbol, watchlistRows]);
 
   return (
     <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-2 xl:h-full xl:overflow-hidden">
       <HeroSearch language={language} onPrompt={onPrompt} />
 
-      <div className="dashboard-wide-grid grid min-h-0 gap-8 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[minmax(420px,1fr)_minmax(360px,0.86fr)_390px] 2xl:grid-rows-[minmax(0,1fr)]">
-        <main className="dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 2xl:col-start-1 2xl:row-start-1">
-          {canMarket ? (
-            <MarketSnapshot
-              error={moduleStatus.market.error || marketModule?.error || dashboardError}
-              indices={marketModule?.indices ?? []}
-              language={language}
-              loading={moduleStatus.market.loading}
-              onOpenMarket={onOpenMarket}
-              subtitle={sectionSubtitle(copy.marketSnapshotSubtitle, moduleStatus.market, language)}
-            />
-          ) : (
-            <PermissionHidden>{copy.marketHidden}</PermissionHidden>
-          )}
-
+      <div
+        className={cn(
+          "dashboard-wide-grid grid min-h-0 gap-6 xl:flex-1 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
+          chatExpanded && "xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
+        )}
+      >
+        <main className="dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1">
           {canWatchlist ? (
             <WatchlistMovers
               error={moduleStatus.watchlist.error || watchlistModule?.error || dashboardError}
@@ -1231,8 +1155,8 @@ export function DashboardPage({
               module={watchlistModule}
               onOpenChart={canMarket ? onOpenChart : undefined}
               onOpenWatchlist={onOpenWatchlist}
-              onSelectNewsSymbol={setSelectedNewsSymbol}
-              selectedNewsSymbol={newsSourceSymbol}
+              onSelectSymbol={setSelectedWatchlistSymbol}
+              selectedSymbol={selectedWatchlistSymbol}
               subtitle={sectionSubtitle(copy.watchlistMoversSubtitle, moduleStatus.watchlist, language)}
             />
           ) : (
@@ -1240,34 +1164,57 @@ export function DashboardPage({
           )}
         </main>
 
-        <section className="dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-2 2xl:col-start-2 2xl:row-start-1">
-          {canPortfolio ? (
-            <PortfolioSummary
-              error={moduleStatus.portfolio.error || portfolioModule?.error || dashboardError}
+        <section
+          className={cn(
+            "dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-2 xl:row-start-1",
+            chatExpanded && "xl:hidden",
+          )}
+        >
+          {selectedWatchlistRow ? (
+            <WatchlistSymbolDetail
               language={language}
-              loading={moduleStatus.portfolio.loading}
-              module={portfolioModule}
-              onOpenPortfolio={onOpenPortfolio}
-              subtitle={sectionSubtitle(copy.portfolioSubtitle, moduleStatus.portfolio, language)}
+              onBack={() => setSelectedWatchlistSymbol("")}
+              onOpenChart={canMarket ? onOpenChart : undefined}
+              row={selectedWatchlistRow}
             />
           ) : (
-            <PermissionHidden>{copy.portfolioHidden}</PermissionHidden>
+            <>
+              {canMarket ? (
+                <MarketSnapshot
+                  error={moduleStatus.market.error || marketModule?.error || dashboardError}
+                  indices={marketModule?.indices ?? []}
+                  language={language}
+                  loading={moduleStatus.market.loading}
+                  onOpenMarketConfig={onOpenMarketConfig}
+                  subtitle={sectionSubtitle(copy.marketSnapshotSubtitle, moduleStatus.market, language)}
+                />
+              ) : (
+                <PermissionHidden>{copy.marketHidden}</PermissionHidden>
+              )}
+              {canPortfolio ? (
+                <PortfolioSummary
+                  error={moduleStatus.portfolio.error || portfolioModule?.error || dashboardError}
+                  language={language}
+                  loading={moduleStatus.portfolio.loading}
+                  module={portfolioModule}
+                  onOpenPortfolio={onOpenPortfolio}
+                  subtitle={sectionSubtitle(copy.portfolioSubtitle, moduleStatus.portfolio, language)}
+                />
+              ) : (
+                <PermissionHidden>{copy.portfolioHidden}</PermissionHidden>
+              )}
+              <SignalDeck language={language} />
+            </>
           )}
-          {canMarket ? (
-            <NewsPreview
-              error={newsError}
-              language={language}
-              loading={newsLoading}
-              news={news}
-              onOpenNews={onOpenNews}
-              sourceSymbol={newsSourceSymbol}
-            />
-          ) : null}
         </section>
 
-        <aside className="dashboard-scroll-column finance-right-rail flex min-w-0 flex-col xl:col-start-2 xl:row-span-2 xl:row-start-1 2xl:col-start-3 2xl:row-span-1 2xl:row-start-1">
-          <SignalDeck language={language} />
-          <SystemStatus config={config} enabledCount={enabledCount} language={language} modelName={modelName} onOpenConfig={onOpenConfig} />
+        <aside
+          className={cn(
+            "dashboard-chat-column dashboard-scroll-column finance-right-rail flex min-h-[720px] min-w-0 flex-col overflow-hidden xl:col-start-3 xl:row-start-1 xl:min-h-0",
+            chatExpanded && "xl:col-start-2 xl:col-span-2",
+          )}
+        >
+          {canChat ? chatPanel : <PermissionHidden>{copy.chatHidden}</PermissionHidden>}
         </aside>
       </div>
     </div>

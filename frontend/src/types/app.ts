@@ -468,7 +468,17 @@ export interface DashboardModule {
   source?: DashboardModuleSource | null;
 }
 
-export type DashboardWatchlistRow = QuoteItem;
+export interface DashboardWatchlistRow extends QuoteItem {
+  id?: number;
+  name_cn?: string;
+  name_en?: string;
+  name_hk?: string;
+  exchange?: string;
+  currency?: string;
+  note?: string;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export interface DashboardWatchlistViews {
   movers: DashboardWatchlistRow[];

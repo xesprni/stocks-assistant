@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, TouchEvent } from "react";
 import {
-  BarChart2,
   BookOpen,
   Bot,
   BrainCircuit,
@@ -54,6 +53,7 @@ import { parseJsonObject } from "@/lib/json";
 import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
 import { CHAT_AUTO_SCROLL_THRESHOLD, useConversations } from "@/hooks/useConversations";
 import type { AppLanguage } from "@/lib/i18n";
+import type { ConfigTab } from "@/pages/ConfigPage";
 import type { EffectiveTheme, Page, Theme } from "@/types/ui";
 import type {
   AppConfig,
@@ -70,8 +70,6 @@ const ConfigPage = lazy(() => import("@/pages/ConfigPage").then((module) => ({ d
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
-const MarketConfigPage = lazy(() => import("@/components/MarketConfigPage").then((module) => ({ default: module.MarketConfigPage })));
-const MarketDashboard = lazy(() => import("@/components/MarketDashboard").then((module) => ({ default: module.MarketDashboard })));
 const MCPPage = lazy(() => import("@/pages/MCPPage").then((module) => ({ default: module.MCPPage })));
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((module) => ({ default: module.MemoryPage })));
 const NewsPage = lazy(() => import("@/pages/NewsPage").then((module) => ({ default: module.NewsPage })));
@@ -101,8 +99,6 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   chat: "chat:read",
   tracing: "tracing:read",
   security: "config:read",
-  market: "market:read",
-  market_config: "market:write",
   watchlist: "watchlist:read",
   portfolio: "portfolio:read",
   news: "market:read",
@@ -123,8 +119,6 @@ const PAGE_PATH: Record<Page, string> = {
   chat: "/chat",
   tracing: "/tracing",
   security: "/security",
-  market: "/market",
-  market_config: "/market/config",
   watchlist: "/watchlist",
   portfolio: "/portfolio",
   news: "/news",
@@ -144,6 +138,8 @@ const PATH_PAGE = new Map<string, Page>([
   ...Object.entries(PAGE_PATH).map(([page, path]) => [path, page as Page] as const),
   ["/", "overview"],
   ["/config", "config"],
+  ["/market", "overview"],
+  ["/market/config", "config"],
   ["/overview", "overview"],
 ]);
 
@@ -273,7 +269,6 @@ function getPinnedNavItems(language: AppLanguage): NavItem[] {
   return [
     navItem(language, "overview", <Home />),
     navItem(language, "chat", <MessageSquareText />),
-    navItem(language, "market", <BarChart2 />),
     navItem(language, "watchlist", <Star />),
     navItem(language, "portfolio", <BriefcaseBusiness />),
     navItem(language, "news", <Newspaper />),
@@ -413,6 +408,10 @@ function pageFromPath(pathname: string): Page {
 
 function pathForPage(page: Page) {
   return PAGE_PATH[page] ?? PAGE_PATH.overview;
+}
+
+function configTabFromPath(pathname: string): ConfigTab | undefined {
+  return normalizeRoutePath(pathname) === "/market/config" ? "market" : undefined;
 }
 
 function ConfigSaveToast({ onClose, toast }: { onClose: () => void; toast: ConfigToast | null }) {
@@ -592,6 +591,8 @@ function ConsoleApp() {
     return window.localStorage.getItem(LEGACY_MOBILE_CHROME_HIDDEN_KEY) !== "true";
   });
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
+  const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
+  const [configInitialTab, setConfigInitialTab] = useState<ConfigTab>(() => configTabFromPath(window.location.pathname) ?? "model");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
@@ -621,7 +622,11 @@ function ConsoleApp() {
   };
 
   useEffect(() => {
-    const handlePopState = () => setPage(pageFromPath(window.location.pathname));
+    const handlePopState = () => {
+      const nextTab = configTabFromPath(window.location.pathname);
+      if (nextTab) setConfigInitialTab(nextTab);
+      setPage(pageFromPath(window.location.pathname));
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
@@ -664,7 +669,7 @@ function ConsoleApp() {
   }, []);
 
   useEffect(() => {
-    if (page !== "chat" || !shouldAutoScrollChatRef.current) return;
+    if ((page !== "chat" && page !== "overview") || !shouldAutoScrollChatRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       if (!shouldAutoScrollChatRef.current) return;
       const element = chatScrollRef.current;
@@ -1415,7 +1420,15 @@ function ConsoleApp() {
     if (nextPage === "fundamentals") {
       setSelectedSymbol("");
     }
+    if (nextPage === "config") {
+      setConfigInitialTab("model");
+    }
     setPage(nextPage);
+  }
+
+  function openConfig(tab: ConfigTab = "model") {
+    setConfigInitialTab(tab);
+    setPage("config");
   }
 
   return (
@@ -1508,20 +1521,35 @@ function ConsoleApp() {
               {page === "overview" ? (
                 <DashboardPage
                   canPermission={auth.can}
-                  config={config}
-                  enabledCount={enabledCount}
+                  chatExpanded={dashboardChatExpanded}
+                  chatPanel={(
+                    <ChatPage
+                      chatScrollRef={chatScrollRef}
+                      confirmAction={confirmDialog.confirm}
+                      displayName={auth.user?.display_name || auth.user?.username || ""}
+                      embedded
+                      endRef={endRef}
+                      expanded={dashboardChatExpanded}
+                      handleChatScroll={handleChatScroll}
+                      handleSend={handleSend}
+                      handleStopStreaming={handleStopStreaming}
+                      isSending={isSending}
+                      language={language}
+                      messages={messages}
+                      mobileNavVisible={isMobileNavVisible}
+                      onToggleExpanded={() => setDashboardChatExpanded((current) => !current)}
+                      prompt={prompt}
+                      quickPrompts={quickPrompts}
+                      chatHistory={chatHistory}
+                      setPrompt={setPrompt}
+                    />
+                  )}
                   language={language}
-                  modelName={modelName}
                   onOpenChart={(symbol) => {
                     setSelectedSymbol(symbol);
                     setPage("chart");
                   }}
-                  onOpenConfig={() => setPage("config")}
-                  onOpenMarket={() => setPage("market")}
-                  onOpenNews={(symbol) => {
-                    if (symbol) setSelectedSymbol(symbol);
-                    setPage("news");
-                  }}
+                  onOpenMarketConfig={() => openConfig("market")}
                   onOpenPortfolio={() => setPage("portfolio")}
                   onOpenWatchlist={() => setPage("watchlist")}
                   onPrompt={(value) => {
@@ -1554,7 +1582,7 @@ function ConsoleApp() {
             {page === "tracing" ? (
               <TracingPage
                 activeSessionId={activeConvId}
-                onOpenConfig={() => setPage("config")}
+                onOpenConfig={() => openConfig()}
                 tracingEnabled={Boolean(config?.tracing_enabled)}
               />
             ) : null}
@@ -1595,39 +1623,16 @@ function ConsoleApp() {
               />
             ) : null}
 
-            {page === "market" ? (
-              <MarketDashboard
-                language={language}
-                onOpenConfig={() => setPage("market_config")}
-                refreshInterval={marketConfig.refresh_interval}
-                onSelectStock={(quote) => {
-                  setSelectedSymbol(quote.symbol);
-                  setPage("chart");
-                }}
-              />
-            ) : null}
-
             {page === "chart" ? (
               <TechnicalAnalysis
                 language={language}
                 symbol={selectedSymbol}
                 onSymbolChange={setSelectedSymbol}
-                onBack={() => setPage("market")}
+                onBack={() => setPage("overview")}
               />
             ) : null}
 
             {page === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
-
-            {page === "market_config" ? (
-              <MarketConfigPage
-                language={language}
-                onBack={() => setPage("market")}
-                onSaved={(cfg) => {
-                  setMarketConfig(cfg);
-                  setPage("market");
-                }}
-              />
-            ) : null}
 
             {page === "skills" ? <SkillsPage confirmAction={confirmDialog.confirm} language={language} /> : null}
 
@@ -1637,7 +1642,7 @@ function ConsoleApp() {
                 confirmAction={confirmDialog.confirm}
                 language={language}
                 onSaved={applySavedConfig}
-                onOpenConfig={() => setPage("config")}
+                onOpenConfig={() => openConfig()}
               />
             ) : null}
 
@@ -1656,13 +1661,17 @@ function ConsoleApp() {
               {page === "config" ? (
                 <ConfigPage
                   canManageSystem={auth.can("config:write")}
+                  canReadMarket={auth.can("market:read")}
+                  canWriteMarket={auth.can("market:write")}
                   config={config}
                   configState={configState}
                   draft={draft}
                   enabledCount={enabledCount}
                   handleSaveConfig={handleSaveConfig}
+                  initialTab={configInitialTab}
                   language={language}
                   onConfigBlur={flushConfigAutoSave}
+                  onMarketConfigSaved={setMarketConfig}
                   patchDraft={patchDraft}
                   setDraft={setDraft}
                 />

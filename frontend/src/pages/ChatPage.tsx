@@ -13,6 +13,7 @@ import {
   Loader2,
   Maximize2,
   MessageSquareText,
+  Minimize2,
   PencilLine,
   Plus,
   Search,
@@ -427,9 +428,12 @@ export function ChatPage({
   handleSend,
   handleChatScroll,
   handleStopStreaming,
+  embedded = false,
+  expanded = false,
   isSending,
   language,
   displayName,
+  onToggleExpanded,
   messages,
   mobileNavVisible = true,
   prompt,
@@ -443,9 +447,12 @@ export function ChatPage({
   handleSend: (event?: { preventDefault: () => void }, value?: string, options?: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean }) => void;
   handleChatScroll: () => void;
   handleStopStreaming: () => void;
+  embedded?: boolean;
+  expanded?: boolean;
   isSending: boolean;
   language: AppLanguage;
   displayName?: string;
+  onToggleExpanded?: () => void;
   messages: ChatMessage[];
   mobileNavVisible?: boolean;
   prompt: string;
@@ -463,6 +470,9 @@ export function ChatPage({
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
   const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
+  const expandLabel = expanded
+    ? (language === "en" ? "Collapse chat" : "收起对话")
+    : (language === "en" ? "Expand chat" : "展开对话");
   const thinkingLabel = language === "en"
     ? `Thinking mode ${thinkingEnabled ? "on" : "off"}`
     : `思考模式${thinkingEnabled ? "开启" : "关闭"}`;
@@ -595,6 +605,10 @@ export function ChatPage({
   }
 
   function handleToggleFullscreen() {
+    if (embedded && onToggleExpanded) {
+      onToggleExpanded();
+      return;
+    }
     const root = document.documentElement;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {
@@ -616,14 +630,14 @@ export function ChatPage({
 
   function renderComposer(mode: "desktop" | "mobile") {
     const isMobile = mode === "mobile";
-    const largeComposer = isNewConversation;
+    const largeComposer = isNewConversation && !embedded;
 
     return (
       <form
         className={cn(
           isMobile
             ? "absolute inset-x-2 rounded-[30px] border border-border/80 bg-card/95 p-2.5 shadow-2xl backdrop-blur"
-            : "hidden bg-transparent px-3 pb-4 pt-1 sm:px-4 lg:block",
+            : cn("bg-transparent px-3 pb-4 pt-1 sm:px-4", embedded ? "block" : "hidden lg:block"),
           isMobile && (mobileNavVisible ? "bottom-[calc(4.75rem+env(safe-area-inset-bottom))]" : "bottom-[calc(0.75rem+env(safe-area-inset-bottom))]"),
         )}
         onSubmit={handleComposerSubmit}
@@ -635,11 +649,12 @@ export function ChatPage({
           )}
         >
           <div className="flex min-h-0 flex-1 items-start gap-2">
-            <Textarea
-              className={cn(
-                "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
-                largeComposer ? "min-h-[78px]" : "min-h-10 text-[15px] leading-6",
-              )}
+              <Textarea
+                className={cn(
+                  "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
+                  largeComposer ? "min-h-[78px]" : "min-h-10 text-[15px] leading-6",
+                  embedded && "text-[14px] leading-6",
+                )}
               disabled={isSending}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
@@ -704,11 +719,11 @@ export function ChatPage({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+    <div className={cn("flex h-full min-h-0 flex-1 overflow-hidden", embedded && "min-h-0 rounded-none")}>
       <section className="finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent">
-        <div className="shrink-0 border-b border-border/60 px-3 py-3 sm:px-4">
+        <div className={cn("shrink-0 border-b border-border/60 px-3 py-3 sm:px-4", embedded && "py-2.5")}>
           <div className="flex items-center justify-between gap-3">
-            <h1 className="truncate text-3xl font-semibold tracking-normal sm:text-4xl">{uiCopy.title}</h1>
+            <h1 className={cn("truncate font-semibold tracking-normal", embedded ? "text-base sm:text-lg" : "text-3xl sm:text-4xl")}>{uiCopy.title}</h1>
             <div className="flex shrink-0 items-center gap-2">
               <Button
                 aria-label="新建对话"
@@ -815,15 +830,18 @@ export function ChatPage({
                 ) : null}
               </div>
               <Button
-                aria-label={uiCopy.fullscreen}
-                className="h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12"
+                aria-label={embedded ? expandLabel : uiCopy.fullscreen}
+                className={cn(
+                  "h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12",
+                  embedded && "h-9 w-9 sm:h-9 sm:w-9",
+                )}
                 onClick={handleToggleFullscreen}
                 size="icon"
-                title={uiCopy.fullscreen}
+                title={embedded ? expandLabel : uiCopy.fullscreen}
                 type="button"
                 variant="ghost"
               >
-                <Maximize2 className="size-5" />
+                {embedded && expanded ? <Minimize2 className="size-4" /> : <Maximize2 className={embedded ? "size-4" : "size-5"} />}
               </Button>
             </div>
           </div>
@@ -832,42 +850,45 @@ export function ChatPage({
         <div
           className={cn(
             "min-h-0 flex-1 overflow-y-auto px-3 pt-4 sm:px-4 sm:pt-5 lg:pb-3",
-            mobileNavVisible ? "pb-20 sm:pb-24" : "pb-14 sm:pb-16",
+            embedded ? "pb-4 sm:pb-4" : mobileNavVisible ? "pb-20 sm:pb-24" : "pb-14 sm:pb-16",
           )}
           onScroll={handleChatScroll}
           ref={chatScrollRef}
         >
           <div className="mr-auto w-full space-y-4">
             {isNewConversation ? (
-              <div className="mx-auto w-full max-w-5xl space-y-10 py-6 sm:py-10">
-                <div className="space-y-8">
-                  <h2 className="max-w-4xl text-2xl font-semibold leading-tight tracking-normal sm:text-3xl">
+              <div className={cn("mx-auto w-full max-w-5xl space-y-10 py-6 sm:py-10", embedded && "space-y-5 py-2 sm:py-4")}>
+                <div className={cn("space-y-8", embedded && "space-y-4")}>
+                  <h2 className={cn("max-w-4xl font-semibold leading-tight tracking-normal", embedded ? "text-lg sm:text-xl" : "text-2xl sm:text-3xl")}>
                     {greeting}
                   </h2>
                   {suggestionPrompts.length > 0 ? (
                     <div className="max-w-4xl space-y-2">
                       {suggestionPrompts.map((item) => (
                         <button
-                          className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-2xl bg-muted/35 px-4 py-3 text-left text-base font-medium text-foreground transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5"
+                            className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-2xl bg-muted/35 px-4 py-3 text-left text-base font-medium text-foreground transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5"
                           key={item}
                           onClick={() => sendPrompt(item)}
                           type="button"
                         >
-                          <span className="min-w-0 truncate">{item}</span>
-                          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-background/65 text-muted-foreground transition-colors group-hover:text-primary">
-                            <Search className="size-5" />
-                          </span>
+                            <span className="min-w-0 truncate">{item}</span>
+                            <span className={cn("grid shrink-0 place-items-center rounded-full bg-background/65 text-muted-foreground transition-colors group-hover:text-primary", embedded ? "size-8" : "size-10")}>
+                              <Search className={embedded ? "size-4" : "size-5"} />
+                            </span>
                         </button>
                       ))}
                     </div>
                   ) : null}
                 </div>
-                <div className="space-y-4">
-                  <p className="text-lg font-semibold text-muted-foreground sm:text-xl">{uiCopy.exploreTitle}</p>
+                <div className={cn("space-y-4", embedded && "space-y-2")}>
+                  <p className={cn("font-semibold text-muted-foreground", embedded ? "text-sm" : "text-lg sm:text-xl")}>{uiCopy.exploreTitle}</p>
                   <div className="flex max-w-4xl flex-wrap gap-3">
                     {explorePrompts.map((item) => (
                       <button
-                        className="inline-flex min-h-11 items-center gap-2 rounded-full bg-muted/55 px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-base"
+                        className={cn(
+                          "inline-flex min-h-11 items-center gap-2 rounded-full bg-muted/55 px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-base",
+                          embedded && "min-h-9 px-3 py-1.5 text-xs sm:text-sm",
+                        )}
                         key={item.label}
                         onClick={() => sendPrompt(item.prompt)}
                         type="button"
@@ -890,6 +911,7 @@ export function ChatPage({
                 <div
                   className={cn(
                     "message-bubble min-w-0 max-w-[92%] rounded-2xl border px-3.5 py-3 shadow-sm sm:max-w-[84%] sm:px-4 sm:py-3.5 xl:max-w-[78%]",
+                    embedded && "sm:max-w-[92%] xl:max-w-[88%]",
                     message.role === "user"
                       ? "chat-bubble-user"
                       : "chat-bubble-assistant",
@@ -932,7 +954,7 @@ export function ChatPage({
 
         {renderComposer("desktop")}
       </section>
-      {mobileComposerOpen ? (
+      {!embedded && mobileComposerOpen ? (
         <div className="fixed inset-0 z-40 lg:hidden">
           <button
             aria-label={closeComposerLabel}
@@ -942,7 +964,7 @@ export function ChatPage({
           />
           {renderComposer("mobile")}
         </div>
-      ) : (
+      ) : !embedded ? (
         <button
           aria-label={openComposerLabel}
           className={cn(
@@ -956,7 +978,7 @@ export function ChatPage({
           {isSending ? <Loader2 className="size-5 animate-spin" /> : <MessageSquareText className="size-5" />}
           {prompt.trim() ? <span className="absolute right-1 top-1 size-2.5 rounded-full bg-secondary ring-2 ring-background" /> : null}
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

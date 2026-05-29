@@ -633,10 +633,10 @@
     }
   }
 
-  @media (min-width: 1536px) {
+  @media (min-width: 1280px) {
     .dashboard-secondary-column {
       border-left: 1px solid hsl(var(--border) / 0.54);
-      padding-left: 1.5rem;
+      padding-left: 1.25rem;
     }
 
     .dashboard-secondary-column .finance-section:first-child {

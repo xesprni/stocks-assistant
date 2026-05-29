@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getMarketConfig, saveMarketConfig } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { IndexConfig, MarketDashboardConfig } from "@/types/app";
 
 type AppLanguage = "zh" | "en";
@@ -32,6 +33,8 @@ const marketConfigCopy = {
     saved: "已保存",
     loadFailed: "配置加载失败",
     saveFailed: "保存失败",
+    readOnly: "只读",
+    readOnlyHint: "当前账号无权限修改行情配置",
     refreshInterval: "自动刷新间隔（秒）",
     intervalRange: "范围：1-3600 秒",
     indexList: "指数监控列表",
@@ -58,6 +61,8 @@ const marketConfigCopy = {
     saved: "Saved",
     loadFailed: "Failed to load config",
     saveFailed: "Save failed",
+    readOnly: "Read only",
+    readOnlyHint: "This account cannot edit market config",
     refreshInterval: "Auto-refresh interval (seconds)",
     intervalRange: "Range: 1-3600 seconds",
     indexList: "Index monitor list",
@@ -126,12 +131,14 @@ const INDEX_CATALOG: IndexCatalogEntry[] = [
 ];
 
 interface Props {
+  embedded?: boolean;
   language: AppLanguage;
-  onBack: () => void;
+  onBack?: () => void;
   onSaved: (config: MarketDashboardConfig) => void;
+  readOnly?: boolean;
 }
 
-export function MarketConfigPage({ language, onBack, onSaved }: Props) {
+export function MarketConfigPage({ embedded = false, language, onBack, onSaved, readOnly = false }: Props) {
   const copy = marketConfigCopy[language];
   const [config, setConfig] = useState<MarketDashboardConfig | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -199,6 +206,7 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
   }
 
   function toggleIndex(symbol: string, enabled: boolean) {
+    if (readOnly) return;
     setConfig((c) =>
       c
         ? {
@@ -212,12 +220,14 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
   }
 
   function removeIndex(symbol: string) {
+    if (readOnly) return;
     setConfig((c) =>
       c ? { ...c, indices: c.indices.filter((idx) => idx.symbol !== symbol) } : c,
     );
   }
 
   function addIndex(sym?: string, nm?: string) {
+    if (readOnly) return;
     const symbol = (sym ?? newSymbol).trim().toUpperCase();
     const name = (nm ?? newName).trim();
     if (!symbol) return;
@@ -233,11 +243,12 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
   }
 
   function resetToDefault() {
+    if (readOnly) return;
     setConfig((c) => (c ? { ...c, indices: DEFAULT_INDICES } : c));
   }
 
   async function handleSave() {
-    if (!config) return;
+    if (!config || readOnly) return;
     setSaveState("saving");
     setError("");
     try {
@@ -253,26 +264,40 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
   }
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <section
+      className={cn(
+        embedded
+          ? "rounded-md border border-border/80 bg-background/50"
+          : "panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full",
+      )}
+    >
+      <div
+        className={cn(
+          "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+          embedded ? "border-b border-border/80 p-4" : "panel-header",
+        )}
+      >
         <div className="flex items-center gap-3">
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onBack} aria-label={copy.back}>
-            <ArrowLeft />
-          </Button>
+          {!embedded && onBack ? (
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onBack} aria-label={copy.back}>
+              <ArrowLeft />
+            </Button>
+          ) : null}
           <div>
             <div className="flex items-center gap-2">
               <Settings2 className="size-5 text-secondary" />
               <p className="font-semibold">{copy.title}</p>
+              {readOnly ? <Badge variant="outline">{copy.readOnly}</Badge> : null}
             </div>
-            <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
+            <p className="text-xs text-muted-foreground">{readOnly ? copy.readOnlyHint : copy.subtitle}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={resetToDefault}>
+          <Button size="sm" variant="outline" disabled={readOnly || !config} onClick={resetToDefault}>
             <RotateCcw />
             {copy.resetDefault}
           </Button>
-          <Button size="sm" disabled={saveState === "saving" || !config} onClick={handleSave}>
+          <Button size="sm" disabled={readOnly || saveState === "saving" || !config} onClick={handleSave}>
             {saveState === "saving" ? (
               <Loader2 className="animate-spin" />
             ) : saveState === "saved" ? (
@@ -292,7 +317,7 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
       ) : null}
 
       {config ? (
-        <div className="panel-body min-h-0 flex-1 space-y-6 lg:overflow-y-auto">
+        <div className={cn("min-h-0 flex-1 space-y-6", embedded ? "p-4" : "panel-body lg:overflow-y-auto")}>
           {/* Refresh interval */}
           <div className="space-y-2">
             <Label>{copy.refreshInterval}</Label>
@@ -302,6 +327,7 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
                 min={1}
                 max={3600}
                 type="number"
+                disabled={readOnly}
                 value={config.refresh_interval}
                 onChange={(e) => patchConfig({ refresh_interval: Number(e.target.value) })}
               />
@@ -335,6 +361,7 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
                 >
                   <Switch
                     checked={idx.enabled}
+                    disabled={readOnly}
                     onCheckedChange={(checked) => toggleIndex(idx.symbol, checked)}
                     aria-label={formatTemplate(copy.enabledLabel, { name: idx.name })}
                   />
@@ -346,6 +373,7 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
                     aria-label={copy.delete}
                     size="icon"
                     variant="ghost"
+                    disabled={readOnly}
                     className="h-7 w-7 text-muted-foreground hover:text-destructive"
                     onClick={() => removeIndex(idx.symbol)}
                   >
@@ -356,81 +384,83 @@ export function MarketConfigPage({ language, onBack, onSaved }: Props) {
             </div>
 
             {/* Add new index — search catalog */}
-            <div ref={addDropdownRef} className="rounded-lg border border-dashed border-border/70 bg-muted/10 p-3">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">{copy.addIndex}</p>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="pl-8"
-                  placeholder={copy.addSearch}
-                  value={addSearch}
-                  onChange={(e) => {
-                    setAddSearch(e.target.value);
-                    setShowAddDropdown(true);
-                  }}
-                  onFocus={() => setShowAddDropdown(true)}
-                />
-                {showAddDropdown && (
-                  <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-background shadow-lg">
-                    {addSearchResults.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-muted-foreground">
-                        {addSearch.trim() ? copy.noMatchedIndex : copy.allKnownAdded}
-                      </div>
-                    ) : (
-                      addSearchResults.map((entry) => (
-                        <button
-                          key={entry.symbol}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/60 transition-colors"
-                          type="button"
-                          onClick={() => addIndex(entry.symbol, entry.name)}
-                        >
-                          <Badge variant="outline" className="shrink-0 text-[10px]">
-                            {entry.market}
-                          </Badge>
-                          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                            {entry.symbol}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
+            {!readOnly ? (
+              <div ref={addDropdownRef} className="rounded-lg border border-dashed border-border/70 bg-muted/10 p-3">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">{copy.addIndex}</p>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-8"
+                    placeholder={copy.addSearch}
+                    value={addSearch}
+                    onChange={(e) => {
+                      setAddSearch(e.target.value);
+                      setShowAddDropdown(true);
+                    }}
+                    onFocus={() => setShowAddDropdown(true)}
+                  />
+                  {showAddDropdown && (
+                    <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-background shadow-lg">
+                      {addSearchResults.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">
+                          {addSearch.trim() ? copy.noMatchedIndex : copy.allKnownAdded}
+                        </div>
+                      ) : (
+                        addSearchResults.map((entry) => (
+                          <button
+                            key={entry.symbol}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/60 transition-colors"
+                            type="button"
+                            onClick={() => addIndex(entry.symbol, entry.name)}
+                          >
+                            <Badge variant="outline" className="shrink-0 text-[10px]">
+                              {entry.market}
+                            </Badge>
+                            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              {entry.symbol}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                {/* Manual fallback */}
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    className="font-mono"
+                    placeholder={copy.manualSymbol}
+                    value={newSymbol}
+                    onChange={(e) => setNewSymbol(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") addIndex();
+                    }}
+                  />
+                  <Input
+                    placeholder={copy.displayName}
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") addIndex();
+                    }}
+                  />
+                  <Button
+                    className="shrink-0"
+                    disabled={!newSymbol.trim()}
+                    onClick={() => addIndex()}
+                    type="button"
+                  >
+                    <Plus />
+                    {copy.add}
+                  </Button>
+                </div>
               </div>
-              {/* Manual fallback */}
-              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                <Input
-                  className="font-mono"
-                  placeholder={copy.manualSymbol}
-                  value={newSymbol}
-                  onChange={(e) => setNewSymbol(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addIndex();
-                  }}
-                />
-                <Input
-                  placeholder={copy.displayName}
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addIndex();
-                  }}
-                />
-                <Button
-                  className="shrink-0"
-                  disabled={!newSymbol.trim()}
-                  onClick={() => addIndex()}
-                  type="button"
-                >
-                  <Plus />
-                  {copy.add}
-                </Button>
-              </div>
-            </div>
+            ) : null}
           </div>
         </div>
       ) : (
-        <div className="panel-body">
+        <div className={cn(embedded ? "p-4" : "panel-body")}>
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
             {copy.loading}

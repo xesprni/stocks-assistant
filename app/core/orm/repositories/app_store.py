@@ -600,7 +600,11 @@ class AppStoreRepository:
 
     def list_page_permissions(self) -> dict[str, str]:
         with session_scope(self.session_factory) as session:
-            rows = session.scalars(select(PagePermission).order_by(PagePermission.page.asc())).all()
+            rows = session.scalars(
+                select(PagePermission)
+                .where(PagePermission.page.in_(tuple(PAGE_PERMISSION_REQUIREMENTS)))
+                .order_by(PagePermission.page.asc())
+            ).all()
             return {row.page: row.permission_key for row in rows}
 
     def upsert_page_permission(self, page: str, permission: str) -> dict[str, str]:
@@ -608,6 +612,8 @@ class AppStoreRepository:
         clean_permission = permission.strip()
         if not clean_page:
             raise ValueError("Page is required")
+        if clean_page not in PAGE_PERMISSION_REQUIREMENTS:
+            raise ValueError(f"Unknown page: {clean_page}")
         if clean_permission not in PERMISSION_DESCRIPTIONS:
             raise ValueError(f"Unknown permission: {clean_permission}")
         now = utc_now()

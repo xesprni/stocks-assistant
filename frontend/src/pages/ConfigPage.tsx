@@ -3,6 +3,7 @@ import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, Globe2, KeyRound,
 
 import { Field } from "@/components/common/Field";
 import { ToggleRow } from "@/components/common/ToggleRow";
+import { MarketConfigPage } from "@/components/MarketConfigPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import { toDraft } from "@/lib/config";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { AppConfig, ConfigDraft, ToolInfo } from "@/types/app";
+import type { AppConfig, ConfigDraft, MarketDashboardConfig, ToolInfo } from "@/types/app";
 
 function isMcpToolName(name: string): boolean {
   return name.startsWith("mcp_");
@@ -26,6 +27,7 @@ const CODEX_DEFAULT_MODEL = "gpt-5.2-codex";
 const EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
 const REASONING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"] as const;
 const TOOL_CHOICE_OPTIONS = ["auto", "none", "required"] as const;
+export type ConfigTab = "model" | "agent" | "longbridge" | "market" | "channels" | "features";
 
 type PasswordForm = { current: string; next: string; confirm: string };
 type PasswordState = "idle" | "saving" | "saved" | "error";
@@ -37,29 +39,38 @@ function isCompatibleBase(value?: string | null): value is string {
 
 export function ConfigPage({
   canManageSystem,
+  canReadMarket,
+  canWriteMarket,
   config,
   configState,
   draft,
   enabledCount,
   handleSaveConfig,
+  initialTab,
   language,
   onConfigBlur,
+  onMarketConfigSaved,
   patchDraft,
   setDraft,
 }: {
   canManageSystem: boolean;
+  canReadMarket: boolean;
+  canWriteMarket: boolean;
   config: AppConfig | null;
   configState: "idle" | "saving" | "saved" | "error";
   draft: ConfigDraft | null;
   enabledCount: number;
   handleSaveConfig: () => void;
+  initialTab?: ConfigTab;
   language: AppLanguage;
   onConfigBlur: () => void;
+  onMarketConfigSaved: (config: MarketDashboardConfig) => void;
   patchDraft: (patch: Partial<ConfigDraft>) => void;
   setDraft: (draft: ConfigDraft) => void;
 }) {
   const copy = i18n[language].config;
   const common = i18n[language].common;
+  const defaultTab = initialTab === "market" && !canReadMarket ? "model" : initialTab ?? "model";
   const [telegramTestMessage, setTelegramTestMessage] = useState(copy.telegramTestDefault);
   const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [telegramTestResult, setTelegramTestResult] = useState("");
@@ -349,11 +360,12 @@ export function ConfigPage({
             state={passwordState}
           />
 
-          <Tabs defaultValue="model">
-            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5">
+          <Tabs defaultValue={defaultTab}>
+            <TabsList className={cn("grid h-auto w-full grid-cols-2", canReadMarket ? "sm:grid-cols-3 lg:grid-cols-6" : "sm:grid-cols-5")}>
               <TabsTrigger value="model">{copy.modelTab}</TabsTrigger>
               <TabsTrigger value="agent">{copy.agentTab}</TabsTrigger>
               <TabsTrigger value="longbridge">{copy.longbridgeTab}</TabsTrigger>
+              {canReadMarket ? <TabsTrigger value="market">{copy.marketTab}</TabsTrigger> : null}
               <TabsTrigger value="channels">{copy.channelsTab}</TabsTrigger>
               <TabsTrigger value="features">{copy.featuresTab}</TabsTrigger>
             </TabsList>
@@ -790,6 +802,17 @@ export function ConfigPage({
                 </div>
               </ConfigSection>
             </TabsContent>
+
+            {canReadMarket ? (
+              <TabsContent value="market" className="space-y-4">
+                <MarketConfigPage
+                  embedded
+                  language={language}
+                  onSaved={onMarketConfigSaved}
+                  readOnly={!canWriteMarket}
+                />
+              </TabsContent>
+            ) : null}
 
             <TabsContent value="channels" className="space-y-4">
               <ConfigSection

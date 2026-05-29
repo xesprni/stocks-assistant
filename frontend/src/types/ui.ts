@@ -3,8 +3,6 @@ export type Page =
   | "chat"
   | "tracing"
   | "security"
-  | "market"
-  | "market_config"
   | "watchlist"
   | "portfolio"
   | "news"

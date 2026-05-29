@@ -105,8 +105,6 @@ PAGE_PERMISSION_REQUIREMENTS: dict[str, str] = {
     "chat": "chat:read",
     "tracing": "tracing:read",
     "security": "config:read",
-    "market": "market:read",
-    "market_config": "market:write",
     "watchlist": "watchlist:read",
     "portfolio": "portfolio:read",
     "news": "market:read",

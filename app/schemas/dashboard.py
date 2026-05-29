@@ -29,6 +29,16 @@ class DashboardMarketModule(DashboardModule):
 class DashboardWatchlistRow(QuoteItem):
     """Dashboard watchlist quote row."""
 
+    id: Optional[int] = None
+    name_cn: str = ""
+    name_en: str = ""
+    name_hk: str = ""
+    exchange: str = ""
+    currency: str = ""
+    note: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
 
 class DashboardWatchlistViews(BaseModel):
     """Pre-sorted watchlist views."""

@@ -367,6 +367,15 @@ class AuthSecurityTest(unittest.TestCase):
         roles = self.client.get("/api/v1/roles", headers=admin_headers)
         self.assertEqual(roles.status_code, 200, roles.text)
         self.assertEqual(roles.json()["page_permissions"]["news"], "market:read")
+        self.assertNotIn("market", roles.json()["page_permissions"])
+        self.assertNotIn("market_config", roles.json()["page_permissions"])
+
+        removed_page = self.client.put(
+            "/api/v1/roles/pages/market",
+            json={"permission": "market:read"},
+            headers=admin_headers,
+        )
+        self.assertEqual(removed_page.status_code, 400)
 
         updated_page = self.client.put(
             "/api/v1/roles/pages/news",
