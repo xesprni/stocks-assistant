@@ -1191,7 +1191,7 @@ export function PortfolioPage({
         ) : (
           <div className="grid gap-1.5 lg:hidden">
             {sortedItems.map((item) => (
-              <article key={item.id} className="finance-row-card rounded-md border border-border/80 bg-background/60 px-2.5 py-2">
+              <article key={item.id} className="finance-row-card portfolio-list-row rounded-md border border-border/80 bg-background/60 px-2.5 py-2">
                 <div className="grid grid-cols-[minmax(82px,1fr)_minmax(68px,0.65fr)_minmax(70px,0.7fr)_auto] items-center gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold leading-5">{item.symbol}</p>
@@ -1253,7 +1253,7 @@ export function PortfolioPage({
             </thead>
             <tbody>
               {sortedItems.map((item) => (
-                <tr key={item.id} className="border-b border-border/60 transition-colors hover:bg-muted/20">
+                <tr key={item.id} className="portfolio-table-row border-b border-border/60">
                   <td className="px-3 py-2">
                     <div className="min-w-0">
                       <p className="font-semibold">{item.symbol}</p>

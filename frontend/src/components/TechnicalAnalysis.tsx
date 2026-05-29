@@ -946,13 +946,12 @@ function ChipDistributionPanel({
   const lossColor = downColor;
 
   return (
-    <div className="flex h-44 w-full shrink-0 flex-col border-t border-border bg-card lg:h-full lg:w-36 lg:border-l lg:border-t-0">
-      <div className="shrink-0 border-b border-border px-2 py-1.5">
-        <div className="text-[11px] font-semibold">{copy.chipDistribution}</div>
+    <div className="flex h-44 w-full shrink-0 flex-col border-t border-border/70 bg-background/80 lg:h-full lg:w-40 lg:border-l lg:border-t-0">
+      <div className="shrink-0 border-b border-border/60 bg-muted/10 px-3 py-2">
+        <div className="text-[11px] font-semibold text-foreground">{copy.chipDistribution}</div>
       </div>
 
-      {/* Profit ratio */}
-      <div className="shrink-0 border-b border-border px-2 py-1.5">
+      <div className="shrink-0 border-b border-border/60 px-3 py-2">
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-muted-foreground">{copy.profitRatio}</span>
           <span
@@ -962,7 +961,7 @@ function ChipDistributionPanel({
             {result.profitRatio.toFixed(1)}%
           </span>
         </div>
-        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted/45">
           <div
             className="h-full rounded-full transition-all"
             style={{
@@ -977,15 +976,13 @@ function ChipDistributionPanel({
         </div>
       </div>
 
-      {/* Chip bars - positioned to match chart price axis */}
-      <div className="relative flex-1 overflow-hidden">
-        {/* Current price line */}
+      <div className="relative flex-1 overflow-hidden bg-card/30">
         {lastClose >= priceMin && lastClose <= priceMax && (
           <div
-            className="absolute left-0 right-0 border-t border-dashed border-primary/50"
+            className="absolute left-2 right-2 border-t border-dashed border-primary/55"
             style={{ bottom: `${((lastClose - priceMin) / priceSpan) * 100}%` }}
           >
-            <span className="absolute -top-2.5 right-1 text-[8px] font-mono text-primary">
+            <span className="absolute -top-2.5 right-0 rounded-sm bg-background/95 px-1 font-mono text-[8px] text-primary">
               {lastClose.toFixed(2)}
             </span>
           </div>
@@ -999,11 +996,11 @@ function ChipDistributionPanel({
           return (
             <div
               key={chip.price.toFixed(4)}
-              className="absolute left-1 right-8 flex items-center"
+              className="absolute left-2 right-8 flex items-center"
               style={{ bottom: `${bottomPct}%`, height: `${barHeight}%` }}
             >
               <div
-                className="h-full rounded-sm"
+                className="h-full rounded-full"
                 style={{
                   width: `${widthPct}%`,
                   backgroundColor: isProfit ? profitColor + "88" : lossColor + "88",

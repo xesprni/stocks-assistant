@@ -340,9 +340,11 @@ export function WatchlistPage({
   }, [category, copy.noMatch, copy.searchFailed, query]);
 
   function selectCategory(next: WatchlistCategory) {
+    if (next === category) return;
     setCategory(next);
     setItems([]);
     setActiveSymbol("");
+    onSelectedSymbolChange?.("");
     setResults([]);
     setMessage("");
   }
@@ -444,15 +446,15 @@ export function WatchlistPage({
         </div>
 
         <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row xl:items-center">
-          <div className="inline-flex h-8 w-fit max-w-full shrink-0 items-center overflow-x-auto border-b border-border/70">
+          <div className="inline-flex h-8 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
             {watchlistCategories.map((item) => (
               <button
                 aria-pressed={category === item.id}
                 className={cn(
-                  "h-8 min-w-[4.25rem] border-b-2 px-2.5 text-xs font-medium transition-colors",
+                  "h-7 min-w-[4.25rem] rounded-full px-2.5 text-xs font-medium transition-colors",
                   category === item.id
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                 )}
                 key={item.id}
                 onClick={() => selectCategory(item.id)}
@@ -467,7 +469,7 @@ export function WatchlistPage({
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 py-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
-        <aside className="finance-module flex min-h-0 flex-col rounded-md border border-border/80 bg-background/45">
+        <aside className="finance-module flex min-h-0 flex-col overflow-hidden rounded-md border border-border/80 bg-card/45">
           <div className="finance-module-header space-y-3 border-b border-border/70 p-3">
             <div>
               <p className="text-sm font-semibold">{formatTemplate(copy.listTitle, { label: selectedCategory?.label ?? category })}</p>
@@ -539,7 +541,7 @@ export function WatchlistPage({
             ) : null}
           </div>
 
-          <div className="min-h-0 flex-1 p-2 lg:overflow-y-auto">
+          <div className="min-h-0 flex-1 overscroll-contain p-2 lg:overflow-y-auto">
             <ManageList
               activeDragItem={activeDragItem}
               activeSymbol={activeSymbol}
@@ -562,7 +564,7 @@ export function WatchlistPage({
           </div>
         </aside>
 
-        <div className="finance-module flex min-h-[640px] min-w-0 flex-col overflow-hidden rounded-md border border-border/80 bg-background/45 lg:min-h-0">
+        <div className="finance-module flex min-h-[640px] min-w-0 flex-col overflow-hidden overscroll-contain rounded-md border border-border/80 bg-card/45 lg:min-h-0">
           {activeSymbol ? (
             <TechnicalAnalysis
               embedded
