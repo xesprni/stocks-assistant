@@ -152,6 +152,8 @@ const TIME_AXIS_HEIGHT = 22;
 const MIN_VISIBLE_BARS = 36;
 const PANE_VERTICAL_PADDING = 10;
 const EDGE_LOAD_THRESHOLD = 4;
+const TOUCH_LONG_PRESS_MS = 360;
+const TOUCH_PAN_THRESHOLD_PX = 8;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -710,9 +712,11 @@ export function NativeStockChart({
   const sizeRef = useRef({ width: 0, height: 0, dpr: 1 });
   const viewportRef = useRef<NativeChartViewport>({ from: 0, to: 0 });
   const crosshairRef = useRef<(NativeCrosshairState & { y: number }) | null>(null);
-  const dragRef = useRef<{ panMode: PointerPanMode; startX: number; startViewport: NativeChartViewport } | null>(null);
+  const dragRef = useRef<{ panMode: PointerPanMode; pointerType: string; startX: number; startY: number; startViewport: NativeChartViewport } | null>(null);
   const activePointersRef = useRef<Map<number, ChartPoint>>(new Map());
   const pinchRef = useRef<PinchState | null>(null);
+  const inspectPointerIdRef = useRef<number | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const layoutsRef = useRef<PaneLayout[]>([]);
   const lastDataRef = useRef<{ fitKey?: string | number; length: number; first?: number; last?: number }>({ length: 0 });
@@ -724,6 +728,28 @@ export function NativeStockChart({
 
   const cachedSeries = useMemo(() => cacheSeries(times, series), [times, series]);
   const dataRef = useRef({ times, panes, series: cachedSeries, theme, primaryRangeSeriesId });
+
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current == null) return;
+    window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }
+
+  function startTouchInspectTimer(pointerId: number, point: ChartPoint) {
+    clearLongPressTimer();
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      if (!activePointersRef.current.has(pointerId) || activePointersRef.current.size !== 1) return;
+      inspectPointerIdRef.current = pointerId;
+      dragRef.current = null;
+      updateCrosshair(point.x, point.y);
+      scheduleDraw();
+    }, TOUCH_LONG_PRESS_MS);
+  }
+
+  useEffect(() => {
+    return () => clearLongPressTimer();
+  }, []);
 
   useLayoutEffect(() => {
     dataRef.current = { times, panes, series: cachedSeries, theme, primaryRangeSeriesId };
@@ -901,7 +927,7 @@ export function NativeStockChart({
     const count = viewportCount(viewport);
     pinchRef.current = {
       leftRatio: clamp((startCenterIndex - viewport.from) / count, 0, 1),
-      panMode: "scroll",
+      panMode: "direct",
       startCenter: center,
       startCenterIndex,
       startDistance: Math.max(1, pointDistance(a, b)),
@@ -935,6 +961,8 @@ export function NativeStockChart({
   };
 
   const finishPointer = (event: PointerEvent<HTMLCanvasElement>) => {
+    clearLongPressTimer();
+    if (inspectPointerIdRef.current === event.pointerId) inspectPointerIdRef.current = null;
     activePointersRef.current.delete(event.pointerId);
     if (activePointersRef.current.size < 2) pinchRef.current = null;
     if (activePointersRef.current.size === 0) dragRef.current = null;
@@ -960,17 +988,25 @@ export function NativeStockChart({
           const point = pointFromEvent(event);
           activePointersRef.current.set(event.pointerId, point);
           if (activePointersRef.current.size >= 2) {
+            clearLongPressTimer();
+            inspectPointerIdRef.current = null;
             startPinch();
             scheduleDraw();
             return;
           }
           pinchRef.current = null;
           dragRef.current = {
-            panMode: event.pointerType === "touch" ? "scroll" : "direct",
+            panMode: "direct",
+            pointerType: event.pointerType,
             startX: point.x,
+            startY: point.y,
             startViewport: viewportRef.current,
           };
-          updateCrosshair(point.x, point.y);
+          if (event.pointerType === "touch") {
+            startTouchInspectTimer(event.pointerId, point);
+          } else {
+            updateCrosshair(point.x, point.y);
+          }
           scheduleDraw();
         }}
         onPointerMove={(event) => {
@@ -980,12 +1016,27 @@ export function NativeStockChart({
             activePointersRef.current.set(event.pointerId, point);
           }
           if (activePointersRef.current.size >= 2) {
+            clearLongPressTimer();
+            inspectPointerIdRef.current = null;
             if (!pinchRef.current) startPinch();
             if (updatePinch()) return;
+          }
+          if (inspectPointerIdRef.current === event.pointerId) {
+            updateCrosshair(point.x, point.y);
+            scheduleDraw();
+            return;
           }
           updateCrosshair(point.x, point.y);
           const current = dataRef.current;
           if (dragRef.current && layoutsRef.current.length > 0 && current.times.length > 0) {
+            if (dragRef.current.pointerType === "touch" && longPressTimerRef.current != null) {
+              const movement = Math.hypot(point.x - dragRef.current.startX, point.y - dragRef.current.startY);
+              if (movement <= TOUCH_PAN_THRESHOLD_PX) {
+                scheduleDraw();
+                return;
+              }
+              clearLongPressTimer();
+            }
             const mapper = createXMapper(layoutsRef.current[0], normalizeViewport(dragRef.current.startViewport, current.times.length));
             const deltaBars = panDeltaBars(point.x - dragRef.current.startX, mapper.spacing, dragRef.current.panMode);
             setViewport({
@@ -1003,6 +1054,8 @@ export function NativeStockChart({
           finishPointer(event);
         }}
         onLostPointerCapture={(event) => {
+          clearLongPressTimer();
+          if (inspectPointerIdRef.current === event.pointerId) inspectPointerIdRef.current = null;
           activePointersRef.current.delete(event.pointerId);
           if (activePointersRef.current.size < 2) pinchRef.current = null;
           if (activePointersRef.current.size === 0) dragRef.current = null;
