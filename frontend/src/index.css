@@ -49,48 +49,47 @@
   }
 
   .dark {
-    --background: 220 18% 8%;
-    --foreground: 210 22% 94%;
-    --card: 218 18% 12%;
-    --card-foreground: 210 22% 94%;
-    --popover: 218 19% 11%;
-    --popover-foreground: 210 22% 94%;
-    --primary: 164 72% 46%;
-    --primary-foreground: 168 36% 7%;
-    --secondary: 36 88% 56%;
-    --secondary-foreground: 35 28% 10%;
-    --muted: 216 14% 17%;
-    --muted-foreground: 212 13% 74%;
-    --accent: 198 88% 53%;
-    --accent-foreground: 202 34% 8%;
-    --destructive: 350 78% 58%;
+    --color-up: #81c995;
+    --color-down: #f28b82;
+    --background: 0 0% 12%;
+    --foreground: 210 17% 92%;
+    --card: 0 0% 15%;
+    --card-foreground: 210 17% 92%;
+    --popover: 0 0% 16%;
+    --popover-foreground: 210 17% 92%;
+    --primary: 217 89% 76%;
+    --primary-foreground: 217 56% 12%;
+    --secondary: 45 97% 64%;
+    --secondary-foreground: 42 38% 12%;
+    --muted: 0 0% 19%;
+    --muted-foreground: 216 8% 68%;
+    --accent: 217 89% 76%;
+    --accent-foreground: 217 56% 12%;
+    --destructive: 4 84% 74%;
     --destructive-foreground: 0 0% 98%;
-    --border: 213 15% 24%;
-    --input: 213 15% 27%;
-    --ring: 164 72% 46%;
-    --grid-line: rgba(255, 255, 255, 0.05);
-    --grid-line-soft: rgba(255, 255, 255, 0.034);
-    --shell-primary: rgba(45, 212, 191, 0.12);
-    --shell-secondary: rgba(245, 158, 11, 0.1);
-    --app-header-bg: linear-gradient(180deg, hsl(218 18% 13% / 0.96), hsl(220 18% 10% / 0.94));
-    --app-grid-bg: hsl(220 15% 6%);
-    --app-sidebar-bg: linear-gradient(180deg, hsl(218 16% 13% / 0.94), hsl(220 17% 9% / 0.94));
-    --app-mobile-nav-bg: hsl(218 17% 12% / 0.96);
-    --app-stage-bg:
-      linear-gradient(180deg, hsl(220 18% 8% / 0.96), hsl(220 17% 6% / 0.96)),
-      linear-gradient(90deg, var(--grid-line-soft) 1px, transparent 1px),
-      linear-gradient(180deg, var(--grid-line-soft) 1px, transparent 1px);
-    --panel-bg: hsl(218 18% 12% / 0.88);
-    --tile-bg: hsl(216 15% 16% / 0.68);
-    --panel-shadow: 0 22px 60px rgba(0, 0, 0, 0.42), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-    --control-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    --control-shadow-hover: 0 10px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    --chat-assistant-bg: hsl(218 17% 13% / 0.92);
-    --chat-assistant-border: hsl(210 16% 27% / 0.7);
+    --border: 0 0% 25%;
+    --input: 0 0% 27%;
+    --ring: 217 89% 76%;
+    --grid-line: rgba(232, 234, 237, 0.052);
+    --grid-line-soft: rgba(232, 234, 237, 0.034);
+    --shell-primary: rgba(138, 180, 248, 0.12);
+    --shell-secondary: rgba(129, 201, 149, 0.1);
+    --app-header-bg: hsl(0 0% 13% / 0.96);
+    --app-grid-bg: hsl(0 0% 12%);
+    --app-sidebar-bg: hsl(0 0% 13% / 0.96);
+    --app-mobile-nav-bg: hsl(0 0% 13% / 0.96);
+    --app-stage-bg: hsl(0 0% 12%);
+    --panel-bg: hsl(0 0% 14% / 0.96);
+    --tile-bg: hsl(0 0% 17% / 0.72);
+    --panel-shadow: none;
+    --control-shadow: none;
+    --control-shadow-hover: none;
+    --chat-assistant-bg: hsl(0 0% 15% / 0.96);
+    --chat-assistant-border: hsl(0 0% 25% / 0.78);
     --chat-user-bg: hsl(var(--primary));
     --chat-user-border: hsl(var(--primary));
     --chat-user-foreground: hsl(var(--primary-foreground));
-    --chat-code-bg: hsl(220 15% 9% / 0.9);
+    --chat-code-bg: hsl(0 0% 10% / 0.92);
   }
 
   [data-color-scheme="cn"] {
@@ -359,8 +358,22 @@
     background: hsl(var(--popover));
     border-color: hsl(var(--border));
     box-shadow:
-      0 24px 64px hsl(0 0% 0% / 0.58),
-      0 0 0 1px hsl(var(--foreground) / 0.07) inset;
+      0 18px 42px hsl(0 0% 0% / 0.34),
+      0 0 0 1px hsl(var(--foreground) / 0.05) inset;
+  }
+
+  .dark .finance-top-nav {
+    border-bottom-color: hsl(var(--border) / 0.86);
+    background: hsl(0 0% 13% / 0.94);
+  }
+
+  .dark .finance-top-nav-item:hover {
+    background: hsl(var(--muted) / 0.82);
+  }
+
+  .dark .finance-top-nav-item-active {
+    background: hsl(var(--primary) / 0.14);
+    color: hsl(var(--primary));
   }
 
   .dashboard-hero {
@@ -594,7 +607,17 @@
   }
 
   .dashboard-scroll-column {
+    min-height: 0;
     scrollbar-width: thin;
+  }
+
+  @media (min-width: 1280px) {
+    .dashboard-scroll-column {
+      height: 100%;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 0.35rem;
+    }
   }
 
   @media (min-width: 1280px) {

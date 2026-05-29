@@ -1205,10 +1205,10 @@ export function DashboardPage({
   }, [canMarket, copy.loadFailed, newsSourceSymbol]);
 
   return (
-    <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-2 lg:h-full lg:overflow-y-auto">
+    <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-2 xl:h-full xl:overflow-hidden">
       <HeroSearch language={language} onPrompt={onPrompt} />
 
-      <div className="dashboard-wide-grid grid min-h-0 gap-8 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(420px,1fr)_minmax(360px,0.86fr)_390px]">
+      <div className="dashboard-wide-grid grid min-h-0 gap-8 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[minmax(420px,1fr)_minmax(360px,0.86fr)_390px] 2xl:grid-rows-[minmax(0,1fr)]">
         <main className="dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 2xl:col-start-1 2xl:row-start-1">
           {canMarket ? (
             <MarketSnapshot

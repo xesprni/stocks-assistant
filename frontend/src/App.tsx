@@ -1493,6 +1493,7 @@ function ConsoleApp() {
               isMobileNavVisible
                 ? "pb-[calc(4.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(5rem+env(safe-area-inset-bottom))]"
                 : "pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]",
+              page === "overview" && "xl:overflow-hidden",
               page === "chat" && "app-main-stage-chat overflow-hidden",
             )}
             key={page}
