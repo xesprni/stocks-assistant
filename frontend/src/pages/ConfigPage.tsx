@@ -72,7 +72,7 @@ export function ConfigPage({
   const [expandedMcpServers, setExpandedMcpServers] = useState<Record<string, boolean>>({});
   const [compatibleSnapshot, setCompatibleSnapshot] = useState({ apiBase: "", model: "" });
 
-  const dangerousTools = ["bash", "write_file", "scheduler"];
+  const dangerousTools = ["bash", "write_file", "scheduler", "watchlist", "portfolio"];
   const builtinTools = useMemo(() => tools.filter((tool) => !isMcpToolName(tool.name)), [tools]);
   const mcpToolGroups = useMemo(() => {
     const groups: Record<string, ToolInfo[]> = {};

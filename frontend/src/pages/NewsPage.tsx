@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getGuardianArticle, getGuardianFeed, getSecurityNews, listWatchlist, translateGuardianArticle } from "@/lib/api";
 import { i18n, localeFor, type AppLanguage } from "@/lib/i18n";
+import { readStoredText, readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
 import type { GuardianArticleResponse, GuardianFeedItem, SecurityNewsItem, WatchlistCategory, WatchlistItem } from "@/types/app";
 
@@ -16,12 +17,31 @@ type ArticleFontSize = "small" | "medium" | "large";
 
 const DEFAULT_GUARDIAN_URL = "https://www.theguardian.com";
 const GUARDIAN_ARTICLE_FONT_SIZE_KEY = "stocks_assistant_guardian_article_font_size";
+const NEWS_MODE_STORAGE_KEY = "stocks-assistant.news.mode";
+const NEWS_SOURCE_MODE_STORAGE_KEY = "stocks-assistant.news.source-mode";
+const NEWS_CATEGORY_STORAGE_KEY = "stocks-assistant.news.category";
+const NEWS_SYMBOL_STORAGE_KEY = "stocks-assistant.news.symbol";
+const NEWS_GUARDIAN_URL_STORAGE_KEY = "stocks-assistant.news.guardian-url";
+const NEWS_GUARDIAN_PRESET_STORAGE_KEY = "stocks-assistant.news.guardian-preset-url";
+const NEWS_GUARDIAN_ACTIVE_ARTICLE_STORAGE_KEY = "stocks-assistant.news.guardian-active-article";
+const NEWS_GUARDIAN_TRANSLATIONS_STORAGE_KEY = "stocks-assistant.news.guardian-translations.v1";
+const GUARDIAN_TRANSLATION_TARGET = "zh-CN";
+const GUARDIAN_TRANSLATION_CACHE_MAX_ENTRIES = 16;
 const ARTICLE_FONT_SIZES: ArticleFontSize[] = ["small", "medium", "large"];
 const ARTICLE_FONT_CLASS: Record<ArticleFontSize, string> = {
   small: "text-sm leading-7",
   medium: "text-base leading-8",
   large: "text-lg leading-9",
 };
+
+type GuardianTranslationCacheEntry = {
+  savedAt: number;
+  translation: string;
+};
+
+type GuardianTranslationStatus = "pending" | "error";
+
+const guardianTranslationTasks = new Map<string, Promise<string>>();
 
 function getWatchlistCategories(language: AppLanguage): Array<{ id: WatchlistCategory; label: string; hint: string }> {
   const markets = i18n[language].markets;
@@ -30,6 +50,97 @@ function getWatchlistCategories(language: AppLanguage): Array<{ id: WatchlistCat
     { id: "A", label: markets.a, hint: markets.aHint },
     { id: "H", label: markets.h, hint: markets.hHint },
   ];
+}
+
+function hashText(value: string) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function guardianTranslationCacheKey(url: string, body: string, targetLanguage = GUARDIAN_TRANSLATION_TARGET) {
+  return `${targetLanguage}:${url || "article"}:${body.length}:${hashText(body)}`;
+}
+
+function readGuardianTranslationCache(): Record<string, GuardianTranslationCacheEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(NEWS_GUARDIAN_TRANSLATIONS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<GuardianTranslationCacheEntry>>;
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([, entry]) => typeof entry?.translation === "string" && entry.translation)
+        .map(([key, entry]) => [
+          key,
+          {
+            savedAt: typeof entry.savedAt === "number" ? entry.savedAt : 0,
+            translation: entry.translation as string,
+          },
+        ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function readStoredGuardianItem(): GuardianFeedItem | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(NEWS_GUARDIAN_ACTIVE_ARTICLE_STORAGE_KEY);
+    if (!raw) return null;
+    const item = JSON.parse(raw) as Partial<GuardianFeedItem>;
+    return typeof item.url === "string" && item.url
+      ? {
+        id: String(item.id || item.url),
+        title: String(item.title || ""),
+        description: String(item.description || ""),
+        url: item.url,
+        published_at: item.published_at ?? null,
+        published_at_ts: item.published_at_ts ?? null,
+        author: String(item.author || ""),
+        categories: Array.isArray(item.categories) ? item.categories.map(String) : [],
+      }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGuardianTranslationCache(cache: Record<string, GuardianTranslationCacheEntry>) {
+  if (typeof window === "undefined") return;
+  try {
+    const entries = Object.entries(cache)
+      .sort(([, a], [, b]) => (b.savedAt || 0) - (a.savedAt || 0))
+      .slice(0, GUARDIAN_TRANSLATION_CACHE_MAX_ENTRIES);
+    window.localStorage.setItem(NEWS_GUARDIAN_TRANSLATIONS_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // 翻译文本可能较长，缓存失败不影响当前页面展示。
+  }
+}
+
+function saveGuardianTranslationToCache(key: string, translation: string) {
+  const cache = readGuardianTranslationCache();
+  cache[key] = { savedAt: Date.now(), translation };
+  writeGuardianTranslationCache(cache);
+  return cache[key];
+}
+
+function startGuardianTranslation(key: string, body: string) {
+  const current = guardianTranslationTasks.get(key);
+  if (current) return current;
+  const task = translateGuardianArticle({ text: body, target_language: GUARDIAN_TRANSLATION_TARGET })
+    .then((response) => {
+      saveGuardianTranslationToCache(key, response.translation);
+      return response.translation;
+    })
+    .finally(() => {
+      guardianTranslationTasks.delete(key);
+    });
+  guardianTranslationTasks.set(key, task);
+  return task;
 }
 
 function getGuardianSources(language: AppLanguage) {
@@ -59,33 +170,47 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
   const common = i18n[language].common;
   const categories = getWatchlistCategories(language);
   const guardianSources = getGuardianSources(language);
-  const [newsMode, setNewsMode] = useState<NewsMode>(initialSymbol ? "security" : "security");
-  const [sourceMode, setSourceMode] = useState<SourceMode>(initialSymbol ? "symbol" : "watchlist");
-  const [category, setCategory] = useState<WatchlistCategory>("US");
+  const [newsMode, setNewsMode] = useState<NewsMode>(() =>
+    initialSymbol ? "security" : readStoredValue(NEWS_MODE_STORAGE_KEY, ["security", "guardian"], "security"),
+  );
+  const [sourceMode, setSourceMode] = useState<SourceMode>(() =>
+    initialSymbol ? "symbol" : readStoredValue(NEWS_SOURCE_MODE_STORAGE_KEY, ["watchlist", "symbol"], "watchlist"),
+  );
+  const [category, setCategory] = useState<WatchlistCategory>(() =>
+    readStoredValue(NEWS_CATEGORY_STORAGE_KEY, ["US", "A", "H"], "US"),
+  );
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [selectedSymbol, setSelectedSymbol] = useState((initialSymbol ?? "").trim().toUpperCase());
-  const [manualSymbol, setManualSymbol] = useState((initialSymbol ?? "").trim().toUpperCase());
+  const [selectedSymbol, setSelectedSymbol] = useState(() => (initialSymbol ?? readStoredText(NEWS_SYMBOL_STORAGE_KEY)).trim().toUpperCase());
+  const [manualSymbol, setManualSymbol] = useState(() => (initialSymbol ?? readStoredText(NEWS_SYMBOL_STORAGE_KEY)).trim().toUpperCase());
   const [news, setNews] = useState<SecurityNewsItem[]>([]);
   const [responseSymbol, setResponseSymbol] = useState("");
   const [isLoadingWatchlist, setIsLoadingWatchlist] = useState(false);
   const [isLoadingNews, setIsLoadingNews] = useState(false);
   const [message, setMessage] = useState("");
 
-  const [guardianPresetUrl, setGuardianPresetUrl] = useState(DEFAULT_GUARDIAN_URL);
+  const [guardianPresetUrl, setGuardianPresetUrl] = useState(() => readStoredValue(NEWS_GUARDIAN_PRESET_STORAGE_KEY, guardianSources.map((source) => source.url), DEFAULT_GUARDIAN_URL));
   const [guardianCustomUrl, setGuardianCustomUrl] = useState("");
-  const [activeGuardianUrl, setActiveGuardianUrl] = useState(DEFAULT_GUARDIAN_URL);
+  const [activeGuardianUrl, setActiveGuardianUrl] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_GUARDIAN_URL;
+    try {
+      return window.localStorage.getItem(NEWS_GUARDIAN_URL_STORAGE_KEY) || DEFAULT_GUARDIAN_URL;
+    } catch {
+      return DEFAULT_GUARDIAN_URL;
+    }
+  });
   const [guardianFeedUrl, setGuardianFeedUrl] = useState("");
   const [guardianFeedTitle, setGuardianFeedTitle] = useState("");
   const [guardianItems, setGuardianItems] = useState<GuardianFeedItem[]>([]);
   const [guardianMessage, setGuardianMessage] = useState("");
   const [isLoadingGuardianFeed, setIsLoadingGuardianFeed] = useState(false);
-  const [selectedGuardianItem, setSelectedGuardianItem] = useState<GuardianFeedItem | null>(null);
+  const [selectedGuardianItem, setSelectedGuardianItem] = useState<GuardianFeedItem | null>(() => initialSymbol ? null : readStoredGuardianItem());
   const [guardianArticle, setGuardianArticle] = useState<GuardianArticleResponse | null>(null);
   const [articleMessage, setArticleMessage] = useState("");
   const [isLoadingArticle, setIsLoadingArticle] = useState(false);
-  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [translations, setTranslations] = useState<Record<string, GuardianTranslationCacheEntry>>(() => readGuardianTranslationCache());
+  const [translationStatuses, setTranslationStatuses] = useState<Record<string, GuardianTranslationStatus>>({});
+  const [translationErrors, setTranslationErrors] = useState<Record<string, string>>({});
   const [translationMessage, setTranslationMessage] = useState("");
-  const [isTranslating, setIsTranslating] = useState(false);
   const [articleFontSize, setArticleFontSize] = useState<ArticleFontSize>(() => readArticleFontSize());
 
   useEffect(() => {
@@ -95,7 +220,32 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     setSourceMode("symbol");
     setManualSymbol(next);
     setSelectedSymbol(next);
+    setSelectedGuardianItem(null);
   }, [initialSymbol]);
+
+  useEffect(() => {
+    writeStoredValue(NEWS_MODE_STORAGE_KEY, newsMode);
+  }, [newsMode]);
+
+  useEffect(() => {
+    writeStoredValue(NEWS_SOURCE_MODE_STORAGE_KEY, sourceMode);
+  }, [sourceMode]);
+
+  useEffect(() => {
+    writeStoredValue(NEWS_CATEGORY_STORAGE_KEY, category);
+  }, [category]);
+
+  useEffect(() => {
+    if (selectedSymbol) writeStoredValue(NEWS_SYMBOL_STORAGE_KEY, selectedSymbol);
+  }, [selectedSymbol]);
+
+  useEffect(() => {
+    writeStoredValue(NEWS_GUARDIAN_URL_STORAGE_KEY, activeGuardianUrl);
+  }, [activeGuardianUrl]);
+
+  useEffect(() => {
+    writeStoredValue(NEWS_GUARDIAN_PRESET_STORAGE_KEY, guardianPresetUrl);
+  }, [guardianPresetUrl]);
 
   useEffect(() => {
     let mounted = true;
@@ -216,6 +366,43 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     };
   }, [activeGuardianUrl, copy.emptyNews, copy.loadFailed, newsMode]);
 
+  useEffect(() => {
+    if (!selectedGuardianItem) {
+      try {
+        window.localStorage.removeItem(NEWS_GUARDIAN_ACTIVE_ARTICLE_STORAGE_KEY);
+      } catch {
+        // 本地缓存失败不影响抽屉关闭。
+      }
+      return undefined;
+    }
+
+    let mounted = true;
+    try {
+      window.localStorage.setItem(NEWS_GUARDIAN_ACTIVE_ARTICLE_STORAGE_KEY, JSON.stringify(selectedGuardianItem));
+    } catch {
+      // 本地缓存失败不影响当前文章阅读。
+    }
+
+    setGuardianArticle(null);
+    setArticleMessage("");
+    setTranslationMessage("");
+    setIsLoadingArticle(true);
+    getGuardianArticle(selectedGuardianItem.url)
+      .then((article) => {
+        if (mounted) setGuardianArticle(article);
+      })
+      .catch((caught) => {
+        if (mounted) setArticleMessage(caught instanceof Error ? caught.message : copy.guardianArticleFailed);
+      })
+      .finally(() => {
+        if (mounted) setIsLoadingArticle(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [copy.guardianArticleFailed, selectedGuardianItem]);
+
   function handleManualSubmit(event?: FormEvent) {
     event?.preventDefault();
     const next = manualSymbol.trim().toUpperCase();
@@ -243,35 +430,42 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     setActiveGuardianUrl(next);
   }
 
-  async function openGuardianArticle(item: GuardianFeedItem) {
-    setSelectedGuardianItem(item);
+  function openGuardianArticle(item: GuardianFeedItem) {
     setGuardianArticle(null);
     setArticleMessage("");
     setTranslationMessage("");
-    setIsLoadingArticle(true);
-    try {
-      const article = await getGuardianArticle(item.url);
-      setGuardianArticle(article);
-    } catch (caught) {
-      setArticleMessage(caught instanceof Error ? caught.message : copy.guardianArticleFailed);
-    } finally {
-      setIsLoadingArticle(false);
-    }
+    setSelectedGuardianItem(item);
   }
 
   async function handleTranslateArticle() {
-    const articleKey = guardianArticle?.url || selectedGuardianItem?.url || "";
     const body = guardianArticle?.body_text.trim() || "";
-    if (!articleKey || !body || translations[articleKey]) return;
-    setIsTranslating(true);
+    const articleUrl = guardianArticle?.url || selectedGuardianItem?.url || "";
+    const translationKey = body ? guardianTranslationCacheKey(articleUrl, body) : "";
+    if (!translationKey || !body || translations[translationKey]?.translation) return;
+    const task = startGuardianTranslation(translationKey, body);
+    setTranslationStatuses((current) => ({ ...current, [translationKey]: "pending" }));
+    setTranslationErrors((current) => {
+      const next = { ...current };
+      delete next[translationKey];
+      return next;
+    });
     setTranslationMessage("");
     try {
-      const response = await translateGuardianArticle({ text: body, target_language: "zh-CN" });
-      setTranslations((current) => ({ ...current, [articleKey]: response.translation }));
+      const translation = await task;
+      setTranslations((current) => ({
+        ...current,
+        [translationKey]: { savedAt: Date.now(), translation },
+      }));
     } catch (caught) {
-      setTranslationMessage(caught instanceof Error ? caught.message : copy.guardianTranslateFailed);
+      const message = caught instanceof Error ? caught.message : copy.guardianTranslateFailed;
+      setTranslationErrors((current) => ({ ...current, [translationKey]: message }));
+      setTranslationMessage(message);
     } finally {
-      setIsTranslating(false);
+      setTranslationStatuses((current) => {
+        const next = { ...current };
+        delete next[translationKey];
+        return next;
+      });
     }
   }
 
@@ -288,8 +482,48 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     () => watchlist.find((item) => item.symbol === selectedSymbol),
     [selectedSymbol, watchlist],
   );
-  const selectedArticleKey = guardianArticle?.url || selectedGuardianItem?.url || "";
-  const selectedTranslation = selectedArticleKey ? translations[selectedArticleKey] : "";
+  const selectedArticleBody = guardianArticle?.body_text.trim() || "";
+  const selectedTranslationKey = selectedArticleBody
+    ? guardianTranslationCacheKey(guardianArticle?.url || selectedGuardianItem?.url || "", selectedArticleBody)
+    : "";
+  const selectedTranslation = selectedTranslationKey ? translations[selectedTranslationKey]?.translation || "" : "";
+  const isSelectedTranslationPending = Boolean(
+    selectedTranslationKey && (translationStatuses[selectedTranslationKey] === "pending" || guardianTranslationTasks.has(selectedTranslationKey)),
+  );
+  const selectedTranslationError = selectedTranslationKey ? translationErrors[selectedTranslationKey] || "" : "";
+
+  useEffect(() => {
+    if (!selectedTranslationKey || selectedTranslation) return undefined;
+    const task = guardianTranslationTasks.get(selectedTranslationKey);
+    if (!task) return undefined;
+    let mounted = true;
+    setTranslationStatuses((current) => ({ ...current, [selectedTranslationKey]: "pending" }));
+    task
+      .then((translation) => {
+        if (!mounted) return;
+        setTranslations((current) => ({
+          ...current,
+          [selectedTranslationKey]: { savedAt: Date.now(), translation },
+        }));
+      })
+      .catch((caught) => {
+        if (!mounted) return;
+        const message = caught instanceof Error ? caught.message : copy.guardianTranslateFailed;
+        setTranslationErrors((current) => ({ ...current, [selectedTranslationKey]: message }));
+        setTranslationMessage(message);
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setTranslationStatuses((current) => {
+          const next = { ...current };
+          delete next[selectedTranslationKey];
+          return next;
+        });
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [copy.guardianTranslateFailed, selectedTranslation, selectedTranslationKey]);
 
   return (
     <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
@@ -438,26 +672,32 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
                   ))}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                {guardianArticle.url ? (
-                  <SourceLink href={guardianArticle.url} label={copy.openSource} />
-                ) : null}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={isTranslating || Boolean(selectedTranslation) || !guardianArticle.body_text.trim()}
-                  onClick={handleTranslateArticle}
-                >
-                  {isTranslating ? <Loader2 className="animate-spin" /> : <Languages />}
-                  {selectedTranslation ? copy.guardianTranslated : copy.guardianTranslate}
-                </Button>
+                  {guardianArticle.url ? (
+                    <SourceLink href={guardianArticle.url} label={copy.openSource} />
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isSelectedTranslationPending || Boolean(selectedTranslation) || !guardianArticle.body_text.trim()}
+                    onClick={handleTranslateArticle}
+                  >
+                    {isSelectedTranslationPending ? <Loader2 className="animate-spin" /> : <Languages />}
+                    {isSelectedTranslationPending ? common.loading : selectedTranslation ? copy.guardianTranslated : copy.guardianTranslate}
+                  </Button>
                 </div>
               </div>
               <article className={cn("whitespace-pre-line rounded-md border border-border/80 bg-background/50 p-3", ARTICLE_FONT_CLASS[articleFontSize])}>
                 {guardianArticle.body_text || copy.guardianNoBody}
               </article>
-              {translationMessage ? (
+              {isSelectedTranslationPending ? (
                 <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  {translationMessage}
+                  <Loader2 className="mr-1 inline size-3.5 animate-spin" />
+                  {common.loading}
+                </div>
+              ) : null}
+              {selectedTranslationError || translationMessage ? (
+                <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  {selectedTranslationError || translationMessage}
                 </div>
               ) : null}
               {selectedTranslation ? (

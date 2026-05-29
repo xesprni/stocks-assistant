@@ -17,12 +17,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getCandlesticks, getIndexQuotes, getStockQuotes } from "@/lib/api";
+import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
 import { useToneClasses } from "@/lib/color-scheme";
 import { calcSupportResistance, type SupportResistanceLevel } from "@/lib/indicators";
 import type { CandlestickItem, QuoteItem, WatchlistCategory } from "@/types/app";
 
 type AppLanguage = "zh" | "en";
+type MarketDashboardTab = "index" | "stocks";
 
 const marketDashboardCopy = {
   zh: {
@@ -205,6 +207,8 @@ function IndexCard({ copy, language, quote }: { copy: MarketDashboardCopy; langu
 type LevelStatus = "idle" | "loading" | "done" | "error";
 
 const STOCK_LEVELS_CACHE_KEY = "stocks-assistant.market-dashboard.stock-levels.v1";
+const MARKET_DASHBOARD_TAB_STORAGE_KEY = "stocks-assistant.market-dashboard.tab";
+const MARKET_DASHBOARD_STOCK_CATEGORY_STORAGE_KEY = "stocks-assistant.market-dashboard.stock-category";
 const STOCK_LEVELS_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface CachedStockLevelsEntry {
@@ -525,7 +529,9 @@ function StockTab({
   refreshInterval: number;
   onSelectStock?: (quote: QuoteItem) => void;
 }) {
-  const [category, setCategory] = useState<WatchlistCategory | "ALL">("ALL");
+  const [category, setCategory] = useState<WatchlistCategory | "ALL">(() =>
+    readStoredValue(MARKET_DASHBOARD_STOCK_CATEGORY_STORAGE_KEY, ["ALL", "US", "A", "H"], "ALL"),
+  );
   const stockCategories = getStockCategories(language);
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
   const cachedLevelStateRef = useRef<ReturnType<typeof loadCachedStockLevelState> | null>(null);
@@ -589,6 +595,10 @@ function StockTab({
       if (requestSeqRef.current === requestId) setLoading(false);
     }
   }, [category, copy.loadFailed]);
+
+  useEffect(() => {
+    writeStoredValue(MARKET_DASHBOARD_STOCK_CATEGORY_STORAGE_KEY, category);
+  }, [category]);
 
   useEffect(() => {
     load();
@@ -666,6 +676,9 @@ export function MarketDashboard({
   onSelectStock?: (quote: QuoteItem) => void;
 }) {
   const copy = marketDashboardCopy[language];
+  const [tab, setTab] = useState<MarketDashboardTab>(() =>
+    readStoredValue(MARKET_DASHBOARD_TAB_STORAGE_KEY, ["index", "stocks"], "index"),
+  );
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [countdown, setCountdown] = useState(refreshInterval);
@@ -692,6 +705,10 @@ export function MarketDashboard({
   function handleRefresh() {
     setRefreshSignal((s) => s + 1);
   }
+
+  useEffect(() => {
+    writeStoredValue(MARKET_DASHBOARD_TAB_STORAGE_KEY, tab);
+  }, [tab]);
 
   return (
     <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
@@ -733,7 +750,7 @@ export function MarketDashboard({
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
-        <Tabs defaultValue="index">
+        <Tabs value={tab} onValueChange={(value) => setTab(value as MarketDashboardTab)}>
           <TabsList className="mb-4 grid w-full grid-cols-2 sm:w-72">
             <TabsTrigger value="index" className="gap-1.5">
               <TrendingUp className="size-3.5" />

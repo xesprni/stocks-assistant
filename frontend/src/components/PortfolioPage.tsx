@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import {
   searchPortfolioSymbols,
   updatePortfolioItem,
 } from "@/lib/api";
+import { readStoredBoolean, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
 import type { PortfolioItem, PortfolioItemDraft, PortfolioMarket, PortfolioSearchResult } from "@/types/app";
 
@@ -76,6 +78,20 @@ const copyByLanguage = {
       searchFailed: "Longbridge 搜索失败",
       noMatch: "未找到匹配标的，可以直接手动输入完整代码。",
       addHolding: "新增持仓",
+      adjustHolding: "调整持仓",
+      adjustHint: "只更新本地持仓，不发起交易。",
+      adjustMode: "调整方式",
+      adjustIncrease: "增加",
+      adjustDecrease: "减少",
+      adjustSet: "设为",
+      currentShares: "当前股数",
+      adjustShares: "调整股数",
+      adjustPrice: "参考价",
+      adjustedShares: "调整后股数",
+      adjustedCost: "调整后成本",
+      adjustInvalid: "请输入有效股数",
+      adjustNegative: "调整后股数不能小于 0",
+      adjustFailed: "调整持仓失败",
       editHolding: "编辑持仓",
       formHint: "股数和成本价可留空；选择搜索结果后会用现价预估市值。",
       stockCode: "股票代码",
@@ -143,6 +159,20 @@ const copyByLanguage = {
       searchFailed: "Longbridge search failed",
       noMatch: "No matching symbol found. You can enter the full symbol manually.",
       addHolding: "Add holding",
+      adjustHolding: "Adjust holding",
+      adjustHint: "Updates local portfolio records only. It does not place trades.",
+      adjustMode: "Adjustment",
+      adjustIncrease: "Increase",
+      adjustDecrease: "Decrease",
+      adjustSet: "Set to",
+      currentShares: "Current shares",
+      adjustShares: "Shares",
+      adjustPrice: "Reference price",
+      adjustedShares: "Adjusted shares",
+      adjustedCost: "Adjusted cost",
+      adjustInvalid: "Enter a valid share amount",
+      adjustNegative: "Adjusted shares cannot be below 0",
+      adjustFailed: "Failed to adjust holding",
       editHolding: "Edit holding",
       formHint: "Shares and cost are optional. Selecting a search result previews value from the live price.",
       stockCode: "Symbol",
@@ -184,6 +214,21 @@ type PortfolioSortKey =
   | "pnl_ratio"
   | "change_rate"
   | "note";
+
+type PortfolioAdjustMode = "increase" | "decrease" | "set";
+
+type PortfolioAdjustmentDraft = {
+  mode: PortfolioAdjustMode;
+  shares: string;
+  price: string;
+};
+
+type PortfolioAdjustmentPreview = {
+  currentShares: number;
+  nextShares: number | null;
+  nextCost: number | null;
+  error: "invalid" | "negative" | null;
+};
 
 function formatTemplate(text: string, values: Record<string, string | number>) {
   return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
@@ -248,6 +293,11 @@ function formatSignedPercent(value: string | number | null | undefined) {
   return `${numeric > 0 ? "+" : ""}${numeric.toFixed(2)}%`;
 }
 
+function formatDraftDecimal(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return null;
+  return String(Number(value.toFixed(8)));
+}
+
 function numericTone(value: string | number | null | undefined) {
   const numeric = parseNumber(value);
   if (numeric == null || numeric === 0) return "text-muted-foreground";
@@ -280,6 +330,50 @@ function comparePortfolioItems(
     result = String(av).localeCompare(String(bv));
   }
   return direction === "asc" ? result : -result;
+}
+
+function emptyAdjustmentDraft(item?: PortfolioItem | null): PortfolioAdjustmentDraft {
+  return {
+    mode: "increase",
+    shares: "",
+    price: item?.current_price ?? item?.cost_price ?? "",
+  };
+}
+
+function computeAdjustmentPreview(item: PortfolioItem | null, draft: PortfolioAdjustmentDraft): PortfolioAdjustmentPreview {
+  const currentShares = parseNumber(item?.shares) ?? 0;
+  const currentCost = parseNumber(item?.cost_price);
+  if (!item || !draft.shares.trim()) {
+    return { currentShares, nextShares: null, nextCost: currentCost, error: null };
+  }
+
+  const amount = parseNumber(draft.shares);
+  if (amount == null || amount < 0) {
+    return { currentShares, nextShares: null, nextCost: currentCost, error: "invalid" };
+  }
+
+  const price = parseNumber(draft.price);
+  let nextShares = amount;
+  let nextCost = currentCost;
+
+  if (draft.mode === "increase") {
+    nextShares = currentShares + amount;
+    if (price != null && nextShares > 0) {
+      const existingCost = currentCost != null ? currentShares * currentCost : 0;
+      nextCost = currentShares > 0 && currentCost != null
+        ? (existingCost + amount * price) / nextShares
+        : price;
+    }
+  } else if (draft.mode === "decrease") {
+    nextShares = currentShares - amount;
+    if (nextShares < 0) {
+      return { currentShares, nextShares, nextCost, error: "negative" };
+    }
+  } else if (price != null) {
+    nextCost = price;
+  }
+
+  return { currentShares, nextShares, nextCost, error: null };
 }
 
 function SortablePortfolioHeader({
@@ -342,24 +436,31 @@ type LoadPortfolioOptions = {
 
 const PORTFOLIO_AUTO_REFRESH_STORAGE_KEY = "stocks-assistant.portfolio.auto-refresh";
 const PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY = "stocks-assistant.portfolio.hide-sensitive";
+const PORTFOLIO_MARKET_STORAGE_KEY = "stocks-assistant.portfolio.market";
+const PORTFOLIO_SORT_STORAGE_KEY = "stocks-assistant.portfolio.sort";
 
-function readStoredBoolean(key: string, fallback: boolean) {
+function readStoredSortState(): { key: PortfolioSortKey; direction: "asc" | "desc" } {
+  const fallback = { key: "symbol" as PortfolioSortKey, direction: "asc" as const };
   if (typeof window === "undefined") return fallback;
   try {
-    const stored = window.localStorage.getItem(key);
-    if (stored == null) return fallback;
-    return stored === "true";
+    const stored = window.localStorage.getItem(PORTFOLIO_SORT_STORAGE_KEY);
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored) as Partial<{ key: PortfolioSortKey; direction: "asc" | "desc" }>;
+    const keys: PortfolioSortKey[] = ["symbol", "pe_ttm_ratio", "cost_price", "current_price", "stock_value", "position_ratio", "pnl_ratio", "change_rate", "note"];
+    return parsed.key && keys.includes(parsed.key) && (parsed.direction === "asc" || parsed.direction === "desc")
+      ? { key: parsed.key, direction: parsed.direction }
+      : fallback;
   } catch {
     return fallback;
   }
 }
 
-function writeStoredBoolean(key: string, value: boolean) {
+function writeStoredSortState(value: { key: PortfolioSortKey; direction: "asc" | "desc" }) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(key, String(value));
+    window.localStorage.setItem(PORTFOLIO_SORT_STORAGE_KEY, JSON.stringify(value));
   } catch {
-    // localStorage 可能被隐私模式或浏览器策略禁用，忽略即可退回当前页面状态。
+    // 本地缓存失败不影响表格排序。
   }
 }
 
@@ -379,14 +480,16 @@ export function PortfolioPage({
   const common = copyByLanguage[language].common;
   const copy = copyByLanguage[language].portfolio;
   const portfolioMarkets = getPortfolioMarkets(language);
-  const [market, setMarket] = useState<PortfolioMarket>("US");
+  const [market, setMarket] = useState<PortfolioMarket>(() => readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US"));
   const [items, setItems] = useState<PortfolioItem[]>([]);
   const [totalCapital, setTotalCapital] = useState("0");
   const [totalAssets, setTotalAssets] = useState("0");
   const [cashRatio, setCashRatio] = useState<string | null>(null);
   const [capitalDraft, setCapitalDraft] = useState("0");
-  const [form, setForm] = useState<PortfolioItemDraft>(() => emptyPortfolioDraft("US"));
+  const [form, setForm] = useState<PortfolioItemDraft>(() => emptyPortfolioDraft(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US")));
   const [editingItem, setEditingItem] = useState<PortfolioItem | null>(null);
+  const [adjustingItem, setAdjustingItem] = useState<PortfolioItem | null>(null);
+  const [adjustmentDraft, setAdjustmentDraft] = useState<PortfolioAdjustmentDraft>(() => emptyAdjustmentDraft());
   const [showForm, setShowForm] = useState(false);
   const [showCashSheet, setShowCashSheet] = useState(false);
   const [query, setQuery] = useState("");
@@ -405,10 +508,7 @@ export function PortfolioPage({
   const [countdown, setCountdown] = useState(refreshInterval);
   const inFlightMarketRef = useRef<PortfolioMarket | null>(null);
   const requestSeqRef = useRef(0);
-  const [sortState, setSortState] = useState<{ key: PortfolioSortKey; direction: "asc" | "desc" }>({
-    key: "symbol",
-    direction: "asc",
-  });
+  const [sortState, setSortState] = useState<{ key: PortfolioSortKey; direction: "asc" | "desc" }>(() => readStoredSortState());
 
   const effectiveRefreshInterval = Math.max(1, Number.isFinite(refreshInterval) ? Math.floor(refreshInterval) : 60);
   const currentMarket = portfolioMarkets.find((item) => item.id === market) ?? portfolioMarkets[0];
@@ -445,6 +545,10 @@ export function PortfolioPage({
     const pnlRatio = current != null && cost && cost > 0 ? ((current - cost) / cost) * 100 : null;
     return { current, stockValue, positionRatio, pnlRatio };
   }, [capitalDraft, editingItem, form.cost_price, form.shares, portfolioStats.marketValue, selectedQuote?.last_done, totalCapital]);
+  const adjustmentPreview = useMemo(
+    () => computeAdjustmentPreview(adjustingItem, adjustmentDraft),
+    [adjustingItem, adjustmentDraft],
+  );
 
   const formatUpdatedTime = useCallback(() => {
     return new Date().toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", {
@@ -500,12 +604,20 @@ export function PortfolioPage({
   }, [loadItems]);
 
   useEffect(() => {
+    writeStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, market);
+  }, [market]);
+
+  useEffect(() => {
     writeStoredBoolean(PORTFOLIO_AUTO_REFRESH_STORAGE_KEY, autoRefresh);
   }, [autoRefresh]);
 
   useEffect(() => {
     writeStoredBoolean(PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY, hideSensitive);
   }, [hideSensitive]);
+
+  useEffect(() => {
+    writeStoredSortState(sortState);
+  }, [sortState]);
 
   useEffect(() => {
     setCountdown(effectiveRefreshInterval);
@@ -624,6 +736,49 @@ export function PortfolioPage({
     setShowForm(true);
   }
 
+  function adjustItem(item: PortfolioItem) {
+    setAdjustingItem(item);
+    setAdjustmentDraft(emptyAdjustmentDraft(item));
+    setMessage("");
+  }
+
+  function closeAdjustmentSheet() {
+    setAdjustingItem(null);
+    setAdjustmentDraft(emptyAdjustmentDraft());
+  }
+
+  async function handleSaveAdjustment(event?: { preventDefault: () => void }) {
+    event?.preventDefault();
+    if (!adjustingItem) return;
+    if (adjustmentPreview.error === "invalid" || adjustmentPreview.nextShares == null) {
+      setMessage(copy.adjustInvalid);
+      return;
+    }
+    if (adjustmentPreview.error === "negative") {
+      setMessage(copy.adjustNegative);
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+    try {
+      await updatePortfolioItem(adjustingItem.id, {
+        market: adjustingItem.market,
+        symbol: adjustingItem.symbol,
+        name: adjustingItem.name,
+        shares: formatDraftDecimal(adjustmentPreview.nextShares),
+        cost_price: formatDraftDecimal(adjustmentPreview.nextCost),
+        note: adjustingItem.note,
+      });
+      closeAdjustmentSheet();
+      await loadItems({ syncCapitalDraft: false });
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : copy.adjustFailed);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleSaveItem(event?: { preventDefault: () => void }) {
     event?.preventDefault();
     const symbol = form.symbol.trim();
@@ -682,6 +837,7 @@ export function PortfolioPage({
     setMarket(nextMarket);
     setShowForm(false);
     setShowCashSheet(false);
+    closeAdjustmentSheet();
     resetForm(nextMarket);
   }
 
@@ -712,6 +868,13 @@ export function PortfolioPage({
       </div>
     );
   }
+
+  const adjustmentErrorText = adjustmentPreview.error === "invalid"
+    ? copy.adjustInvalid
+    : adjustmentPreview.error === "negative"
+      ? copy.adjustNegative
+      : "";
+  const adjustmentSaveDisabled = !adjustingItem || !adjustmentDraft.shares.trim() || adjustmentPreview.nextShares == null || Boolean(adjustmentPreview.error);
 
   const emptyState = (
     <div className="finance-soft-state grid min-h-56 place-items-center rounded-lg border border-dashed border-border/80 bg-muted/15 px-4 text-center text-sm text-muted-foreground">
@@ -865,6 +1028,72 @@ export function PortfolioPage({
         </SideDrawer>
 
         <SideDrawer
+          open={Boolean(adjustingItem)}
+          title={copy.adjustHolding}
+          subtitle={adjustingItem ? `${adjustingItem.symbol} · ${copy.adjustHint}` : copy.adjustHint}
+          onClose={closeAdjustmentSheet}
+          cancelText={common.cancel}
+          formId="portfolio-adjustment-form"
+          isSaving={isSaving}
+          saveDisabled={adjustmentSaveDisabled}
+          saveText={common.save}
+        >
+          <form id="portfolio-adjustment-form" className="space-y-4" onSubmit={handleSaveAdjustment}>
+            <Field label={copy.adjustMode}>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  ["increase", copy.adjustIncrease],
+                  ["decrease", copy.adjustDecrease],
+                  ["set", copy.adjustSet],
+                ] as const).map(([mode, label]) => (
+                  <Button
+                    key={mode}
+                    size="sm"
+                    type="button"
+                    variant={adjustmentDraft.mode === mode ? "default" : "outline"}
+                    onClick={() => setAdjustmentDraft((current) => ({ ...current, mode }))}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </Field>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={copy.adjustShares}>
+                <Input
+                  inputMode="decimal"
+                  value={adjustmentDraft.shares}
+                  onChange={(event) => setAdjustmentDraft((current) => ({ ...current, shares: event.target.value }))}
+                  placeholder={copy.optional}
+                />
+              </Field>
+              <Field label={copy.adjustPrice}>
+                <Input
+                  inputMode="decimal"
+                  value={adjustmentDraft.price}
+                  onChange={(event) => setAdjustmentDraft((current) => ({ ...current, price: event.target.value }))}
+                  placeholder={formatPlain(adjustingItem?.current_price ?? adjustingItem?.cost_price)}
+                />
+              </Field>
+            </div>
+
+            {adjustmentErrorText ? (
+              <div className="finance-soft-state rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {adjustmentErrorText}
+              </div>
+            ) : null}
+
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <QuoteMetric label={copy.currentShares} value={formatPlain(adjustmentPreview.currentShares)} />
+              <QuoteMetric label={copy.adjustedShares} value={adjustmentPreview.nextShares == null ? "-" : formatPlain(formatDraftDecimal(adjustmentPreview.nextShares))} />
+              <QuoteMetric label={copy.adjustedCost} value={sensitiveValue(adjustmentPreview.nextCost == null ? "-" : formatMoney(adjustmentPreview.nextCost))} />
+              <QuoteMetric label={copy.currentPrice} value={sensitiveValue(formatMoney(adjustingItem?.current_price))} />
+            </div>
+          </form>
+        </SideDrawer>
+
+        <SideDrawer
           open={showForm}
           title={editingItem ? copy.editHolding : copy.addHolding}
           subtitle={copy.formHint}
@@ -985,6 +1214,9 @@ export function PortfolioPage({
                     <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
                       <FileText />
                     </Button>
+                    <Button aria-label={copy.adjustHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.adjustHolding} onClick={() => adjustItem(item)}>
+                      <SlidersHorizontal />
+                    </Button>
                     <Button aria-label={copy.edit} size="icon" variant="ghost" className="h-7 w-7" title={copy.edit} onClick={() => editItem(item)}>
                       <Pencil />
                     </Button>
@@ -1043,6 +1275,9 @@ export function PortfolioPage({
                       </Button>
                       <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
                         <FileText />
+                      </Button>
+                      <Button aria-label={copy.adjustHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.adjustHolding} onClick={() => adjustItem(item)}>
+                        <SlidersHorizontal />
                       </Button>
                       <Button aria-label={copy.edit} size="icon" variant="ghost" className="h-7 w-7" title={copy.edit} onClick={() => editItem(item)}>
                         <Pencil />

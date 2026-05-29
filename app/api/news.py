@@ -1,6 +1,9 @@
 """Security news API."""
 
+from functools import partial
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_effective_settings
 from app.core.security import CurrentUser, require_permissions
@@ -80,10 +83,14 @@ async def translate_guardian_article(
     service = get_news_service()
     try:
         llm_provider = create_llm_provider(settings)
-        data = service.translate_guardian_text(
-            text=request.text,
-            llm_provider=llm_provider,
-            target_language=request.target_language,
+        # LLM 翻译可能耗时较长，放到线程池避免阻塞 FastAPI 事件循环和其他模块加载请求。
+        data = await run_in_threadpool(
+            partial(
+                service.translate_guardian_text,
+                text=request.text,
+                llm_provider=llm_provider,
+                target_language=request.target_language,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

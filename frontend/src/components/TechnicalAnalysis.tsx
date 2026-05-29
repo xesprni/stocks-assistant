@@ -33,6 +33,7 @@ import {
 } from "lightweight-charts";
 import { BarChart2, RefreshCw, TrendingUp } from "lucide-react";
 import { getCandlesticks, getIntraday, listWatchlist } from "@/lib/api";
+import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import type { CandlestickItem, IntradayItem, WatchlistItem } from "@/types/app";
 import {
   calcMA,
@@ -216,6 +217,9 @@ type ParsedIntradayBar = ReturnType<typeof parseIntraday>[number];
 
 const DEFAULT_INTRADAY_REFRESH_SECONDS = 5;
 const INTRADAY_REFRESH_STORAGE_KEY = "stocks-assistant.intraday-refresh-seconds";
+const TECHNICAL_WATCHLIST_TAB_STORAGE_KEY = "stocks-assistant.technical.watchlist-tab";
+const TECHNICAL_ACTIVE_TAB_STORAGE_KEY = "stocks-assistant.technical.active-tab";
+const TECHNICAL_KLINE_PERIOD_STORAGE_KEY = "stocks-assistant.technical.kline-period";
 
 function clampIntradayRefreshSeconds(value: number) {
   if (!Number.isFinite(value)) return DEFAULT_INTRADAY_REFRESH_SECONDS;
@@ -315,8 +319,14 @@ function SymbolSideNav({
   onSelect: (s: string, name: string) => void;
 }) {
   const [items, setItems] = useState<WatchlistItem[]>([]);
-  const [tab, setTab] = useState<"US" | "A" | "H">("US");
+  const [tab, setTab] = useState<"US" | "A" | "H">(() =>
+    readStoredValue(TECHNICAL_WATCHLIST_TAB_STORAGE_KEY, ["US", "A", "H"], "US"),
+  );
   const categoryLabels: Record<"US" | "A" | "H", string> = { US: copy.us, A: copy.a, H: copy.h };
+
+  useEffect(() => {
+    writeStoredValue(TECHNICAL_WATCHLIST_TAB_STORAGE_KEY, tab);
+  }, [tab]);
 
   useEffect(() => {
     listWatchlist(tab)
@@ -417,7 +427,9 @@ function KLineChart({
   const ma10Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
 
-  const [period, setPeriod] = useState<Period>("1D");
+  const [period, setPeriod] = useState<Period>(() =>
+    readStoredValue(TECHNICAL_KLINE_PERIOD_STORAGE_KEY, ["1D", "1W", "1M"], "1D"),
+  );
   const [loading, setLoading] = useState(false);
 
   const indicatorSeriesRef = useRef<Map<IndicatorKey, ISeriesApi<SeriesType>[]>>(new Map());
@@ -431,6 +443,9 @@ function KLineChart({
   // Keep refs in sync with props/state
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
   useEffect(() => { periodRef.current = period; }, [period]);
+  useEffect(() => {
+    writeStoredValue(TECHNICAL_KLINE_PERIOD_STORAGE_KEY, period);
+  }, [period]);
   useEffect(() => { isDarkRef.current = isDark; }, [isDark]);
   useEffect(() => { upColorRef.current = upColor; }, [upColor]);
   useEffect(() => { downColorRef.current = downColor; }, [downColor]);
@@ -1253,7 +1268,9 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorKey>>(new Set());
-  const [activeTab, setActiveTab] = useState<"kline" | "intraday">("kline");
+  const [activeTab, setActiveTab] = useState<"kline" | "intraday">(() =>
+    readStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, ["kline", "intraday"], "kline"),
+  );
   const [parsedBars, setParsedBars] = useState<ReturnType<typeof parseBars>>([]);
   const [visiblePriceRange, setVisiblePriceRange] = useState<{ min: number; max: number } | null>(null);
 
@@ -1263,6 +1280,10 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   useEffect(() => {
     if (!displayName && symbol) setDisplayName(symbol);
   }, [symbol, displayName]);
+
+  useEffect(() => {
+    writeStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
 
   const registerKLine = useCallback(
     (chart: IChartApi | null, primary: ISeriesApi<SeriesType> | null) => {

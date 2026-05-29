@@ -90,7 +90,7 @@ export function SubAgentsPage({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const dangerousTools = config?.multi_agent_dangerous_tools ?? ["bash", "write_file", "scheduler"];
+  const dangerousTools = config?.multi_agent_dangerous_tools ?? ["bash", "write_file", "scheduler", "watchlist", "portfolio"];
   const roleNames = Object.keys(roles).sort();
   const selectedRole = selectedName ? roles[selectedName] : undefined;
   const hasUnsavedNameChange = selectedName && form.name.trim() !== selectedName;
