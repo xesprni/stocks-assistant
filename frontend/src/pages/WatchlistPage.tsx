@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Activity, BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
+import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { Badge } from "@/components/ui/badge";
@@ -73,19 +73,33 @@ function SortableWatchlistItem({
   onOpenNews: (symbol: string) => void;
   copy: typeof i18n.zh.watchlist;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { active, attributes, listeners, over, setNodeRef, transform, transition, isDragging, isSorting } = useSortable({
     id: item.id,
   });
-  const style = {
+  const isDropTarget = over?.id === item.id && active?.id !== item.id;
+  const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
+    transition: [
+      transition,
+      "background-color 180ms ease",
+      "border-color 180ms ease",
+      "box-shadow 180ms ease",
+      "opacity 140ms ease",
+    ].filter(Boolean).join(", "),
+    opacity: isDragging ? 0.34 : 1,
     zIndex: isDragging ? 10 : undefined,
   };
 
   return (
     <div
-      className="finance-row-card message-bubble rounded-md border border-border/80 bg-card/80 p-2 transition-colors hover:border-primary/50 sm:p-3"
+      className={cn(
+        "watchlist-sortable-row finance-row-card message-bubble rounded-md border border-border/80 bg-card/80 p-2 hover:border-primary/50 sm:p-3",
+        isDragging && "watchlist-sortable-row-dragging",
+        isDropTarget && "watchlist-sortable-row-over",
+        isSorting && !isDragging && "watchlist-sortable-row-sorting",
+      )}
+      data-dragging={isDragging ? "true" : undefined}
+      data-drop-target={isDropTarget ? "true" : undefined}
       ref={setNodeRef}
       style={style}
     >
@@ -94,7 +108,10 @@ function SortableWatchlistItem({
           {...attributes}
           {...listeners}
           aria-label={copy.dragSort}
-          className="shrink-0 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+          className={cn(
+            "watchlist-drag-handle grid size-7 shrink-0 cursor-grab touch-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
+            (isDragging || isDropTarget) && "text-primary",
+          )}
           type="button"
         >
           <GripVertical className="size-4" />
@@ -113,6 +130,24 @@ function SortableWatchlistItem({
           onOpenNews={() => onOpenNews(item.symbol)}
           showDelete
         />
+      </div>
+    </div>
+  );
+}
+
+function WatchlistDragPreview({ item, copy }: { item: WatchlistItem; copy: typeof i18n.zh.watchlist }) {
+  return (
+    <div className="watchlist-drag-overlay min-w-[min(22rem,calc(100vw-2rem))] rounded-md px-3 py-2.5">
+      <div className="flex items-center gap-3">
+        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+          <GripVertical className="size-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">{item.symbol}</p>
+          <p className="truncate text-xs text-muted-foreground">{stockName(item)}</p>
+        </div>
+        <Badge className="h-5 px-1.5 text-[10px]" variant="outline">{item.category}</Badge>
+        <span className="sr-only">{copy.dragSort}</span>
       </div>
     </div>
   );
@@ -231,6 +266,7 @@ export function WatchlistPage({
   const [quoteView, setQuoteView] = useState<WatchlistQuoteView>(() => readStoredValue(WATCHLIST_QUOTE_VIEW_STORAGE_KEY, QUOTE_VIEWS, "movers"));
   const [localFilter, setLocalFilter] = useState(() => readStoredText(WATCHLIST_FILTER_STORAGE_KEY));
   const [items, setItems] = useState<WatchlistItem[]>([]);
+  const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WatchlistSearchResult[]>([]);
   const [overview, setOverview] = useState<WatchlistOverviewResponse | null>(null);
@@ -258,6 +294,10 @@ export function WatchlistPage({
     return rows.filter((row) => row.category === category);
   }, [category, overview?.views, quoteView]);
   const symbolSet = useMemo(() => new Set(items.map((item) => item.symbol)), [items]);
+  const activeDragItem = useMemo(
+    () => items.find((item) => item.id === activeDragId) ?? null,
+    [activeDragId, items],
+  );
   const quoteStatus = overview
     ? formatTemplate(copy.quotesUpdated, {
       source: quoteSourceLabel(overview.source, copy),
@@ -411,7 +451,16 @@ export function WatchlistPage({
     }
   }
 
+  function handleDragStart(event: DragStartEvent) {
+    setActiveDragId(event.active.id);
+  }
+
+  function handleDragCancel() {
+    setActiveDragId(null);
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
@@ -536,6 +585,7 @@ export function WatchlistPage({
           <div className="min-h-0 flex-1 p-2 lg:overflow-y-auto lg:p-3">
             {mode === "manage" ? (
               <ManageList
+                activeDragItem={activeDragItem}
                 commonLoading={common.loading}
                 copy={copy}
                 filteredItems={filteredItems}
@@ -544,7 +594,9 @@ export function WatchlistPage({
                 onAddToPortfolio={handleAddToPortfolio}
                 onAnalyze={onAnalyzeStock}
                 onDelete={handleDelete}
+                onDragCancel={handleDragCancel}
                 onDragEnd={handleDragEnd}
+                onDragStart={handleDragStart}
                 onOpenFinancials={onOpenFinancials}
                 onOpenNews={onOpenNews}
                 sensors={sensors}
@@ -625,6 +677,7 @@ export function WatchlistPage({
 }
 
 function ManageList({
+  activeDragItem,
   commonLoading,
   copy,
   filteredItems,
@@ -633,11 +686,14 @@ function ManageList({
   onAddToPortfolio,
   onAnalyze,
   onDelete,
+  onDragCancel,
   onDragEnd,
+  onDragStart,
   onOpenFinancials,
   onOpenNews,
   sensors,
 }: {
+  activeDragItem: WatchlistItem | null;
   commonLoading: string;
   copy: typeof i18n.zh.watchlist;
   filteredItems: WatchlistItem[];
@@ -646,7 +702,9 @@ function ManageList({
   onAddToPortfolio: (item: WatchlistItem) => void;
   onAnalyze: (symbol: string) => void;
   onDelete: (item: WatchlistItem) => void;
+  onDragCancel: () => void;
   onDragEnd: (event: DragEndEvent) => void;
+  onDragStart: (event: DragStartEvent) => void;
   onOpenFinancials: (symbol: string) => void;
   onOpenNews: (symbol: string) => void;
   sensors: ReturnType<typeof useSensors>;
@@ -666,8 +724,8 @@ function ManageList({
     return <SoftState icon={<Search className="size-6 text-muted-foreground" />}>{copy.localNoMatch}</SoftState>;
   }
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-      <SortableContext items={filteredItems.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragCancel={onDragCancel} onDragEnd={onDragEnd} onDragStart={onDragStart}>
+      <SortableContext items={filteredItems.map((i) => i.id)} strategy={rectSortingStrategy}>
         <div className="grid gap-1.5 sm:gap-2 2xl:grid-cols-2">
           {filteredItems.map((item) => (
             <SortableWatchlistItem
@@ -683,6 +741,9 @@ function ManageList({
           ))}
         </div>
       </SortableContext>
+      <DragOverlay adjustScale={false} dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+        {activeDragItem ? <WatchlistDragPreview copy={copy} item={activeDragItem} /> : null}
+      </DragOverlay>
     </DndContext>
   );
 }
