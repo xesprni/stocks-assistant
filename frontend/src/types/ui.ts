@@ -6,7 +6,6 @@ export type Page =
   | "portfolio"
   | "news"
   | "config"
-  | "chart"
   | "fundamentals"
   | "skills"
   | "subagents"

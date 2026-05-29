@@ -39,6 +39,9 @@
     --panel-shadow: 0 1px 2px rgba(60, 64, 67, 0.08), 0 1px 1px rgba(60, 64, 67, 0.04);
     --control-shadow: 0 1px 2px rgba(60, 64, 67, 0.08);
     --control-shadow-hover: 0 2px 6px rgba(60, 64, 67, 0.12);
+    --list-hover-bg: hsl(217 89% 45% / 0.075);
+    --list-hover-border: hsl(217 89% 45% / 0.42);
+    --list-hover-shadow: inset 3px 0 0 hsl(217 89% 45% / 0.58), 0 1px 0 hsl(217 89% 45% / 0.08);
     --chat-assistant-bg: hsl(0 0% 100% / 0.96);
     --chat-assistant-border: hsl(220 9% 87% / 0.76);
     --chat-user-bg: hsl(var(--primary));
@@ -84,6 +87,9 @@
     --panel-shadow: none;
     --control-shadow: none;
     --control-shadow-hover: none;
+    --list-hover-bg: hsl(217 89% 76% / 0.13);
+    --list-hover-border: hsl(217 89% 76% / 0.56);
+    --list-hover-shadow: inset 3px 0 0 hsl(217 89% 76% / 0.7), 0 0 0 1px hsl(217 89% 76% / 0.09);
     --chat-assistant-bg: hsl(0 0% 15% / 0.96);
     --chat-assistant-border: hsl(0 0% 25% / 0.78);
     --chat-user-bg: hsl(var(--primary));
@@ -432,6 +438,11 @@
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 180ms ease,
+      transform 180ms ease;
   }
 
   .finance-row-card {
@@ -443,14 +454,32 @@
   }
 
   .finance-row-card:hover,
-  .finance-data-card:hover {
-    background: hsl(var(--muted) / 0.24) !important;
+  .finance-row-card:focus-within,
+  .finance-data-card:hover,
+  .finance-data-card:focus-within {
+    background: var(--list-hover-bg) !important;
+    border-color: var(--list-hover-border) !important;
+    box-shadow: var(--list-hover-shadow) !important;
+    transform: translateX(2px);
+  }
+
+  .finance-row-card:hover .text-muted-foreground,
+  .finance-row-card:focus-within .text-muted-foreground,
+  .finance-data-card:hover .text-muted-foreground,
+  .finance-data-card:focus-within .text-muted-foreground {
+    color: hsl(var(--foreground) / 0.78);
   }
 
   .watchlist-sortable-row {
     isolation: isolate;
     overflow: hidden;
     position: relative;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 180ms ease,
+      transform 180ms ease,
+      opacity 180ms ease;
     will-change: transform, opacity;
   }
 
@@ -484,6 +513,22 @@
     transform: translateX(-10%);
     transition: opacity 160ms ease;
     z-index: 0;
+  }
+
+  .watchlist-sortable-row:hover {
+    background: var(--list-hover-bg) !important;
+    border-color: var(--list-hover-border) !important;
+    box-shadow: var(--list-hover-shadow) !important;
+    transform: translateX(2px);
+  }
+
+  .watchlist-sortable-row:hover::before {
+    opacity: 0.9;
+    transform: scaleY(1);
+  }
+
+  .watchlist-sortable-row:hover::after {
+    opacity: 0.78;
   }
 
   .watchlist-sortable-row-dragging {
@@ -569,7 +614,19 @@
   .app-main-stage > .page-enter.panel [class*="bg-background/50"][class*="border-border"]:hover,
   .app-main-stage > .page-enter.panel [class*="bg-background/60"][class*="border-border"]:hover,
   .app-main-stage > .page-enter.panel [class*="bg-card/80"][class*="border-border"]:hover {
-    background: hsl(var(--muted) / 0.22) !important;
+    background: var(--list-hover-bg) !important;
+    border-color: var(--list-hover-border) !important;
+    box-shadow: var(--list-hover-shadow) !important;
+    transform: translateX(2px);
+  }
+
+  .app-main-stage > .page-enter.panel button[class*="text-left"][class*="transition-colors"]:hover,
+  .app-main-stage > .page-enter.panel article[class*="transition-colors"]:hover,
+  .app-main-stage > .page-enter.panel label[class*="transition-colors"]:hover {
+    background: var(--list-hover-bg) !important;
+    border-color: var(--list-hover-border) !important;
+    box-shadow: var(--list-hover-shadow);
+    transform: translateX(2px);
   }
 
   .app-main-stage > .page-enter.panel [class*="border-dashed"][class*="bg-muted/20"],

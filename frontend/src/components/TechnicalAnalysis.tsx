@@ -53,6 +53,7 @@ interface Props {
   symbol: string;
   onSymbolChange: (s: string) => void;
   onBack?: () => void;
+  embedded?: boolean;
 }
 
 type AppLanguage = "zh" | "en";
@@ -664,16 +665,16 @@ function KLineChart({
 
   return (
     <div className="flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
-      <div className="flex shrink-0 items-center gap-0.5 border-b border-border bg-card px-3 py-1.5">
-        <div className="flex rounded bg-muted p-0.5">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border bg-background px-3">
+        <div className="flex h-8 items-center gap-1 border-b border-border/70">
           {(["1D", "1W", "1M"] as Period[]).map((p) => (
             <button
               key={p}
               onClick={() => setPeriod(p)}
-              className={`rounded px-2.5 py-0.5 text-[11px] font-medium transition-all ${
+              className={`h-8 border-b-2 px-2.5 text-[11px] font-medium transition-colors ${
                 period === p
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
               {p === "1D" ? copy.daily : p === "1W" ? copy.weekly : copy.monthly}
@@ -850,9 +851,9 @@ function IntradayCharts({
 
   return (
     <div className="flex min-h-[560px] flex-1 flex-col bg-background lg:min-h-0">
-      <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-1.5">
-        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">VOL</span>
-        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">MACD</span>
+      <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+        <span className="border-l-2 border-primary/60 pl-1.5 text-[10px] font-medium text-muted-foreground">VOL</span>
+        <span className="border-l-2 border-secondary/70 pl-1.5 text-[10px] font-medium text-muted-foreground">MACD</span>
         <label className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
           <input
             type="checkbox"
@@ -869,7 +870,7 @@ function IntradayCharts({
           value={refreshSeconds}
           disabled={!autoRefresh}
           onChange={(e) => setRefreshSeconds(clampIntradayRefreshSeconds(e.currentTarget.valueAsNumber))}
-          className="h-5 w-11 rounded border border-border bg-background px-1 text-right text-[10px] text-foreground outline-none transition-colors focus:border-primary disabled:opacity-50"
+          className="h-6 w-11 border border-border bg-background px-1 text-right text-[10px] text-foreground outline-none transition-colors focus:border-primary disabled:opacity-50"
           aria-label={copy.refreshIntervalAria}
         />
         <span className="text-[10px] text-muted-foreground">s</span>
@@ -880,7 +881,7 @@ function IntradayCharts({
           onClick={() => load("incremental")}
           disabled={loading}
           title={copy.refresh}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+          className="p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
         >
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
         </button>
@@ -1020,23 +1021,23 @@ function ChipDistributionPanel({
 // ── Indicator selector + display ──────────────────────────────────────────────
 
 const SUB_INDICATORS: { key: SubIndicatorKey; label: string; color: string }[] = [
-  { key: "MACD", label: "MACD", color: "#2962ff" },
-  { key: "KDJ",  label: "KDJ",  color: "#ff6d00" },
-  { key: "RSI",  label: "RSI",  color: "#9c27b0" },
-  { key: "CCI",  label: "CCI",  color: "#00897b" },
-  { key: "WR",   label: "WR",   color: "#c62828" },
-  { key: "DMI",  label: "DMI",  color: "#1565c0" },
-  { key: "OSC",  label: "OSC",  color: "#e65100" },
+  { key: "MACD", label: "MACD", color: "#2563eb" },
+  { key: "KDJ",  label: "KDJ",  color: "#d97706" },
+  { key: "RSI",  label: "RSI",  color: "#7c3aed" },
+  { key: "CCI",  label: "CCI",  color: "#0f766e" },
+  { key: "WR",   label: "WR",   color: "#be123c" },
+  { key: "DMI",  label: "DMI",  color: "#0284c7" },
+  { key: "OSC",  label: "OSC",  color: "#ea580c" },
 ];
 const OVERLAY_INDICATORS: { key: OverlayIndicatorKey; label: string; color: string }[] = [
-  { key: "BOLL",    label: "BOLL",    color: "#f57f17" },
-  { key: "BBIBOLL", label: "BBIBOLL", color: "#ff6d00" },
-  { key: "EMA",     label: "EMA",     color: "#9c27b0" },
+  { key: "BOLL",    label: "BOLL",    color: "#ca8a04" },
+  { key: "BBIBOLL", label: "BBIBOLL", color: "#ea580c" },
+  { key: "EMA",     label: "EMA",     color: "#7c3aed" },
 ];
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function TechnicalAnalysis({ language, symbol, onSymbolChange, onBack }: Props) {
+export default function TechnicalAnalysis({ language, symbol, onSymbolChange, onBack, embedded = false }: Props) {
   const copy = technicalCopy[language];
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
@@ -1071,54 +1072,58 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   return (
     <div className="flex min-h-0 flex-col bg-background text-foreground lg:h-full lg:overflow-hidden">
       {/* ── Header ── */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card/90 px-4 py-2 backdrop-blur">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/20">
-          <BarChart2 size={14} className="text-primary" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold leading-tight">
-            {displayName || symbol || copy.title}
+      {!embedded ? (
+        <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card/90 px-4 py-2 backdrop-blur">
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/20">
+            <BarChart2 size={14} className="text-primary" />
           </div>
-          {symbol && displayName && displayName !== symbol && (
-            <div className="text-[10px] leading-tight text-muted-foreground">{symbol}</div>
-          )}
-        </div>
-      </header>
+          <div>
+            <div className="text-sm font-semibold leading-tight">
+              {displayName || symbol || copy.title}
+            </div>
+            {symbol && displayName && displayName !== symbol && (
+              <div className="text-[10px] leading-tight text-muted-foreground">{symbol}</div>
+            )}
+          </div>
+        </header>
+      ) : null}
 
       {/* ── Body ── */}
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row lg:overflow-hidden">
+      <div className={`flex min-h-0 flex-1 flex-col lg:overflow-hidden ${embedded ? "" : "md:flex-row"}`}>
         {/* Sidebar */}
-        <SymbolSideNav
-          active={symbol}
-          copy={copy}
-          language={language}
-          onSelect={(s, name) => {
-            setDisplayName(name);
-            onSymbolChange(s);
-          }}
-        />
+        {!embedded ? (
+          <SymbolSideNav
+            active={symbol}
+            copy={copy}
+            language={language}
+            onSelect={(s, name) => {
+              setDisplayName(name);
+              onSymbolChange(s);
+            }}
+          />
+        ) : null}
 
         {/* Main content */}
         <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
           {/* Tab switch: 分时 / K线 */}
-          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-1">
-            <div className="flex rounded-md border border-border/80 bg-muted/40 p-0.5">
+          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+            <div className="flex h-9 items-center gap-1 border-b border-border/70">
               <button
                 onClick={() => setActiveTab("kline")}
-                className={`rounded-sm px-3 py-1 text-[11px] font-medium transition-all ${
+                className={`h-9 border-b-2 px-3 text-[11px] font-medium transition-colors ${
                   activeTab === "kline"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {copy.kline}
               </button>
               <button
                 onClick={() => setActiveTab("intraday")}
-                className={`rounded-sm px-3 py-1 text-[11px] font-medium transition-all ${
+                className={`h-9 border-b-2 px-3 text-[11px] font-medium transition-colors ${
                   activeTab === "intraday"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {copy.intraday}
@@ -1131,19 +1136,19 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
               {/* Left: indicator selector + chart */}
               <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
                 {/* Indicator selector (above chart) */}
-                <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-muted/40 px-3 py-1.5">
+                <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2">
                   <span className="mr-0.5 text-[10px] font-medium text-muted-foreground">{copy.subIndicators}</span>
                   {SUB_INDICATORS.map(({ key, label, color }) => (
                     <button
                       key={key}
                       onClick={() => toggleIndicator(key)}
-                      className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-all ${
+                      className={`inline-flex h-7 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium transition-colors ${
                         activeIndicators.has(key)
-                          ? "border-transparent text-white"
-                          : "border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                          ? "border-primary text-foreground"
+                          : "border-transparent text-muted-foreground hover:text-foreground"
                       }`}
-                      style={activeIndicators.has(key) ? { background: color, borderColor: color } : {}}
                     >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
                       {label}
                     </button>
                   ))}
@@ -1153,13 +1158,13 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                     <button
                       key={key}
                       onClick={() => toggleIndicator(key)}
-                      className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-all ${
+                      className={`inline-flex h-7 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium transition-colors ${
                         activeIndicators.has(key)
-                          ? "border-transparent text-white"
-                          : "border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                          ? "border-primary text-foreground"
+                          : "border-transparent text-muted-foreground hover:text-foreground"
                       }`}
-                      style={activeIndicators.has(key) ? { background: color, borderColor: color } : {}}
                     >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
                       {label}
                     </button>
                   ))}
@@ -1169,13 +1174,13 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                     <>
                       <div className="mx-1.5 h-3 w-px bg-border" />
                       {activeOverlayLabels.map(({ key, label, color }) => (
-                        <span key={key} className="flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px]">
+                        <span key={key} className="flex items-center gap-1 border-l border-border/80 pl-1.5 text-[10px] text-muted-foreground">
                           <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
                           <span className="font-medium">{label}</span>
                         </span>
                       ))}
                       {activeSubLabels.map(({ key, label, color }) => (
-                        <span key={key} className="flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px]">
+                        <span key={key} className="flex items-center gap-1 border-l border-border/80 pl-1.5 text-[10px] text-muted-foreground">
                           <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
                           <span className="font-medium">{label}</span>
                         </span>

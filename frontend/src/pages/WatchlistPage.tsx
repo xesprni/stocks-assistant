@@ -1,26 +1,23 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Activity, BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, Search, Sparkles, Star, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { Badge } from "@/components/ui/badge";
+import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addPortfolioItem, addWatchlistItem, deleteWatchlistItem, getWatchlistOverview, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
-import { formatTemplate, i18n, localeFor } from "@/lib/i18n";
+import { addPortfolioItem, addWatchlistItem, deleteWatchlistItem, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
+import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { PortfolioMarket, WatchlistCategory, WatchlistItem, WatchlistOverviewResponse, WatchlistOverviewRow, WatchlistQuoteView, WatchlistSearchResult } from "@/types/app";
+import type { PortfolioMarket, WatchlistCategory, WatchlistItem, WatchlistSearchResult } from "@/types/app";
 
-type WatchlistMode = "manage" | "quotes";
 type NameParts = Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">;
 
 const WATCHLIST_CATEGORY_STORAGE_KEY = "stocks-assistant-watchlist-category";
-const WATCHLIST_MODE_STORAGE_KEY = "stocks-assistant-watchlist-mode";
 const WATCHLIST_FILTER_STORAGE_KEY = "stocks-assistant-watchlist-filter";
-const WATCHLIST_QUOTE_VIEW_STORAGE_KEY = "stocks-assistant-watchlist-quote-view";
-const QUOTE_VIEWS: WatchlistQuoteView[] = ["movers", "gainers", "losers", "active"];
 
 function getWatchlistCategories(language: AppLanguage): Array<{ id: WatchlistCategory; label: string; hint: string; placeholder: string }> {
   const markets = i18n[language].markets;
@@ -58,19 +55,23 @@ function writeStoredValue(key: string, value: string) {
 
 function SortableWatchlistItem({
   item,
+  activeSymbol,
   onDelete,
   onAnalyze,
   onAddToPortfolio,
   onOpenFinancials,
   onOpenNews,
+  onSelect,
   copy,
 }: {
   item: WatchlistItem;
+  activeSymbol: string;
   onDelete: (item: WatchlistItem) => void;
   onAnalyze: (symbol: string) => void;
   onAddToPortfolio: (item: WatchlistItem) => void;
   onOpenFinancials: (symbol: string) => void;
   onOpenNews: (symbol: string) => void;
+  onSelect: (item: WatchlistItem) => void;
   copy: typeof i18n.zh.watchlist;
 }) {
   const { active, attributes, listeners, over, setNodeRef, transform, transition, isDragging, isSorting } = useSortable({
@@ -89,19 +90,31 @@ function SortableWatchlistItem({
     opacity: isDragging ? 0.34 : 1,
     zIndex: isDragging ? 10 : undefined,
   };
+  const isSelected = activeSymbol === item.symbol;
 
   return (
     <div
       className={cn(
-        "watchlist-sortable-row finance-row-card message-bubble rounded-md border border-border/80 bg-card/80 p-2 hover:border-primary/50 sm:p-3",
+        "watchlist-sortable-row finance-row-card message-bubble rounded-md border border-border/80 bg-card/80 p-2 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary sm:p-3",
+        isSelected && "border-primary/60 bg-primary/5 shadow-[inset_2px_0_0_hsl(var(--primary))]",
         isDragging && "watchlist-sortable-row-dragging",
         isDropTarget && "watchlist-sortable-row-over",
         isSorting && !isDragging && "watchlist-sortable-row-sorting",
       )}
       data-dragging={isDragging ? "true" : undefined}
       data-drop-target={isDropTarget ? "true" : undefined}
+      data-selected={isSelected ? "true" : undefined}
+      onClick={() => onSelect(item)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(item);
+        }
+      }}
+      role="button"
       ref={setNodeRef}
       style={style}
+      tabIndex={0}
     >
       <div className="flex items-center gap-2 sm:gap-3">
         <button
@@ -112,6 +125,7 @@ function SortableWatchlistItem({
             "watchlist-drag-handle grid size-7 shrink-0 cursor-grab touch-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
             (isDragging || isDropTarget) && "text-primary",
           )}
+          onClick={(event) => event.stopPropagation()}
           type="button"
         >
           <GripVertical className="size-4" />
@@ -153,50 +167,6 @@ function WatchlistDragPreview({ item, copy }: { item: WatchlistItem; copy: typeo
   );
 }
 
-function QuoteWatchlistItem({
-  item,
-  onAnalyze,
-  onAddToPortfolio,
-  onOpenFinancials,
-  onOpenNews,
-  copy,
-}: {
-  item: WatchlistOverviewRow;
-  onAnalyze: (symbol: string) => void;
-  onAddToPortfolio: (item: WatchlistOverviewRow) => void;
-  onOpenFinancials: (symbol: string) => void;
-  onOpenNews: (symbol: string) => void;
-  copy: typeof i18n.zh.watchlist;
-}) {
-  return (
-    <div className="finance-row-card rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/50">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <p className="truncate text-sm font-semibold sm:text-base">{item.symbol}</p>
-            <Badge className="h-5 px-1.5 text-[10px]" variant="outline">{item.category}</Badge>
-          </div>
-          <p className="truncate text-xs text-muted-foreground sm:text-sm">{stockName(item)}</p>
-        </div>
-        <RowActions
-          category={item.category}
-          copy={copy}
-          onAddToPortfolio={() => onAddToPortfolio(item)}
-          onAnalyze={() => onAnalyze(item.symbol)}
-          onOpenFinancials={() => onOpenFinancials(item.symbol)}
-          onOpenNews={() => onOpenNews(item.symbol)}
-        />
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <QuoteMetric label={copy.last} value={item.last_done ?? "-"} />
-        <QuoteMetric label={copy.change} value={item.change_value ?? "-"} tone={rateTone(item.change_value)} />
-        <QuoteMetric label={copy.rate} value={item.change_rate ?? "-"} tone={rateTone(item.change_rate)} />
-        <QuoteMetric label={copy.turnover} value={formatCompactValue(item.turnover)} />
-      </div>
-    </div>
-  );
-}
-
 function RowActions({
   category,
   copy,
@@ -218,20 +188,20 @@ function RowActions({
 }) {
   return (
     <div className="ml-auto grid shrink-0 grid-cols-3 justify-end gap-0.5 sm:flex sm:gap-1">
-      <Button aria-label={copy.analyze} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={onAnalyze} size="icon" title={copy.analyze} variant="ghost">
+      <Button aria-label={copy.analyze} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onAnalyze(); }} size="icon" title={copy.analyze} variant="ghost">
         <Sparkles />
       </Button>
-      <Button aria-label={copy.financials} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={onOpenFinancials} size="icon" title={copy.financials} variant="ghost">
+      <Button aria-label={copy.financials} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenFinancials(); }} size="icon" title={copy.financials} variant="ghost">
         <FileText />
       </Button>
-      <Button aria-label={copy.news} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={onOpenNews} size="icon" title={copy.news} variant="ghost">
+      <Button aria-label={copy.news} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenNews(); }} size="icon" title={copy.news} variant="ghost">
         <Newspaper />
       </Button>
       <Button
         aria-label={copy.addToPortfolio}
         className="h-7 w-7 text-muted-foreground hover:text-primary"
         disabled={category === "H"}
-        onClick={onAddToPortfolio}
+        onClick={(event) => { event.stopPropagation(); onAddToPortfolio(); }}
         size="icon"
         title={category === "H" ? copy.addPortfolioUnsupported : copy.addToPortfolio}
         variant="ghost"
@@ -239,7 +209,7 @@ function RowActions({
         <BriefcaseBusiness />
       </Button>
       {showDelete ? (
-        <Button aria-label={copy.deleteItem} className="h-7 w-7" onClick={onDelete} size="icon" title={copy.deleteItem} variant="ghost">
+        <Button aria-label={copy.deleteItem} className="h-7 w-7" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
           <Trash2 />
         </Button>
       ) : null}
@@ -249,11 +219,15 @@ function RowActions({
 
 export function WatchlistPage({
   language,
+  selectedSymbol = "",
+  onSelectedSymbolChange,
   onAnalyzeStock,
   onOpenFinancials,
   onOpenNews,
 }: {
   language: AppLanguage;
+  selectedSymbol?: string;
+  onSelectedSymbolChange?: (symbol: string) => void;
   onAnalyzeStock: (symbol: string) => void;
   onOpenFinancials: (symbol: string) => void;
   onOpenNews: (symbol: string) => void;
@@ -261,20 +235,17 @@ export function WatchlistPage({
   const common = i18n[language].common;
   const copy = i18n[language].watchlist;
   const watchlistCategories = getWatchlistCategories(language);
-  const [category, setCategory] = useState<WatchlistCategory>(() => readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["US", "A", "H"], "US"));
-  const [mode, setMode] = useState<WatchlistMode>(() => readStoredValue(WATCHLIST_MODE_STORAGE_KEY, ["manage", "quotes"], "manage"));
-  const [quoteView, setQuoteView] = useState<WatchlistQuoteView>(() => readStoredValue(WATCHLIST_QUOTE_VIEW_STORAGE_KEY, QUOTE_VIEWS, "movers"));
+  const [category, setCategory] = useState<WatchlistCategory>(() =>
+    inferCategoryFromSymbol(selectedSymbol) ?? readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["US", "A", "H"], "US"),
+  );
+  const [activeSymbol, setActiveSymbol] = useState(selectedSymbol);
   const [localFilter, setLocalFilter] = useState(() => readStoredText(WATCHLIST_FILTER_STORAGE_KEY));
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WatchlistSearchResult[]>([]);
-  const [overview, setOverview] = useState<WatchlistOverviewResponse | null>(null);
-  const [overviewStale, setOverviewStale] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [isOverviewLoading, setIsOverviewLoading] = useState(false);
-  const [overviewError, setOverviewError] = useState("");
   const [message, setMessage] = useState("");
 
   const searchControllerRef = useRef<AbortController | null>(null);
@@ -289,21 +260,11 @@ export function WatchlistPage({
     if (!text) return items;
     return items.filter((item) => watchlistSearchText(item).includes(text));
   }, [items, localFilter]);
-  const quoteRows = useMemo(() => {
-    const rows = overview?.views?.[quoteView] ?? [];
-    return rows.filter((row) => row.category === category);
-  }, [category, overview?.views, quoteView]);
   const symbolSet = useMemo(() => new Set(items.map((item) => item.symbol)), [items]);
   const activeDragItem = useMemo(
     () => items.find((item) => item.id === activeDragId) ?? null,
     [activeDragId, items],
   );
-  const quoteStatus = overview
-    ? formatTemplate(copy.quotesUpdated, {
-      source: quoteSourceLabel(overview.source, copy),
-      time: formatUpdatedAt(overview.fetched_at, language),
-    })
-    : copy.quotesNotLoaded;
 
   useEffect(() => {
     writeStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, category);
@@ -324,12 +285,19 @@ export function WatchlistPage({
   }, [category, copy.loadFailed]);
 
   useEffect(() => {
-    writeStoredValue(WATCHLIST_MODE_STORAGE_KEY, mode);
-  }, [mode]);
+    if (!selectedSymbol || selectedSymbol === activeSymbol) return;
+    const inferred = inferCategoryFromSymbol(selectedSymbol);
+    if (inferred && inferred !== category) setCategory(inferred);
+    setActiveSymbol(selectedSymbol);
+  }, [activeSymbol, category, selectedSymbol]);
 
   useEffect(() => {
-    writeStoredValue(WATCHLIST_QUOTE_VIEW_STORAGE_KEY, quoteView);
-  }, [quoteView]);
+    if (activeSymbol) return;
+    const fallback = filteredItems[0] ?? items[0];
+    if (!fallback) return;
+    setActiveSymbol(fallback.symbol);
+    onSelectedSymbolChange?.(fallback.symbol);
+  }, [activeSymbol, filteredItems, items, onSelectedSymbolChange]);
 
   useEffect(() => {
     writeStoredValue(WATCHLIST_FILTER_STORAGE_KEY, localFilter);
@@ -373,35 +341,18 @@ export function WatchlistPage({
 
   function selectCategory(next: WatchlistCategory) {
     setCategory(next);
+    setItems([]);
+    setActiveSymbol("");
     setResults([]);
     setMessage("");
   }
 
-  function selectMode(next: WatchlistMode) {
-    setMode(next);
-    if (next === "quotes" && !overview && !isOverviewLoading) {
-      void loadOverview();
-    }
-  }
-
-  function markOverviewStale() {
-    if (overview) setOverviewStale(true);
-  }
-
-  async function loadOverview() {
-    if (isOverviewLoading) return;
-    setIsOverviewLoading(true);
-    setOverviewError("");
-    try {
-      const response = await getWatchlistOverview();
-      setOverview(response);
-      setOverviewStale(false);
-    } catch (caught) {
-      setOverviewError(caught instanceof Error ? caught.message : copy.overviewFailed);
-    } finally {
-      setIsOverviewLoading(false);
-    }
-  }
+  const handleSelectSymbol = useCallback((itemOrSymbol: WatchlistItem | string) => {
+    const nextSymbol = typeof itemOrSymbol === "string" ? itemOrSymbol : itemOrSymbol.symbol;
+    if (!nextSymbol) return;
+    setActiveSymbol(nextSymbol);
+    onSelectedSymbolChange?.(nextSymbol);
+  }, [onSelectedSymbolChange]);
 
   async function handleAdd(result: WatchlistSearchResult) {
     setMessage("");
@@ -409,9 +360,9 @@ export function WatchlistPage({
       const item = await addWatchlistItem(result);
       if (item.category === category) {
         setItems((current) => [...current.filter((e) => e.symbol !== item.symbol), item]);
+        handleSelectSymbol(item);
       }
       setResults((current) => current.filter((e) => e.symbol !== item.symbol));
-      markOverviewStale();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : copy.addFailed);
     }
@@ -419,18 +370,20 @@ export function WatchlistPage({
 
   async function handleDelete(item: WatchlistItem) {
     const previous = items;
+    const wasActive = item.symbol === activeSymbol;
     setMessage("");
     setItems((current) => current.filter((e) => e.id !== item.id));
+    if (wasActive) setActiveSymbol("");
     try {
       await deleteWatchlistItem(item.id);
-      markOverviewStale();
     } catch (caught) {
       setItems(previous);
+      if (wasActive) setActiveSymbol(item.symbol);
       setMessage(caught instanceof Error ? caught.message : copy.deleteFailed);
     }
   }
 
-  async function handleAddToPortfolio(item: WatchlistItem | WatchlistOverviewRow) {
+  async function handleAddToPortfolio(item: WatchlistItem) {
     if (item.category === "H") {
       setMessage(copy.addPortfolioUnsupported);
       return;
@@ -471,7 +424,6 @@ export function WatchlistPage({
       const previous = current;
       const next = arrayMove(current, oldIndex, newIndex);
       reorderWatchlist(next.map((e) => e.id))
-        .then(markOverviewStale)
         .catch(() => {
           setItems(previous);
           setMessage(copy.reorderFailed);
@@ -482,7 +434,7 @@ export function WatchlistPage({
 
   return (
     <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="panel-header flex flex-col gap-3 border-b border-border/70 bg-background/70 px-3 py-2 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <Star className="size-5 text-secondary" />
@@ -492,15 +444,15 @@ export function WatchlistPage({
         </div>
 
         <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row xl:items-center">
-          <div className="inline-flex h-7 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
+          <div className="inline-flex h-8 w-fit max-w-full shrink-0 items-center overflow-x-auto border-b border-border/70">
             {watchlistCategories.map((item) => (
               <button
                 aria-pressed={category === item.id}
                 className={cn(
-                  "h-6 min-w-[4.25rem] rounded-full px-2.5 text-xs font-medium transition-colors",
+                  "h-8 min-w-[4.25rem] border-b-2 px-2.5 text-xs font-medium transition-colors",
                   category === item.id
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
                 )}
                 key={item.id}
                 onClick={() => selectCategory(item.id)}
@@ -510,167 +462,121 @@ export function WatchlistPage({
               </button>
             ))}
           </div>
-          <div className="inline-flex h-7 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
-            {(["manage", "quotes"] as const).map((item) => (
-              <button
-                aria-pressed={mode === item}
-                className={cn(
-                  "h-6 min-w-[4.5rem] rounded-full px-2.5 text-xs font-medium transition-colors",
-                  mode === item ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-                )}
-                key={item}
-                onClick={() => selectMode(item)}
-                type="button"
-              >
-                {item === "manage" ? copy.manageView : copy.quotesView}
-              </button>
-            ))}
-          </div>
           <Badge variant="outline">{formatTemplate(copy.symbols, { count: items.length })}</Badge>
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-6 py-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden lg:py-4">
-        <div className="finance-module flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="finance-module-header flex flex-col gap-3 p-2 sm:p-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="grid min-h-0 flex-1 gap-4 py-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
+        <aside className="finance-module flex min-h-0 flex-col rounded-md border border-border/80 bg-background/45">
+          <div className="finance-module-header space-y-3 border-b border-border/70 p-3">
             <div>
-              <p className="text-sm font-semibold">
-                {mode === "manage"
-                  ? formatTemplate(copy.listTitle, { label: selectedCategory?.label ?? category })
-                  : `${selectedCategory?.label ?? category} ${copy.quotesView}`}
-              </p>
+              <p className="text-sm font-semibold">{formatTemplate(copy.listTitle, { label: selectedCategory?.label ?? category })}</p>
               <p className="hidden text-xs text-muted-foreground sm:block">
-                {mode === "manage"
-                  ? formatTemplate(copy.dragHint, { hint: selectedCategory?.hint ?? category })
-                  : quoteStatus}
+                {formatTemplate(copy.dragHint, { hint: selectedCategory?.hint ?? category })}
               </p>
             </div>
-            {mode === "manage" ? (
-              <div className="relative w-full xl:w-72">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  aria-label={copy.localFilter}
-                  className="pl-8"
-                  placeholder={copy.localFilterPlaceholder}
-                  value={localFilter}
-                  onChange={(event) => setLocalFilter(event.target.value)}
-                />
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="flex max-w-full gap-1 overflow-x-auto rounded-full bg-muted/40 p-0.5">
-                  {QUOTE_VIEWS.map((item) => (
-                    <button
-                      aria-pressed={quoteView === item}
-                      className={cn(
-                        "shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors",
-                        quoteView === item ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-                      )}
-                      key={item}
-                      onClick={() => setQuoteView(item)}
-                      type="button"
-                    >
-                      {quoteViewLabel(item, copy)}
-                    </button>
-                  ))}
-                </div>
-                <Button className="shrink-0" disabled={isOverviewLoading} onClick={loadOverview} size="sm" type="button" variant="outline">
-                  {isOverviewLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                  {copy.refreshQuotes}
-                </Button>
-              </div>
-            )}
-          </div>
 
-          <div className="min-h-0 flex-1 p-2 lg:overflow-y-auto lg:p-3">
-            {mode === "manage" ? (
-              <ManageList
-                activeDragItem={activeDragItem}
-                commonLoading={common.loading}
-                copy={copy}
-                filteredItems={filteredItems}
-                isLoading={isLoading}
-                items={items}
-                onAddToPortfolio={handleAddToPortfolio}
-                onAnalyze={onAnalyzeStock}
-                onDelete={handleDelete}
-                onDragCancel={handleDragCancel}
-                onDragEnd={handleDragEnd}
-                onDragStart={handleDragStart}
-                onOpenFinancials={onOpenFinancials}
-                onOpenNews={onOpenNews}
-                sensors={sensors}
-              />
-            ) : (
-              <QuoteList
-                copy={copy}
-                error={overviewError || overview?.error || overview?.quote_error || ""}
-                isLoading={isOverviewLoading}
-                onAddToPortfolio={handleAddToPortfolio}
-                onAnalyze={onAnalyzeStock}
-                onOpenFinancials={onOpenFinancials}
-                onOpenNews={onOpenNews}
-                onRefresh={loadOverview}
-                overview={overview}
-                rows={quoteRows}
-                stale={overviewStale || Boolean(overview?.stale)}
-              />
-            )}
-          </div>
-        </div>
-
-        <aside className="finance-module flex min-h-0 flex-col rounded-lg border border-border/80 bg-background/45">
-          <div className="finance-module-header p-3">
             <form className="flex gap-2" onSubmit={(event) => event.preventDefault()}>
               <Input
+                className="h-8"
                 placeholder={selectedCategory?.placeholder}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
-              <Button className="shrink-0" disabled={isSearching || !query.trim()} type="submit">
+              <Button className="h-8 shrink-0" disabled={isSearching || !query.trim()} size="sm" type="submit" variant="outline">
                 {isSearching ? <Loader2 className="animate-spin" /> : <Search />}
                 {common.search}
               </Button>
             </form>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                aria-label={copy.localFilter}
+                className="h-8 pl-8"
+                placeholder={copy.localFilterPlaceholder}
+                value={localFilter}
+                onChange={(event) => setLocalFilter(event.target.value)}
+              />
+            </div>
+
             {message ? (
-              <div className="finance-soft-state mt-3 rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 {message}
+              </div>
+            ) : null}
+
+            {(query.trim() || results.length > 0) ? (
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                {results.map((result) => {
+                  const exists = symbolSet.has(result.symbol);
+                  return (
+                    <div className="finance-row-card rounded-md border border-border/80 bg-card/80 p-2.5" key={result.symbol}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{result.symbol}</p>
+                          <p className="truncate text-xs text-muted-foreground">{stockName(result)}</p>
+                        </div>
+                        <Button disabled={exists} onClick={() => handleAdd(result)} size="sm" variant={exists ? "outline" : "default"}>
+                          <Plus />
+                          {exists ? common.added : common.add}
+                        </Button>
+                      </div>
+                      <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs">
+                        <QuoteMetric label={copy.last} value={result.last_done ?? "-"} />
+                        <QuoteMetric label={copy.change} value={result.change_value ?? "-"} tone={rateTone(result.change_value)} />
+                        <QuoteMetric label={copy.rate} value={result.change_rate ?? "-"} tone={rateTone(result.change_rate)} />
+                      </div>
+                    </div>
+                  );
+                })}
+                {results.length === 0 && !isSearching ? (
+                  <div className="finance-soft-state rounded-md border border-dashed border-border/80 bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
+                    {copy.inputHint}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
 
-          <div className="min-h-0 flex-1 p-3 lg:overflow-y-auto">
-            <div className="space-y-2">
-              {results.map((result) => {
-                const exists = symbolSet.has(result.symbol);
-                return (
-                  <div className="finance-row-card rounded-md border border-border/80 bg-card/80 p-3" key={result.symbol}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{result.symbol}</p>
-                        <p className="truncate text-xs text-muted-foreground">{stockName(result)}</p>
-                      </div>
-                      <Button disabled={exists} onClick={() => handleAdd(result)} size="sm" variant={exists ? "outline" : "default"}>
-                        <Plus />
-                        {exists ? common.added : common.add}
-                      </Button>
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                      <QuoteMetric label={copy.last} value={result.last_done ?? "-"} />
-                      <QuoteMetric label={copy.change} value={result.change_value ?? "-"} tone={rateTone(result.change_value)} />
-                      <QuoteMetric label={copy.rate} value={result.change_rate ?? "-"} tone={rateTone(result.change_rate)} />
-                    </div>
-                  </div>
-                );
-              })}
-              {results.length === 0 ? (
-                <div className="finance-soft-state rounded-md border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
-                  {copy.inputHint}
-                </div>
-              ) : null}
-            </div>
+          <div className="min-h-0 flex-1 p-2 lg:overflow-y-auto">
+            <ManageList
+              activeDragItem={activeDragItem}
+              activeSymbol={activeSymbol}
+              commonLoading={common.loading}
+              copy={copy}
+              filteredItems={filteredItems}
+              isLoading={isLoading}
+              items={items}
+              onAddToPortfolio={handleAddToPortfolio}
+              onAnalyze={onAnalyzeStock}
+              onDelete={handleDelete}
+              onDragCancel={handleDragCancel}
+              onDragEnd={handleDragEnd}
+              onDragStart={handleDragStart}
+              onOpenFinancials={onOpenFinancials}
+              onOpenNews={onOpenNews}
+              onSelect={handleSelectSymbol}
+              sensors={sensors}
+            />
           </div>
         </aside>
+
+        <div className="finance-module flex min-h-[640px] min-w-0 flex-col overflow-hidden rounded-md border border-border/80 bg-background/45 lg:min-h-0">
+          {activeSymbol ? (
+            <TechnicalAnalysis
+              embedded
+              language={language}
+              symbol={activeSymbol}
+              onSymbolChange={handleSelectSymbol}
+            />
+          ) : (
+            <SoftState icon={<Star className="size-8 text-muted-foreground" />}>
+              <span className="block text-sm font-medium">{copy.emptyTitle}</span>
+              <span className="mt-1 block text-xs text-muted-foreground">{copy.emptyHint}</span>
+            </SoftState>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -678,6 +584,7 @@ export function WatchlistPage({
 
 function ManageList({
   activeDragItem,
+  activeSymbol,
   commonLoading,
   copy,
   filteredItems,
@@ -691,9 +598,11 @@ function ManageList({
   onDragStart,
   onOpenFinancials,
   onOpenNews,
+  onSelect,
   sensors,
 }: {
   activeDragItem: WatchlistItem | null;
+  activeSymbol: string;
   commonLoading: string;
   copy: typeof i18n.zh.watchlist;
   filteredItems: WatchlistItem[];
@@ -707,6 +616,7 @@ function ManageList({
   onDragStart: (event: DragStartEvent) => void;
   onOpenFinancials: (symbol: string) => void;
   onOpenNews: (symbol: string) => void;
+  onSelect: (item: WatchlistItem) => void;
   sensors: ReturnType<typeof useSensors>;
 }) {
   if (isLoading && items.length === 0) {
@@ -726,9 +636,10 @@ function ManageList({
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragCancel={onDragCancel} onDragEnd={onDragEnd} onDragStart={onDragStart}>
       <SortableContext items={filteredItems.map((i) => i.id)} strategy={rectSortingStrategy}>
-        <div className="grid gap-1.5 sm:gap-2 2xl:grid-cols-2">
+        <div className="grid gap-1.5">
           {filteredItems.map((item) => (
             <SortableWatchlistItem
+              activeSymbol={activeSymbol}
               copy={copy}
               item={item}
               key={item.id}
@@ -737,6 +648,7 @@ function ManageList({
               onDelete={onDelete}
               onOpenFinancials={onOpenFinancials}
               onOpenNews={onOpenNews}
+              onSelect={onSelect}
             />
           ))}
         </div>
@@ -748,70 +660,6 @@ function ManageList({
   );
 }
 
-function QuoteList({
-  copy,
-  error,
-  isLoading,
-  onAddToPortfolio,
-  onAnalyze,
-  onOpenFinancials,
-  onOpenNews,
-  onRefresh,
-  overview,
-  rows,
-  stale,
-}: {
-  copy: typeof i18n.zh.watchlist;
-  error: string;
-  isLoading: boolean;
-  onAddToPortfolio: (item: WatchlistOverviewRow) => void;
-  onAnalyze: (symbol: string) => void;
-  onOpenFinancials: (symbol: string) => void;
-  onOpenNews: (symbol: string) => void;
-  onRefresh: () => void;
-  overview: WatchlistOverviewResponse | null;
-  rows: WatchlistOverviewRow[];
-  stale: boolean;
-}) {
-  if (!overview && isLoading) {
-    return <SoftState icon={<Loader2 className="size-5 animate-spin" />}>{copy.quotesLoading}</SoftState>;
-  }
-  if (!overview) {
-    return (
-      <SoftState icon={<Activity className="size-7 text-muted-foreground" />}>
-        <span className="block">{copy.quotesNotLoaded}</span>
-        <Button className="mt-3" disabled={isLoading} onClick={onRefresh} size="sm" type="button" variant="outline">
-          {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          {copy.refreshQuotes}
-        </Button>
-      </SoftState>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      {stale ? <InlineState>{copy.quotesStale}</InlineState> : null}
-      {error ? <InlineState>{error}</InlineState> : null}
-      {rows.length === 0 ? (
-        <SoftState icon={<Activity className="size-7 text-muted-foreground" />}>{copy.noQuoteRows}</SoftState>
-      ) : (
-        <div className="grid gap-2 2xl:grid-cols-2">
-          {rows.map((item) => (
-            <QuoteWatchlistItem
-              copy={copy}
-              item={item}
-              key={`${item.id}-${item.symbol}`}
-              onAddToPortfolio={onAddToPortfolio}
-              onAnalyze={onAnalyze}
-              onOpenFinancials={onOpenFinancials}
-              onOpenNews={onOpenNews}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SoftState({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
   return (
     <div className="finance-soft-state grid h-full min-h-56 place-items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-4 text-center text-sm text-muted-foreground">
@@ -819,14 +667,6 @@ function SoftState({ children, icon }: { children: React.ReactNode; icon?: React
         {icon ? <div className="mb-3 flex justify-center">{icon}</div> : null}
         {children}
       </div>
-    </div>
-  );
-}
-
-function InlineState({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-      {children}
     </div>
   );
 }
@@ -866,29 +706,11 @@ function rateTone(value: string | null): "up" | "down" | "flat" {
   return "flat";
 }
 
-function formatCompactValue(value: string | null): string {
-  if (!value) return "-";
-  const parsed = Number.parseFloat(String(value).replace(/,/g, ""));
-  if (!Number.isFinite(parsed)) return value;
-  return parsed.toLocaleString(undefined, { maximumFractionDigits: 1, notation: "compact" });
-}
-
-function quoteViewLabel(view: WatchlistQuoteView, copy: typeof i18n.zh.watchlist) {
-  if (view === "gainers") return copy.quoteGainers;
-  if (view === "losers") return copy.quoteLosers;
-  if (view === "active") return copy.quoteActive;
-  return copy.quoteMovers;
-}
-
-function quoteSourceLabel(source: WatchlistOverviewResponse["source"], copy: typeof i18n.zh.watchlist) {
-  if (source === "live") return copy.quoteSourceLive;
-  if (source === "cache") return copy.quoteSourceCache;
-  return copy.quoteSourceLocal;
-}
-
-function formatUpdatedAt(value: string | null | undefined, language: AppLanguage) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(localeFor(language), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+function inferCategoryFromSymbol(symbol: string): WatchlistCategory | null {
+  const normalized = symbol.trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized.endsWith(".US")) return "US";
+  if (normalized.endsWith(".HK")) return "H";
+  if (normalized.endsWith(".SH") || normalized.endsWith(".SZ") || normalized.endsWith(".CN")) return "A";
+  return null;
 }

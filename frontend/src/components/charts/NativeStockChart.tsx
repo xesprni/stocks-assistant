@@ -449,6 +449,91 @@ function drawTextPill(
   ctx.restore();
 }
 
+function legendColorForSeries(series: CachedSeries, index: number | null, theme: NativeChartTheme) {
+  if (series.type === "candlestick" && index != null) {
+    const point = series.points[index];
+    if (point) return point.close >= point.open ? theme.up : theme.down;
+  }
+  if (series.type === "histogram" && index != null) {
+    const point = series.points[index];
+    if (point?.color) return point.color;
+  }
+  return series.color ?? theme.mutedText;
+}
+
+function legendTextForSeries(series: CachedSeries, index: number | null) {
+  const title = series.title ?? series.id;
+  if (index == null) return title;
+  if (series.type === "candlestick") {
+    const point = series.points[index];
+    if (!point) return title;
+    return `${title} O ${formatNumber(point.open)} H ${formatNumber(point.high)} L ${formatNumber(point.low)} C ${formatNumber(point.close)}`;
+  }
+  const point = series.points[index];
+  if (!point) return title;
+  return `${title} ${formatNumber(point.value)}`;
+}
+
+function drawPaneLegend(
+  ctx: CanvasRenderingContext2D,
+  layout: PaneLayout,
+  series: CachedSeries[],
+  index: number | null,
+  theme: NativeChartTheme,
+) {
+  const paneSeries = series.filter((item) => item.paneId === layout.id && item.title);
+  if (!layout.label && paneSeries.length === 0) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(layout.x + 4, layout.y + 4, Math.max(1, layout.width - 8), Math.max(1, layout.height - 8));
+  ctx.clip();
+  ctx.font = "11px Inter, ui-sans-serif, system-ui, sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+
+  let x = layout.x + 8;
+  let y = layout.y + 14;
+  const maxX = layout.x + layout.width - 8;
+  const maxY = layout.y + Math.min(layout.height - 8, 48);
+
+  if (layout.label) {
+    ctx.fillStyle = theme.mutedText;
+    ctx.fillText(layout.label, x, y);
+    x += ctx.measureText(layout.label).width + 12;
+  }
+
+  for (const item of paneSeries) {
+    const text = legendTextForSeries(item, index);
+    const color = legendColorForSeries(item, index, theme);
+    const textWidth = ctx.measureText(text).width;
+    const entryWidth = 18 + textWidth + 12;
+    if (x + entryWidth > maxX && x > layout.x + 8) {
+      x = layout.x + 8;
+      y += 15;
+    }
+    if (y > maxY) break;
+
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = Math.max(1.5, item.lineWidth ?? 1.5);
+    ctx.setLineDash(item.dashed ? [5, 4] : []);
+    if (item.type === "histogram") {
+      ctx.fillRect(x, y - 4, 12, 8);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + 12, y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = theme.text;
+    ctx.fillText(text, x + 16, y);
+    x += entryWidth;
+  }
+  ctx.restore();
+}
+
 function drawChart(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -500,10 +585,6 @@ function drawChart(
       ctx.lineTo(layout.x + layout.width, y);
       ctx.stroke();
     }
-
-    ctx.fillStyle = theme.mutedText;
-    ctx.textAlign = "left";
-    if (layout.label) ctx.fillText(layout.label, layout.x + 8, layout.y + 14);
 
     ctx.textAlign = "left";
     for (let tick = 0; tick <= 4; tick++) {
@@ -573,31 +654,11 @@ function drawChart(
     }
 
     drawTextPill(ctx, formatTimeLabel(times[crosshair.index], intradayScale), x + 6, height - TIME_AXIS_HEIGHT / 2, theme);
+  }
 
-    for (const layout of layouts) {
-      const values: string[] = [];
-      for (const item of series) {
-        if (item.paneId !== layout.id) continue;
-        if (item.type === "candlestick") {
-          const point = item.points[crosshair.index];
-          if (!point) continue;
-          values.push(`O ${formatNumber(point.open)} H ${formatNumber(point.high)} L ${formatNumber(point.low)} C ${formatNumber(point.close)}`);
-        } else if (item.type === "line" && item.title) {
-          const point = item.points[crosshair.index];
-          if (!point) continue;
-          values.push(`${item.title} ${formatNumber(point.value)}`);
-        } else if (item.type === "histogram" && item.title) {
-          const point = item.points[crosshair.index];
-          if (!point) continue;
-          values.push(`${item.title} ${formatNumber(point.value)}`);
-        }
-      }
-      if (values.length > 0) {
-        ctx.fillStyle = theme.text;
-        ctx.textAlign = "left";
-        ctx.fillText(values.slice(0, 4).join("  "), layout.x + 8, layout.y + 30);
-      }
-    }
+  const legendIndex = crosshair && crosshair.index >= 0 && crosshair.index < times.length ? crosshair.index : null;
+  for (const layout of layouts) {
+    drawPaneLegend(ctx, layout, series, legendIndex, theme);
   }
 
   return layouts;

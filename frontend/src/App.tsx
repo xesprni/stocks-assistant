@@ -25,7 +25,6 @@ import {
   Sparkles,
   Star,
   Sun,
-  TrendingUp,
   UserCog,
   X,
   Zap,
@@ -77,7 +76,6 @@ const SchedulerPage = lazy(() => import("@/pages/SchedulerPage").then((module) =
 const SecurityPage = lazy(() => import("@/pages/SecurityPage").then((module) => ({ default: module.SecurityPage })));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })));
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
-const TechnicalAnalysis = lazy(() => import("@/components/TechnicalAnalysis"));
 const TracingPage = lazy(() => import("@/pages/TracingPage").then((module) => ({ default: module.TracingPage })));
 const UsersPage = lazy(() => import("@/pages/UsersPage").then((module) => ({ default: module.UsersPage })));
 const WatchlistPage = lazy(() => import("@/pages/WatchlistPage").then((module) => ({ default: module.WatchlistPage })));
@@ -101,7 +99,6 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   portfolio: "portfolio:read",
   news: "market:read",
   config: "config:read",
-  chart: "market:read",
   fundamentals: "fundamentals:read",
   skills: "skills:read",
   subagents: "config:write",
@@ -120,7 +117,6 @@ const PAGE_PATH: Record<Page, string> = {
   portfolio: "/portfolio",
   news: "/news",
   config: "/settings",
-  chart: "/chart",
   fundamentals: "/fundamentals",
   skills: "/skills",
   subagents: "/subagents",
@@ -136,6 +132,7 @@ const PATH_PAGE = new Map<string, Page>([
   ["/", "overview"],
   ["/config", "config"],
   ["/chat", "overview"],
+  ["/chart", "watchlist"],
   ["/market", "overview"],
   ["/market/config", "config"],
   ["/overview", "overview"],
@@ -289,7 +286,6 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
     id: "market-tools",
     label: groups.market,
     items: [
-      navItem(language, "chart", <TrendingUp />),
       navItem(language, "fundamentals", <FileText />),
     ],
   },
@@ -327,7 +323,6 @@ function getDesktopMoreGroups(language: AppLanguage): NavGroup[] {
       id: "analysis",
       label: groups.analysis,
       items: [
-        navItem(language, "chart", <TrendingUp />),
         navItem(language, "fundamentals", <FileText />),
         navItem(language, "tracing", <Cpu />),
       ],
@@ -1543,7 +1538,7 @@ function ConsoleApp() {
                   language={language}
                   onOpenChart={(symbol) => {
                     setSelectedSymbol(symbol);
-                    setPage("chart");
+                    setPage("watchlist");
                   }}
                   onOpenMarketConfig={() => openConfig("market")}
                   onOpenPortfolio={() => setPage("portfolio")}
@@ -1563,6 +1558,8 @@ function ConsoleApp() {
             {page === "watchlist" ? (
               <WatchlistPage
                 language={language}
+                selectedSymbol={selectedSymbol}
+                onSelectedSymbolChange={setSelectedSymbol}
                 onAnalyzeStock={(symbol) => {
                   setPrompt(formatTemplate(i18n[language].watchlist.analysisPrompt, { symbol }));
                   setPage("overview");
@@ -1593,15 +1590,6 @@ function ConsoleApp() {
                   setSelectedSymbol(symbol);
                   setPage("fundamentals");
                 }}
-              />
-            ) : null}
-
-            {page === "chart" ? (
-              <TechnicalAnalysis
-                language={language}
-                symbol={selectedSymbol}
-                onSymbolChange={setSelectedSymbol}
-                onBack={() => setPage("overview")}
               />
             ) : null}
 
