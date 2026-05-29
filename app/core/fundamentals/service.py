@@ -74,8 +74,35 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(item) for item in value]
     if hasattr(value, "__dict__"):
-        return {k: _plain(v) for k, v in vars(value).items() if not k.startswith("_")}
+        try:
+            data = {k: _plain(v) for k, v in vars(value).items() if not k.startswith("_")}
+        except TypeError:
+            data = {}
+        if data:
+            return data
+    descriptor_data = _descriptor_object_data(value)
+    if descriptor_data:
+        return descriptor_data
     return str(value)
+
+
+def _descriptor_object_data(value: Any) -> dict[str, Any]:
+    """Serialize PyO3/extension SDK objects whose fields are exposed as descriptors."""
+
+    data: dict[str, Any] = {}
+    for cls in type(value).__mro__:
+        for name, descriptor in vars(cls).items():
+            if name.startswith("_") or name in data:
+                continue
+            descriptor_type = type(descriptor).__name__
+            if descriptor_type not in {"getset_descriptor", "member_descriptor"}:
+                continue
+            try:
+                raw = getattr(value, name)
+            except Exception:
+                continue
+            data[name] = _plain(raw)
+    return data
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -156,22 +183,13 @@ class FundamentalService:
                 return self._error_section(str(exc))
 
         # 每个板块单独捕获错误，避免某个 Longbridge 子接口失败导致 Dashboard 整列空白。
-        financial_reports = section(
-            lambda: self.get_financial_reports(
-                normalized_symbol,
-                kind="All",
-                period="Annual",
-                settings=settings,
-            ),
-            collection_keys=("statements",),
-        )
+        # 财报明细由独立 Fundamentals API 提供，这里只保留公司资料和轻量研究信息。
         return {
             "symbol": normalized_symbol,
             "source": "Longbridge FundamentalContext + QuoteContext",
             "fetched_at": _iso_now(),
             "filings": section(lambda: get_quote_ctx().filings(normalized_symbol), collection_keys=("list", "items", "filings")),
             "company": section(lambda: get_fundamental_ctx().company(normalized_symbol)),
-            "financial_reports": financial_reports,
             "valuation": section(lambda: get_fundamental_ctx().valuation(normalized_symbol)),
             "dividends": section(lambda: get_fundamental_ctx().dividend(normalized_symbol), collection_keys=("list", "items", "dividends")),
             "institution_rating": section(lambda: get_fundamental_ctx().institution_rating(normalized_symbol)),

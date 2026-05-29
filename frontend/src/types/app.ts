@@ -538,7 +538,6 @@ export interface DashboardSymbolInsightsResponse {
   fetched_at: string;
   filings: DashboardSymbolInsightSection;
   company: DashboardSymbolInsightSection;
-  financial_reports: DashboardSymbolInsightSection;
   valuation: DashboardSymbolInsightSection;
   dividends: DashboardSymbolInsightSection;
   institution_rating: DashboardSymbolInsightSection;

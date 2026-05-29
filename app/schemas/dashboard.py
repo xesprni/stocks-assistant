@@ -108,7 +108,6 @@ class DashboardSymbolInsightsResponse(BaseModel):
     fetched_at: str = ""
     filings: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
     company: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
-    financial_reports: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
     valuation: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
     dividends: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
     institution_rating: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)

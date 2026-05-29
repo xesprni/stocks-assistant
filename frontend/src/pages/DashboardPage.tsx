@@ -8,11 +8,16 @@ import {
   BarChart2,
   BriefcaseBusiness,
   Building2,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
+  CircleDollarSign,
+  FileText,
+  Landmark,
   Loader2,
   Settings2,
   Star,
+  Users,
 } from "lucide-react";
 
 import { MarketPulse } from "@/components/MarketPulse";
@@ -23,7 +28,15 @@ import {
 } from "@/components/charts/NativeStockChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getCandlesticks, getDashboard, getDashboardMarket, getDashboardPortfolio, getDashboardWatchlist, getIntraday } from "@/lib/api";
+import {
+  getCandlesticks,
+  getDashboard,
+  getDashboardMarket,
+  getDashboardPortfolio,
+  getDashboardSymbolInsights,
+  getDashboardWatchlist,
+  getIntraday,
+} from "@/lib/api";
 import { useChartColors } from "@/lib/color-scheme";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -34,6 +47,8 @@ import type {
   DashboardPortfolioModule,
   DashboardPortfolioMarket,
   DashboardResponse,
+  DashboardSymbolInsightSection,
+  DashboardSymbolInsightsResponse,
   DashboardWatchlistModule,
   DashboardWatchlistRow,
   DashboardWatchlistView,
@@ -1102,12 +1117,387 @@ function SymbolDetailMetric({ label, tone, value }: { label: string; tone?: Tone
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasInsightValue(value: unknown): boolean {
+  if (value == null || value === "") return false;
+  if (Array.isArray(value)) return value.some(hasInsightValue);
+  if (isRecord(value)) return Object.values(value).some(hasInsightValue);
+  return true;
+}
+
+function displayInsightValue(value: unknown, language: AppLanguage): string {
+  if (value == null || value === "") return "";
+  if (typeof value === "boolean") return value ? (language === "en" ? "Yes" : "是") : (language === "en" ? "No" : "否");
+  if (typeof value === "number") return value.toLocaleString(localeFor(language), { maximumFractionDigits: 4 });
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((item) => displayInsightValue(item, language)).filter(Boolean).join(" · ");
+  if (isRecord(value)) {
+    const direct = firstInsightText(value, ["desc", "name", "title", "value", "target", "recommend", "date_str", "date"], language);
+    if (direct) return direct;
+    return Object.entries(value)
+      .filter(([, entryValue]) => hasInsightValue(entryValue))
+      .slice(0, 3)
+      .map(([key, entryValue]) => `${key}: ${displayInsightValue(entryValue, language)}`)
+      .join(" · ");
+  }
+  return String(value);
+}
+
+function firstInsightText(record: Record<string, unknown>, keys: string[], language: AppLanguage): string {
+  for (const key of keys) {
+    const text = displayInsightValue(record[key], language);
+    if (text) return text;
+  }
+  return "";
+}
+
+function dateInsightText(value: unknown, language: AppLanguage): string {
+  const text = displayInsightValue(value, language);
+  if (/^\d{8}$/.test(text)) return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6)}`;
+  return text;
+}
+
+function sectionHasInsightContent(section: DashboardSymbolInsightSection | undefined): boolean {
+  if (!section) return false;
+  return section.items.length > 0 || hasInsightValue(section.data);
+}
+
+function sectionRecords(section: DashboardSymbolInsightSection | undefined): Array<Record<string, unknown>> {
+  return section?.items.filter(isRecord) ?? [];
+}
+
+function InsightField({ href, label, value }: { href?: string; label: string; value: string }) {
+  if (!value) return null;
+  const content = href ? (
+    <a className="truncate text-primary hover:underline" href={href} rel="noreferrer" target="_blank">
+      {value}
+    </a>
+  ) : (
+    <span className="truncate">{value}</span>
+  );
+  return (
+    <div className="min-w-0 rounded-md bg-muted/20 px-3 py-2">
+      <p className="truncate text-[11px] text-muted-foreground">{label}</p>
+      <p className="mt-1 flex min-w-0 text-sm font-semibold">{content}</p>
+    </div>
+  );
+}
+
+function InsightBlock({
+  children,
+  icon,
+  section,
+  title,
+}: {
+  children?: ReactNode;
+  icon: ReactNode;
+  section?: DashboardSymbolInsightSection;
+  title: string;
+}) {
+  const hasContent = sectionHasInsightContent(section);
+  if (!hasContent && !section?.error) return null;
+  return (
+    <div className="border-t border-border/55 pt-4 first:border-t-0 first:pt-0">
+      <div className="mb-2 flex min-w-0 items-center gap-2 text-sm font-semibold">
+        <span className="shrink-0 text-muted-foreground [&_svg]:size-4">{icon}</span>
+        <span className="truncate">{title}</span>
+      </div>
+      {section?.error && !hasContent ? <InlineState>{section.error}</InlineState> : children}
+    </div>
+  );
+}
+
+function CompanyInsightSection({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const labels = language === "en"
+    ? {
+      title: "Company",
+      fullName: "Full name",
+      market: "Market",
+      category: "Category",
+      founded: "Founded",
+      listing: "Listing",
+      fiscalYear: "Fiscal year",
+      employees: "Employees",
+      manager: "Manager",
+      chairman: "Chairman",
+      website: "Website",
+      office: "Office",
+    }
+    : {
+      title: "公司资料",
+      fullName: "公司全称",
+      market: "市场",
+      category: "分类",
+      founded: "成立",
+      listing: "上市",
+      fiscalYear: "财年",
+      employees: "员工",
+      manager: "经理",
+      chairman: "主席",
+      website: "官网",
+      office: "办公地址",
+    };
+  const data = section.data;
+  const profile = firstInsightText(data, ["profile"], language);
+  const website = firstInsightText(data, ["website"], language);
+  const fields = [
+    { label: labels.fullName, value: firstInsightText(data, ["company_name", "name"], language) },
+    { label: labels.market, value: [firstInsightText(data, ["market"], language), firstInsightText(data, ["region"], language)].filter(Boolean).join(" · ") },
+    { label: labels.category, value: firstInsightText(data, ["category"], language) },
+    { label: labels.founded, value: dateInsightText(data.founded, language) },
+    { label: labels.listing, value: dateInsightText(data.listing_date, language) },
+    { label: labels.fiscalYear, value: firstInsightText(data, ["year_end"], language) },
+    { label: labels.employees, value: firstInsightText(data, ["employees"], language) },
+    { label: labels.manager, value: firstInsightText(data, ["manager", "legal_repr"], language) },
+    { label: labels.chairman, value: firstInsightText(data, ["chairman"], language) },
+    { label: labels.website, value: website, href: /^https?:\/\//i.test(website) ? website : undefined },
+    { label: labels.office, value: firstInsightText(data, ["office_address", "address"], language) },
+  ].filter((field) => field.value);
+
+  return (
+    <InsightBlock icon={<Building2 />} section={section} title={labels.title}>
+      <div className="space-y-3">
+        {profile ? <p className="text-sm leading-6 text-muted-foreground">{profile}</p> : null}
+        {fields.length > 0 ? (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {fields.map((field) => (
+              <InsightField href={field.href} key={field.label} label={field.label} value={field.value} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </InsightBlock>
+  );
+}
+
+function valuationMetricValue(metric: unknown, language: AppLanguage): string {
+  if (!isRecord(metric)) return displayInsightValue(metric, language);
+  const points = Array.isArray(metric.list) ? metric.list.filter(isRecord) : [];
+  const latest = points.length > 0 ? displayInsightValue(points[points.length - 1]?.value, language) : "";
+  return latest || firstInsightText(metric, ["value", "desc"], language);
+}
+
+function valuationMetricMeta(metric: unknown, labels: { high: string; low: string; median: string }, language: AppLanguage): string {
+  if (!isRecord(metric)) return "";
+  return [
+    firstInsightText(metric, ["high"], language) ? `${labels.high} ${firstInsightText(metric, ["high"], language)}` : "",
+    firstInsightText(metric, ["median"], language) ? `${labels.median} ${firstInsightText(metric, ["median"], language)}` : "",
+    firstInsightText(metric, ["low"], language) ? `${labels.low} ${firstInsightText(metric, ["low"], language)}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function ValuationInsightSection({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const labels = language === "en"
+    ? { title: "Valuation", high: "High", low: "Low", median: "Median", pe: "PE", pb: "PB", ps: "PS", dvd_yld: "Dividend yield" }
+    : { title: "估值", high: "高", low: "低", median: "中位", pe: "PE", pb: "PB", ps: "PS", dvd_yld: "股息率" };
+  const metrics = isRecord(section.data.metrics) ? section.data.metrics : section.data;
+  const rows = (["pe", "pb", "ps", "dvd_yld"] as const)
+    .map((key) => ({ key, label: labels[key], value: valuationMetricValue(metrics[key], language), meta: valuationMetricMeta(metrics[key], labels, language) }))
+    .filter((row) => row.value);
+
+  return (
+    <InsightBlock icon={<CircleDollarSign />} section={section} title={labels.title}>
+      {rows.length > 0 ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {rows.map((row) => (
+            <div className="min-w-0 rounded-md bg-muted/20 px-3 py-2" key={row.key}>
+              <p className="truncate text-[11px] text-muted-foreground">{row.label}</p>
+              <p className="mt-1 truncate text-sm font-semibold tabular-nums">{row.value}</p>
+              {row.meta ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{row.meta}</p> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </InsightBlock>
+  );
+}
+
+function RatingInsightSection({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
+  const labels = language === "en"
+    ? { title: "Institution rating", recommend: "Consensus", target: "Target", change: "Change", updated: "Updated", buy: "Buy", hold: "Hold", sell: "Sell" }
+    : { title: "机构评级", recommend: "共识", target: "目标价", change: "变化", updated: "更新", buy: "买入", hold: "持有", sell: "卖出" };
+  const summary = isRecord(section.data.summary) ? section.data.summary : {};
+  const latest = isRecord(section.data.latest) ? section.data.latest : {};
+  const evaluate = isRecord(summary.evaluate) ? summary.evaluate : isRecord(latest.evaluate) ? latest.evaluate : {};
+  const ccy = firstInsightText(summary, ["ccy_symbol"], language);
+  const fields = [
+    { label: labels.recommend, value: firstInsightText(summary, ["recommend"], language) },
+    { label: labels.target, value: [ccy, firstInsightText(summary, ["target"], language)].filter(Boolean).join("") },
+    { label: labels.change, value: firstInsightText(summary, ["change"], language) },
+    { label: labels.updated, value: firstInsightText(summary, ["updated_at"], language) },
+    { label: labels.buy, value: [firstInsightText(evaluate, ["strong_buy"], language), firstInsightText(evaluate, ["buy"], language)].filter(Boolean).join(" / ") },
+    { label: labels.hold, value: firstInsightText(evaluate, ["hold"], language) },
+    { label: labels.sell, value: [firstInsightText(evaluate, ["sell"], language), firstInsightText(evaluate, ["under"], language)].filter(Boolean).join(" / ") },
+  ].filter((field) => field.value);
+
+  return (
+    <InsightBlock icon={<Users />} section={section} title={labels.title}>
+      {fields.length > 0 ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {fields.map((field) => (
+            <InsightField key={field.label} label={field.label} value={field.value} />
+          ))}
+        </div>
+      ) : null}
+    </InsightBlock>
+  );
+}
+
+function ListInsightSection({
+  icon,
+  kind,
+  language,
+  section,
+  title,
+}: {
+  icon: ReactNode;
+  kind: "dividend" | "action" | "filing";
+  language: AppLanguage;
+  section: DashboardSymbolInsightSection;
+  title: string;
+}) {
+  const emptyLabel = language === "en" ? "No records" : "暂无记录";
+  const records = sectionRecords(section).slice(0, 4);
+
+  function recordTitle(record: Record<string, unknown>) {
+    if (kind === "dividend") return firstInsightText(record, ["desc", "title", "name"], language);
+    if (kind === "action") return firstInsightText(record, ["act_desc", "action", "act_type", "title"], language);
+    return firstInsightText(record, ["title", "name", "filing_title", "type", "desc"], language);
+  }
+
+  function recordMeta(record: Record<string, unknown>) {
+    if (kind === "dividend") {
+      return [
+        dateInsightText(record.ex_date, language) ? `${language === "en" ? "Ex" : "除权"} ${dateInsightText(record.ex_date, language)}` : "",
+        dateInsightText(record.payment_date, language) ? `${language === "en" ? "Pay" : "派付"} ${dateInsightText(record.payment_date, language)}` : "",
+      ].filter(Boolean).join(" · ");
+    }
+    if (kind === "action") {
+      return [
+        dateInsightText(record.date_str || record.date, language),
+        firstInsightText(record, ["act_type", "date_type"], language),
+      ].filter(Boolean).join(" · ");
+    }
+    return [
+      dateInsightText(record.date || record.publish_time || record.released_at || record.time, language),
+      firstInsightText(record, ["type", "source"], language),
+    ].filter(Boolean).join(" · ");
+  }
+
+  return (
+    <InsightBlock icon={icon} section={section} title={title}>
+      {records.length > 0 ? (
+        <div className="divide-y divide-border/55 border-y border-border/55">
+          {records.map((record, index) => {
+            const itemTitle = recordTitle(record) || emptyLabel;
+            const meta = recordMeta(record);
+            return (
+              <div className="min-w-0 py-2.5" key={`${itemTitle}-${index}`}>
+                <p className="line-clamp-2 text-sm font-semibold">{itemTitle}</p>
+                {meta ? <p className="mt-1 truncate text-xs text-muted-foreground">{meta}</p> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </InsightBlock>
+  );
+}
+
+function SymbolInsightsPanel({
+  canFundamentals,
+  error,
+  insights,
+  language,
+  loading,
+}: {
+  canFundamentals: boolean;
+  error: string;
+  insights: DashboardSymbolInsightsResponse | null;
+  language: AppLanguage;
+  loading: boolean;
+}) {
+  const labels = language === "en"
+    ? {
+      title: "Longbridge insights",
+      subtitle: "Company profile, valuation and events",
+      loading: "Loading company data...",
+      empty: "No company insight data",
+      hidden: "This account cannot view company fundamentals",
+      filings: "Filings",
+      dividends: "Dividends",
+      actions: "Corporate actions",
+      refreshing: "Refreshing",
+    }
+    : {
+      title: "长桥公司信息",
+      subtitle: "公司资料、估值和事件",
+      loading: "加载公司信息中...",
+      empty: "暂无公司信息数据",
+      hidden: "当前账号无权限查看公司基本面",
+      filings: "公告披露",
+      dividends: "分红",
+      actions: "公司行动",
+      refreshing: "刷新中",
+    };
+  const hasAnyContent = Boolean(insights && [
+    insights.company,
+    insights.valuation,
+    insights.institution_rating,
+    insights.dividends,
+    insights.corporate_actions,
+    insights.filings,
+  ].some((section) => sectionHasInsightContent(section) || section.error));
+
+  return (
+    <div className="border-t border-border/55 pt-4">
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{labels.title}</p>
+          <p className="truncate text-xs text-muted-foreground">{labels.subtitle}</p>
+        </div>
+        {loading && insights ? (
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            {labels.refreshing}
+          </span>
+        ) : null}
+      </div>
+
+      {!canFundamentals ? (
+        <InlineState>{labels.hidden}</InlineState>
+      ) : loading && !insights ? (
+        <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{labels.loading}</InlineState>
+      ) : error && !insights ? (
+        <InlineState>{error}</InlineState>
+      ) : !insights || !hasAnyContent ? (
+        <InlineState>{labels.empty}</InlineState>
+      ) : (
+        <div className="space-y-4">
+          <CompanyInsightSection language={language} section={insights.company} />
+          <ValuationInsightSection language={language} section={insights.valuation} />
+          <RatingInsightSection language={language} section={insights.institution_rating} />
+          <ListInsightSection icon={<CalendarDays />} kind="dividend" language={language} section={insights.dividends} title={labels.dividends} />
+          <ListInsightSection icon={<Landmark />} kind="action" language={language} section={insights.corporate_actions} title={labels.actions} />
+          <ListInsightSection icon={<FileText />} kind="filing" language={language} section={insights.filings} title={labels.filings} />
+          {error ? <InlineState>{error}</InlineState> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WatchlistSymbolDetail({
+  canFundamentals,
   language,
   onBack,
   onOpenChart,
   row,
 }: {
+  canFundamentals: boolean;
   language: AppLanguage;
   onBack: () => void;
   onOpenChart?: (symbol: string) => void;
@@ -1140,6 +1530,35 @@ function WatchlistSymbolDetail({
       turnover: "成交额",
       openChart: "图表",
     };
+  const insightFallbackError = language === "en" ? "Failed to load company data" : "公司信息加载失败";
+  const [insights, setInsights] = useState<DashboardSymbolInsightsResponse | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState("");
+
+  useEffect(() => {
+    setInsights(null);
+    setInsightsError("");
+    if (!canFundamentals) {
+      setInsightsLoading(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setInsightsLoading(true);
+    getDashboardSymbolInsights(row.symbol, { signal: controller.signal })
+      .then((payload) => {
+        setInsights(payload);
+      })
+      .catch((caught) => {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        setInsightsError(caught instanceof Error ? caught.message : insightFallbackError);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setInsightsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [canFundamentals, insightFallbackError, row.symbol]);
 
   return (
     <FinanceSection
@@ -1186,6 +1605,14 @@ function WatchlistSymbolDetail({
           <SymbolDetailMetric label={labels.volume} value={formatCompactNumeric(row.volume, language)} />
           <SymbolDetailMetric label={labels.turnover} value={formatCompactNumeric(row.turnover, language)} />
         </div>
+
+        <SymbolInsightsPanel
+          canFundamentals={canFundamentals}
+          error={insightsError}
+          insights={insights}
+          language={language}
+          loading={insightsLoading}
+        />
       </div>
     </FinanceSection>
   );
@@ -1223,6 +1650,7 @@ export function DashboardPage({
   const canMarket = canPermission("market:read");
   const canPortfolio = canPermission("portfolio:read");
   const canWatchlist = canPermission("watchlist:read");
+  const canFundamentals = canPermission("fundamentals:read");
   const canChat = canPermission("chat:read");
 
   const initialSnapshotRef = useRef<DashboardResponse | null | undefined>(undefined);
@@ -1418,6 +1846,7 @@ export function DashboardPage({
         >
           {selectedWatchlistRow ? (
             <WatchlistSymbolDetail
+              canFundamentals={canFundamentals}
               language={language}
               onBack={() => setSelectedWatchlistSymbol("")}
               onOpenChart={canMarket ? onOpenChart : undefined}
