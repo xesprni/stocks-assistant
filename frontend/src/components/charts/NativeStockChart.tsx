@@ -118,6 +118,19 @@ interface PaneLayout {
   axisWidth: number;
 }
 
+type ChartPoint = {
+  x: number;
+  y: number;
+};
+
+type PinchState = {
+  leftRatio: number;
+  startCenter: ChartPoint;
+  startCenterIndex: number;
+  startDistance: number;
+  startViewport: NativeChartViewport;
+};
+
 interface NativeStockChartProps {
   times: number[];
   panes: NativeChartPane[];
@@ -153,6 +166,14 @@ function normalizeViewport(viewport: NativeChartViewport, count: number): Native
 
 function viewportCount(viewport: NativeChartViewport) {
   return Math.max(1, viewport.to - viewport.from + 1);
+}
+
+function pointDistance(a: ChartPoint, b: ChartPoint) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function midpoint(a: ChartPoint, b: ChartPoint): ChartPoint {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 function paddedBounds(layout: PaneLayout) {
@@ -682,6 +703,8 @@ export function NativeStockChart({
   const viewportRef = useRef<NativeChartViewport>({ from: 0, to: 0 });
   const crosshairRef = useRef<(NativeCrosshairState & { y: number }) | null>(null);
   const dragRef = useRef<{ startX: number; startViewport: NativeChartViewport } | null>(null);
+  const activePointersRef = useRef<Map<number, ChartPoint>>(new Map());
+  const pinchRef = useRef<PinchState | null>(null);
   const rafRef = useRef<number | null>(null);
   const layoutsRef = useRef<PaneLayout[]>([]);
   const lastDataRef = useRef<{ fitKey?: string | number; length: number; first?: number; last?: number }>({ length: 0 });
@@ -858,6 +881,62 @@ export function NativeStockChart({
     crosshairRef.current = { index, time: current.times[index], paneId: paneForY(y), y };
   };
 
+  const startPinch = () => {
+    const current = dataRef.current;
+    const points = [...activePointersRef.current.values()];
+    if (points.length < 2 || current.times.length === 0 || layoutsRef.current.length === 0) return;
+    const [a, b] = points;
+    const viewport = normalizeViewport(viewportRef.current, current.times.length);
+    const mapper = createXMapper(layoutsRef.current[0], viewport);
+    const center = midpoint(a, b);
+    const startCenterIndex = clamp(mapper.xToIndex(center.x), 0, current.times.length - 1);
+    const count = viewportCount(viewport);
+    pinchRef.current = {
+      leftRatio: clamp((startCenterIndex - viewport.from) / count, 0, 1),
+      startCenter: center,
+      startCenterIndex,
+      startDistance: Math.max(1, pointDistance(a, b)),
+      startViewport: viewport,
+    };
+    dragRef.current = null;
+    updateCrosshair(center.x, center.y);
+  };
+
+  const updatePinch = () => {
+    const current = dataRef.current;
+    const pinch = pinchRef.current;
+    const points = [...activePointersRef.current.values()];
+    if (!pinch || points.length < 2 || current.times.length === 0 || layoutsRef.current.length === 0) return false;
+    const [a, b] = points;
+    const center = midpoint(a, b);
+    const distance = Math.max(1, pointDistance(a, b));
+    const mapper = createXMapper(layoutsRef.current[0], normalizeViewport(pinch.startViewport, current.times.length));
+    const startCount = viewportCount(pinch.startViewport);
+    const nextCount = clamp(
+      startCount * (pinch.startDistance / distance),
+      Math.min(MIN_VISIBLE_BARS, current.times.length),
+      current.times.length,
+    );
+    const deltaBars = (center.x - pinch.startCenter.x) / Math.max(1, mapper.spacing);
+    const centerIndex = pinch.startCenterIndex - deltaBars;
+    const nextFrom = centerIndex - pinch.leftRatio * nextCount;
+    setViewport({ from: nextFrom, to: nextFrom + nextCount - 1 });
+    updateCrosshair(center.x, center.y);
+    return true;
+  };
+
+  const finishPointer = (event: PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(event.pointerId);
+    if (activePointersRef.current.size < 2) pinchRef.current = null;
+    if (activePointersRef.current.size === 0) dragRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture may already be released by the browser.
+    }
+    scheduleDraw();
+  };
+
   return (
     <div ref={containerRef} className={["native-stock-chart", className].filter(Boolean).join(" ")} style={{ minWidth: 0, position: "relative" }}>
       <canvas
@@ -870,12 +949,27 @@ export function NativeStockChart({
           if (dataRef.current.times.length === 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           const point = pointFromEvent(event);
+          activePointersRef.current.set(event.pointerId, point);
+          if (activePointersRef.current.size >= 2) {
+            startPinch();
+            scheduleDraw();
+            return;
+          }
+          pinchRef.current = null;
           dragRef.current = { startX: point.x, startViewport: viewportRef.current };
           updateCrosshair(point.x, point.y);
           scheduleDraw();
         }}
         onPointerMove={(event) => {
+          event.preventDefault();
           const point = pointFromEvent(event);
+          if (activePointersRef.current.has(event.pointerId)) {
+            activePointersRef.current.set(event.pointerId, point);
+          }
+          if (activePointersRef.current.size >= 2) {
+            if (!pinchRef.current) startPinch();
+            if (updatePinch()) return;
+          }
           updateCrosshair(point.x, point.y);
           const current = dataRef.current;
           if (dragRef.current && layoutsRef.current.length > 0 && current.times.length > 0) {
@@ -890,16 +984,19 @@ export function NativeStockChart({
           }
         }}
         onPointerUp={(event) => {
-          dragRef.current = null;
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          scheduleDraw();
+          finishPointer(event);
         }}
-        onPointerCancel={() => {
-          dragRef.current = null;
+        onPointerCancel={(event) => {
+          finishPointer(event);
+        }}
+        onLostPointerCapture={(event) => {
+          activePointersRef.current.delete(event.pointerId);
+          if (activePointersRef.current.size < 2) pinchRef.current = null;
+          if (activePointersRef.current.size === 0) dragRef.current = null;
           scheduleDraw();
         }}
         onPointerLeave={() => {
-          if (!dragRef.current) {
+          if (!dragRef.current && activePointersRef.current.size === 0) {
             crosshairRef.current = null;
             scheduleDraw();
           }
