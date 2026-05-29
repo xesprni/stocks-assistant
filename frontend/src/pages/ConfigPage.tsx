@@ -1033,7 +1033,7 @@ function PasswordChangeDialog({
   const disabled = state === "saving" || form.next.length < 8 || !form.current || !form.confirm;
 
   return (
-    <div className="fixed inset-0 z-[75] grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[1100] grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
       <button aria-label={common.close} className="absolute inset-0" onClick={onClose} type="button" />
       <form
         aria-labelledby="change-password-title"

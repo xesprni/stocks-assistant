@@ -751,7 +751,7 @@ export function ChatPage({
                   <History className="size-5" />
                 </Button>
                 {historyOpen ? (
-                  <div className="fixed inset-x-2 top-[calc(0.75rem+env(safe-area-inset-top))] z-[60] max-h-[min(520px,72dvh)] w-auto max-w-none overflow-hidden rounded-xl border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur lg:absolute lg:inset-x-auto lg:bottom-auto lg:right-0 lg:top-[calc(100%+0.5rem)] lg:z-40 lg:max-h-none lg:w-[320px] lg:max-w-[calc(100vw-2rem)] lg:rounded-lg">
+                  <div className="fixed inset-x-2 top-[calc(0.75rem+env(safe-area-inset-top))] z-[1000] max-h-[min(520px,72dvh)] w-auto max-w-none overflow-hidden rounded-xl border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur lg:absolute lg:inset-x-auto lg:bottom-auto lg:right-0 lg:top-[calc(100%+0.5rem)] lg:z-40 lg:max-h-none lg:w-[320px] lg:max-w-[calc(100vw-2rem)] lg:rounded-lg">
                     <div className="mb-2 flex items-center justify-between gap-2 px-1">
                       <div>
                         <p className="text-xs font-semibold">{common.history}</p>
@@ -955,7 +955,7 @@ export function ChatPage({
         {renderComposer("desktop")}
       </section>
       {!embedded && mobileComposerOpen ? (
-        <div className="fixed inset-0 z-40 lg:hidden">
+        <div className="fixed inset-0 z-[1000] lg:hidden">
           <button
             aria-label={closeComposerLabel}
             className="absolute inset-0 bg-background/35 backdrop-blur-[1px]"

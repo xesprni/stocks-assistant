@@ -441,6 +441,10 @@ function touchPointFromEvent<T extends Element>(event: TouchEvent<T>): TouchPoin
   return touch ? { x: touch.clientX, y: touch.clientY } : null;
 }
 
+function isInteractiveTouchTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest("button, a, input, textarea, select, [role='button'], [data-touch-gesture-ignore='true']"));
+}
+
 function verticalGesture(previous: TouchPoint | null, next: TouchPoint | null) {
   if (!previous || !next) return null;
   const deltaX = next.x - previous.x;
@@ -677,6 +681,10 @@ function ConsoleApp() {
 
   function handleHeaderTouchStart(event: TouchEvent<HTMLElement>) {
     if (!isMobileShellViewport()) return;
+    if (isInteractiveTouchTarget(event.target)) {
+      mobileHeaderTouchPointRef.current = null;
+      return;
+    }
     mobileHeaderTouchPointRef.current = touchPointFromEvent(event);
   }
 
@@ -691,6 +699,10 @@ function ConsoleApp() {
 
   function handleMobileNavTouchStart(event: TouchEvent<HTMLElement>) {
     if (!isMobileShellViewport()) return;
+    if (isInteractiveTouchTarget(event.target)) {
+      mobileNavTouchPointRef.current = null;
+      return;
+    }
     mobileNavTouchPointRef.current = touchPointFromEvent(event);
   }
 
@@ -1827,7 +1839,8 @@ function UserAvatarMenu({
   useEffect(() => {
     if (!isOpen) return undefined;
     function handlePointerDown(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setIsOpen(false);
+      const path = event.composedPath();
+      if (!menuRef.current || !path.includes(menuRef.current)) setIsOpen(false);
     }
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -1879,7 +1892,11 @@ function UserAvatarMenu({
       </button>
 
       {isOpen ? (
-        <div className="account-menu-popover absolute right-0 top-[calc(100%+0.55rem)] z-[1000] max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 p-3 text-popover-foreground shadow-2xl ring-1 ring-border/40">
+        <div
+          className="account-menu-popover absolute right-0 top-[calc(100%+0.55rem)] z-[1000] max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 p-3 text-popover-foreground shadow-2xl ring-1 ring-border/40"
+          onPointerDown={(event) => event.stopPropagation()}
+          onTouchStart={(event) => event.stopPropagation()}
+        >
           <div className="flex min-w-0 items-center gap-3 border-b border-border/65 pb-3">
             <AvatarVisual size="lg" user={user} />
             <div className="min-w-0 flex-1">

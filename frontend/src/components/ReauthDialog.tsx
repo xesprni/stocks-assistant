@@ -29,7 +29,7 @@ export function ReauthDialog() {
   }
 
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[1300] grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
       <form className="panel motion-panel w-full max-w-[420px] rounded-md p-5 shadow-2xl" onSubmit={submit}>
         <div className="mb-4 flex items-start gap-3">
           <div className="grid size-10 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary">

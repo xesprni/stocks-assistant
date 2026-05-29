@@ -32,7 +32,8 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
       if (!open) return undefined;
 
       function closeOnOutside(event: PointerEvent) {
-        if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+        const path = event.composedPath();
+        if (!rootRef.current || !path.includes(rootRef.current)) setOpen(false);
       }
 
       function closeOnEscape(event: KeyboardEvent) {

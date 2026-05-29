@@ -962,7 +962,7 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
 
       {/* Tools dialog overlay */}
       {showToolsFor ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowToolsFor(null)}>
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50" onClick={() => setShowToolsFor(null)}>
           <div
             className="mx-4 max-h-[70vh] w-full max-w-xl overflow-hidden rounded-lg border border-border bg-card shadow-xl"
             onClick={(e) => e.stopPropagation()}

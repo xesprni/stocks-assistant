@@ -416,7 +416,7 @@ function SkillPreviewDialog({
   const scanText = detail?.scan && Object.keys(detail.scan).length > 0 ? JSON.stringify(detail.scan, null, 2) : "";
 
   return (
-    <div className="fixed inset-0 z-[65] flex items-center justify-center px-4 py-6">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center px-4 py-6">
       <button aria-label={commonClose} className="absolute inset-0 bg-background/65 backdrop-blur-[2px]" onClick={onClose} type="button" />
       <div className="relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 px-4 py-3">

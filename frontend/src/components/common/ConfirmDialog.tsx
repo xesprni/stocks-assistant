@@ -24,7 +24,7 @@ export function ConfirmDialog({
   if (!options) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center px-4">
       <button
         aria-label={options.cancelText}
         className="absolute inset-0 bg-background/60 backdrop-blur-[2px]"
