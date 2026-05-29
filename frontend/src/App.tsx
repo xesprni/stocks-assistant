@@ -1879,7 +1879,7 @@ function UserAvatarMenu({
       </button>
 
       {isOpen ? (
-        <div className="absolute right-0 top-[calc(100%+0.55rem)] z-50 max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 bg-[hsl(var(--popover))] p-3 text-popover-foreground shadow-2xl ring-1 ring-border/40">
+        <div className="account-menu-popover absolute right-0 top-[calc(100%+0.55rem)] z-[1000] max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 p-3 text-popover-foreground shadow-2xl ring-1 ring-border/40">
           <div className="flex min-w-0 items-center gap-3 border-b border-border/65 pb-3">
             <AvatarVisual size="lg" user={user} />
             <div className="min-w-0 flex-1">

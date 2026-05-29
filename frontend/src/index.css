@@ -283,6 +283,9 @@
     border-color: hsl(var(--border));
     background: var(--app-header-bg);
     box-shadow: none;
+    overflow: visible;
+    position: relative;
+    z-index: 90;
   }
 
   .panel.app-mobile-nav {
@@ -322,7 +325,19 @@
     background: var(--app-header-bg);
     backdrop-filter: blur(14px);
     position: relative;
-    z-index: 40;
+    z-index: 30;
+  }
+
+  .account-menu-popover {
+    background: hsl(var(--popover)) !important;
+    backdrop-filter: none;
+    isolation: isolate;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .dark .account-menu-popover {
+    background: hsl(var(--popover)) !important;
   }
 
   .finance-top-nav-item {
