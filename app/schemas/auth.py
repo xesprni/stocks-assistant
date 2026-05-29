@@ -40,10 +40,16 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=256)
 
 
+class UserProfileUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    avatar_base64: Optional[str] = Field(default=None, max_length=800_000)
+
+
 class UserPublic(BaseModel):
     id: str
     username: str
     display_name: str = ""
+    avatar_base64: str = Field(default="", max_length=800_000)
     roles: List[str] = Field(default_factory=list)
     permissions: List[str] = Field(default_factory=list)
     page_permissions: Dict[str, str] = Field(default_factory=dict)

@@ -97,6 +97,36 @@ class AuthSecurityTest(unittest.TestCase):
         after_logout = self.client.post("/api/v1/auth/refresh", json={"refresh_token": next_refresh})
         self.assertEqual(after_logout.status_code, 401)
 
+    def test_profile_update_stores_avatar_data_url(self):
+        tokens = self.setup_admin()
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        avatar = "data:image/png;base64,iVBORw0KGgo="
+
+        response = self.client.patch(
+            "/api/v1/auth/me/profile",
+            headers=headers,
+            json={"display_name": "Admin User", "avatar_base64": avatar},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["display_name"], "Admin User")
+        self.assertEqual(payload["avatar_base64"], avatar)
+
+        me = self.client.get("/api/v1/auth/me", headers=headers)
+        self.assertEqual(me.status_code, 200, me.text)
+        self.assertEqual(me.json()["avatar_base64"], avatar)
+
+    def test_profile_update_rejects_non_image_avatar(self):
+        tokens = self.setup_admin()
+        response = self.client.patch(
+            "/api/v1/auth/me/profile",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            json={"avatar_base64": "data:text/plain;base64,SGVsbG8="},
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_login_sessions_are_listed_and_can_be_revoked(self):
         tokens = self.setup_admin()
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}

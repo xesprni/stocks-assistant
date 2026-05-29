@@ -40,6 +40,7 @@ export interface AuthUser {
   id: string;
   username: string;
   display_name: string;
+  avatar_base64?: string;
   roles: string[];
   permissions: string[];
   page_permissions?: Partial<Record<Page, string>>;
@@ -72,6 +73,11 @@ export interface UserUpdateRequest {
 export interface ChangePasswordRequest {
   current_password: string;
   new_password: string;
+}
+
+export interface UserProfileUpdateRequest {
+  display_name?: string;
+  avatar_base64?: string;
 }
 
 export interface RoleInfo {

@@ -137,9 +137,11 @@ class AppStoreSecurityTest(unittest.TestCase):
 
         store = AppStore(legacy_db)
         with store.connect() as conn:
+            user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
             refresh_columns = {row[1] for row in conn.execute("PRAGMA table_info(refresh_tokens)").fetchall()}
             indexes = {row[1] for row in conn.execute("PRAGMA index_list(refresh_tokens)").fetchall()}
 
+        self.assertIn("avatar_base64", user_columns)
         self.assertIn("session_id", refresh_columns)
         self.assertIn("idx_refresh_tokens_session", indexes)
 

@@ -1,5 +1,7 @@
 """Authentication and first-run setup API."""
 
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -37,14 +39,41 @@ from app.schemas.auth import (
     RefreshRequest,
     SetupRequest,
     SetupStatusResponse,
+    UserProfileUpdateRequest,
     UserPublic,
 )
 
 router = APIRouter()
 
+AVATAR_DATA_URL_PREFIXES = (
+    "data:image/png;base64,",
+    "data:image/jpeg;base64,",
+    "data:image/webp;base64,",
+    "data:image/gif;base64,",
+)
+MAX_AVATAR_BYTES = 512 * 1024
+
 
 def _current_device_id(http_request: Request) -> str:
     return resolve_device_id(request=http_request)
+
+
+def _normalize_avatar_base64(value: str | None) -> str | None:
+    if value is None:
+        return None
+    clean = value.strip()
+    if not clean:
+        return ""
+    if not clean.startswith(AVATAR_DATA_URL_PREFIXES):
+        raise HTTPException(status_code=400, detail="Avatar must be a PNG, JPEG, WebP or GIF data URL")
+    _, _, encoded = clean.partition(",")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Avatar data is not valid base64") from exc
+    if len(decoded) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="Avatar image must be 512KB or smaller")
+    return clean
 
 
 def _token_response(user: dict, refresh_token: str, *, session_id: str | None = None) -> AuthTokenResponse:
@@ -339,14 +368,25 @@ async def delete_login_record(
 
 @router.get("/me", response_model=UserPublic)
 async def me(user=Depends(get_current_user)):
-    return UserPublic(**public_user({
-        "id": user.id,
-        "username": user.username,
-        "display_name": user.display_name,
-        "roles": list(user.roles),
-        "permissions": sorted(user.permissions),
-        "is_active": user.is_active,
-    }))
+    record = get_app_store().get_user_by_id(user.id)
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return UserPublic(**public_user(record))
+
+
+@router.patch("/me/profile", response_model=UserPublic)
+async def update_profile(request: UserProfileUpdateRequest, current_user=Depends(get_current_user)):
+    avatar_base64 = _normalize_avatar_base64(request.avatar_base64)
+    try:
+        user = get_app_store().update_user(
+            current_user.id,
+            display_name=request.display_name,
+            avatar_base64=avatar_base64,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
+    get_app_store().audit(current_user.id, "auth.profile_update", "users", {"avatar": avatar_base64 is not None})
+    return UserPublic(**public_user(user))
 
 
 @router.patch("/me/password")

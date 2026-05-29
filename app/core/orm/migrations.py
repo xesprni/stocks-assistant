@@ -15,6 +15,7 @@ def init_app_schema(engine: Engine) -> None:
 
     AppBase.metadata.create_all(engine)
     with engine.begin() as conn:
+        _ensure_users_profile_schema(conn)
         _ensure_login_sessions_device_schema(conn)
         _ensure_refresh_tokens_session_schema(conn)
         _ensure_mcp_oauth_tokens_schema(conn)
@@ -153,6 +154,13 @@ def _ensure_login_sessions_device_schema(conn: Connection) -> None:
         # 旧会话缺少客户端设备标识，回填为自身 session id，避免错误合并历史设备。
         conn.exec_driver_sql("UPDATE login_sessions SET device_id = id WHERE device_id = ''")
     conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_login_sessions_user_device ON login_sessions(user_id, device_id)")
+
+
+def _ensure_users_profile_schema(conn: Connection) -> None:
+    cols = _table_columns(conn, "users")
+    if "avatar_base64" not in cols:
+        # 头像是用户自定义资料，旧库回填空字符串以保持 UserPublic 响应结构稳定。
+        conn.exec_driver_sql("ALTER TABLE users ADD COLUMN avatar_base64 TEXT NOT NULL DEFAULT ''")
 
 
 def _ensure_mcp_oauth_tokens_schema(conn: Connection) -> None:

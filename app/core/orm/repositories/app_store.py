@@ -441,6 +441,7 @@ class AppStoreRepository:
         password_hash: str,
         *,
         display_name: str = "",
+        avatar_base64: str = "",
         role_names: Optional[Iterable[str]] = None,
         is_active: bool = True,
     ) -> dict[str, Any]:
@@ -453,6 +454,7 @@ class AppStoreRepository:
                 username=username.strip(),
                 password_hash=password_hash,
                 display_name=display_name.strip(),
+                avatar_base64=avatar_base64.strip(),
                 is_active=int(is_active),
                 created_at=now,
                 updated_at=now,
@@ -492,6 +494,7 @@ class AppStoreRepository:
         display_name: Optional[str] = None,
         is_active: Optional[bool] = None,
         password_hash: Optional[str] = None,
+        avatar_base64: Optional[str] = None,
         role_names: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
@@ -500,6 +503,8 @@ class AppStoreRepository:
                 raise KeyError(user_id)
             if display_name is not None:
                 user.display_name = display_name.strip()
+            if avatar_base64 is not None:
+                user.avatar_base64 = avatar_base64.strip()
             if is_active is not None:
                 user.is_active = int(is_active)
             if password_hash is not None:
@@ -539,6 +544,7 @@ class AppStoreRepository:
             "username": row.username,
             "password_hash": row.password_hash,
             "display_name": row.display_name,
+            "avatar_base64": row.avatar_base64,
             "is_active": bool(row.is_active),
             "roles": list(role_rows),
             "permissions": sorted(permissions),

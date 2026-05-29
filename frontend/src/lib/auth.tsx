@@ -13,6 +13,7 @@ import {
   resolveAuthRecovery,
   setAuthTokens,
   setupAdmin,
+  updateOwnProfile,
 } from "@/lib/api";
 import type { AuthUser } from "@/types/app";
 
@@ -26,6 +27,7 @@ type AuthState = {
   login: (username: string, password: string) => Promise<void>;
   reauthenticate: (password: string) => Promise<void>;
   setup: (payload: { username: string; password: string; display_name?: string }) => Promise<void>;
+  updateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
   logout: () => Promise<void>;
   can: (permission: string) => boolean;
 };
@@ -155,6 +157,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSetupRequired(false);
       setUser(tokens.user);
       resolveAuthRecovery();
+    },
+    async updateProfile(payload) {
+      const nextUser = await updateOwnProfile(payload);
+      setUser(nextUser);
+      return nextUser;
     },
     async logout() {
       await apiLogout();

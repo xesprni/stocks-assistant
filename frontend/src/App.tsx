@@ -15,7 +15,6 @@ import {
   Home,
   Loader2,
   LogOut,
-  Menu,
   Monitor,
   Moon,
   Newspaper,
@@ -25,6 +24,7 @@ import {
   Sparkles,
   Star,
   Sun,
+  Upload,
   UserCog,
   X,
   Zap,
@@ -35,7 +35,6 @@ import { useConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  checkHealth,
   getChatSession,
   getMarketConfig,
   loadConfig,
@@ -55,6 +54,7 @@ import type { ConfigTab } from "@/pages/ConfigPage";
 import type { EffectiveTheme, Page, Theme } from "@/types/ui";
 import type {
   AppConfig,
+  AuthUser,
   ChatMessage,
   ChatStreamEvent,
   ChatTraceEvent,
@@ -249,12 +249,6 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "debug",
 ]);
 
-function getActiveLlmModel(config: AppConfig | null, fallback: string): string {
-  if (!config) return fallback;
-  const isCodexOAuth = config.llm_provider === "openai_responses" && config.llm_auth_mode === "codex";
-  return (isCodexOAuth ? config.llm_codex_model : config.llm_model) || fallback;
-}
-
 function navItem(language: AppLanguage, id: Page, icon: ReactNode): NavItem {
   const [label, hint] = i18n[language].nav[id as keyof typeof i18n.zh.nav];
   return { id, label, icon, hint };
@@ -301,39 +295,6 @@ function getNavGroups(language: AppLanguage): NavGroup[] {
       navItem(language, "config", <Settings2 />),
     ],
   },
-  ];
-}
-
-function getDesktopMoreGroups(language: AppLanguage): NavGroup[] {
-  const groups = i18n[language].groups;
-  return [
-    {
-      id: "analysis",
-      label: groups.analysis,
-      items: [
-        navItem(language, "tracing", <Cpu />),
-      ],
-    },
-    {
-      id: "workspace",
-      label: groups.workspace,
-      items: [
-        navItem(language, "memory", <BrainCircuit />),
-        navItem(language, "knowledge", <BookOpen />),
-        navItem(language, "skills", <Zap />),
-        navItem(language, "subagents", <Bot />),
-        navItem(language, "mcp", <Plug />),
-      ],
-    },
-    {
-      id: "system",
-      label: groups.system,
-      items: [
-        navItem(language, "security", <ShieldCheck />),
-        navItem(language, "users", <UserCog />),
-        navItem(language, "config", <Settings2 />),
-      ],
-    },
   ];
 }
 
@@ -547,7 +508,6 @@ function ConsoleApp() {
   const [isSending, setIsSending] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
-  const [health, setHealth] = useState<"checking" | "online" | "offline">("checking");
   const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [configToast, setConfigToast] = useState<ConfigToast | null>(null);
   const [error, setError] = useState("");
@@ -562,7 +522,6 @@ function ConsoleApp() {
     if (stored !== null) return stored === "true";
     return window.localStorage.getItem(LEGACY_MOBILE_CHROME_HIDDEN_KEY) !== "true";
   });
-  const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
   const [configInitialTab, setConfigInitialTab] = useState<ConfigTab>(() => configTabFromPath(window.location.pathname) ?? "model");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -764,14 +723,12 @@ function ConsoleApp() {
     let mounted = true;
 
     async function bootstrap() {
-      const [healthResult, configResult, marketConfigResult] = await Promise.allSettled([
-        checkHealth(),
+      const [configResult, marketConfigResult] = await Promise.allSettled([
         loadConfig(),
         getMarketConfig(),
       ]);
       if (!mounted) return;
 
-      setHealth(healthResult.status === "fulfilled" ? "online" : "offline");
       if (configResult.status === "fulfilled") {
         setConfig(configResult.value);
         setDraft(toDraft(configResult.value));
@@ -789,7 +746,6 @@ function ConsoleApp() {
     };
   }, []);
 
-  const modelName = getActiveLlmModel(config, ui.shell.notConfigured);
   const enabledCount = useMemo(() => {
     if (!config) return 0;
     return [config.memory_enabled, config.knowledge_enabled, config.scheduler_enabled, config.tracing_enabled].filter(Boolean).length;
@@ -1421,38 +1377,24 @@ function ConsoleApp() {
           <span className="app-edge-grabber" />
         </button>
         <Header
-          health={health}
+          canPage={canPage}
           isMobileVisible={isMobileHeaderVisible}
           language={language}
-          modelName={modelName}
-          onOpenMobileMore={() => setIsMobileMoreOpen(true)}
           onHideMobileChrome={() => {
             setIsMobileHeaderVisible(false);
             setIsMobileNavVisible(false);
-            setIsMobileMoreOpen(false);
           }}
           onHome={() => setPage("overview")}
           onLogout={auth.logout}
+          onUpdateProfile={auth.updateProfile}
+          page={page}
+          setPage={handleNavigate}
           onTouchMove={handleHeaderTouchMove}
           onTouchStart={handleHeaderTouchStart}
           onThemeChange={setTheme}
           resolvedTheme={resolvedTheme}
           theme={theme}
-          username={auth.user?.username ?? ""}
-        />
-        <MobileMoreSheet
-          canPage={canPage}
-          isOpen={isMobileMoreOpen}
-          language={language}
-          onClose={() => setIsMobileMoreOpen(false)}
-          page={page}
-          setPage={handleNavigate}
-        />
-        <DesktopTopNav
-          canPage={canPage}
-          language={language}
-          page={page}
-          setPage={handleNavigate}
+          user={auth.user}
         />
         <MobileNav
           canPage={canPage}
@@ -1626,35 +1568,37 @@ function ConsoleApp() {
 }
 
 function Header({
-  health,
+  canPage,
   isMobileVisible,
   language,
-  modelName,
   onHideMobileChrome,
   onHome,
   onLogout,
-  onOpenMobileMore,
+  onUpdateProfile,
+  page,
+  setPage,
   onTouchMove,
   onTouchStart,
   onThemeChange,
   resolvedTheme,
   theme,
-  username,
+  user,
 }: {
-  health: "checking" | "online" | "offline";
+  canPage: (page: Page) => boolean;
   isMobileVisible: boolean;
   language: AppLanguage;
-  modelName: string;
   onHideMobileChrome: () => void;
   onHome: () => void;
   onLogout: () => void;
-  onOpenMobileMore: () => void;
+  onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
+  page: Page;
+  setPage: (page: Page) => void;
   onTouchMove: (event: TouchEvent<HTMLElement>) => void;
   onTouchStart: (event: TouchEvent<HTMLElement>) => void;
   onThemeChange: (theme: Theme) => void;
   resolvedTheme: EffectiveTheme;
   theme: Theme;
-  username: string;
+  user: AuthUser | null;
 }) {
   const themeLabels = language === "en"
     ? { system: "System", dark: "Dark", light: "Light", current: "Theme", switchTo: "Switch to", darkNow: "dark", lightNow: "light" }
@@ -1685,25 +1629,6 @@ function Header({
         </div>
       </button>
       <div className="flex shrink-0 items-center gap-1.5 lg:min-w-0 lg:flex-wrap lg:gap-2">
-        <Badge className="hidden lg:inline-flex" variant={health === "online" ? "default" : health === "checking" ? "muted" : "danger"}>
-          {health === "online" ? "API ONLINE" : health === "checking" ? "CHECKING" : "API OFFLINE"}
-        </Badge>
-        <Badge variant="outline" className="hidden max-w-full gap-1.5 truncate lg:inline-flex">
-          <Cpu className="size-3.5" />
-          <span className="truncate">{modelName}</span>
-        </Badge>
-        <Badge variant="outline" className="hidden max-w-[160px] truncate lg:inline-flex">{username}</Badge>
-        <Button
-          aria-label={language === "en" ? "Open page menu" : "打开页面菜单"}
-          className="h-8 w-8 lg:hidden"
-          onClick={onOpenMobileMore}
-          size="icon"
-          title={language === "en" ? "Open page menu" : "打开页面菜单"}
-          type="button"
-          variant="outline"
-        >
-          <Menu className="size-4" />
-        </Button>
         <Button
           aria-label={hideMobileChromeLabel}
           className="h-8 w-8 lg:hidden"
@@ -1714,9 +1639,6 @@ function Header({
           variant="outline"
         >
           <ChevronUp className="size-4" />
-        </Button>
-        <Button size="icon" variant="outline" onClick={onLogout} aria-label={language === "en" ? "Log out" : "退出登录"}>
-          <LogOut />
         </Button>
         <div
           aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
@@ -1747,174 +1669,278 @@ function Header({
             );
           })}
         </div>
+        <UserAvatarMenu
+          canPage={canPage}
+          language={language}
+          onLogout={onLogout}
+          onUpdateProfile={onUpdateProfile}
+          page={page}
+          setPage={setPage}
+          user={user}
+        />
       </div>
     </header>
   );
 }
 
-function DesktopTopNav({
-  canPage,
-  language,
-  page,
-  setPage,
-}: {
-  canPage: (page: Page) => boolean;
-  language: AppLanguage;
-  page: Page;
-  setPage: (page: Page) => void;
-}) {
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const primaryItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
-  const moreGroups = getDesktopMoreGroups(language)
-    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
-    .filter((group) => group.items.length > 0);
-  const moreItems = moreGroups.flatMap((group) => group.items);
-  const isMoreActive = moreItems.some((item) => item.id === page);
-  const moreLabel = language === "en" ? "More" : "更多";
+function userInitials(user: AuthUser | null) {
+  const source = (user?.display_name || user?.username || "?").trim();
+  if (!source) return "?";
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return source.slice(0, 2).toUpperCase();
+}
 
-  useEffect(() => {
-    setIsMoreOpen(false);
-  }, [page]);
+function formatProfileTime(value: string | null | undefined, language: AppLanguage) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString(localeFor(language), { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
 
-  function navigate(nextPage: Page) {
-    setIsMoreOpen(false);
-    setPage(nextPage);
+function readAvatarDataUrl(file: File, language: AppLanguage): Promise<string> {
+  const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  if (!allowed.has(file.type)) {
+    return Promise.reject(new Error(language === "en" ? "Use PNG, JPEG, WebP or GIF" : "请使用 PNG、JPEG、WebP 或 GIF 图片"));
   }
+  if (file.size > 512 * 1024) {
+    return Promise.reject(new Error(language === "en" ? "Avatar must be 512KB or smaller" : "头像需小于 512KB"));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error(language === "en" ? "Failed to read image" : "图片读取失败"));
+    };
+    reader.onerror = () => reject(new Error(language === "en" ? "Failed to read image" : "图片读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
 
+function AvatarVisual({ user, size = "md" }: { user: AuthUser | null; size?: "md" | "lg" }) {
+  const className = size === "lg" ? "size-12 text-base" : "size-9 text-sm";
+  if (user?.avatar_base64) {
+    return (
+      <img
+        alt={user.display_name || user.username}
+        className={cn(className, "rounded-full border border-border/70 object-cover")}
+        src={user.avatar_base64}
+      />
+    );
+  }
   return (
-    <nav className="finance-top-nav hidden shrink-0 lg:block" aria-label={i18n[language].shell.navigation}>
-      <div className="flex h-11 w-full items-center gap-1 px-4">
-        {primaryItems.map((item) => (
-          <button
-            aria-current={page === item.id ? "page" : undefined}
-            className={cn("finance-top-nav-item", page === item.id && "finance-top-nav-item-active")}
-            key={item.id}
-            onClick={() => navigate(item.id)}
-            type="button"
-          >
-            <span className="[&_svg]:size-3.5">{item.icon}</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
-
-        {moreGroups.length > 0 ? (
-          <div className="relative ml-1">
-            <button
-              aria-expanded={isMoreOpen}
-              className={cn("finance-top-nav-item", isMoreActive && "finance-top-nav-item-active")}
-              onClick={() => setIsMoreOpen((current) => !current)}
-              type="button"
-            >
-              <Menu className="size-3.5" />
-              <span>{moreLabel}</span>
-              <ChevronDown className="size-3.5" />
-            </button>
-            {isMoreOpen ? (
-              <div className="finance-more-menu absolute left-0 top-[calc(100%+0.5rem)] z-50 w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl p-3 text-popover-foreground">
-                <div className="grid grid-cols-2 gap-3">
-                  {moreGroups.map((group) => (
-                    <div className="min-w-0" key={group.id}>
-                      <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>
-                      <div className="space-y-0.5">
-                        {group.items.map((item) => (
-                          <button
-                            aria-current={page === item.id ? "page" : undefined}
-                            className={cn(
-                              "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                              page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
-                            )}
-                            key={item.id}
-                            onClick={() => navigate(item.id)}
-                            type="button"
-                          >
-                            <span className="shrink-0 [&_svg]:size-4">{item.icon}</span>
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium">{item.label}</span>
-                              <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </nav>
+    <span className={cn(className, "grid shrink-0 place-items-center rounded-full border border-primary/35 bg-primary/10 font-semibold text-primary")}>
+      {userInitials(user)}
+    </span>
   );
 }
 
-function MobileMoreSheet({
+function UserAvatarMenu({
   canPage,
-  isOpen,
   language,
-  onClose,
+  onLogout,
+  onUpdateProfile,
   page,
   setPage,
+  user,
 }: {
   canPage: (page: Page) => boolean;
-  isOpen: boolean;
   language: AppLanguage;
-  onClose: () => void;
+  onLogout: () => void;
+  onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
   page: Page;
   setPage: (page: Page) => void;
+  user: AuthUser | null;
 }) {
-  const navItems = getNavItems(language).filter((item) => canPage(item.id));
-  const moreItems = navItems.filter((item) => !MOBILE_PRIMARY_PAGES.includes(item.id));
-  const copy = i18n[language].shell;
-  const closeLabel = language === "en" ? "Close" : "关闭";
+  const [isOpen, setIsOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState("");
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const copy = language === "en"
+    ? {
+      account: "Account",
+      upload: "Upload avatar",
+      remove: "Remove avatar",
+      uploading: "Uploading...",
+      roles: "Roles",
+      lastLogin: "Last login",
+      created: "Created",
+      navigation: "Navigation",
+      logout: "Log out",
+      permissions: "permissions",
+      noRoles: "No roles",
+    }
+    : {
+      account: "账号",
+      upload: "上传头像",
+      remove: "移除头像",
+      uploading: "上传中...",
+      roles: "角色",
+      lastLogin: "最近登录",
+      created: "创建时间",
+      navigation: "导航",
+      logout: "退出登录",
+      permissions: "项权限",
+      noRoles: "暂无角色",
+    };
+  const navGroups = useMemo(() => {
+    const groups: NavGroup[] = [
+      { id: "pinned", label: i18n[language].groups.pinned, items: getPinnedNavItems(language) },
+      ...getNavGroups(language),
+    ];
+    return groups
+      .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
+      .filter((group) => group.items.length > 0);
+  }, [canPage, language]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    function handlePointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setIsOpen(false);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOpen]);
 
   function navigate(nextPage: Page) {
-    onClose();
+    setIsOpen(false);
     setPage(nextPage);
   }
 
-  if (!isOpen) return null;
+  async function handleAvatarFile(file: File | undefined) {
+    if (!file) return;
+    setAvatarError("");
+    setIsUploading(true);
+    try {
+      const avatar_base64 = await readAvatarDataUrl(file, language);
+      await onUpdateProfile({ avatar_base64 });
+    } catch (caught) {
+      setAvatarError(caught instanceof Error ? caught.message : (language === "en" ? "Upload failed" : "上传失败"));
+    } finally {
+      setIsUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    setAvatarError("");
+    setIsUploading(true);
+    try {
+      await onUpdateProfile({ avatar_base64: "" });
+    } catch (caught) {
+      setAvatarError(caught instanceof Error ? caught.message : (language === "en" ? "Failed to remove avatar" : "移除头像失败"));
+    } finally {
+      setIsUploading(false);
+    }
+  }
 
   return (
-    <div className="fixed inset-0 z-40 lg:hidden">
+    <div className="relative" ref={menuRef}>
       <button
-        aria-label={closeLabel}
-        className="absolute inset-0 bg-background/60 backdrop-blur-[2px]"
-        onClick={onClose}
+        aria-expanded={isOpen}
+        aria-label={language === "en" ? "Open account menu" : "打开账号菜单"}
+        className="flex h-9 items-center gap-1 rounded-full border border-input bg-background/70 p-0.5 pr-1.5 transition-colors hover:bg-muted/55"
+        onClick={() => setIsOpen((current) => !current)}
         type="button"
-      />
-      <div className="absolute inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] mx-2 max-h-[min(560px,72dvh)] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border/80 px-3 py-2">
-          <div>
-            <p className="text-sm font-semibold">{copy.navigation}</p>
-            <p className="text-xs text-muted-foreground">{copy.pageSwitch}</p>
+      >
+        <AvatarVisual user={user} />
+        <ChevronDown className="size-3.5 text-muted-foreground" />
+      </button>
+
+      {isOpen ? (
+        <div className="absolute right-0 top-[calc(100%+0.55rem)] z-50 max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 bg-popover p-3 text-popover-foreground shadow-2xl">
+          <div className="flex min-w-0 items-center gap-3 border-b border-border/65 pb-3">
+            <AvatarVisual size="lg" user={user} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">{user?.display_name || user?.username || copy.account}</p>
+              <p className="truncate text-xs text-muted-foreground">@{user?.username || "-"}</p>
+              <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                {(user?.permissions?.length ?? 0).toLocaleString(localeFor(language))} {copy.permissions}
+              </p>
+            </div>
           </div>
-          <Button aria-label={closeLabel} className="h-8 w-8" onClick={onClose} size="icon" variant="ghost">
-            <X className="size-4" />
-          </Button>
+
+          <div className="space-y-3 py-3">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-md bg-muted/25 px-2.5 py-2">
+                <p className="text-muted-foreground">{copy.lastLogin}</p>
+                <p className="mt-1 truncate font-semibold">{formatProfileTime(user?.last_login_at, language)}</p>
+              </div>
+              <div className="rounded-md bg-muted/25 px-2.5 py-2">
+                <p className="text-muted-foreground">{copy.created}</p>
+                <p className="mt-1 truncate font-semibold">{formatProfileTime(user?.created_at, language)}</p>
+              </div>
+            </div>
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.roles}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {user?.roles?.length ? user.roles.map((role) => (
+                  <Badge className="border-transparent bg-muted/45 shadow-none" key={role} variant="outline">{role}</Badge>
+                )) : <span className="text-xs text-muted-foreground">{copy.noRoles}</span>}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={(event) => void handleAvatarFile(event.target.files?.[0])}
+                ref={inputRef}
+                type="file"
+              />
+              <Button disabled={isUploading} onClick={() => inputRef.current?.click()} size="sm" type="button" variant="outline">
+                {isUploading ? <Loader2 className="animate-spin" /> : <Upload />}
+                {isUploading ? copy.uploading : copy.upload}
+              </Button>
+              {user?.avatar_base64 ? (
+                <Button disabled={isUploading} onClick={() => void handleRemoveAvatar()} size="sm" type="button" variant="ghost">
+                  <X className="size-4" />
+                  {copy.remove}
+                </Button>
+              ) : null}
+            </div>
+            {avatarError ? <p className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">{avatarError}</p> : null}
+          </div>
+
+          <div className="border-t border-border/65 py-3">
+            <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.navigation}</p>
+            <div className="space-y-3">
+              {navGroups.map((group) => (
+                <div className="min-w-0" key={group.id}>
+                  <p className="mb-1 px-1 text-[11px] font-semibold text-muted-foreground">{group.label}</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {group.items.map((item) => (
+                      <button
+                        aria-current={page === item.id ? "page" : undefined}
+                        className={cn(
+                          "flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                          page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                        )}
+                        key={item.id}
+                        onClick={() => navigate(item.id)}
+                        type="button"
+                      >
+                        <span className="shrink-0 [&_svg]:size-4">{item.icon}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{item.label}</span>
+                          <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-border/65 pt-3">
+            <Button className="w-full justify-start text-destructive hover:text-destructive" onClick={onLogout} size="sm" type="button" variant="ghost">
+              <LogOut />
+              {copy.logout}
+            </Button>
+          </div>
         </div>
-        <div className="grid max-h-[calc(min(560px,72dvh)-3.5rem)] grid-cols-2 gap-2 overflow-y-auto p-2 sm:grid-cols-3">
-          {moreItems.map((item) => (
-            <button
-              aria-current={page === item.id ? "page" : undefined}
-              className={cn(
-                "flex min-w-0 items-center gap-2 rounded-md border px-3 py-2.5 text-left transition-colors",
-                page === item.id
-                  ? "border-primary/50 bg-primary/10 text-primary"
-                  : "border-border/80 bg-background/55 text-muted-foreground hover:bg-muted/80 hover:text-foreground",
-              )}
-              key={item.id}
-              onClick={() => navigate(item.id)}
-              type="button"
-            >
-              <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/70 [&_svg]:size-4">{item.icon}</span>
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{item.label}</span>
-                <span className="block truncate text-[11px]">{item.hint}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      ) : null}
     </div>
   );
 }

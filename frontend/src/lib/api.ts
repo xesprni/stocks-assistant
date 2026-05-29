@@ -63,6 +63,7 @@ import type {
   TraceSessionResponse,
   UserCreateRequest,
   UserListResponse,
+  UserProfileUpdateRequest,
   UserUpdateRequest,
   WatchlistCategory,
   WatchlistItem,
@@ -262,6 +263,13 @@ export function login(payload: { username: string; password: string }) {
 
 export function getMe() {
   return request<AuthUser>("/api/v1/auth/me");
+}
+
+export function updateOwnProfile(payload: UserProfileUpdateRequest) {
+  return request<AuthUser>("/api/v1/auth/me/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function changeOwnPassword(payload: ChangePasswordRequest) {

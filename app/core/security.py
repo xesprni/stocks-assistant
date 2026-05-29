@@ -219,6 +219,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "id": user["id"],
         "username": user["username"],
         "display_name": user.get("display_name") or "",
+        "avatar_base64": user.get("avatar_base64") or "",
         "roles": user.get("roles", []),
         "permissions": user.get("permissions", []),
         "page_permissions": store.list_page_permissions(),
