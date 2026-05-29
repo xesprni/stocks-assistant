@@ -180,6 +180,13 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
     }
     tool_keys = {"workspace_dir", "memory_enabled"}
     skill_keys = {"workspace_dir"}
+    longbridge_keys = {
+        "longbridge_app_key",
+        "longbridge_app_secret",
+        "longbridge_access_token",
+        "longbridge_http_url",
+        "longbridge_quote_ws_url",
+    }
 
     if llm_keys & patch.keys():
         deps.get_llm_provider.cache_clear()
@@ -192,6 +199,12 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
         deps.get_tool_manager.cache_clear()
     if skill_keys & patch.keys():
         deps.get_skill_manager.cache_clear()
+    if longbridge_keys & patch.keys():
+        try:
+            deps.get_fundamental_service().clear_cache()
+        except Exception:
+            pass
+        deps.get_fundamental_service.cache_clear()
 
 
 @router.get("", response_model=AppConfig)

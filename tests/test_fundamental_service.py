@@ -19,6 +19,12 @@ class SdkLikeObject:
         self.items = [{"event": "Dividend"}]
 
 
+class WeirdDictObject:
+    @property
+    def __dict__(self):
+        return {}.items
+
+
 class FakeQuoteContext:
     def filings(self, symbol):
         payload = SdkLikeObject()
@@ -51,12 +57,17 @@ class FakeFundamentalContext:
 
 class FakeFundamentalService(FundamentalService):
     def __init__(self):
+        super().__init__()
         self.financial_report_calls = 0
+        self.fundamental_context_calls = 0
+        self.quote_context_calls = 0
 
     def _quote_context(self, settings=None):
+        self.quote_context_calls += 1
         return FakeQuoteContext()
 
     def _fundamental_context(self, settings=None):
+        self.fundamental_context_calls += 1
         return FakeFundamentalContext()
 
     def get_financial_reports(self, *args, **kwargs):
@@ -72,6 +83,17 @@ def test_plain_serializes_descriptor_backed_sdk_objects():
         "metrics": {"pb": "4.5", "pe": "12.3"},
         "name": "Example Inc.",
     }
+
+
+def test_plain_handles_sdk_objects_with_non_mapping_dict_attribute():
+    plain = _plain(WeirdDictObject())
+
+    assert isinstance(plain, str)
+
+    section = FundamentalService._section_from_raw(WeirdDictObject())
+    assert section["available"] is True
+    assert section["data"] == {}
+    assert section["items"] == []
 
 
 def test_section_from_raw_extracts_items_and_preserves_statement_data():
@@ -112,3 +134,19 @@ def test_security_insights_skip_financial_reports_and_parse_descriptor_sections(
 
     response_payload = DashboardSymbolInsightsResponse(**payload).model_dump()
     assert "financial_reports" not in response_payload
+
+
+def test_security_insights_uses_process_cache_for_repeated_symbol():
+    service = FakeFundamentalService()
+
+    first = service.get_security_insights("aapl.us")
+    second = service.get_security_insights("AAPL.US")
+
+    assert first == second
+    assert service.fundamental_context_calls == 1
+    assert service.quote_context_calls == 1
+
+    service.clear_cache()
+    service.get_security_insights("AAPL.US")
+    assert service.fundamental_context_calls == 2
+    assert service.quote_context_calls == 2

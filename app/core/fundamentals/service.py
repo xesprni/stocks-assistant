@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import hashlib
+import threading
+import time
 from typing import Any, Optional
 
 from app.core.watchlist.service import LongbridgeUnavailableError
 
+
+INSIGHTS_CACHE_TTL_SECONDS = 180
+INSIGHTS_CACHE_MAX_ENTRIES = 128
+INSIGHTS_SECTION_WORKERS = 6
 
 STATEMENT_NAMES = {
     "IS": "利润表",
@@ -69,15 +79,20 @@ def _plain(value: Any) -> Any:
         return str(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(k): _plain(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_plain(item) for item in value]
     if hasattr(value, "__dict__"):
         try:
-            data = {k: _plain(v) for k, v in vars(value).items() if not k.startswith("_")}
-        except TypeError:
-            data = {}
+            object_vars = vars(value)
+        except Exception:
+            object_vars = {}
+        data = (
+            {k: _plain(v) for k, v in object_vars.items() if not k.startswith("_") and not callable(v)}
+            if isinstance(object_vars, Mapping)
+            else {}
+        )
         if data:
             return data
     descriptor_data = _descriptor_object_data(value)
@@ -138,6 +153,10 @@ def _iso_now() -> str:
 class FundamentalService:
     """Fetch and normalize Longbridge fundamental data."""
 
+    def __init__(self) -> None:
+        self._insights_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._insights_cache_lock = threading.RLock()
+
     def get_security_insights(self, symbol: str, settings: Any = None) -> dict[str, Any]:
         """Fetch Dashboard-ready Longbridge content and fundamental sections."""
 
@@ -145,34 +164,43 @@ class FundamentalService:
         if not normalized_symbol:
             raise ValueError("symbol is required")
 
+        cache_key = (normalized_symbol, self._settings_cache_key(settings))
+        cached = self._get_cached_insights(cache_key)
+        if cached is not None:
+            return cached
+
         fundamental_ctx = None
         quote_ctx = None
         fundamental_error: str | None = None
         quote_error: str | None = None
+        fundamental_ctx_lock = threading.Lock()
+        quote_ctx_lock = threading.Lock()
 
         def get_fundamental_ctx():
             nonlocal fundamental_ctx, fundamental_error
-            if fundamental_error:
-                raise LongbridgeUnavailableError(fundamental_error)
-            if fundamental_ctx is None:
-                try:
-                    fundamental_ctx = self._fundamental_context(settings=settings)
-                except LongbridgeUnavailableError as exc:
-                    fundamental_error = str(exc)
-                    raise
-            return fundamental_ctx
+            with fundamental_ctx_lock:
+                if fundamental_error:
+                    raise LongbridgeUnavailableError(fundamental_error)
+                if fundamental_ctx is None:
+                    try:
+                        fundamental_ctx = self._fundamental_context(settings=settings)
+                    except LongbridgeUnavailableError as exc:
+                        fundamental_error = str(exc)
+                        raise
+                return fundamental_ctx
 
         def get_quote_ctx():
             nonlocal quote_ctx, quote_error
-            if quote_error:
-                raise LongbridgeUnavailableError(quote_error)
-            if quote_ctx is None:
-                try:
-                    quote_ctx = self._quote_context(settings=settings)
-                except LongbridgeUnavailableError as exc:
-                    quote_error = str(exc)
-                    raise
-            return quote_ctx
+            with quote_ctx_lock:
+                if quote_error:
+                    raise LongbridgeUnavailableError(quote_error)
+                if quote_ctx is None:
+                    try:
+                        quote_ctx = self._quote_context(settings=settings)
+                    except LongbridgeUnavailableError as exc:
+                        quote_error = str(exc)
+                        raise
+                return quote_ctx
 
         def section(fetcher, *, collection_keys: tuple[str, ...] = ("list", "items")) -> dict[str, Any]:
             try:
@@ -182,19 +210,86 @@ class FundamentalService:
             except Exception as exc:
                 return self._error_section(str(exc))
 
+        sections = {
+            "filings": self._error_section("not loaded"),
+            "company": self._error_section("not loaded"),
+            "valuation": self._error_section("not loaded"),
+            "dividends": self._error_section("not loaded"),
+            "institution_rating": self._error_section("not loaded"),
+            "corporate_actions": self._error_section("not loaded"),
+        }
+        section_specs = {
+            "filings": (lambda: get_quote_ctx().filings(normalized_symbol), ("list", "items", "filings")),
+            "company": (lambda: get_fundamental_ctx().company(normalized_symbol), ("list", "items")),
+            "valuation": (lambda: get_fundamental_ctx().valuation(normalized_symbol), ("list", "items")),
+            "dividends": (lambda: get_fundamental_ctx().dividend(normalized_symbol), ("list", "items", "dividends")),
+            "institution_rating": (lambda: get_fundamental_ctx().institution_rating(normalized_symbol), ("list", "items")),
+            "corporate_actions": (lambda: get_fundamental_ctx().corp_action(normalized_symbol), ("items", "list", "actions")),
+        }
+
+        # Longbridge 各板块相互独立，并发拉取能缩短 Dashboard 选中公司后的等待时间。
+        with ThreadPoolExecutor(max_workers=min(INSIGHTS_SECTION_WORKERS, len(section_specs))) as executor:
+            futures = {
+                executor.submit(section, fetcher, collection_keys=collection_keys): name
+                for name, (fetcher, collection_keys) in section_specs.items()
+            }
+            for future in as_completed(futures):
+                sections[futures[future]] = future.result()
+
         # 每个板块单独捕获错误，避免某个 Longbridge 子接口失败导致 Dashboard 整列空白。
         # 财报明细由独立 Fundamentals API 提供，这里只保留公司资料和轻量研究信息。
-        return {
+        payload = {
             "symbol": normalized_symbol,
             "source": "Longbridge FundamentalContext + QuoteContext",
             "fetched_at": _iso_now(),
-            "filings": section(lambda: get_quote_ctx().filings(normalized_symbol), collection_keys=("list", "items", "filings")),
-            "company": section(lambda: get_fundamental_ctx().company(normalized_symbol)),
-            "valuation": section(lambda: get_fundamental_ctx().valuation(normalized_symbol)),
-            "dividends": section(lambda: get_fundamental_ctx().dividend(normalized_symbol), collection_keys=("list", "items", "dividends")),
-            "institution_rating": section(lambda: get_fundamental_ctx().institution_rating(normalized_symbol)),
-            "corporate_actions": section(lambda: get_fundamental_ctx().corp_action(normalized_symbol), collection_keys=("items", "list", "actions")),
+            **sections,
         }
+        if any(payload[name]["available"] for name in section_specs):
+            self._set_cached_insights(cache_key, payload)
+        return payload
+
+    def clear_cache(self) -> None:
+        """Clear process-local Longbridge insights cache after config changes."""
+
+        with self._insights_cache_lock:
+            self._insights_cache.clear()
+
+    def _get_cached_insights(self, cache_key: tuple[str, str]) -> dict[str, Any] | None:
+        now = time.monotonic()
+        with self._insights_cache_lock:
+            cached = self._insights_cache.get(cache_key)
+            if not cached:
+                return None
+            expires_at, payload = cached
+            if expires_at <= now:
+                self._insights_cache.pop(cache_key, None)
+                return None
+            return deepcopy(payload)
+
+    def _set_cached_insights(self, cache_key: tuple[str, str], payload: dict[str, Any]) -> None:
+        expires_at = time.monotonic() + INSIGHTS_CACHE_TTL_SECONDS
+        with self._insights_cache_lock:
+            self._insights_cache[cache_key] = (expires_at, deepcopy(payload))
+            if len(self._insights_cache) > INSIGHTS_CACHE_MAX_ENTRIES:
+                overflow = len(self._insights_cache) - INSIGHTS_CACHE_MAX_ENTRIES
+                for key, _ in sorted(self._insights_cache.items(), key=lambda item: item[1][0])[:overflow]:
+                    self._insights_cache.pop(key, None)
+
+    @staticmethod
+    def _settings_cache_key(settings: Any = None) -> str:
+        if settings is None:
+            return "env"
+        material = "\0".join(
+            str(getattr(settings, key, "") or "")
+            for key in (
+                "longbridge_app_key",
+                "longbridge_app_secret",
+                "longbridge_access_token",
+                "longbridge_http_url",
+                "longbridge_quote_ws_url",
+            )
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def get_financial_reports(
         self,
