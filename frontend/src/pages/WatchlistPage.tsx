@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, Search, Sparkles, Star, Trash2 } from "lucide-react";
-import { DndContext, DragOverlay, closestCenter, KeyboardSensor, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
-import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,11 @@ type NameParts = Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">
 
 const WATCHLIST_CATEGORY_STORAGE_KEY = "stocks-assistant-watchlist-category";
 const WATCHLIST_FILTER_STORAGE_KEY = "stocks-assistant-watchlist-filter";
+
+type DragPreviewSize = {
+  width: number;
+  height: number;
+};
 
 function getWatchlistCategories(language: AppLanguage): Array<{ id: WatchlistCategory; label: string; hint: string; placeholder: string }> {
   const markets = i18n[language].markets;
@@ -81,7 +86,7 @@ function SortableWatchlistItem({
   const pressStartedAtRef = useRef(0);
   const suppressNextClickRef = useRef(false);
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: isDragging ? undefined : CSS.Transform.toString(transform),
     transition: [
       transition,
       "background-color 180ms ease",
@@ -170,9 +175,21 @@ function SortableWatchlistItem({
   );
 }
 
-function WatchlistDragPreview({ item, copy }: { item: WatchlistItem; copy: typeof i18n.zh.watchlist }) {
+function WatchlistDragPreview({
+  copy,
+  item,
+  size,
+}: {
+  copy: typeof i18n.zh.watchlist;
+  item: WatchlistItem;
+  size: DragPreviewSize | null;
+}) {
+  const style: CSSProperties | undefined = size
+    ? { maxWidth: "calc(100vw - 2rem)", minHeight: size.height, width: size.width }
+    : undefined;
+
   return (
-    <div className="watchlist-drag-overlay min-w-[min(22rem,calc(100vw-2rem))] rounded-md px-3 py-2.5">
+    <div className={cn("watchlist-drag-overlay rounded-md px-3 py-2.5", !size && "min-w-[min(22rem,calc(100vw-2rem))]")} style={style}>
       <div className="flex items-center gap-3">
         <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
           <GripVertical className="size-4" aria-hidden="true" />
@@ -263,6 +280,7 @@ export function WatchlistPage({
   const [localFilter, setLocalFilter] = useState(() => readStoredText(WATCHLIST_FILTER_STORAGE_KEY));
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
+  const [activeDragSize, setActiveDragSize] = useState<DragPreviewSize | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WatchlistSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -271,8 +289,7 @@ export function WatchlistPage({
 
   const searchControllerRef = useRef<AbortController | null>(null);
   const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -429,15 +446,19 @@ export function WatchlistPage({
   }
 
   function handleDragStart(event: DragStartEvent) {
+    const initialRect = event.active.rect.current.initial;
     setActiveDragId(event.active.id);
+    setActiveDragSize(initialRect ? { height: initialRect.height, width: initialRect.width } : null);
   }
 
   function handleDragCancel() {
     setActiveDragId(null);
+    setActiveDragSize(null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveDragId(null);
+    setActiveDragSize(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
@@ -566,6 +587,7 @@ export function WatchlistPage({
           <div className="min-h-0 flex-1 overscroll-contain p-2 lg:overflow-y-auto">
             <ManageList
               activeDragItem={activeDragItem}
+              activeDragSize={activeDragSize}
               activeSymbol={activeSymbol}
               commonLoading={common.loading}
               copy={copy}
@@ -608,6 +630,7 @@ export function WatchlistPage({
 
 function ManageList({
   activeDragItem,
+  activeDragSize,
   activeSymbol,
   commonLoading,
   copy,
@@ -626,6 +649,7 @@ function ManageList({
   sensors,
 }: {
   activeDragItem: WatchlistItem | null;
+  activeDragSize: DragPreviewSize | null;
   activeSymbol: string;
   commonLoading: string;
   copy: typeof i18n.zh.watchlist;
@@ -659,7 +683,7 @@ function ManageList({
   }
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragCancel={onDragCancel} onDragEnd={onDragEnd} onDragStart={onDragStart}>
-      <SortableContext items={filteredItems.map((i) => i.id)} strategy={rectSortingStrategy}>
+      <SortableContext items={filteredItems.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div className="grid gap-1.5">
           {filteredItems.map((item) => (
             <SortableWatchlistItem
@@ -678,7 +702,7 @@ function ManageList({
         </div>
       </SortableContext>
       <DragOverlay adjustScale={false} dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
-        {activeDragItem ? <WatchlistDragPreview copy={copy} item={activeDragItem} /> : null}
+        {activeDragItem ? <WatchlistDragPreview copy={copy} item={activeDragItem} size={activeDragSize} /> : null}
       </DragOverlay>
     </DndContext>
   );
