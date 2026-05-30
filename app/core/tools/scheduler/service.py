@@ -7,7 +7,6 @@
 - once: 一次性延时执行
 """
 import asyncio
-import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
@@ -77,8 +76,9 @@ class SchedulerService:
         started = datetime.now()
         result: Optional[str] = None
         error: Optional[str] = None
+        task_for_execution = self._with_execution_context(task, trigger=trigger, due_at=now, started_at=started)
         try:
-            output = await asyncio.to_thread(self.execute_callback, task)
+            output = await asyncio.to_thread(self.execute_callback, task_for_execution)
             result = str(output or "")
         except Exception as exc:
             error = str(exc)
@@ -87,6 +87,16 @@ class SchedulerService:
         record = self._record_run(task, trigger, started, ended, result, error)
         self._complete_task(task, now, error=error, update_schedule=update_schedule)
         return record
+
+    def _with_execution_context(self, task: dict, trigger: str, due_at: datetime, started_at: datetime) -> dict:
+        task_copy = dict(task)
+        # 执行上下文只传给回调，不写回任务存储，避免后台 Agent 误把“今天”理解成旧会话日期。
+        task_copy["_execution_context"] = {
+            "trigger": trigger,
+            "due_at": due_at.astimezone().isoformat(),
+            "started_at": started_at.astimezone().isoformat(),
+        }
+        return task_copy
 
     def _complete_task(self, task: dict, now: datetime, error: Optional[str], update_schedule: bool = True):
         updates = {

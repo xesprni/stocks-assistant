@@ -1,6 +1,8 @@
+import asyncio
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 import app.config as config_module
@@ -10,7 +12,7 @@ from app.core.tools.scheduler.service import SchedulerService
 from app.core.tools.scheduler.store import SQLiteRunStore, SQLiteTaskStore
 from app.core.tools.scheduler.tool import SchedulerTool
 from app.core.tools.tool_manager import ToolManager
-from app.deps import get_scheduler_service
+from app.deps import _build_scheduled_agent_prompt, get_scheduler_service
 
 
 class SchedulerToolTest(unittest.TestCase):
@@ -108,6 +110,66 @@ class SchedulerToolTest(unittest.TestCase):
         deleted = tool.execute_tool({"action": "delete", "task_id": task_id})
         self.assertEqual(deleted.status, "success")
         self.assertEqual(deleted.result, {"status": "ok"})
+
+    def test_scheduler_service_passes_runtime_context_to_callback(self):
+        captured = {}
+
+        def callback(task):
+            captured.update(task.get("_execution_context") or {})
+            return "ok"
+
+        task_store = SQLiteTaskStore(user_id=self.user["id"])
+        service = SchedulerService(
+            task_store=task_store,
+            run_store=SQLiteRunStore(user_id=self.user["id"]),
+            execute_callback=callback,
+        )
+        task = {
+            "id": "task-1",
+            "user_id": self.user["id"],
+            "name": "Opening brief",
+            "prompt": "生成美股开盘简报",
+            "schedule": {"type": "interval", "seconds": 60},
+            "enabled": True,
+            "created_at": "2026-05-31T01:00:00",
+            "updated_at": "2026-05-31T01:00:00",
+            "run_count": 0,
+            "metadata": {},
+        }
+        task_store.add_task(task)
+
+        asyncio.run(
+            service._execute_task(
+                task,
+                datetime(2026, 5, 31, 1, 9, 0),
+                trigger="schedule",
+                update_schedule=False,
+            )
+        )
+
+        self.assertEqual(captured["trigger"], "schedule")
+        self.assertIn("2026-05-31", captured["due_at"])
+        self.assertIn("2026-05-31", captured["started_at"])
+
+    def test_scheduled_agent_prompt_includes_current_execution_date(self):
+        prompt = _build_scheduled_agent_prompt(
+            "生成美股开盘简报",
+            {
+                "id": "task-1",
+                "name": "美股市场开盘简报",
+                "_execution_context": {
+                    "trigger": "schedule",
+                    "due_at": "2026-05-31T01:09:00+08:00",
+                    "started_at": "2026-05-31T01:09:03+08:00",
+                },
+            },
+        )
+
+        self.assertIn("美股市场开盘简报", prompt)
+        self.assertIn("2026-05-31", prompt)
+        self.assertIn("current UTC time", prompt)
+        self.assertIn("今天", prompt)
+        self.assertTrue(prompt.endswith("生成美股开盘简报"))
 
 
 if __name__ == "__main__":

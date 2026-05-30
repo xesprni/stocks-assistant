@@ -6,6 +6,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from datetime import datetime, timezone
 
 from app.config import Settings, get_effective_settings, get_settings
 
@@ -278,7 +279,7 @@ def get_scheduler_service():
         if action_type == "send_message":
             result = str(action.get("content") or prompt)
         elif prompt:
-            result = _run_scheduled_agent(prompt, user_id=task.get("user_id"))
+            result = _run_scheduled_agent(_build_scheduled_agent_prompt(prompt, task), user_id=task.get("user_id"))
         else:
             result = f"Scheduled task executed: {task.get('name', task.get('id'))}"
 
@@ -295,6 +296,49 @@ def get_scheduler_service():
 
     service = SchedulerService(task_store=store, run_store=run_store, execute_callback=execute_callback)
     return service
+
+
+def _build_scheduled_agent_prompt(prompt: str, task: dict | None = None) -> str:
+    task = task or {}
+    context = task.get("_execution_context") or {}
+    started_at = _parse_execution_time(context.get("started_at")) or datetime.now().astimezone()
+    due_at = _parse_execution_time(context.get("due_at"))
+    local_now = started_at.astimezone()
+    utc_now = local_now.astimezone(timezone.utc)
+    timezone_name = local_now.tzname() or "local"
+    trigger = str(context.get("trigger") or "schedule")
+    task_name = str(task.get("name") or task.get("id") or "scheduled task")
+
+    lines = [
+        "<scheduled_task_runtime_context>",
+        f"任务名称 / task name: {task_name}",
+        f"触发方式 / trigger: {trigger}",
+        f"当前本地时间 / current local time: {local_now.isoformat()} ({timezone_name})",
+        f"当前本地日期 / current local date: {local_now.date().isoformat()}",
+        f"当前 UTC 时间 / current UTC time: {utc_now.isoformat()}",
+    ]
+    if due_at:
+        lines.append(f"计划到期时间 / scheduled due time: {due_at.astimezone().isoformat()}")
+    lines.extend(
+        [
+            "如果任务提示词包含“今天”“当前”“现在”“今日”“开盘”或 today/now/current，必须以本次执行时间为准。",
+            "涉及交易日、市场开闭市或开盘简报时，优先使用可用行情/交易日工具验证，不要沿用历史输出中的日期。",
+            "</scheduled_task_runtime_context>",
+            "",
+            prompt,
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _parse_execution_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed.astimezone() if parsed.tzinfo else parsed.astimezone()
 
 
 def _run_scheduled_agent(prompt: str, user_id: str | None = None) -> str:
