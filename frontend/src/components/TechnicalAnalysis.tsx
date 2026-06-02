@@ -708,6 +708,7 @@ function KLineChart({
         onVisibleRangeChange={handleVisibleRangeChange}
         onNearStart={loadMore}
         onNearEnd={refreshLatest}
+        enableTouchCrosshairHaptics
         className="technical-native-chart min-h-[440px] flex-1 lg:min-h-0"
       />
     </div>

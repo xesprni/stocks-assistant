@@ -144,6 +144,7 @@ interface NativeStockChartProps {
   onVisibleRangeChange?: (range: NativeVisibleRange | null) => void;
   onNearStart?: () => void;
   onNearEnd?: () => void;
+  enableTouchCrosshairHaptics?: boolean;
   className?: string;
 }
 
@@ -154,6 +155,8 @@ const PANE_VERTICAL_PADDING = 10;
 const EDGE_LOAD_THRESHOLD = 4;
 const TOUCH_LONG_PRESS_MS = 360;
 const TOUCH_PAN_THRESHOLD_PX = 8;
+const TOUCH_CROSSHAIR_HAPTIC_MS = 8;
+const TOUCH_CROSSHAIR_HAPTIC_MIN_INTERVAL_MS = 45;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -705,6 +708,7 @@ export function NativeStockChart({
   onVisibleRangeChange,
   onNearStart,
   onNearEnd,
+  enableTouchCrosshairHaptics = false,
   className,
 }: NativeStockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -723,6 +727,8 @@ export function NativeStockChart({
   const lastVisibleSignatureRef = useRef("");
   const nearStartLengthRef = useRef<number | null>(null);
   const nearEndLengthRef = useRef<number | null>(null);
+  const lastHapticCrosshairIndexRef = useRef<number | null>(null);
+  const lastHapticAtRef = useRef(0);
   const edgeLoadingEnabledRef = useRef(false);
   const callbacksRef = useRef({ onVisibleRangeChange, onNearStart, onNearEnd });
 
@@ -742,7 +748,8 @@ export function NativeStockChart({
       if (!activePointersRef.current.has(pointerId) || activePointersRef.current.size !== 1) return;
       inspectPointerIdRef.current = pointerId;
       dragRef.current = null;
-      updateCrosshair(point.x, point.y);
+      lastHapticCrosshairIndexRef.current = null;
+      updateCrosshair(point.x, point.y, { haptic: true });
       scheduleDraw();
     }, TOUCH_LONG_PRESS_MS);
   }
@@ -907,12 +914,29 @@ export function NativeStockChart({
     return layout?.id ?? null;
   };
 
-  const updateCrosshair = (x: number, y: number) => {
+  const maybeVibrateTouchCrosshair = (index: number) => {
+    if (!enableTouchCrosshairHaptics || typeof navigator.vibrate !== "function") return;
+    if (typeof window.matchMedia !== "function") return;
+    if (!window.matchMedia("(orientation: landscape)").matches) return;
+    if (lastHapticCrosshairIndexRef.current === index) return;
+    if (lastHapticCrosshairIndexRef.current == null) {
+      lastHapticCrosshairIndexRef.current = index;
+      return;
+    }
+    lastHapticCrosshairIndexRef.current = index;
+    const now = window.performance.now();
+    if (now - lastHapticAtRef.current < TOUCH_CROSSHAIR_HAPTIC_MIN_INTERVAL_MS) return;
+    lastHapticAtRef.current = now;
+    navigator.vibrate(TOUCH_CROSSHAIR_HAPTIC_MS);
+  };
+
+  const updateCrosshair = (x: number, y: number, options?: { haptic?: boolean }) => {
     const current = dataRef.current;
     if (current.times.length === 0 || layoutsRef.current.length === 0) return;
     const mapper = createXMapper(layoutsRef.current[0], normalizeViewport(viewportRef.current, current.times.length));
     const index = clamp(Math.round(mapper.xToIndex(x)), 0, current.times.length - 1);
     crosshairRef.current = { index, time: current.times[index], paneId: paneForY(y), y };
+    if (options?.haptic) maybeVibrateTouchCrosshair(index);
   };
 
   const startPinch = () => {
@@ -990,6 +1014,7 @@ export function NativeStockChart({
           if (activePointersRef.current.size >= 2) {
             clearLongPressTimer();
             inspectPointerIdRef.current = null;
+            lastHapticCrosshairIndexRef.current = null;
             startPinch();
             scheduleDraw();
             return;
@@ -1018,11 +1043,12 @@ export function NativeStockChart({
           if (activePointersRef.current.size >= 2) {
             clearLongPressTimer();
             inspectPointerIdRef.current = null;
+            lastHapticCrosshairIndexRef.current = null;
             if (!pinchRef.current) startPinch();
             if (updatePinch()) return;
           }
           if (inspectPointerIdRef.current === event.pointerId) {
-            updateCrosshair(point.x, point.y);
+            updateCrosshair(point.x, point.y, { haptic: true });
             scheduleDraw();
             return;
           }
@@ -1056,6 +1082,7 @@ export function NativeStockChart({
         onLostPointerCapture={(event) => {
           clearLongPressTimer();
           if (inspectPointerIdRef.current === event.pointerId) inspectPointerIdRef.current = null;
+          lastHapticCrosshairIndexRef.current = null;
           activePointersRef.current.delete(event.pointerId);
           if (activePointersRef.current.size < 2) pinchRef.current = null;
           if (activePointersRef.current.size === 0) dragRef.current = null;
