@@ -91,6 +91,7 @@ PUBLIC_API_PATHS = {
     "/api/v1/auth/setup/status",
     "/api/v1/auth/setup",
     "/api/v1/auth/login",
+    "/api/v1/auth/dev-login",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
 }

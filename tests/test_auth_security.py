@@ -78,6 +78,27 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertEqual(authenticated.status_code, 200)
         self.assertEqual(authenticated.json()["username"], "admin")
 
+    def test_dev_login_is_disabled_by_default(self):
+        response = self.client.post("/api/v1/auth/dev-login")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_dev_login_creates_local_admin_when_enabled(self):
+        with patch.dict(os.environ, {"STOCKS_ASSISTANT_DEV_AUTH": "1"}):
+            response = self.client.post("/api/v1/auth/dev-login", headers={"X-Device-Id": "dev-browser"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        tokens = response.json()
+        self.assertEqual(tokens["user"]["username"], "dev_admin")
+        self.assertIn("admin", tokens["user"]["roles"])
+        self.assertIn("*", tokens["user"]["permissions"])
+
+        protected = self.client.get(
+            "/api/v1/config",
+            headers={"Authorization": f"Bearer {tokens['access_token']}", "X-Device-Id": "dev-browser"},
+        )
+        self.assertEqual(protected.status_code, 200, protected.text)
+
     def test_refresh_token_rotation_revokes_previous_token(self):
         tokens = self.setup_admin()
 

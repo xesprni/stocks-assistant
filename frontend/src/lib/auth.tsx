@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import {
   addAuthExpiredListener,
   clearAuthTokens,
+  devLogin,
   getMe,
   getSetupStatus,
   getStoredAccessToken,
@@ -34,6 +35,50 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 const DEVICE_HEARTBEAT_INTERVAL_MS = 60_000;
+const DEV_AUTH_ENABLED = import.meta.env.DEV && import.meta.env.VITE_DEV_AUTH_BYPASS !== "false";
+const DEV_AUTH_USERNAME = import.meta.env.VITE_DEV_AUTH_USERNAME || "dev_admin";
+const DEV_AUTH_PASSWORD = import.meta.env.VITE_DEV_AUTH_PASSWORD || "Password123!";
+
+const DEV_MOCK_USER: AuthUser = {
+  id: "dev-local",
+  username: DEV_AUTH_USERNAME,
+  display_name: "Dev Admin",
+  avatar_base64: "",
+  roles: ["admin"],
+  permissions: ["*"],
+  page_permissions: {},
+  is_active: true,
+  created_at: null,
+  updated_at: null,
+  last_login_at: null,
+};
+
+async function tryDevAuth(setupRequired: boolean) {
+  if (!DEV_AUTH_ENABLED) return null;
+  try {
+    return await devLogin();
+  } catch {
+    // 后端开发登录未启用时，继续尝试首次初始化或固定开发账号登录。
+  }
+
+  if (setupRequired) {
+    try {
+      return await setupAdmin({
+        username: DEV_AUTH_USERNAME,
+        password: DEV_AUTH_PASSWORD,
+        display_name: "Dev Admin",
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return await apiLogin({ username: DEV_AUTH_USERNAME, password: DEV_AUTH_PASSWORD });
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -54,6 +99,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const setup = await getSetupStatus();
         if (!mounted) return;
+        const devTokens = await tryDevAuth(setup.setup_required);
+        if (!mounted) return;
+        if (devTokens) {
+          setAuthTokens(devTokens);
+          setSetupRequired(false);
+          setUser(devTokens.user);
+          resolveAuthRecovery();
+          return;
+        }
         setSetupRequired(setup.setup_required);
         if (setup.setup_required) {
           clearAuthTokens();
@@ -66,6 +120,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch {
         if (mounted) {
+          if (DEV_AUTH_ENABLED) {
+            setSetupRequired(false);
+            setUser(DEV_MOCK_USER);
+            return;
+          }
           setUser(null);
         }
       } finally {

@@ -89,6 +89,7 @@ let resolveAuthRecoveryPromise: (() => void) | null = null;
 let rejectAuthRecoveryPromise: ((error: Error) => void) | null = null;
 const AUTH_RETRY_EXCLUDED_PATHS = new Set([
   "/api/v1/auth/login",
+  "/api/v1/auth/dev-login",
   "/api/v1/auth/logout",
   "/api/v1/auth/refresh",
   "/api/v1/auth/setup",
@@ -260,6 +261,12 @@ export function login(payload: { username: string; password: string }) {
   return request<AuthTokenResponse>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ ...payload, device_id: getDeviceId() }),
+  });
+}
+
+export function devLogin() {
+  return request<AuthTokenResponse>("/api/v1/auth/dev-login", {
+    method: "POST",
   });
 }
 

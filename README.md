@@ -215,6 +215,14 @@ npm run dev
 
 Vite 默认启动在 [http://localhost:5175](http://localhost:5175)，`/api` 的代理目标由 `frontend/vite.config.ts` 配置，请确保它与后端服务端口一致。
 
+本地开发沙箱如果只想验证页面而不被登录页挡住，可打开开发登录：
+
+```bash
+STOCKS_ASSISTANT_DEV_AUTH=1 uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+Vite 开发模式默认会尝试自动获取开发登录态；后端未启动时会临时使用本地 mock 管理员进入页面，方便做布局冒烟验证。可通过 `VITE_DEV_AUTH_BYPASS=false npm run dev` 关闭该行为，也可用 `VITE_DEV_AUTH_USERNAME` / `VITE_DEV_AUTH_PASSWORD` 指定首次初始化或固定开发账号登录信息。`STOCKS_ASSISTANT_DEV_AUTH` 只应在本地开发使用，勿在共享或生产环境开启。
+
 ## API 路由
 
 | 前缀 | 说明 |

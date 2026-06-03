@@ -2,6 +2,8 @@
 
 import base64
 import binascii
+import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -45,6 +47,10 @@ from app.schemas.auth import (
 
 router = APIRouter()
 
+DEV_AUTH_ENV = "STOCKS_ASSISTANT_DEV_AUTH"
+DEV_AUTH_USERNAME_ENV = "STOCKS_ASSISTANT_DEV_AUTH_USERNAME"
+DEV_AUTH_DISPLAY_NAME_ENV = "STOCKS_ASSISTANT_DEV_AUTH_DISPLAY_NAME"
+
 AVATAR_DATA_URL_PREFIXES = (
     "data:image/png;base64,",
     "data:image/jpeg;base64,",
@@ -52,6 +58,14 @@ AVATAR_DATA_URL_PREFIXES = (
     "data:image/gif;base64,",
 )
 MAX_AVATAR_BYTES = 512 * 1024
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dev_auth_enabled() -> bool:
+    return _env_truthy(DEV_AUTH_ENV)
 
 
 def _current_device_id(http_request: Request) -> str:
@@ -199,6 +213,51 @@ async def setup(request: SetupRequest, http_request: Request):
     )
     _enforce_device_limit(user["id"], login_session["id"])
     store.audit(user["id"], "auth.setup", "users", {"permissions": list(PERMISSION_DESCRIPTIONS)})
+    return _token_response(user, refresh_token, session_id=login_session["id"])
+
+
+@router.post("/dev-login", response_model=AuthTokenResponse)
+async def dev_login(http_request: Request):
+    if not _dev_auth_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Development auth is disabled")
+
+    store = get_app_store()
+    store.migrate_config_json_once()
+    username = os.environ.get(DEV_AUTH_USERNAME_ENV, "dev_admin").strip() or "dev_admin"
+    display_name = os.environ.get(DEV_AUTH_DISPLAY_NAME_ENV, "Dev Admin").strip() or "Dev Admin"
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail=f"{DEV_AUTH_USERNAME_ENV} must be at least 3 characters")
+
+    user = store.get_user_by_username(username)
+    if user:
+        user = store.update_user(user["id"], display_name=display_name, is_active=True, role_names=["admin"])
+    else:
+        # 仅在显式开发开关打开时创建本地管理员，方便沙箱验证页面而不暴露生产登录入口。
+        user = store.create_user(
+            username=username,
+            password_hash=hash_password(secrets.token_urlsafe(32)),
+            display_name=display_name,
+            role_names=["admin"],
+        )
+        settings = get_settings()
+        store.migrate_legacy_user_data(user["id"], settings.workspace_dir)
+
+    store.touch_login(user["id"])
+    user = store.get_user_by_id(user["id"]) or user
+    login_session = create_login_session(
+        user["id"],
+        user_agent=http_request.headers.get("user-agent", ""),
+        ip_address=request_ip(http_request),
+        device_id=resolve_device_id(request=http_request),
+    )
+    refresh_token, _ = create_refresh_token(
+        user["id"],
+        session_id=login_session["id"],
+        user_agent=http_request.headers.get("user-agent", ""),
+        ip_address=request_ip(http_request),
+    )
+    _enforce_device_limit(user["id"], login_session["id"])
+    store.audit(user["id"], "auth.dev_login", "users")
     return _token_response(user, refresh_token, session_id=login_session["id"])
 
 
