@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { clearChatSessionMessages, createChatSession, deleteAllChatSessions, deleteChatSession, getChatSession, listChatSessions, updateChatSessionTitle } from "@/lib/api";
 import type { ChatMessage, Conversation } from "@/types/app";
@@ -17,6 +17,7 @@ export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem(ACTIVE_SESSION_KEY));
   const [isLoading, setIsLoading] = useState(true);
+  const userMutationVersionRef = useRef(0);
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? null,
@@ -42,6 +43,27 @@ export function useConversations() {
     });
   }
 
+  function mergeLoadedSessions(sessions: Conversation[], preserveLocal: boolean) {
+    if (!preserveLocal) {
+      setConversations(sessions.slice(0, MAX_CONVERSATIONS));
+      return;
+    }
+    setConversations((prev) => {
+      const sessionIds = new Set(sessions.map((session) => session.id));
+      const localOnly = prev.filter((conversation) => !sessionIds.has(conversation.id));
+      const mergedSessions = sessions.map((session) => {
+        const existing = prev.find((conversation) => conversation.id === session.id);
+        if (!existing) return session;
+        return {
+          ...existing,
+          ...session,
+          messages: session.messages.length > 0 ? session.messages : existing.messages,
+        };
+      });
+      return [...localOnly, ...mergedSessions].slice(0, MAX_CONVERSATIONS);
+    });
+  }
+
   async function loadConversation(id: string) {
     const detail = await getChatSession(id);
     mergeConversation(detail);
@@ -50,22 +72,25 @@ export function useConversations() {
 
   useEffect(() => {
     let mounted = true;
+    const loadVersion = userMutationVersionRef.current;
 
     async function loadSessions() {
       try {
         const sessions = await listChatSessions();
         if (!mounted) return;
-        setConversations(sessions);
+        const hasUserMutation = userMutationVersionRef.current !== loadVersion;
+        mergeLoadedSessions(sessions, hasUserMutation);
+        if (hasUserMutation) return;
 
         const stored = localStorage.getItem(ACTIVE_SESSION_KEY);
         const nextActive = stored && sessions.some((c) => c.id === stored) ? stored : sessions[0]?.id ?? null;
         rememberActive(nextActive);
         if (nextActive) {
           const detail = await getChatSession(nextActive);
-          if (mounted) mergeConversation(detail);
+          if (mounted && userMutationVersionRef.current === loadVersion) mergeConversation(detail);
         }
       } catch {
-        if (mounted) {
+        if (mounted && userMutationVersionRef.current === loadVersion) {
           setConversations([]);
           rememberActive(null);
         }
@@ -83,6 +108,7 @@ export function useConversations() {
   async function createConversation(firstMessage?: ChatMessage): Promise<string> {
     const title = titleFromMessage(firstMessage);
     const conv = await createChatSession(title);
+    userMutationVersionRef.current += 1;
     const next = { ...conv, title, messages: firstMessage ? [firstMessage] : conv.messages };
     mergeConversation(next);
     rememberActive(next.id);
@@ -90,6 +116,7 @@ export function useConversations() {
   }
 
   function switchConversation(id: string) {
+    userMutationVersionRef.current += 1;
     rememberActive(id);
     const conv = conversations.find((c) => c.id === id);
     if (!conv || conv.messages.length === 0) {
@@ -124,6 +151,7 @@ export function useConversations() {
   }
 
   function deleteConversation(id: string) {
+    userMutationVersionRef.current += 1;
     const remaining = conversations.filter((c) => c.id !== id);
     setConversations(remaining);
     if (activeId === id) rememberActive(remaining[0]?.id ?? null);
@@ -135,6 +163,7 @@ export function useConversations() {
   }
 
   function clearMessages(convId: string) {
+    userMutationVersionRef.current += 1;
     setConversations((prev) => {
       const next = prev.map((c) => {
         if (c.id !== convId) return c;
@@ -150,6 +179,7 @@ export function useConversations() {
   }
 
   function clearAllConversations() {
+    userMutationVersionRef.current += 1;
     const previousConversations = conversations;
     const previousActiveId = activeId;
     setConversations([]);
@@ -161,6 +191,7 @@ export function useConversations() {
   }
 
   function updateTitle(convId: string, title: string) {
+    userMutationVersionRef.current += 1;
     setConversations((prev) => {
       const next = prev.map((c) => {
         if (c.id !== convId) return c;

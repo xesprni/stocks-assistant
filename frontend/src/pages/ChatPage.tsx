@@ -476,7 +476,8 @@ export function ChatPage({
   const thinkingLabel = language === "en"
     ? `Thinking mode ${thinkingEnabled ? "on" : "off"}`
     : `思考模式${thinkingEnabled ? "开启" : "关闭"}`;
-  const isNewConversation = messages.length === 0 && !isSending;
+  const isHistoryLoading = chatHistory.isLoading;
+  const isNewConversation = !isHistoryLoading && messages.length === 0 && !isSending;
   const greeting = displayName
     ? formatTemplate(uiCopy.greeting, { name: displayName })
     : uiCopy.greetingAnonymous;
