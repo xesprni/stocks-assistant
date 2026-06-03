@@ -383,7 +383,11 @@
     color: hsl(var(--primary));
   }
 
-  .mobile-nav-fab,
+  .mobile-nav-fab {
+    touch-action: none;
+    user-select: none;
+  }
+
   .dashboard-chat-searchbar {
     touch-action: manipulation;
   }
@@ -1188,6 +1192,10 @@
     height: calc(2rem + env(safe-area-inset-bottom));
     padding-bottom: calc(0.45rem + env(safe-area-inset-bottom));
     z-index: 51;
+  }
+
+  .app-bottom-edge-trigger.mobile-nav-restore-trigger {
+    z-index: 941;
   }
 
   .app-edge-grabber {

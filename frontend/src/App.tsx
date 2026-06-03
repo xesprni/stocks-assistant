@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode, TouchEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, TouchEvent } from "react";
 import {
   BookOpen,
   Bot,
@@ -11,6 +11,7 @@ import {
   CircleAlert,
   Clock,
   Cpu,
+  EyeOff,
   FileText,
   Home,
   Loader2,
@@ -88,10 +89,18 @@ type NavItem = { id: Page; label: string; icon: ReactNode; hint: string };
 type NavGroup = { id: string; label: string; items: NavItem[] };
 type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
 type TouchPoint = { x: number; y: number };
+type MobileNavFabSide = "left" | "right";
+type MobileNavFabPosition = { side: MobileNavFabSide; top: number };
+type MobileNavFabDrag = { startX: number; startY: number; initialTop: number; hasMoved: boolean };
 
 const MOBILE_GESTURE_DELTA = 28;
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
 const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
+const MOBILE_NAV_FAB_VISIBLE_KEY = "stocks-assistant-mobile-nav-fab-visible";
+const MOBILE_NAV_FAB_POSITION_KEY = "stocks-assistant-mobile-nav-fab-position";
+const MOBILE_NAV_FAB_SIZE = 56;
+const MOBILE_NAV_FAB_MARGIN = 12;
+const MOBILE_NAV_FAB_DRAG_THRESHOLD = 8;
 
 const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   overview: "config:read",
@@ -432,6 +441,38 @@ function isTheme(value: string | null): value is Theme {
 
 function isMobileShellViewport(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
+}
+
+function clampMobileNavFabTop(top: number): number {
+  if (typeof window === "undefined") return top;
+  const maxTop = Math.max(MOBILE_NAV_FAB_MARGIN, window.innerHeight - MOBILE_NAV_FAB_SIZE - MOBILE_NAV_FAB_MARGIN);
+  return Math.min(Math.max(top, MOBILE_NAV_FAB_MARGIN), maxTop);
+}
+
+function readMobileNavFabPosition(): MobileNavFabPosition | null {
+  const raw = readStoredText(MOBILE_NAV_FAB_POSITION_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<MobileNavFabPosition>;
+    if ((parsed.side === "left" || parsed.side === "right") && typeof parsed.top === "number" && Number.isFinite(parsed.top)) {
+      return { side: parsed.side, top: clampMobileNavFabTop(parsed.top) };
+    }
+  } catch {
+    // 忽略旧版或损坏的本地位置，回退到默认右下角。
+  }
+  return null;
+}
+
+function writeMobileNavFabPosition(position: MobileNavFabPosition) {
+  writeStoredValue(MOBILE_NAV_FAB_POSITION_KEY, JSON.stringify(position));
+}
+
+function mobileNavFabPositionFromPointer(event: ReactPointerEvent<HTMLButtonElement>, drag: MobileNavFabDrag): MobileNavFabPosition {
+  const side: MobileNavFabSide = typeof window !== "undefined" && event.clientX < window.innerWidth / 2 ? "left" : "right";
+  return {
+    side,
+    top: clampMobileNavFabTop(drag.initialTop + event.clientY - drag.startY),
+  };
 }
 
 function touchPointFromEvent<T extends Element>(event: TouchEvent<T>): TouchPoint | null {
@@ -2103,12 +2144,110 @@ function MobileNav({
     ...secondaryGroups,
   ].filter((group) => group.items.length > 0);
   const copy = i18n[language].shell;
-  const openLabel = language === "en" ? "Open navigation" : "打开导航";
+  const openLabel = language === "en" ? "Open navigation. Drag to move." : "打开导航，可拖动调整位置";
   const closeLabel = language === "en" ? "Close navigation" : "关闭导航";
+  const hideFabLabel = language === "en" ? "Hide navigation button" : "隐藏导航按钮";
+  const showFabLabel = language === "en" ? "Show navigation button" : "显示导航按钮";
+  const [isFabVisible, setIsFabVisible] = useState(() => readStoredText(MOBILE_NAV_FAB_VISIBLE_KEY, "true") !== "false");
+  const [fabPosition, setFabPosition] = useState<MobileNavFabPosition | null>(() => readMobileNavFabPosition());
+  const [isFabDragging, setIsFabDragging] = useState(false);
+  const fabDragRef = useRef<MobileNavFabDrag | null>(null);
+  const suppressNextFabClickRef = useRef(false);
+  const fabSide = fabPosition?.side ?? "right";
+  const fabStyle = useMemo<CSSProperties | undefined>(() => {
+    return fabPosition ? { top: `${fabPosition.top}px` } : undefined;
+  }, [fabPosition]);
+
+  useEffect(() => {
+    writeStoredValue(MOBILE_NAV_FAB_VISIBLE_KEY, isFabVisible ? "true" : "false");
+    if (!isFabVisible) onOpenChange(false);
+  }, [isFabVisible, onOpenChange]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => {
+      setFabPosition((current) => {
+        if (!current) return current;
+        const next = { ...current, top: clampMobileNavFabTop(current.top) };
+        if (next.top === current.top) return current;
+        writeMobileNavFabPosition(next);
+        return next;
+      });
+    };
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("orientationchange", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("orientationchange", handleResize);
+    };
+  }, []);
 
   function navigate(nextPage: Page) {
     setPage(nextPage);
     onOpenChange(false);
+  }
+
+  function hideFab() {
+    setIsFabVisible(false);
+    onOpenChange(false);
+  }
+
+  function showFab() {
+    setIsFabVisible(true);
+  }
+
+  function handleFabPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    fabDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      initialTop: rect.top,
+      hasMoved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleFabPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = fabDragRef.current;
+    if (!drag) return;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (!drag.hasMoved && Math.hypot(deltaX, deltaY) < MOBILE_NAV_FAB_DRAG_THRESHOLD) return;
+    drag.hasMoved = true;
+    setIsFabDragging(true);
+    event.preventDefault();
+    setFabPosition(mobileNavFabPositionFromPointer(event, drag));
+  }
+
+  function finishFabPointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = fabDragRef.current;
+    if (!drag) return;
+    if (drag.hasMoved) {
+      const next = mobileNavFabPositionFromPointer(event, drag);
+      setFabPosition(next);
+      writeMobileNavFabPosition(next);
+      suppressNextFabClickRef.current = true;
+      event.preventDefault();
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          suppressNextFabClickRef.current = false;
+        }, 0);
+      }
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    fabDragRef.current = null;
+    setIsFabDragging(false);
+  }
+
+  function handleFabClick() {
+    if (suppressNextFabClickRef.current) {
+      suppressNextFabClickRef.current = false;
+      return;
+    }
+    onOpenChange(!isOpen);
   }
 
   return (
@@ -2124,7 +2263,8 @@ function MobileNav({
           <nav
             aria-label={copy.navigation}
             className={cn(
-              "mobile-nav-popover absolute right-3 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-border/80 bg-popover p-3 text-popover-foreground shadow-2xl",
+              "mobile-nav-popover absolute w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-border/80 bg-popover p-3 text-popover-foreground shadow-2xl",
+              fabSide === "left" ? "left-3" : "right-3",
               hasDashboardBottomDock
                 ? "bottom-[calc(10.5rem+env(safe-area-inset-bottom))]"
                 : "bottom-[calc(5rem+env(safe-area-inset-bottom))]",
@@ -2132,17 +2272,30 @@ function MobileNav({
           >
             <div className="mb-2 flex items-center justify-between gap-3">
               <p className="text-sm font-semibold">{copy.pageSwitch}</p>
-              <Button
-                aria-label={closeLabel}
-                className="h-8 w-8"
-                onClick={() => onOpenChange(false)}
-                size="icon"
-                title={closeLabel}
-                type="button"
-                variant="ghost"
-              >
-                <X className="size-4" />
-              </Button>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  aria-label={hideFabLabel}
+                  className="h-8 w-8"
+                  onClick={hideFab}
+                  size="icon"
+                  title={hideFabLabel}
+                  type="button"
+                  variant="ghost"
+                >
+                  <EyeOff className="size-4" />
+                </Button>
+                <Button
+                  aria-label={closeLabel}
+                  className="h-8 w-8"
+                  onClick={() => onOpenChange(false)}
+                  size="icon"
+                  title={closeLabel}
+                  type="button"
+                  variant="ghost"
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
             </div>
             <div className="max-h-[min(62dvh,31rem)] space-y-3 overflow-y-auto pr-1">
               {groups.map((group) => (
@@ -2176,21 +2329,40 @@ function MobileNav({
           </nav>
         </div>
       ) : null}
-      <button
-        aria-expanded={isOpen}
-        aria-label={openLabel}
-        className={cn(
-          "mobile-nav-fab fixed right-3 z-[940] grid size-14 place-items-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-[0_16px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden",
-          hasDashboardBottomDock
-            ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))]"
-            : "bottom-[calc(1rem+env(safe-area-inset-bottom))]",
-        )}
-        onClick={() => onOpenChange(!isOpen)}
-        title={openLabel}
-        type="button"
-      >
-        <Menu className="size-5" />
-      </button>
+      {!isFabVisible ? (
+        <button
+          aria-label={showFabLabel}
+          className="app-bottom-edge-trigger mobile-nav-restore-trigger lg:hidden"
+          onClick={showFab}
+          title={showFabLabel}
+          type="button"
+        >
+          <span className="app-edge-grabber" />
+        </button>
+      ) : (
+        <button
+          aria-expanded={isOpen}
+          aria-label={openLabel}
+          className={cn(
+            "mobile-nav-fab fixed z-[940] grid size-14 cursor-grab select-none place-items-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-[0_16px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden",
+            fabSide === "left" ? "left-3" : "right-3",
+            !fabPosition && (hasDashboardBottomDock
+              ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))]"
+              : "bottom-[calc(1rem+env(safe-area-inset-bottom))]"),
+            isFabDragging && "scale-105 transition-none",
+          )}
+          onClick={handleFabClick}
+          onPointerCancel={finishFabPointer}
+          onPointerDown={handleFabPointerDown}
+          onPointerMove={handleFabPointerMove}
+          onPointerUp={finishFabPointer}
+          style={fabStyle}
+          title={openLabel}
+          type="button"
+        >
+          <Menu className="size-5" />
+        </button>
+      )}
     </>
   );
 }
