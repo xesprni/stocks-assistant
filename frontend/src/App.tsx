@@ -47,6 +47,7 @@ import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { parseJsonObject } from "@/lib/json";
+import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
 import { CHAT_AUTO_SCROLL_THRESHOLD, useConversations } from "@/hooks/useConversations";
 import type { AppLanguage } from "@/lib/i18n";
@@ -537,7 +538,7 @@ function ConsoleApp() {
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = window.localStorage.getItem("stocks-assistant-theme");
+    const stored = readStoredValue("stocks-assistant-theme", ["system", "dark", "light"], "system");
     return isTheme(stored) ? stored : "system";
   });
   const [systemPreference, setSystemPreference] = useState<EffectiveTheme>(() => systemTheme());
@@ -550,14 +551,14 @@ function ConsoleApp() {
   const [error, setError] = useState("");
   const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const [isMobileHeaderVisible, setIsMobileHeaderVisible] = useState(() => {
-    const stored = window.localStorage.getItem(MOBILE_HEADER_VISIBLE_KEY);
-    if (stored !== null) return stored === "true";
-    return window.localStorage.getItem(LEGACY_MOBILE_CHROME_HIDDEN_KEY) !== "true";
+    const stored = readStoredText(MOBILE_HEADER_VISIBLE_KEY, "");
+    if (stored === "true" || stored === "false") return stored === "true";
+    return readStoredText(LEGACY_MOBILE_CHROME_HIDDEN_KEY, "") !== "true";
   });
   const [isMobileNavVisible, setIsMobileNavVisible] = useState(() => {
-    const stored = window.localStorage.getItem(MOBILE_NAV_VISIBLE_KEY);
-    if (stored !== null) return stored === "true";
-    return window.localStorage.getItem(LEGACY_MOBILE_CHROME_HIDDEN_KEY) !== "true";
+    const stored = readStoredText(MOBILE_NAV_VISIBLE_KEY, "");
+    if (stored === "true" || stored === "false") return stored === "true";
+    return readStoredText(LEGACY_MOBILE_CHROME_HIDDEN_KEY, "") !== "true";
   });
   const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
   const [configInitialTab, setConfigInitialTab] = useState<ConfigTab>(() => configTabFromPath(window.location.pathname) ?? "model");
@@ -753,15 +754,15 @@ function ConsoleApp() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
     document.documentElement.style.colorScheme = resolvedTheme;
-    window.localStorage.setItem("stocks-assistant-theme", theme);
+    writeStoredValue("stocks-assistant-theme", theme);
   }, [resolvedTheme, theme]);
 
   useEffect(() => {
-    window.localStorage.setItem(MOBILE_HEADER_VISIBLE_KEY, String(isMobileHeaderVisible));
+    writeStoredBoolean(MOBILE_HEADER_VISIBLE_KEY, isMobileHeaderVisible);
   }, [isMobileHeaderVisible]);
 
   useEffect(() => {
-    window.localStorage.setItem(MOBILE_NAV_VISIBLE_KEY, String(isMobileNavVisible));
+    writeStoredBoolean(MOBILE_NAV_VISIBLE_KEY, isMobileNavVisible);
   }, [isMobileNavVisible]);
 
   useEffect(() => {

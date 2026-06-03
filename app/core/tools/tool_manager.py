@@ -45,6 +45,7 @@ class ToolManager:
         from app.core.tools.write_file import WriteFileTool
         from app.core.tools.financial_reports import GetFinancialReportsTool
         from app.core.tools.market_data import (
+            GetLongbridgeCapitalFlowTool,
             GetLongbridgeCandlesticksTool,
             GetLongbridgeDepthTool,
             GetLongbridgeHistoryCandlesticksTool,
@@ -76,6 +77,7 @@ class ToolManager:
             GetLongbridgeHistoryCandlesticksTool,
             GetLongbridgeCandlesticksTool,
             GetLongbridgeIntradayTool,
+            GetLongbridgeCapitalFlowTool,
             GetLongbridgeTradesTool,
             GetLongbridgeDepthTool,
             GetLongbridgeMarketStatusTool,

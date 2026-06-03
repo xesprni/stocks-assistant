@@ -686,6 +686,18 @@ export interface IntradayResponse {
   bars: IntradayItem[];
 }
 
+export interface CapitalFlowItem {
+  timestamp: number;
+  inflow: string;
+}
+
+export interface CapitalFlowResponse {
+  source: string;
+  symbol: string;
+  lines: CapitalFlowItem[];
+  total: number;
+}
+
 export interface MarketTemperature {
   market: string;
   temperature: number | null;

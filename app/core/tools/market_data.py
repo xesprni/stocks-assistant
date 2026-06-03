@@ -192,6 +192,27 @@ class GetLongbridgeIntradayTool(_LongbridgeMarketTool):
         )
 
 
+class GetLongbridgeCapitalFlowTool(_LongbridgeMarketTool):
+    name = "get_longbridge_capital_flow"
+    description = (
+        "查询 Longbridge 标的当日资金流向时序时使用此工具。Use for intraday capital flow, net inflow, "
+        "资金净流入曲线, 资金流向. Returns timestamped inflow values for one symbol."
+    )
+    params = {
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK, 600519.SH."},
+        },
+        "required": ["symbol"],
+    }
+
+    def execute(self, args: Dict[str, Any]) -> ToolResult:
+        symbol = str(args.get("symbol") or "").strip()
+        if not symbol:
+            return ToolResult.fail("symbol is required")
+        return self._call("get_capital_flow", symbol)
+
+
 class GetLongbridgeTradesTool(_LongbridgeMarketTool):
     name = "get_longbridge_trades"
     description = "查询 Longbridge 逐笔成交明细时使用此工具。Use for time-and-sales, prints, tick trades, 逐笔成交."

@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import type { ColorScheme } from "@/types/app";
 
 const STORAGE_KEY = "stocks-assistant-color-scheme";
@@ -27,12 +28,11 @@ const TAILWIND_CLASSES: Record<ColorScheme, { up: string; down: string }> = {
 
 export function ColorSchemeProvider({ children }: { children: ReactNode }) {
   const [scheme, setSchemeState] = useState<ColorScheme>(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    return stored === "cn" || stored === "intl" ? stored : "intl";
+    return readStoredValue(STORAGE_KEY, ["cn", "intl"], "intl");
   });
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, scheme);
+    writeStoredValue(STORAGE_KEY, scheme);
     document.documentElement.setAttribute("data-color-scheme", scheme);
   }, [scheme]);
 

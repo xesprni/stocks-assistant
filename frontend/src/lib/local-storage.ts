@@ -17,6 +17,15 @@ export function writeStoredValue(key: string, value: string) {
   }
 }
 
+export function removeStoredValue(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // localStorage 可能被隐私模式或浏览器策略禁用，忽略即可退回当前页面状态。
+  }
+}
+
 export function readStoredText(key: string, fallback = "") {
   if (typeof window === "undefined") return fallback;
   try {

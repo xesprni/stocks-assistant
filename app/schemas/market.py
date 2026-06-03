@@ -81,6 +81,22 @@ class IntradayResponse(BaseModel):
     bars: List[IntradayItem]
 
 
+class CapitalFlowItem(BaseModel):
+    """单条资金流向时序数据。"""
+
+    timestamp: int
+    inflow: str
+
+
+class CapitalFlowResponse(BaseModel):
+    """资金流向时序响应。"""
+
+    source: str = ""
+    symbol: str
+    lines: List[CapitalFlowItem]
+    total: int = 0
+
+
 class MarketTemperatureResponse(BaseModel):
     """市场温度响应。"""
 

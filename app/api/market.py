@@ -10,6 +10,7 @@ from app.deps import get_market_service, get_watchlist_service
 from app.core.security import CurrentUser, require_permissions
 from app.schemas.market import (
     CandlesticksResponse,
+    CapitalFlowResponse,
     IntradayResponse,
     MarketDashboardConfig,
     MarketQuotesResponse,
@@ -94,6 +95,22 @@ async def get_intraday(
     except LongbridgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return IntradayResponse(**data)
+
+
+@router.get("/capital-flow", response_model=CapitalFlowResponse)
+async def get_capital_flow(
+    symbol: str,
+    current_user: CurrentUser = Depends(require_permissions("market:read")),
+):
+    """拉取指定标的当日资金净流入时序。"""
+    service = get_market_service()
+    try:
+        data = service.get_capital_flow(symbol, settings=get_effective_settings(current_user.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LongbridgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return CapitalFlowResponse(**data)
 
 
 @router.get("/temperature", response_model=MarketTemperatureResponse)

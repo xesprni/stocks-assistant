@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from app.core.tools.market_data import (
+    GetLongbridgeCapitalFlowTool,
     GetLongbridgeCandlesticksTool,
     GetLongbridgeDepthTool,
     GetLongbridgeHistoryCandlesticksTool,
@@ -44,6 +45,10 @@ class FakeMarketService:
     def get_intraday(self, symbol, since=None, trade_sessions=None, settings=None):
         self.calls.append(("get_intraday", symbol, since, trade_sessions, settings))
         return {"symbol": symbol, "bars": []}
+
+    def get_capital_flow(self, symbol, settings=None):
+        self.calls.append(("get_capital_flow", symbol, settings))
+        return {"symbol": symbol, "lines": [], "total": 0}
 
     def get_trades(self, symbol, count=50, settings=None):
         self.calls.append(("get_trades", symbol, count, settings))
@@ -133,6 +138,11 @@ class MarketDataToolsTest(unittest.TestCase):
                 ("get_intraday", "AAPL.US", 1767330000, "intraday", settings),
             ),
             (
+                GetLongbridgeCapitalFlowTool,
+                {"symbol": "AAPL.US"},
+                ("get_capital_flow", "AAPL.US", settings),
+            ),
+            (
                 GetLongbridgeTradesTool,
                 {"symbol": "AAPL.US", "count": 25},
                 ("get_trades", "AAPL.US", 25, settings),
@@ -205,6 +215,7 @@ class MarketDataToolsTest(unittest.TestCase):
 
         self.assertIn("get_longbridge_realtime_quotes", names)
         self.assertIn("get_longbridge_history_candlesticks", names)
+        self.assertIn("get_longbridge_capital_flow", names)
         self.assertIn("get_longbridge_quote_indicators", names)
         self.assertIn("get_technical_indicators", names)
 

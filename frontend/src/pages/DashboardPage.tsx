@@ -20,6 +20,7 @@ import {
   Users,
 } from "lucide-react";
 
+import { CapitalFlowChart } from "@/components/CapitalFlowChart";
 import { MarketPulse } from "@/components/MarketPulse";
 import {
   NativeStockChart,
@@ -1574,6 +1575,12 @@ function WatchlistSymbolDetail({
     >
       <div className="space-y-4">
         <WatchlistSymbolChart language={language} row={row} />
+        <CapitalFlowChart
+          chartClassName="h-[220px]"
+          className="min-h-[318px] rounded-md border border-border/65 bg-card/70"
+          language={language}
+          symbol={row.symbol}
+        />
 
         <div className="rounded-md border-y border-border/55 py-4">
           <div className="flex flex-wrap items-end justify-between gap-3">

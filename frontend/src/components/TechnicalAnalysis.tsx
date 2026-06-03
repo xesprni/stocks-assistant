@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import { BarChart2, RefreshCw, TrendingUp } from "lucide-react";
+import { CapitalFlowChart } from "@/components/CapitalFlowChart";
 import {
   NativeStockChart,
   type NativeChartPane,
@@ -80,6 +81,7 @@ const technicalCopy = {
     profit: "获利 {value}%",
     kline: "K线",
     intraday: "分时",
+    capitalFlow: "资金",
     subIndicators: "副图",
     overlays: "叠加",
   },
@@ -104,6 +106,7 @@ const technicalCopy = {
     profit: "Profit {value}%",
     kline: "K-line",
     intraday: "Intraday",
+    capitalFlow: "Flow",
     subIndicators: "Sub",
     overlays: "Overlay",
   },
@@ -1040,8 +1043,8 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorKey>>(new Set());
-  const [activeTab, setActiveTab] = useState<"kline" | "intraday">(() =>
-    readStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, ["kline", "intraday"], "kline"),
+  const [activeTab, setActiveTab] = useState<"kline" | "intraday" | "capital">(() =>
+    readStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, ["kline", "intraday", "capital"], "kline"),
   );
   const [parsedBars, setParsedBars] = useState<ReturnType<typeof parseBars>>([]);
   const [visiblePriceRange, setVisiblePriceRange] = useState<{ min: number; max: number } | null>(null);
@@ -1126,6 +1129,16 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
               >
                 {copy.intraday}
               </button>
+              <button
+                onClick={() => setActiveTab("capital")}
+                className={`h-9 border-b-2 px-3 text-[11px] font-medium transition-colors ${
+                  activeTab === "capital"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {copy.capitalFlow}
+              </button>
             </div>
           </div>
 
@@ -1203,9 +1216,16 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                 <ChipDistributionPanel bars={parsedBars} copy={copy} isDark={isDark} visibleRange={visiblePriceRange} />
               )}
             </div>
-          ) : (
+          ) : activeTab === "intraday" ? (
             /* Intraday mode */
             <IntradayCharts symbol={symbol} copy={copy} language={language} isDark={isDark} />
+          ) : (
+            <CapitalFlowChart
+              chartClassName="min-h-[500px]"
+              className="flex min-h-[560px] flex-1"
+              language={language}
+              symbol={symbol}
+            />
           )}
         </div>
       </div>

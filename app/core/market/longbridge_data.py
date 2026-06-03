@@ -201,6 +201,30 @@ class LongbridgeMarketDataMixin:
             "bars": bars,
         }
 
+    def get_capital_flow(self, symbol: str, settings: Any = None) -> dict:
+        """拉取标的当日资金净流入时序。"""
+        symbol = canonical_symbol(symbol)
+        if not symbol:
+            raise ValueError("symbol is required")
+
+        ctx = self._quote_context(settings=settings)
+        try:
+            raw = ctx.capital_flow(symbol)
+        except Exception as exc:
+            raise LongbridgeUnavailableError(str(exc)) from exc
+
+        # Longbridge 返回的是盘中资金净流入曲线；按时间排序后前端和工具都能稳定消费。
+        lines = sorted(
+            (self._serialize_capital_flow_line(item) for item in raw),
+            key=lambda item: item["timestamp"],
+        )
+        return {
+            "source": "Longbridge QuoteContext.capital_flow",
+            "symbol": symbol,
+            "lines": lines,
+            "total": len(lines),
+        }
+
     def get_trades(self, symbol: str, count: int = 50, settings: Any = None) -> dict:
         """拉取逐笔成交。"""
         symbol = canonical_symbol(symbol)
@@ -601,6 +625,12 @@ class LongbridgeMarketDataMixin:
             "volume": stringify(getattr(item, "volume", None)) or "0",
             "turnover": stringify(getattr(item, "turnover", None)) or "0",
             "avg_price": stringify(getattr(item, "avg_price", None)) or "0",
+        }
+
+    def _serialize_capital_flow_line(self, item: Any) -> dict:
+        return {
+            "timestamp": timestamp(getattr(item, "timestamp", None)) or 0,
+            "inflow": stringify(getattr(item, "inflow", None)) or "0",
         }
 
     def _serialize_trade(self, item: Any) -> dict:

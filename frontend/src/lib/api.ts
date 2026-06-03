@@ -3,6 +3,7 @@ import type {
   AuthTokenResponse,
   AuthUser,
   CandlesticksResponse,
+  CapitalFlowResponse,
   ChangePasswordRequest,
   ChatMessage,
   ChatResponse,
@@ -71,6 +72,7 @@ import type {
   WatchlistOverviewResponse,
   WatchlistSearchResponse,
 } from "@/types/app";
+import { readStoredText, removeStoredValue, writeStoredValue } from "@/lib/local-storage";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const ACCESS_TOKEN_KEY = "stocks_assistant_access_token";
@@ -79,8 +81,8 @@ const DEVICE_ID_KEY = "stocks_assistant_device_id";
 const DEVICE_ID_HEADER = "X-Device-Id";
 const AUTH_EXPIRED_EVENT = "stocks-assistant:auth-expired";
 
-let accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) ?? "";
-let refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) ?? "";
+let accessToken = readStoredText(ACCESS_TOKEN_KEY);
+let refreshToken = readStoredText(REFRESH_TOKEN_KEY);
 let refreshPromise: Promise<AuthTokenResponse> | null = null;
 let authRecoveryPromise: Promise<void> | null = null;
 let resolveAuthRecoveryPromise: (() => void) | null = null;
@@ -112,10 +114,10 @@ export function getStoredRefreshToken() {
 }
 
 export function getDeviceId() {
-  let deviceId = localStorage.getItem(DEVICE_ID_KEY) ?? "";
+  let deviceId = readStoredText(DEVICE_ID_KEY);
   if (!deviceId) {
-    deviceId = crypto.randomUUID?.() ?? `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    deviceId = globalThis.crypto?.randomUUID?.() ?? `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    writeStoredValue(DEVICE_ID_KEY, deviceId);
   }
   return deviceId;
 }
@@ -123,15 +125,15 @@ export function getDeviceId() {
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
   accessToken = tokens.access_token;
   refreshToken = tokens.refresh_token;
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  writeStoredValue(ACCESS_TOKEN_KEY, accessToken);
+  writeStoredValue(REFRESH_TOKEN_KEY, refreshToken);
 }
 
 export function clearAuthTokens() {
   accessToken = "";
   refreshToken = "";
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  removeStoredValue(ACCESS_TOKEN_KEY);
+  removeStoredValue(REFRESH_TOKEN_KEY);
 }
 
 function notifyAuthExpired(message: string) {
@@ -700,6 +702,11 @@ export function getIntraday(symbol: string, since?: number | null) {
   const params = new URLSearchParams({ symbol });
   if (since != null) params.set("since", String(since));
   return request<IntradayResponse>(`/api/v1/market/intraday?${params.toString()}`);
+}
+
+export function getCapitalFlow(symbol: string, init?: RequestInit) {
+  const params = new URLSearchParams({ symbol });
+  return request<CapitalFlowResponse>(`/api/v1/market/capital-flow?${params.toString()}`, init);
 }
 
 export function getMarketTemperature(market: string = "US") {

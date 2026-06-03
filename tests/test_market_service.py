@@ -14,6 +14,7 @@ class FakeQuoteContext:
         self.candlestick_args = None
         self.history_args = None
         self.intraday_args = None
+        self.capital_flow_symbol = None
         self.trades_args = None
         self.depth_symbol = None
         self.trading_days_args = None
@@ -82,6 +83,13 @@ class FakeQuoteContext:
         return [
             SimpleNamespace(timestamp=datetime(2026, 1, 2, 9, 30), price="10", volume="100", turnover="1000", avg_price="10"),
             SimpleNamespace(timestamp=datetime(2026, 1, 2, 9, 31), price="11", volume="200", turnover="2200", avg_price="10.5"),
+        ]
+
+    def capital_flow(self, symbol):
+        self.capital_flow_symbol = symbol
+        return [
+            SimpleNamespace(timestamp=datetime(2026, 1, 2, 9, 31), inflow="-2000"),
+            SimpleNamespace(timestamp=datetime(2026, 1, 2, 9, 30), inflow="1000"),
         ]
 
     def trades(self, symbol, count):
@@ -267,6 +275,7 @@ class MarketServiceConfigTest(unittest.TestCase):
             days = service.get_trading_days("US", "2026-01-01", "2026-01-31")
             status = service.get_market_status()
             indicators = service.get_quote_indicators(["HSI.HK"], ["LastDone", "pe_ttm_ratio"])
+            capital_flow = service.get_capital_flow(".HSI.HK")
 
         self.assertEqual(quote_context.history_args[3], date(2026, 1, 1))
         self.assertEqual(history["bars"][0]["close"], "10")
@@ -278,6 +287,10 @@ class MarketServiceConfigTest(unittest.TestCase):
         self.assertEqual(status["market_time"][0]["market"], "US")
         self.assertEqual(quote_context.calc_indexes_args[1], ["CalcIndex.LastDone", "CalcIndex.PeTtmRatio"])
         self.assertEqual(indicators["indicators"][0]["last_done"], "10")
+        self.assertEqual(quote_context.capital_flow_symbol, "HSI.HK")
+        self.assertEqual(capital_flow["source"], "Longbridge QuoteContext.capital_flow")
+        self.assertEqual(capital_flow["total"], 2)
+        self.assertEqual([line["inflow"] for line in capital_flow["lines"]], ["1000", "-2000"])
 
 
 if __name__ == "__main__":
