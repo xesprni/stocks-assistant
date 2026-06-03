@@ -9,18 +9,15 @@ import {
   BriefcaseBusiness,
   Building2,
   CalendarDays,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   FileText,
   Landmark,
   Loader2,
-  MessageSquareText,
   Settings2,
   Star,
   Users,
-  X,
 } from "lucide-react";
 
 import { CapitalFlowChart } from "@/components/CapitalFlowChart";
@@ -127,12 +124,10 @@ type DashboardSnapshot = {
 
 type DashboardPageProps = {
   canPermission: (permission: string) => boolean;
-  chatDrawerOpen: boolean;
   chatExpanded: boolean;
   chatPanel: ReactNode;
   isMobileViewport: boolean;
   language: AppLanguage;
-  onChatDrawerOpenChange: (open: boolean) => void;
   onOpenChart: (symbol: string) => void;
   onOpenMarketConfig: () => void;
   onOpenPortfolio: () => void;
@@ -1650,12 +1645,10 @@ function PermissionHidden({ children }: { children: ReactNode }) {
 
 export function DashboardPage({
   canPermission,
-  chatDrawerOpen,
   chatExpanded,
   chatPanel,
   isMobileViewport,
   language,
-  onChatDrawerOpenChange,
   onOpenChart,
   onOpenMarketConfig,
   onOpenPortfolio,
@@ -1668,8 +1661,6 @@ export function DashboardPage({
   const canWatchlist = canPermission("watchlist:read");
   const canFundamentals = canPermission("fundamentals:read");
   const canChat = canPermission("chat:read");
-  const mobileChatLabel = language === "en" ? "Ask AI" : "问 Agent";
-  const closeMobileChatLabel = language === "en" ? "Close AI drawer" : "关闭 AI 抽屉";
 
   const initialSnapshotRef = useRef<DashboardResponse | null | undefined>(undefined);
   if (initialSnapshotRef.current === undefined) {
@@ -1912,67 +1903,6 @@ export function DashboardPage({
           </aside>
         ) : null}
       </div>
-
-      {isMobileViewport && canChat ? (
-        <>
-          {!chatDrawerOpen ? (
-            <button
-              aria-label={mobileChatLabel}
-              className="dashboard-chat-dock fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-3 z-[920] flex h-14 max-w-[calc(100vw-6rem)] items-center gap-2 rounded-full border border-border/70 bg-card/95 px-3.5 text-sm font-semibold text-foreground shadow-[0_16px_34px_hsl(var(--foreground)_/_0.14)] backdrop-blur transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background xl:hidden"
-              onClick={() => onChatDrawerOpenChange(true)}
-              title={mobileChatLabel}
-              type="button"
-            >
-              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
-                <MessageSquareText className="size-4" />
-              </span>
-              <span className="truncate">{mobileChatLabel}</span>
-              <ChevronDown className="size-4 rotate-180 text-muted-foreground" />
-            </button>
-          ) : null}
-          {chatDrawerOpen ? (
-            <div className="dashboard-chat-drawer-layer fixed inset-0 z-[950] xl:hidden">
-              <button
-                aria-label={closeMobileChatLabel}
-                className="absolute inset-0 bg-background/45 backdrop-blur-[2px]"
-                onClick={() => onChatDrawerOpenChange(false)}
-                type="button"
-              />
-              <aside
-                aria-label={mobileChatLabel}
-                className="dashboard-chat-drawer absolute inset-x-0 bottom-0 flex h-[min(86dvh,46rem)] min-h-[28rem] flex-col overflow-hidden rounded-t-2xl border border-border/80 bg-background shadow-2xl"
-              >
-                <div className="flex shrink-0 items-center justify-between border-b border-border/65 px-3 py-2">
-                  <button
-                    aria-label={closeMobileChatLabel}
-                    className="flex flex-1 items-center justify-center py-1"
-                    onClick={() => onChatDrawerOpenChange(false)}
-                    type="button"
-                  >
-                    <span className="h-1 w-10 rounded-full bg-muted-foreground/35" />
-                  </button>
-                  <Button
-                    aria-label={closeMobileChatLabel}
-                    className="ml-2 h-8 w-8"
-                    onClick={() => onChatDrawerOpenChange(false)}
-                    size="icon"
-                    title={closeMobileChatLabel}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  {chatPanel}
-                </div>
-              </aside>
-            </div>
-          ) : null}
-        </>
-      ) : isMobileViewport && !canChat ? (
-        <PermissionHidden>{copy.chatHidden}</PermissionHidden>
-      ) : null}
     </div>
   );
 }

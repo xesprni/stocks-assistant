@@ -16,10 +16,12 @@ import {
   Loader2,
   LogOut,
   Menu,
+  MessageSquareText,
   Monitor,
   Moon,
   Newspaper,
   Plug,
+  Search,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -1361,6 +1363,35 @@ function ConsoleApp() {
     setPage("config");
   }
 
+  const dashboardChatPanel = (
+    <ChatPage
+      chatScrollRef={chatScrollRef}
+      confirmAction={confirmDialog.confirm}
+      displayName={auth.user?.display_name || auth.user?.username || ""}
+      embedded
+      endRef={endRef}
+      expanded={isMobileViewport ? dashboardChatDrawerOpen : dashboardChatExpanded}
+      handleChatScroll={handleChatScroll}
+      handleSend={handleSend}
+      handleStopStreaming={handleStopStreaming}
+      isSending={isSending}
+      language={language}
+      messages={messages}
+      mobileNavVisible={false}
+      onToggleExpanded={() => {
+        if (isMobileViewport) {
+          setDashboardChatDrawerOpen(false);
+        } else {
+          setDashboardChatExpanded((current) => !current);
+        }
+      }}
+      prompt={prompt}
+      quickPrompts={quickPrompts}
+      chatHistory={chatHistory}
+      setPrompt={setPrompt}
+    />
+  );
+
   return (
     <div className="console-shell h-[100dvh] overflow-hidden">
       {confirmDialog.dialog}
@@ -1401,6 +1432,7 @@ function ConsoleApp() {
         <DesktopTopNav canPage={canPage} language={language} page={page} setPage={handleNavigate} />
         <MobileNav
           canPage={canPage}
+          hasDashboardBottomDock={page === "overview" && auth.can("chat:read")}
           isOpen={isMobileNavMenuOpen}
           language={language}
           onOpenChange={setIsMobileNavMenuOpen}
@@ -1415,7 +1447,9 @@ function ConsoleApp() {
             className={cn(
               "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-2 sm:p-4 lg:overflow-y-auto lg:pb-4",
               isMobileHeaderVisible && "mobile-header-spacer",
-              "pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.75rem+env(safe-area-inset-bottom))] lg:pb-4",
+              page === "overview"
+                ? "pb-[calc(7.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(7.75rem+env(safe-area-inset-bottom))] lg:pb-4"
+                : "pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.75rem+env(safe-area-inset-bottom))] lg:pb-4",
               page === "overview" && "xl:overflow-hidden",
             )}
             key={page}
@@ -1430,39 +1464,10 @@ function ConsoleApp() {
               {page === "overview" ? (
                 <DashboardPage
                   canPermission={auth.can}
-                  chatDrawerOpen={dashboardChatDrawerOpen}
                   chatExpanded={dashboardChatExpanded}
-                  chatPanel={(
-                    <ChatPage
-                      chatScrollRef={chatScrollRef}
-                      confirmAction={confirmDialog.confirm}
-                      displayName={auth.user?.display_name || auth.user?.username || ""}
-                      embedded
-                      endRef={endRef}
-                      expanded={isMobileViewport ? dashboardChatDrawerOpen : dashboardChatExpanded}
-                      handleChatScroll={handleChatScroll}
-                      handleSend={handleSend}
-                      handleStopStreaming={handleStopStreaming}
-                      isSending={isSending}
-                      language={language}
-                      messages={messages}
-                      mobileNavVisible={false}
-                      onToggleExpanded={() => {
-                        if (isMobileViewport) {
-                          setDashboardChatDrawerOpen(false);
-                        } else {
-                          setDashboardChatExpanded((current) => !current);
-                        }
-                      }}
-                      prompt={prompt}
-                      quickPrompts={quickPrompts}
-                      chatHistory={chatHistory}
-                      setPrompt={setPrompt}
-                    />
-                  )}
+                  chatPanel={dashboardChatPanel}
                   isMobileViewport={isMobileViewport}
                   language={language}
-                  onChatDrawerOpenChange={setDashboardChatDrawerOpen}
                   onOpenChart={(symbol) => {
                     setSelectedSymbol(symbol);
                     setPage("watchlist");
@@ -1567,8 +1572,94 @@ function ConsoleApp() {
             </Suspense>
           </main>
         </div>
+        {page === "overview" && isMobileViewport && auth.can("chat:read") ? (
+          <DashboardMobileChatDock
+            chatPanel={dashboardChatPanel}
+            isOpen={dashboardChatDrawerOpen}
+            language={language}
+            onOpenChange={setDashboardChatDrawerOpen}
+          />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function DashboardMobileChatDock({
+  chatPanel,
+  isOpen,
+  language,
+  onOpenChange,
+}: {
+  chatPanel: ReactNode;
+  isOpen: boolean;
+  language: AppLanguage;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const mobileChatLabel = language === "en" ? "Search or ask" : "搜索或提问";
+  const closeMobileChatLabel = language === "en" ? "Close AI drawer" : "关闭 AI 抽屉";
+
+  return (
+    <>
+      {!isOpen ? (
+        <div className="dashboard-chat-searchbar fixed inset-x-0 bottom-0 z-[920] px-3 pb-[calc(0.85rem+env(safe-area-inset-bottom))] pt-3 lg:hidden">
+          <button
+            aria-label={mobileChatLabel}
+            className="flex h-16 w-full items-center gap-3 rounded-[2rem] border border-border/75 bg-card px-4 text-left text-lg font-semibold text-muted-foreground shadow-[0_-10px_30px_hsl(var(--background)_/_0.75),0_14px_34px_hsl(var(--foreground)_/_0.13)] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            onClick={() => onOpenChange(true)}
+            title={mobileChatLabel}
+            type="button"
+          >
+            <span className="grid size-10 shrink-0 place-items-center rounded-full text-muted-foreground">
+              <Search className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1 truncate">{mobileChatLabel}</span>
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted/55 text-muted-foreground">
+              <MessageSquareText className="size-4" />
+            </span>
+          </button>
+        </div>
+      ) : null}
+      {isOpen ? (
+        <div className="dashboard-chat-drawer-layer fixed inset-0 z-[950] lg:hidden">
+          <button
+            aria-label={closeMobileChatLabel}
+            className="absolute inset-0 bg-background/45 backdrop-blur-[2px]"
+            onClick={() => onOpenChange(false)}
+            type="button"
+          />
+          <aside
+            aria-label={mobileChatLabel}
+            className="dashboard-chat-drawer absolute inset-x-0 bottom-0 flex h-[min(86dvh,46rem)] min-h-[28rem] flex-col overflow-hidden rounded-t-2xl border border-border/80 bg-background shadow-2xl"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-border/65 px-3 py-2">
+              <button
+                aria-label={closeMobileChatLabel}
+                className="flex flex-1 items-center justify-center py-1"
+                onClick={() => onOpenChange(false)}
+                type="button"
+              >
+                <span className="h-1 w-10 rounded-full bg-muted-foreground/35" />
+              </button>
+              <Button
+                aria-label={closeMobileChatLabel}
+                className="ml-2 h-8 w-8"
+                onClick={() => onOpenChange(false)}
+                size="icon"
+                title={closeMobileChatLabel}
+                type="button"
+                variant="ghost"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <Suspense fallback={<PageFallback />}>{chatPanel}</Suspense>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -1988,6 +2079,7 @@ function DesktopTopNav({
 
 function MobileNav({
   canPage,
+  hasDashboardBottomDock,
   isOpen,
   language,
   onOpenChange,
@@ -1995,6 +2087,7 @@ function MobileNav({
   setPage,
 }: {
   canPage: (page: Page) => boolean;
+  hasDashboardBottomDock: boolean;
   isOpen: boolean;
   language: AppLanguage;
   onOpenChange: (open: boolean) => void;
@@ -2030,7 +2123,12 @@ function MobileNav({
           />
           <nav
             aria-label={copy.navigation}
-            className="mobile-nav-popover absolute bottom-[calc(5rem+env(safe-area-inset-bottom))] right-3 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-border/80 bg-popover p-3 text-popover-foreground shadow-2xl"
+            className={cn(
+              "mobile-nav-popover absolute right-3 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-border/80 bg-popover p-3 text-popover-foreground shadow-2xl",
+              hasDashboardBottomDock
+                ? "bottom-[calc(10.5rem+env(safe-area-inset-bottom))]"
+                : "bottom-[calc(5rem+env(safe-area-inset-bottom))]",
+            )}
           >
             <div className="mb-2 flex items-center justify-between gap-3">
               <p className="text-sm font-semibold">{copy.pageSwitch}</p>
@@ -2081,7 +2179,12 @@ function MobileNav({
       <button
         aria-expanded={isOpen}
         aria-label={openLabel}
-        className="mobile-nav-fab fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-3 z-[940] grid size-14 place-items-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-[0_16px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden"
+        className={cn(
+          "mobile-nav-fab fixed right-3 z-[940] grid size-14 place-items-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-[0_16px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden",
+          hasDashboardBottomDock
+            ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))]"
+            : "bottom-[calc(1rem+env(safe-area-inset-bottom))]",
+        )}
         onClick={() => onOpenChange(!isOpen)}
         title={openLabel}
         type="button"

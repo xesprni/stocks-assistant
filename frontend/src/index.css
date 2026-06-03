@@ -384,7 +384,7 @@
   }
 
   .mobile-nav-fab,
-  .dashboard-chat-dock {
+  .dashboard-chat-searchbar {
     touch-action: manipulation;
   }
 
@@ -395,8 +395,13 @@
     transform-origin: right bottom;
   }
 
-  .dashboard-chat-dock {
-    animation: mobile-popover-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  .dashboard-chat-searchbar {
+    background: linear-gradient(
+      180deg,
+      hsl(var(--background) / 0),
+      hsl(var(--background) / 0.92) 26%,
+      hsl(var(--background)) 100%
+    );
   }
 
   .dashboard-chat-drawer {
