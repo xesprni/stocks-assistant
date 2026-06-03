@@ -383,6 +383,28 @@
     color: hsl(var(--primary));
   }
 
+  .mobile-nav-fab,
+  .dashboard-chat-dock {
+    touch-action: manipulation;
+  }
+
+  .mobile-nav-popover {
+    animation: mobile-popover-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    backdrop-filter: blur(16px);
+    overscroll-behavior: contain;
+    transform-origin: right bottom;
+  }
+
+  .dashboard-chat-dock {
+    animation: mobile-popover-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .dashboard-chat-drawer {
+    animation: dashboard-chat-drawer-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    overscroll-behavior: contain;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
   .dashboard-hero {
     border: 0;
     background: transparent;
@@ -1283,6 +1305,28 @@
   to {
     opacity: 1;
     transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes mobile-popover-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0.5rem, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes dashboard-chat-drawer-in {
+  from {
+    opacity: 0.92;
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }
 

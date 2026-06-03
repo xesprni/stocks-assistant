@@ -15,6 +15,7 @@ import {
   Home,
   Loader2,
   LogOut,
+  Menu,
   Monitor,
   Moon,
   Newspaper,
@@ -86,10 +87,8 @@ type NavGroup = { id: string; label: string; items: NavItem[] };
 type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
 type TouchPoint = { x: number; y: number };
 
-const MOBILE_PRIMARY_PAGES: Page[] = ["overview", "watchlist", "portfolio"];
 const MOBILE_GESTURE_DELTA = 28;
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
-const MOBILE_NAV_VISIBLE_KEY = "stocks-assistant-mobile-nav-visible";
 const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
 
 const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
@@ -332,10 +331,6 @@ function getMoreNavGroups(language: AppLanguage): NavGroup[] {
   ];
 }
 
-function getNavItems(language: AppLanguage) {
-  return [...getPinnedNavItems(language), ...getNavGroups(language).flatMap((group) => group.items)];
-}
-
 function chatTime(language: AppLanguage = "zh") {
   return new Date().toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit" });
 }
@@ -555,20 +550,16 @@ function ConsoleApp() {
     if (stored === "true" || stored === "false") return stored === "true";
     return readStoredText(LEGACY_MOBILE_CHROME_HIDDEN_KEY, "") !== "true";
   });
-  const [isMobileNavVisible, setIsMobileNavVisible] = useState(() => {
-    const stored = readStoredText(MOBILE_NAV_VISIBLE_KEY, "");
-    if (stored === "true" || stored === "false") return stored === "true";
-    return readStoredText(LEGACY_MOBILE_CHROME_HIDDEN_KEY, "") !== "true";
-  });
+  const [isMobileNavMenuOpen, setIsMobileNavMenuOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => isMobileShellViewport());
   const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
+  const [dashboardChatDrawerOpen, setDashboardChatDrawerOpen] = useState(false);
   const [configInitialTab, setConfigInitialTab] = useState<ConfigTab>(() => configTabFromPath(window.location.pathname) ?? "model");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
   const mobileHeaderTouchPointRef = useRef<TouchPoint | null>(null);
   const mobileTopEdgeTouchPointRef = useRef<TouchPoint | null>(null);
-  const mobileNavTouchPointRef = useRef<TouchPoint | null>(null);
-  const mobileBottomEdgeTouchPointRef = useRef<TouchPoint | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const configAutoSaveTimerRef = useRef<number | null>(null);
   const configAutoSaveDraftRef = useRef<ConfigDraft | null>(null);
@@ -618,18 +609,19 @@ function ConsoleApp() {
   useEffect(() => {
     mobileHeaderTouchPointRef.current = null;
     mobileTopEdgeTouchPointRef.current = null;
-    mobileNavTouchPointRef.current = null;
-    mobileBottomEdgeTouchPointRef.current = null;
+    setIsMobileNavMenuOpen(false);
+    setDashboardChatDrawerOpen(false);
   }, [page]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1023px)");
     const handleChange = () => {
+      setIsMobileViewport(media.matches);
       if (!media.matches) {
         mobileHeaderTouchPointRef.current = null;
         mobileTopEdgeTouchPointRef.current = null;
-        mobileNavTouchPointRef.current = null;
-        mobileBottomEdgeTouchPointRef.current = null;
+        setIsMobileNavMenuOpen(false);
+        setDashboardChatDrawerOpen(false);
       }
     };
     handleChange();
@@ -698,38 +690,6 @@ function ConsoleApp() {
     }
   }
 
-  function handleMobileNavTouchStart(event: TouchEvent<HTMLElement>) {
-    if (!isMobileShellViewport()) return;
-    if (isInteractiveTouchTarget(event.target)) {
-      mobileNavTouchPointRef.current = null;
-      return;
-    }
-    mobileNavTouchPointRef.current = touchPointFromEvent(event);
-  }
-
-  function handleMobileNavTouchMove(event: TouchEvent<HTMLElement>) {
-    if (!isMobileShellViewport()) return;
-    const point = touchPointFromEvent(event);
-    if (verticalGesture(mobileNavTouchPointRef.current, point) === "down") {
-      setIsMobileNavVisible(false);
-      mobileNavTouchPointRef.current = point;
-    }
-  }
-
-  function handleBottomEdgeTouchStart(event: TouchEvent<HTMLButtonElement>) {
-    if (!isMobileShellViewport()) return;
-    mobileBottomEdgeTouchPointRef.current = touchPointFromEvent(event);
-  }
-
-  function handleBottomEdgeTouchMove(event: TouchEvent<HTMLButtonElement>) {
-    if (!isMobileShellViewport()) return;
-    const point = touchPointFromEvent(event);
-    if (verticalGesture(mobileBottomEdgeTouchPointRef.current, point) === "up") {
-      setIsMobileNavVisible(true);
-      mobileBottomEdgeTouchPointRef.current = point;
-    }
-  }
-
   const resolvedTheme = effectiveTheme(theme, systemPreference);
 
   useEffect(() => {
@@ -760,10 +720,6 @@ function ConsoleApp() {
   useEffect(() => {
     writeStoredBoolean(MOBILE_HEADER_VISIBLE_KEY, isMobileHeaderVisible);
   }, [isMobileHeaderVisible]);
-
-  useEffect(() => {
-    writeStoredBoolean(MOBILE_NAV_VISIBLE_KEY, isMobileNavVisible);
-  }, [isMobileNavVisible]);
 
   useEffect(() => {
     let mounted = true;
@@ -1428,7 +1384,7 @@ function ConsoleApp() {
           language={language}
           onHideMobileChrome={() => {
             setIsMobileHeaderVisible(false);
-            setIsMobileNavVisible(false);
+            setIsMobileNavMenuOpen(false);
           }}
           onHome={() => setPage("overview")}
           onLogout={auth.logout}
@@ -1445,14 +1401,9 @@ function ConsoleApp() {
         <DesktopTopNav canPage={canPage} language={language} page={page} setPage={handleNavigate} />
         <MobileNav
           canPage={canPage}
-          isVisible={isMobileNavVisible}
+          isOpen={isMobileNavMenuOpen}
           language={language}
-          onBottomEdgeTouchMove={handleBottomEdgeTouchMove}
-          onBottomEdgeTouchStart={handleBottomEdgeTouchStart}
-          onHide={() => setIsMobileNavVisible(false)}
-          onNavTouchMove={handleMobileNavTouchMove}
-          onNavTouchStart={handleMobileNavTouchStart}
-          onShow={() => setIsMobileNavVisible(true)}
+          onOpenChange={setIsMobileNavMenuOpen}
           page={page}
           setPage={handleNavigate}
         />
@@ -1464,9 +1415,7 @@ function ConsoleApp() {
             className={cn(
               "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-2 sm:p-4 lg:overflow-y-auto lg:pb-4",
               isMobileHeaderVisible && "mobile-header-spacer",
-              isMobileNavVisible
-                ? "pb-[calc(4.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(5rem+env(safe-area-inset-bottom))]"
-                : "pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]",
+              "pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.75rem+env(safe-area-inset-bottom))] lg:pb-4",
               page === "overview" && "xl:overflow-hidden",
             )}
             key={page}
@@ -1481,6 +1430,7 @@ function ConsoleApp() {
               {page === "overview" ? (
                 <DashboardPage
                   canPermission={auth.can}
+                  chatDrawerOpen={dashboardChatDrawerOpen}
                   chatExpanded={dashboardChatExpanded}
                   chatPanel={(
                     <ChatPage
@@ -1489,22 +1439,30 @@ function ConsoleApp() {
                       displayName={auth.user?.display_name || auth.user?.username || ""}
                       embedded
                       endRef={endRef}
-                      expanded={dashboardChatExpanded}
+                      expanded={isMobileViewport ? dashboardChatDrawerOpen : dashboardChatExpanded}
                       handleChatScroll={handleChatScroll}
                       handleSend={handleSend}
                       handleStopStreaming={handleStopStreaming}
                       isSending={isSending}
                       language={language}
                       messages={messages}
-                      mobileNavVisible={isMobileNavVisible}
-                      onToggleExpanded={() => setDashboardChatExpanded((current) => !current)}
+                      mobileNavVisible={false}
+                      onToggleExpanded={() => {
+                        if (isMobileViewport) {
+                          setDashboardChatDrawerOpen(false);
+                        } else {
+                          setDashboardChatExpanded((current) => !current);
+                        }
+                      }}
                       prompt={prompt}
                       quickPrompts={quickPrompts}
                       chatHistory={chatHistory}
                       setPrompt={setPrompt}
                     />
                   )}
+                  isMobileViewport={isMobileViewport}
                   language={language}
+                  onChatDrawerOpenChange={setDashboardChatDrawerOpen}
                   onOpenChart={(symbol) => {
                     setSelectedSymbol(symbol);
                     setPage("watchlist");
@@ -1655,7 +1613,7 @@ function Header({
     { value: "dark", label: themeLabels.dark, icon: <Moon /> },
     { value: "light", label: themeLabels.light, icon: <Sun /> },
   ];
-  const hideMobileChromeLabel = language === "en" ? "Hide header and bottom navigation" : "隐藏顶部和底部导航";
+  const hideMobileChromeLabel = language === "en" ? "Hide header" : "隐藏顶部栏";
 
   return (
     <header
@@ -2030,88 +1988,105 @@ function DesktopTopNav({
 
 function MobileNav({
   canPage,
-  isVisible,
+  isOpen,
   language,
-  onBottomEdgeTouchMove,
-  onBottomEdgeTouchStart,
-  onHide,
-  onNavTouchMove,
-  onNavTouchStart,
-  onShow,
+  onOpenChange,
   page,
   setPage,
 }: {
   canPage: (page: Page) => boolean;
-  isVisible: boolean;
+  isOpen: boolean;
   language: AppLanguage;
-  onBottomEdgeTouchMove: (event: TouchEvent<HTMLButtonElement>) => void;
-  onBottomEdgeTouchStart: (event: TouchEvent<HTMLButtonElement>) => void;
-  onHide: () => void;
-  onNavTouchMove: (event: TouchEvent<HTMLElement>) => void;
-  onNavTouchStart: (event: TouchEvent<HTMLElement>) => void;
-  onShow: () => void;
+  onOpenChange: (open: boolean) => void;
   page: Page;
   setPage: (page: Page) => void;
 }) {
-  const navItems = getNavItems(language).filter((item) => canPage(item.id));
-  const primaryItems = MOBILE_PRIMARY_PAGES
-    .map((id) => navItems.find((item) => item.id === id))
-    .filter((item): item is NavItem => Boolean(item));
+  const primaryItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
+  const secondaryGroups = getMoreNavGroups(language)
+    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
+    .filter((group) => group.items.length > 0);
+  const groups: NavGroup[] = [
+    { id: "primary", label: i18n[language].groups.pinned, items: primaryItems },
+    ...secondaryGroups,
+  ].filter((group) => group.items.length > 0);
   const copy = i18n[language].shell;
-  const showNavLabel = language === "en" ? "Show bottom navigation" : "显示底部导航";
-  const hideNavLabel = language === "en" ? "Hide bottom navigation" : "隐藏底部导航";
+  const openLabel = language === "en" ? "Open navigation" : "打开导航";
+  const closeLabel = language === "en" ? "Close navigation" : "关闭导航";
 
   function navigate(nextPage: Page) {
     setPage(nextPage);
+    onOpenChange(false);
   }
 
   return (
     <>
-      <nav
-        className={cn(
-          "panel app-mobile-nav fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 gap-1 rounded-none border-x-0 border-b-0 px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-none lg:hidden",
-          !isVisible && "mobile-nav-hidden",
-        )}
-        aria-label={copy.navigation}
-        onTouchMove={onNavTouchMove}
-        onTouchStart={onNavTouchStart}
-      >
-        <Button
-          aria-label={hideNavLabel}
-          className="absolute -top-3.5 right-2 h-7 w-7 rounded-full border-border/90 bg-card/95 shadow-md backdrop-blur"
-          onClick={onHide}
-          size="icon"
-          title={hideNavLabel}
-          type="button"
-          variant="outline"
-        >
-          <ChevronDown className="size-3.5" />
-        </Button>
-        {primaryItems.map((item) => (
+      {isOpen ? (
+        <div className="mobile-nav-layer fixed inset-0 z-[930] lg:hidden">
           <button
-            className={cn(
-              "nav-item flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold transition-colors",
-              page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground",
-            )}
-            key={item.id}
-            onClick={() => navigate(item.id)}
+            aria-label={closeLabel}
+            className="absolute inset-0 bg-background/30 backdrop-blur-[1px]"
+            onClick={() => onOpenChange(false)}
             type="button"
+          />
+          <nav
+            aria-label={copy.navigation}
+            className="mobile-nav-popover absolute bottom-[calc(5rem+env(safe-area-inset-bottom))] right-3 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-border/80 bg-popover p-3 text-popover-foreground shadow-2xl"
           >
-            <span className="[&_svg]:size-4">{item.icon}</span>
-            <span className="max-w-full truncate">{item.label}</span>
-          </button>
-        ))}
-      </nav>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">{copy.pageSwitch}</p>
+              <Button
+                aria-label={closeLabel}
+                className="h-8 w-8"
+                onClick={() => onOpenChange(false)}
+                size="icon"
+                title={closeLabel}
+                type="button"
+                variant="ghost"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div className="max-h-[min(62dvh,31rem)] space-y-3 overflow-y-auto pr-1">
+              {groups.map((group) => (
+                <div className="min-w-0" key={group.id}>
+                  <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {group.items.map((item) => (
+                      <button
+                        aria-current={page === item.id ? "page" : undefined}
+                        className={cn(
+                          "flex min-h-14 min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
+                          page === item.id
+                            ? "bg-primary/12 text-primary"
+                            : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                        )}
+                        key={item.id}
+                        onClick={() => navigate(item.id)}
+                        type="button"
+                      >
+                        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-background/70 [&_svg]:size-4">{item.icon}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold">{item.label}</span>
+                          <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </nav>
+        </div>
+      ) : null}
       <button
-        aria-label={showNavLabel}
-        className={cn("app-bottom-edge-trigger lg:hidden", isVisible && "pointer-events-none opacity-0")}
-        onClick={onShow}
-        onTouchMove={onBottomEdgeTouchMove}
-        onTouchStart={onBottomEdgeTouchStart}
-        tabIndex={isVisible ? -1 : 0}
+        aria-expanded={isOpen}
+        aria-label={openLabel}
+        className="mobile-nav-fab fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-3 z-[940] grid size-14 place-items-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-[0_16px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden"
+        onClick={() => onOpenChange(!isOpen)}
+        title={openLabel}
         type="button"
       >
-        <span className="app-edge-grabber" />
+        <Menu className="size-5" />
       </button>
     </>
   );
