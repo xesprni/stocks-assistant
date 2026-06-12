@@ -25,6 +25,7 @@ import {
 } from "@/components/charts/NativeStockChart";
 import { getCandlesticks, getIntraday, listWatchlist } from "@/lib/api";
 import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
+import { cn } from "@/lib/utils";
 import type { CandlestickItem, IntradayItem, WatchlistItem } from "@/types/app";
 import {
   calcMA,
@@ -55,6 +56,7 @@ interface Props {
   onSymbolChange: (s: string) => void;
   onBack?: () => void;
   embedded?: boolean;
+  watchlistChangeRate?: string | null;
 }
 
 type AppLanguage = "zh" | "en";
@@ -84,6 +86,7 @@ const technicalCopy = {
     capitalFlow: "资金",
     subIndicators: "副图",
     overlays: "叠加",
+    changeRate: "涨跌幅",
   },
   en: {
     title: "Technical Analysis",
@@ -109,6 +112,7 @@ const technicalCopy = {
     capitalFlow: "Flow",
     subIndicators: "Sub",
     overlays: "Overlay",
+    changeRate: "Change %",
   },
 } as const;
 
@@ -116,6 +120,58 @@ type TechnicalCopy = (typeof technicalCopy)[AppLanguage];
 
 function formatTemplate(text: string, values: Record<string, string | number>) {
   return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
+}
+
+function parsePercentValue(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = Number(value.replace(/[%$,]/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function changeRate(current: number | null | undefined, base: number | null | undefined) {
+  if (current == null || base == null || !Number.isFinite(current) || !Number.isFinite(base) || base === 0) return null;
+  return ((current - base) / base) * 100;
+}
+
+function formatSignedPercent(rate: number | null, language: AppLanguage) {
+  if (rate == null || !Number.isFinite(rate)) return "-";
+  const sign = rate > 0 ? "+" : rate < 0 ? "" : "";
+  return `${sign}${rate.toLocaleString(language === "en" ? "en-US" : "zh-CN", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}%`;
+}
+
+function toneForRate(rate: number | null) {
+  if (rate == null || rate === 0) return "flat";
+  return rate > 0 ? "up" : "down";
+}
+
+function ChartRateBadge({
+  label,
+  language,
+  rate,
+}: {
+  label: string;
+  language: AppLanguage;
+  rate: number | null;
+}) {
+  const tone = toneForRate(rate);
+
+  return (
+    <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-muted/20 px-2 text-[10px] tabular-nums text-muted-foreground">
+      <span>{label}</span>
+      <span
+        className={cn(
+          "font-semibold text-foreground",
+          tone === "up" && "text-[var(--color-up)]",
+          tone === "down" && "text-[var(--color-down)]",
+        )}
+      >
+        {formatSignedPercent(rate, language)}
+      </span>
+    </span>
+  );
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -546,6 +602,7 @@ function KLineChart({
   symbol,
   activeIndicators,
   copy,
+  language,
   isDark,
   onParsedBars,
   onVisibleRangeChange,
@@ -553,6 +610,7 @@ function KLineChart({
   symbol: string;
   activeIndicators: Set<IndicatorKey>;
   copy: TechnicalCopy;
+  language: AppLanguage;
   isDark: boolean;
   onParsedBars: (bars: ReturnType<typeof parseBars>) => void;
   onVisibleRangeChange: (range: { min: number; max: number } | null) => void;
@@ -582,6 +640,11 @@ function KLineChart({
     [activeIndicators, bars, theme],
   );
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
+  const latestChangeRate = useMemo(() => {
+    const latest = bars[bars.length - 1];
+    const previous = bars[bars.length - 2];
+    return latest && previous ? changeRate(latest.close, previous.close) : null;
+  }, [bars]);
 
   const loadMore = useCallback(() => {
     if (!symbolRef.current || isLoadingMoreRef.current || allDataLoadedRef.current || bars.length === 0) return;
@@ -668,7 +731,7 @@ function KLineChart({
 
   return (
     <div className="technical-chart-panel flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border bg-background px-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-background px-3 py-1">
         <div className="flex h-8 items-center gap-1 border-b border-border/70">
           {(["1D", "1W", "1M"] as Period[]).map((p) => (
             <button
@@ -695,11 +758,14 @@ function KLineChart({
             <span className="h-px w-3 bg-purple-600" />MA20
           </span>
         </div>
-        {loading && (
-          <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-            <RefreshCw size={10} className="animate-spin" />{copy.loading}
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <ChartRateBadge label={copy.changeRate} language={language} rate={latestChangeRate} />
+          {loading && (
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <RefreshCw size={10} className="animate-spin" />{copy.loading}
+            </span>
+          )}
+        </div>
       </div>
       <NativeStockChart
         times={times}
@@ -751,11 +817,13 @@ function IntradayCharts({
   copy,
   language,
   isDark,
+  watchlistChangeRate,
 }: {
   symbol: string;
   copy: TechnicalCopy;
   language: AppLanguage;
   isDark: boolean;
+  watchlistChangeRate?: string | null;
 }) {
   const { upColor, downColor } = useChartColors();
   const theme = useNativeChartTheme(isDark, upColor, downColor);
@@ -807,6 +875,13 @@ function IntradayCharts({
 
   const chartModel = useMemo(() => buildIntradayChartModel(bars, theme), [bars, theme]);
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
+  const latestChangeRate = useMemo(() => {
+    const quotedRate = parsePercentValue(watchlistChangeRate);
+    if (quotedRate != null) return quotedRate;
+    const latest = bars[bars.length - 1];
+    const first = bars[0];
+    return latest && first ? changeRate(latest.price, first.price) : null;
+  }, [bars, watchlistChangeRate]);
 
   const load = useCallback((mode: "full" | "incremental" = "incremental") => {
     if (!symbol) return;
@@ -855,9 +930,10 @@ function IntradayCharts({
 
   return (
     <div className="technical-chart-panel technical-intraday-panel flex min-h-[560px] flex-1 flex-col bg-background lg:min-h-0">
-      <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-1.5">
         <span className="border-l-2 border-primary/60 pl-1.5 text-[10px] font-medium text-muted-foreground">VOL</span>
         <span className="border-l-2 border-secondary/70 pl-1.5 text-[10px] font-medium text-muted-foreground">MACD</span>
+        <ChartRateBadge label={copy.changeRate} language={language} rate={latestChangeRate} />
         <label className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
           <input
             type="checkbox"
@@ -1038,7 +1114,7 @@ const OVERLAY_INDICATORS: { key: OverlayIndicatorKey; label: string; color: stri
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function TechnicalAnalysis({ language, symbol, onSymbolChange, onBack, embedded = false }: Props) {
+export default function TechnicalAnalysis({ language, symbol, onSymbolChange, onBack, embedded = false, watchlistChangeRate }: Props) {
   const copy = technicalCopy[language];
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
@@ -1205,6 +1281,7 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                   symbol={symbol}
                   activeIndicators={activeIndicators}
                   copy={copy}
+                  language={language}
                   isDark={isDark}
                   onParsedBars={setParsedBars}
                   onVisibleRangeChange={setVisiblePriceRange}
@@ -1218,7 +1295,13 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
             </div>
           ) : activeTab === "intraday" ? (
             /* Intraday mode */
-            <IntradayCharts symbol={symbol} copy={copy} language={language} isDark={isDark} />
+            <IntradayCharts
+              symbol={symbol}
+              copy={copy}
+              language={language}
+              isDark={isDark}
+              watchlistChangeRate={watchlistChangeRate}
+            />
           ) : (
             <CapitalFlowChart
               chartClassName="min-h-[500px]"

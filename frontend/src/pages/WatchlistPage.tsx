@@ -160,7 +160,6 @@ function SortableWatchlistItem({
           <p className="truncate text-sm font-semibold sm:text-base">{item.symbol}</p>
           <p className="truncate text-xs text-muted-foreground sm:text-sm">{stockName(item)}</p>
         </div>
-        <WatchlistChangePill copy={copy} item={item} />
         <RowActions
           category={item.category}
           copy={copy}
@@ -199,7 +198,6 @@ function WatchlistDragPreview({
           <p className="truncate text-sm font-semibold">{item.symbol}</p>
           <p className="truncate text-xs text-muted-foreground">{stockName(item)}</p>
         </div>
-        <WatchlistChangePill copy={copy} item={item} compact />
         <Badge className="h-5 px-1.5 text-[10px]" variant="outline">{item.category}</Badge>
         <span className="sr-only">{copy.dragSort}</span>
       </div>
@@ -306,6 +304,10 @@ export function WatchlistPage({
   const activeDragItem = useMemo(
     () => items.find((item) => item.id === activeDragId) ?? null,
     [activeDragId, items],
+  );
+  const activeItem = useMemo(
+    () => items.find((item) => item.symbol === activeSymbol) ?? null,
+    [activeSymbol, items],
   );
 
   useEffect(() => {
@@ -646,6 +648,7 @@ export function WatchlistPage({
               embedded
               language={language}
               symbol={activeSymbol}
+              watchlistChangeRate={activeItem?.change_rate}
               onSymbolChange={handleSelectSymbol}
             />
           ) : (
@@ -751,39 +754,6 @@ function SoftState({ children, icon }: { children: React.ReactNode; icon?: React
   );
 }
 
-function WatchlistChangePill({
-  compact = false,
-  copy,
-  item,
-}: {
-  compact?: boolean;
-  copy: typeof i18n.zh.watchlist;
-  item: Pick<WatchlistItem, "change_rate" | "change_value">;
-}) {
-  const tone = rateTone(item.change_rate || item.change_value);
-  const value = formatQuoteValue(item.change_rate);
-
-  return (
-    <div
-      className={cn(
-        "min-w-[4.7rem] shrink-0 rounded-md bg-muted/25 px-2 py-1 text-right tabular-nums",
-        compact && "min-w-[4.2rem]",
-      )}
-    >
-      <p className="truncate text-[10px] uppercase text-muted-foreground">{copy.rate}</p>
-      <p
-        className={cn(
-          "mt-0.5 truncate text-xs font-semibold",
-          tone === "up" && "text-[var(--color-up)]",
-          tone === "down" && "text-[var(--color-down)]",
-        )}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "down" | "flat"; value: string }) {
   return (
     <div className="rounded-md bg-muted/20 px-2 py-1.5">
@@ -799,10 +769,6 @@ function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "dow
       </p>
     </div>
   );
-}
-
-function formatQuoteValue(value: string | null | undefined) {
-  return value?.trim() || "-";
 }
 
 function stockName(item: NameParts) {
