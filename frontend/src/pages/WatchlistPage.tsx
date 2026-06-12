@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, Search, Sparkles, Star, Trash2 } from "lucide-react";
+import { BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addPortfolioItem, addWatchlistItem, deleteWatchlistItem, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
+import { addPortfolioItem, addWatchlistItem, deleteWatchlistItem, getWatchlistOverview, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -160,6 +160,7 @@ function SortableWatchlistItem({
           <p className="truncate text-sm font-semibold sm:text-base">{item.symbol}</p>
           <p className="truncate text-xs text-muted-foreground sm:text-sm">{stockName(item)}</p>
         </div>
+        <WatchlistChangePill copy={copy} item={item} />
         <RowActions
           category={item.category}
           copy={copy}
@@ -198,6 +199,7 @@ function WatchlistDragPreview({
           <p className="truncate text-sm font-semibold">{item.symbol}</p>
           <p className="truncate text-xs text-muted-foreground">{stockName(item)}</p>
         </div>
+        <WatchlistChangePill copy={copy} item={item} compact />
         <Badge className="h-5 px-1.5 text-[10px]" variant="outline">{item.category}</Badge>
         <span className="sr-only">{copy.dragSort}</span>
       </div>
@@ -285,6 +287,7 @@ export function WatchlistPage({
   const [results, setResults] = useState<WatchlistSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isRefreshingQuotes, setIsRefreshingQuotes] = useState(false);
   const [message, setMessage] = useState("");
 
   const searchControllerRef = useRef<AbortController | null>(null);
@@ -445,6 +448,31 @@ export function WatchlistPage({
     }
   }
 
+  async function handleRefreshQuotes() {
+    setMessage("");
+    setIsRefreshingQuotes(true);
+    try {
+      const response = await getWatchlistOverview();
+      const nextItems = response.items.filter((item) => item.category === category);
+      setItems(nextItems);
+      if (activeSymbol && !nextItems.some((item) => item.symbol === activeSymbol)) {
+        setActiveSymbol("");
+        onSelectedSymbolChange?.("");
+      }
+      if (response.quote_error || response.error) {
+        setMessage(response.quote_error || response.error || copy.overviewFailed);
+        return;
+      }
+      const time = formatQuoteTime(response.fetched_at, language);
+      const source = quoteSourceLabel(response.source, copy);
+      setMessage(formatTemplate(copy.quotesUpdated, { time, source }));
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : copy.overviewFailed);
+    } finally {
+      setIsRefreshingQuotes(false);
+    }
+  }
+
   function handleDragStart(event: DragStartEvent) {
     const initialRect = event.active.rect.current.initial;
     setActiveDragId(event.active.id);
@@ -520,6 +548,10 @@ export function WatchlistPage({
                 {formatTemplate(copy.dragHint, { hint: selectedCategory?.hint ?? category })}
               </p>
             </div>
+            <Button className="h-8 w-full justify-start sm:w-auto sm:justify-center" disabled={isRefreshingQuotes} onClick={handleRefreshQuotes} size="sm" type="button" variant="outline">
+              {isRefreshingQuotes ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {isRefreshingQuotes ? copy.quotesLoading : copy.refreshQuotes}
+            </Button>
 
             <form className="flex gap-2" onSubmit={(event) => event.preventDefault()}>
               <Input
@@ -719,6 +751,39 @@ function SoftState({ children, icon }: { children: React.ReactNode; icon?: React
   );
 }
 
+function WatchlistChangePill({
+  compact = false,
+  copy,
+  item,
+}: {
+  compact?: boolean;
+  copy: typeof i18n.zh.watchlist;
+  item: Pick<WatchlistItem, "change_rate" | "change_value">;
+}) {
+  const tone = rateTone(item.change_rate || item.change_value);
+  const value = formatQuoteValue(item.change_rate);
+
+  return (
+    <div
+      className={cn(
+        "min-w-[4.7rem] shrink-0 rounded-md bg-muted/25 px-2 py-1 text-right tabular-nums",
+        compact && "min-w-[4.2rem]",
+      )}
+    >
+      <p className="truncate text-[10px] uppercase text-muted-foreground">{copy.rate}</p>
+      <p
+        className={cn(
+          "mt-0.5 truncate text-xs font-semibold",
+          tone === "up" && "text-[var(--color-up)]",
+          tone === "down" && "text-[var(--color-down)]",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "down" | "flat"; value: string }) {
   return (
     <div className="rounded-md bg-muted/20 px-2 py-1.5">
@@ -736,22 +801,45 @@ function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "dow
   );
 }
 
+function formatQuoteValue(value: string | null | undefined) {
+  return value?.trim() || "-";
+}
+
 function stockName(item: NameParts) {
   return item.name || item.name_cn || item.name_hk || item.name_en || "-";
 }
 
-function watchlistSearchText(item: NameParts & { symbol: string; exchange?: string; currency?: string; note?: string }) {
-  return [item.symbol, item.name, item.name_cn, item.name_hk, item.name_en, item.exchange, item.currency, item.note]
+function watchlistSearchText(item: NameParts & { symbol: string; exchange?: string; currency?: string; note?: string; last_done?: string | null; change_value?: string | null; change_rate?: string | null }) {
+  return [item.symbol, item.name, item.name_cn, item.name_hk, item.name_en, item.exchange, item.currency, item.note, item.last_done, item.change_value, item.change_rate]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
 }
 
-function rateTone(value: string | null): "up" | "down" | "flat" {
-  if (!value) return "flat";
-  if (value.startsWith("-")) return "down";
-  if (value !== "-" && value !== "0" && value !== "0.00%") return "up";
-  return "flat";
+function numericQuoteValue(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number(value.replace(/[%$,]/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function rateTone(value: string | null | undefined): "up" | "down" | "flat" {
+  const parsed = numericQuoteValue(value);
+  if (parsed === null || parsed === 0) return "flat";
+  if (parsed < 0) return "down";
+  return "up";
+}
+
+function formatQuoteTime(value: string | null | undefined, language: AppLanguage) {
+  if (!value) return new Date().toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" });
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function quoteSourceLabel(source: string | null | undefined, copy: typeof i18n.zh.watchlist) {
+  if (source === "cache") return copy.quoteSourceCache;
+  if (source === "live") return copy.quoteSourceLive;
+  return copy.quoteSourceLocal;
 }
 
 function inferCategoryFromSymbol(symbol: string): WatchlistCategory | null {
