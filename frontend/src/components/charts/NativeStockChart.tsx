@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import type { PointerEvent, WheelEvent } from "react";
+import type { PointerEvent } from "react";
 
 export interface NativeChartTheme {
   background: string;
@@ -903,7 +903,7 @@ export function NativeStockChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panes, cachedSeries, theme]);
 
-  const pointFromEvent = (event: PointerEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement>) => {
+  const pointFromEvent = (event: PointerEvent<HTMLCanvasElement> | WheelEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -983,6 +983,46 @@ export function NativeStockChart({
     updateCrosshair(center.x, center.y);
     return true;
   };
+
+  const handleWheel = (event: WheelEvent) => {
+    const current = dataRef.current;
+    if (current.times.length === 0 || layoutsRef.current.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = pointFromEvent(event);
+    const viewport = normalizeViewport(viewportRef.current, current.times.length);
+    const mapper = createXMapper(layoutsRef.current[0], viewport);
+    const deltaUnit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? Math.max(1, sizeRef.current.height)
+        : 1;
+    const deltaX = event.deltaX * deltaUnit;
+    const deltaY = event.deltaY * deltaUnit;
+    const horizontalBars = Math.abs(deltaX) > Math.abs(deltaY)
+      ? deltaX / Math.max(1, mapper.spacing)
+      : 0;
+    if (horizontalBars !== 0) {
+      setViewport({ from: viewport.from + horizontalBars, to: viewport.to + horizontalBars });
+      updateCrosshair(point.x, point.y);
+      return;
+    }
+    const center = clamp(mapper.xToIndex(point.x), 0, current.times.length - 1);
+    const currentCount = viewportCount(viewport);
+    const factor = Math.exp(clamp(deltaY, -180, 180) * 0.0022);
+    const nextCount = clamp(currentCount * factor, Math.min(MIN_VISIBLE_BARS, current.times.length), current.times.length);
+    const leftRatio = clamp((center - viewport.from) / currentCount, 0, 1);
+    const nextFrom = center - leftRatio * nextCount;
+    setViewport({ from: nextFrom, to: nextFrom + nextCount - 1 });
+    updateCrosshair(point.x, point.y);
+  };
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  });
 
   const finishPointer = (event: PointerEvent<HTMLCanvasElement>) => {
     clearLongPressTimer();
@@ -1093,30 +1133,6 @@ export function NativeStockChart({
             crosshairRef.current = null;
             scheduleDraw();
           }
-        }}
-        onWheel={(event) => {
-          const current = dataRef.current;
-          if (current.times.length === 0 || layoutsRef.current.length === 0) return;
-          event.preventDefault();
-          const point = pointFromEvent(event);
-          const viewport = normalizeViewport(viewportRef.current, current.times.length);
-          const mapper = createXMapper(layoutsRef.current[0], viewport);
-          const horizontalBars = Math.abs(event.deltaX) > Math.abs(event.deltaY)
-            ? event.deltaX / Math.max(1, mapper.spacing)
-            : 0;
-          if (horizontalBars !== 0) {
-            setViewport({ from: viewport.from + horizontalBars, to: viewport.to + horizontalBars });
-            updateCrosshair(point.x, point.y);
-            return;
-          }
-          const center = clamp(mapper.xToIndex(point.x), 0, current.times.length - 1);
-          const currentCount = viewportCount(viewport);
-          const factor = Math.exp(clamp(event.deltaY, -180, 180) * 0.0022);
-          const nextCount = clamp(currentCount * factor, Math.min(MIN_VISIBLE_BARS, current.times.length), current.times.length);
-          const leftRatio = clamp((center - viewport.from) / currentCount, 0, 1);
-          const nextFrom = center - leftRatio * nextCount;
-          setViewport({ from: nextFrom, to: nextFrom + nextCount - 1 });
-          updateCrosshair(point.x, point.y);
         }}
       />
     </div>

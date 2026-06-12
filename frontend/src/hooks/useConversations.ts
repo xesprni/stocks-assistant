@@ -23,10 +23,10 @@ export function useConversations() {
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem(ACTIVE_SESSION_KEY));
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
   const userMutationVersionRef = useRef(0);
   const conversationsRef = useRef<Conversation[]>([]);
   const activeIdRef = useRef<string | null>(activeId);
-  const pendingEmptyConversationRef = useRef<Promise<string> | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? null,
@@ -127,32 +127,23 @@ export function useConversations() {
     if (!firstMessage) {
       const active = conversationsRef.current.find((conversation) => conversation.id === activeIdRef.current);
       if (active && isEmptyConversation(active)) return active.id;
-      if (pendingEmptyConversationRef.current) return pendingEmptyConversationRef.current;
+      userMutationVersionRef.current += 1;
+      setLoadingConversationId(null);
+      rememberActive(null);
+      return "";
     }
 
     const title = titleFromMessage(firstMessage);
-    const createRequest = (async () => {
+    setIsCreatingConversation(true);
+    try {
       const conv = await createChatSession(title);
       userMutationVersionRef.current += 1;
       const next = { ...conv, title, messages: firstMessage ? [firstMessage] : conv.messages };
       mergeConversation(next);
       rememberActive(next.id);
       return next.id;
-    })();
-
-    if (firstMessage) {
-      return createRequest;
-    }
-
-    pendingEmptyConversationRef.current = createRequest;
-    setIsCreatingConversation(true);
-    try {
-      return await createRequest;
     } finally {
-      if (pendingEmptyConversationRef.current === createRequest) {
-        pendingEmptyConversationRef.current = null;
-        setIsCreatingConversation(false);
-      }
+      setIsCreatingConversation(false);
     }
   }
 
@@ -160,10 +151,16 @@ export function useConversations() {
     userMutationVersionRef.current += 1;
     rememberActive(id);
     const conv = conversations.find((c) => c.id === id);
-    if (!conv || conv.messages.length === 0) {
+    const needsDetail = !conv || (conv.messages.length === 0 && (conv.messageCount ?? 0) > 0);
+    if (needsDetail) {
+      setLoadingConversationId(id);
       loadConversation(id).catch(() => {
         // 留在当前本地列表，下一次刷新会重新同步。
+      }).finally(() => {
+        setLoadingConversationId((current) => (current === id ? null : current));
       });
+    } else {
+      setLoadingConversationId(null);
     }
   }
 
@@ -251,6 +248,7 @@ export function useConversations() {
     activeConversation,
     isLoading,
     isCreatingConversation,
+    isActiveConversationLoading: activeId != null && loadingConversationId === activeId,
     createConversation,
     switchConversation,
     addMessage,

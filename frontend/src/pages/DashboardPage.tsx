@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -1674,6 +1674,7 @@ export function DashboardPage({
   const [selectedWatchlistSymbol, setSelectedWatchlistSymbol] = useState("");
   const dashboardRef = useRef<DashboardResponse | null>(dashboard);
   const modulesAbortRef = useRef<AbortController | null>(null);
+  const [, startDashboardTransition] = useTransition();
 
   useEffect(() => {
     dashboardRef.current = dashboard;
@@ -1706,32 +1707,36 @@ export function DashboardPage({
       try {
         const module = await loader();
         if (signal.aborted) return;
-        setDashboardError("");
-        setDashboard((previous) => mergeDashboard(previous, { [key]: module } as Partial<DashboardResponse>));
-        setModuleStatus((previous) => ({
-          ...previous,
-          [key]: moduleStatusFromModule(module),
-        }));
+        startDashboardTransition(() => {
+          setDashboardError("");
+          setDashboard((previous) => mergeDashboard(previous, { [key]: module } as Partial<DashboardResponse>));
+          setModuleStatus((previous) => ({
+            ...previous,
+            [key]: moduleStatusFromModule(module),
+          }));
+        });
       } catch (caught) {
         if (signal.aborted) return;
         const message = caught instanceof Error ? caught.message : copy.loadFailed;
-        setModuleStatus((previous) => ({
-          ...previous,
-          [key]: {
-            ...previous[key],
-            loading: false,
-            refreshing: false,
-            error: message,
-            stale: true,
-          },
-        }));
+        startDashboardTransition(() => {
+          setModuleStatus((previous) => ({
+            ...previous,
+            [key]: {
+              ...previous[key],
+              loading: false,
+              refreshing: false,
+              error: message,
+              stale: true,
+            },
+          }));
+        });
       }
     });
 
     return Promise.allSettled(tasks).finally(() => {
       if (modulesAbortRef.current === controller) modulesAbortRef.current = null;
     });
-  }, [copy.loadFailed]);
+  }, [copy.loadFailed, startDashboardTransition]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1748,29 +1753,33 @@ export function DashboardPage({
     getDashboard("bootstrap", { signal: controller.signal })
       .then((response) => {
         if (controller.signal.aborted) return;
-        setDashboardError("");
-        setDashboard((previous) => mergeDashboard(previous, response));
-        setModuleStatus({
-          market: moduleStatusFromModule(response.market),
-          watchlist: moduleStatusFromModule(response.watchlist),
-          portfolio: moduleStatusFromModule(response.portfolio),
+        startDashboardTransition(() => {
+          setDashboardError("");
+          setDashboard((previous) => mergeDashboard(previous, response));
+          setModuleStatus({
+            market: moduleStatusFromModule(response.market),
+            watchlist: moduleStatusFromModule(response.watchlist),
+            portfolio: moduleStatusFromModule(response.portfolio),
+          });
         });
       })
       .catch((caught) => {
         if (controller.signal.aborted) return;
         const message = caught instanceof Error ? caught.message : copy.loadFailed;
-        setDashboardError(message);
-        setModuleStatus((previous) => {
-          const next = { ...previous };
-          for (const key of DASHBOARD_MODULE_KEYS) {
-            next[key] = {
-              ...next[key],
-              loading: false,
-              refreshing: false,
-              error: dashboardHasModuleData(dashboardRef.current, key) ? next[key].error : message,
-            };
-          }
-          return next;
+        startDashboardTransition(() => {
+          setDashboardError(message);
+          setModuleStatus((previous) => {
+            const next = { ...previous };
+            for (const key of DASHBOARD_MODULE_KEYS) {
+              next[key] = {
+                ...next[key],
+                loading: false,
+                refreshing: false,
+                error: dashboardHasModuleData(dashboardRef.current, key) ? next[key].error : message,
+              };
+            }
+            return next;
+          });
         });
       })
       .finally(() => {
@@ -1780,7 +1789,7 @@ export function DashboardPage({
     return () => {
       controller.abort();
     };
-  }, [copy.loadFailed, refreshModules]);
+  }, [copy.loadFailed, refreshModules, startDashboardTransition]);
 
   useEffect(() => () => modulesAbortRef.current?.abort(), []);
 

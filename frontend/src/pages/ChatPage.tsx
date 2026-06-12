@@ -469,6 +469,7 @@ export function ChatPage({
     clearMessages,
     clearAllConversations,
     isCreatingConversation,
+    isActiveConversationLoading,
   } = chatHistory;
   const chatCopy = i18n[language].chat;
   const common = i18n[language].common;
@@ -486,7 +487,7 @@ export function ChatPage({
     ? `Thinking mode ${thinkingEnabled ? "on" : "off"}`
     : `思考模式${thinkingEnabled ? "开启" : "关闭"}`;
   const isHistoryLoading = chatHistory.isLoading;
-  const isNewConversation = !isHistoryLoading && messages.length === 0 && !isSending;
+  const isNewConversation = !isHistoryLoading && !isActiveConversationLoading && messages.length === 0 && !isSending;
   const greeting = displayName
     ? formatTemplate(uiCopy.greeting, { name: displayName })
     : uiCopy.greetingAnonymous;
@@ -561,7 +562,7 @@ export function ChatPage({
   function handleNew() {
     resetThinkingMode();
     if (isSending || isCreatingConversation || isNewConversation) return;
-    createConversation().catch(() => {
+    void createConversation().catch(() => {
       // 新建失败时保留当前会话。
     });
   }
@@ -875,6 +876,14 @@ export function ChatPage({
           ref={chatScrollRef}
         >
           <div className="mr-auto w-full space-y-4">
+            {isActiveConversationLoading ? (
+              <div className="flex min-h-56 items-center justify-center">
+                <div className="flex items-center gap-2 rounded-md border border-border/75 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin text-primary" />
+                  {common.loading}
+                </div>
+              </div>
+            ) : null}
             {isNewConversation ? (
               <div className={cn("mx-auto w-full max-w-5xl space-y-10 py-6 sm:py-10", embedded && "space-y-5 py-2 sm:py-4")}>
                 <div className={cn("space-y-8", embedded && "space-y-4")}>
@@ -920,7 +929,7 @@ export function ChatPage({
                 </div>
               </div>
             ) : null}
-            {messages.map((message) => (
+            {!isActiveConversationLoading && messages.map((message) => (
               <div className={cn("group flex min-w-0 gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")} key={message.id}>
                 {message.role === "assistant" ? (
                   <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
