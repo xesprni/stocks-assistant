@@ -13,19 +13,37 @@ function titleFromMessage(message?: ChatMessage): string {
   return title.slice(0, 30) + (title.length > 30 ? "..." : "");
 }
 
+function isEmptyConversation(conversation: Conversation | null | undefined): boolean {
+  if (!conversation) return false;
+  return conversation.messages.length === 0 && !conversation.lastMessage && (conversation.messageCount ?? 0) === 0;
+}
+
 export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem(ACTIVE_SESSION_KEY));
   const [isLoading, setIsLoading] = useState(true);
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const userMutationVersionRef = useRef(0);
+  const conversationsRef = useRef<Conversation[]>([]);
+  const activeIdRef = useRef<string | null>(activeId);
+  const pendingEmptyConversationRef = useRef<Promise<string> | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? null,
     [conversations, activeId],
   );
 
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
   function rememberActive(id: string | null) {
     setActiveId(id);
+    activeIdRef.current = id;
     if (id) {
       localStorage.setItem(ACTIVE_SESSION_KEY, id);
     } else {
@@ -106,13 +124,36 @@ export function useConversations() {
   }, []);
 
   async function createConversation(firstMessage?: ChatMessage): Promise<string> {
+    if (!firstMessage) {
+      const active = conversationsRef.current.find((conversation) => conversation.id === activeIdRef.current);
+      if (active && isEmptyConversation(active)) return active.id;
+      if (pendingEmptyConversationRef.current) return pendingEmptyConversationRef.current;
+    }
+
     const title = titleFromMessage(firstMessage);
-    const conv = await createChatSession(title);
-    userMutationVersionRef.current += 1;
-    const next = { ...conv, title, messages: firstMessage ? [firstMessage] : conv.messages };
-    mergeConversation(next);
-    rememberActive(next.id);
-    return next.id;
+    const createRequest = (async () => {
+      const conv = await createChatSession(title);
+      userMutationVersionRef.current += 1;
+      const next = { ...conv, title, messages: firstMessage ? [firstMessage] : conv.messages };
+      mergeConversation(next);
+      rememberActive(next.id);
+      return next.id;
+    })();
+
+    if (firstMessage) {
+      return createRequest;
+    }
+
+    pendingEmptyConversationRef.current = createRequest;
+    setIsCreatingConversation(true);
+    try {
+      return await createRequest;
+    } finally {
+      if (pendingEmptyConversationRef.current === createRequest) {
+        pendingEmptyConversationRef.current = null;
+        setIsCreatingConversation(false);
+      }
+    }
   }
 
   function switchConversation(id: string) {
@@ -209,6 +250,7 @@ export function useConversations() {
     activeId,
     activeConversation,
     isLoading,
+    isCreatingConversation,
     createConversation,
     switchConversation,
     addMessage,

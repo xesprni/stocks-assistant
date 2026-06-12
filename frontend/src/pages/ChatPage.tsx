@@ -460,7 +460,16 @@ export function ChatPage({
   chatHistory: ChatHistoryState;
   setPrompt: (value: string) => void;
 }) {
-  const { conversations, activeId, createConversation, switchConversation, deleteConversation, clearMessages, clearAllConversations } = chatHistory;
+  const {
+    conversations,
+    activeId,
+    createConversation,
+    switchConversation,
+    deleteConversation,
+    clearMessages,
+    clearAllConversations,
+    isCreatingConversation,
+  } = chatHistory;
   const chatCopy = i18n[language].chat;
   const common = i18n[language].common;
   const uiCopy = i18n[language].chatUi;
@@ -551,7 +560,7 @@ export function ChatPage({
 
   function handleNew() {
     resetThinkingMode();
-    if (isNewConversation) return;
+    if (isSending || isCreatingConversation || isNewConversation) return;
     createConversation().catch(() => {
       // 新建失败时保留当前会话。
     });
@@ -675,14 +684,16 @@ export function ChatPage({
             <div className="flex shrink-0 items-center gap-1">
               <Button
                 aria-label={common.newChat}
+                aria-busy={isCreatingConversation}
                 className="h-10 w-10 shrink-0 rounded-2xl text-muted-foreground hover:text-foreground"
+                disabled={isSending || isCreatingConversation || isNewConversation}
                 onClick={handleNew}
                 size="icon"
                 title={common.newChat}
                 type="button"
                 variant="ghost"
               >
-                <Plus className="size-5" />
+                {isCreatingConversation ? <Loader2 className="size-5 animate-spin" /> : <Plus className="size-5" />}
               </Button>
               <Button
                 aria-label={thinkingLabel}
@@ -728,14 +739,16 @@ export function ChatPage({
             <div className="flex shrink-0 items-center gap-2">
               <Button
                 aria-label="新建对话"
+                aria-busy={isCreatingConversation}
                 className="h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12"
+                disabled={isSending || isCreatingConversation || isNewConversation}
                 onClick={handleNew}
                 size="icon"
                 title={common.newChat}
                 type="button"
                 variant="ghost"
               >
-                <PencilLine className="size-5" />
+                {isCreatingConversation ? <Loader2 className="size-5 animate-spin" /> : <PencilLine className="size-5" />}
               </Button>
               <div className="relative" ref={historyMenuRef}>
                 <Button

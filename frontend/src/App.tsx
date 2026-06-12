@@ -604,6 +604,7 @@ function ConsoleApp() {
   const mobileHeaderTouchPointRef = useRef<TouchPoint | null>(null);
   const mobileTopEdgeTouchPointRef = useRef<TouchPoint | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const isSendingRef = useRef(false);
   const configAutoSaveTimerRef = useRef<number | null>(null);
   const configAutoSaveDraftRef = useRef<ConfigDraft | null>(null);
   const configAutoSavePatchRef = useRef<Partial<ConfigDraft>>({});
@@ -803,7 +804,7 @@ function ConsoleApp() {
   ) {
     event?.preventDefault();
     const text = value.trim();
-    if (!text || isSending) return;
+    if (!text || isSendingRef.current) return;
 
     shouldAutoScrollChatRef.current = true;
     const createdAt = chatTime(language);
@@ -825,6 +826,7 @@ function ConsoleApp() {
 
     setPrompt("");
     setError("");
+    isSendingRef.current = true;
     setIsSending(true);
     setPage("overview");
 
@@ -1161,6 +1163,7 @@ function ConsoleApp() {
       if (streamAbortRef.current === abortController) {
         streamAbortRef.current = null;
       }
+      isSendingRef.current = false;
       setIsSending(false);
     }
   }
