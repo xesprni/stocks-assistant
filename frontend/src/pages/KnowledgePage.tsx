@@ -257,15 +257,7 @@ export function KnowledgePage({ language }: { language: AppLanguage }) {
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <BookOpen className="size-5 text-primary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           {tree ? <Badge variant="outline">{formatTemplate(copy.pagesBadge, { pages: tree.stats.pages, size: (tree.stats.size / 1024).toFixed(0) })}</Badge> : null}
           <Button size="sm" onClick={() => setShowImportPanel(true)} disabled={showImportPanel}>
             <Plus />
@@ -285,7 +277,6 @@ export function KnowledgePage({ language }: { language: AppLanguage }) {
               {formatTemplate(copy.graph, { count: totalNodes })}
             </button>
           </div>
-        </div>
       </div>
 
       {error ? (

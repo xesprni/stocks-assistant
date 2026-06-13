@@ -281,15 +281,7 @@ export function ConfigPage({
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full" onBlurCapture={onConfigBlur}>
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="size-5 text-secondary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <Badge variant="outline">{enabledCount}/4 ON</Badge>
           <Button
             aria-label={copy.reload}
@@ -305,7 +297,6 @@ export function ConfigPage({
             {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" ? <Check /> : <Save />}
             {configState === "saving" ? copy.saving : configState === "saved" ? copy.saved : copy.save}
           </Button>
-        </div>
       </div>
 
       {draft ? (

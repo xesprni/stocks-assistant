@@ -749,18 +749,6 @@ function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: D
   );
 }
 
-function DashboardHeader({ language }: { language: AppLanguage }) {
-  const copy = i18n[language].overview;
-  return (
-    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 pb-2">
-      <div className="min-w-0">
-        <h1 className="truncate text-lg font-semibold tracking-normal">{copy.title}</h1>
-        <p className="truncate text-xs text-muted-foreground">{copy.subtitle}</p>
-      </div>
-    </header>
-  );
-}
-
 function MarketSnapshot({
   error,
   indices,
@@ -1830,8 +1818,6 @@ export function DashboardPage({
 
   return (
     <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3 xl:h-full xl:overflow-hidden">
-      <DashboardHeader language={language} />
-
       <div
         className={cn(
           "dashboard-wide-grid grid min-h-0 gap-6 xl:flex-1 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",

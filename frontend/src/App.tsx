@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, TouchEvent } from "react";
+import type { ReactNode, TouchEvent } from "react";
 import {
   BookOpen,
   Bot,
@@ -11,12 +11,10 @@ import {
   CircleAlert,
   Clock,
   Cpu,
-  EyeOff,
   FileText,
   Home,
   Loader2,
   LogOut,
-  Menu,
   MessageSquareText,
   Monitor,
   Moon,
@@ -89,18 +87,10 @@ type NavItem = { id: Page; label: string; icon: ReactNode; hint: string };
 type NavGroup = { id: string; label: string; items: NavItem[] };
 type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
 type TouchPoint = { x: number; y: number };
-type MobileNavFabSide = "left" | "right";
-type MobileNavFabPosition = { side: MobileNavFabSide; top: number };
-type MobileNavFabDrag = { startX: number; startY: number; initialTop: number; hasMoved: boolean };
 
 const MOBILE_GESTURE_DELTA = 28;
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
 const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
-const MOBILE_NAV_FAB_VISIBLE_KEY = "stocks-assistant-mobile-nav-fab-visible";
-const MOBILE_NAV_FAB_POSITION_KEY = "stocks-assistant-mobile-nav-fab-position";
-const MOBILE_NAV_FAB_SIZE = 56;
-const MOBILE_NAV_FAB_MARGIN = 12;
-const MOBILE_NAV_FAB_DRAG_THRESHOLD = 8;
 
 const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   overview: "config:read",
@@ -265,58 +255,35 @@ function navItem(language: AppLanguage, id: Page, icon: ReactNode): NavItem {
   return { id, label, icon, hint };
 }
 
-function getPinnedNavItems(language: AppLanguage): NavItem[] {
-  return [
-    navItem(language, "overview", <Home />),
-    navItem(language, "watchlist", <Star />),
-    navItem(language, "portfolio", <BriefcaseBusiness />),
-    navItem(language, "fundamentals", <FileText />),
-    navItem(language, "news", <Newspaper />),
-    navItem(language, "scheduler", <Clock />),
-  ];
-}
-
-function getNavGroups(language: AppLanguage): NavGroup[] {
-  const groups = i18n[language].groups;
-  return [
-  {
-    id: "agents",
-    label: groups.agents,
-    items: [
-      navItem(language, "tracing", <Cpu />),
-      navItem(language, "skills", <Zap />),
-      navItem(language, "subagents", <Bot />),
-      navItem(language, "mcp", <Plug />),
-    ],
-  },
-  {
-    id: "workspace",
-    label: groups.workspace,
-    items: [
-      navItem(language, "memory", <BrainCircuit />),
-      navItem(language, "knowledge", <BookOpen />),
-    ],
-  },
-  {
-    id: "system",
-    label: groups.system,
-    items: [
-      navItem(language, "security", <ShieldCheck />),
-      navItem(language, "users", <UserCog />),
-      navItem(language, "config", <Settings2 />),
-    ],
-  },
-  ];
-}
-
-function getMoreNavGroups(language: AppLanguage): NavGroup[] {
+function getAccountNavGroups(language: AppLanguage): NavGroup[] {
   const groups = i18n[language].groups;
   return [
     {
-      id: "analysis",
-      label: groups.analysis,
+      id: "market",
+      label: groups.market,
+      items: [
+        navItem(language, "overview", <Home />),
+        navItem(language, "watchlist", <Star />),
+        navItem(language, "portfolio", <BriefcaseBusiness />),
+        navItem(language, "fundamentals", <FileText />),
+        navItem(language, "news", <Newspaper />),
+      ],
+    },
+    {
+      id: "automation",
+      label: groups.automation,
+      items: [
+        navItem(language, "scheduler", <Clock />),
+      ],
+    },
+    {
+      id: "agents",
+      label: groups.agents,
       items: [
         navItem(language, "tracing", <Cpu />),
+        navItem(language, "skills", <Zap />),
+        navItem(language, "subagents", <Bot />),
+        navItem(language, "mcp", <Plug />),
       ],
     },
     {
@@ -325,9 +292,6 @@ function getMoreNavGroups(language: AppLanguage): NavGroup[] {
       items: [
         navItem(language, "memory", <BrainCircuit />),
         navItem(language, "knowledge", <BookOpen />),
-        navItem(language, "skills", <Zap />),
-        navItem(language, "subagents", <Bot />),
-        navItem(language, "mcp", <Plug />),
       ],
     },
     {
@@ -441,38 +405,6 @@ function isTheme(value: string | null): value is Theme {
 
 function isMobileShellViewport(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
-}
-
-function clampMobileNavFabTop(top: number): number {
-  if (typeof window === "undefined") return top;
-  const maxTop = Math.max(MOBILE_NAV_FAB_MARGIN, window.innerHeight - MOBILE_NAV_FAB_SIZE - MOBILE_NAV_FAB_MARGIN);
-  return Math.min(Math.max(top, MOBILE_NAV_FAB_MARGIN), maxTop);
-}
-
-function readMobileNavFabPosition(): MobileNavFabPosition | null {
-  const raw = readStoredText(MOBILE_NAV_FAB_POSITION_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<MobileNavFabPosition>;
-    if ((parsed.side === "left" || parsed.side === "right") && typeof parsed.top === "number" && Number.isFinite(parsed.top)) {
-      return { side: parsed.side, top: clampMobileNavFabTop(parsed.top) };
-    }
-  } catch {
-    // 忽略旧版或损坏的本地位置，回退到默认右下角。
-  }
-  return null;
-}
-
-function writeMobileNavFabPosition(position: MobileNavFabPosition) {
-  writeStoredValue(MOBILE_NAV_FAB_POSITION_KEY, JSON.stringify(position));
-}
-
-function mobileNavFabPositionFromPointer(event: ReactPointerEvent<HTMLButtonElement>, drag: MobileNavFabDrag): MobileNavFabPosition {
-  const side: MobileNavFabSide = typeof window !== "undefined" && event.clientX < window.innerWidth / 2 ? "left" : "right";
-  return {
-    side,
-    top: clampMobileNavFabTop(drag.initialTop + event.clientY - drag.startY),
-  };
 }
 
 function touchPointFromEvent<T extends Element>(event: TouchEvent<T>): TouchPoint | null {
@@ -593,7 +525,6 @@ function ConsoleApp() {
     if (stored === "true" || stored === "false") return stored === "true";
     return readStoredText(LEGACY_MOBILE_CHROME_HIDDEN_KEY, "") !== "true";
   });
-  const [isMobileNavMenuOpen, setIsMobileNavMenuOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(() => isMobileShellViewport());
   const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
   const [dashboardChatDrawerOpen, setDashboardChatDrawerOpen] = useState(false);
@@ -653,7 +584,6 @@ function ConsoleApp() {
   useEffect(() => {
     mobileHeaderTouchPointRef.current = null;
     mobileTopEdgeTouchPointRef.current = null;
-    setIsMobileNavMenuOpen(false);
     setDashboardChatDrawerOpen(false);
   }, [page]);
 
@@ -664,7 +594,6 @@ function ConsoleApp() {
       if (!media.matches) {
         mobileHeaderTouchPointRef.current = null;
         mobileTopEdgeTouchPointRef.current = null;
-        setIsMobileNavMenuOpen(false);
         setDashboardChatDrawerOpen(false);
       }
     };
@@ -1437,7 +1366,7 @@ function ConsoleApp() {
   );
 
   return (
-    <div className="console-shell h-[100dvh] overflow-hidden">
+    <div className={cn("console-shell h-[100dvh] overflow-hidden", page === "watchlist" && "console-shell-watchlist")}>
       {confirmDialog.dialog}
       <ReauthDialog />
       <ConfigSaveToast key={configToast?.id ?? "empty"} toast={configToast} onClose={dismissConfigToast} />
@@ -1459,7 +1388,6 @@ function ConsoleApp() {
           language={language}
           onHideMobileChrome={() => {
             setIsMobileHeaderVisible(false);
-            setIsMobileNavMenuOpen(false);
           }}
           onHome={() => setPage("overview")}
           onLogout={auth.logout}
@@ -1473,27 +1401,14 @@ function ConsoleApp() {
           theme={theme}
           user={auth.user}
         />
-        <DesktopTopNav canPage={canPage} language={language} page={page} setPage={handleNavigate} />
-        <MobileNav
-          canPage={canPage}
-          hasDashboardBottomDock={page === "overview" && auth.can("chat:read")}
-          isOpen={isMobileNavMenuOpen}
-          language={language}
-          onOpenChange={setIsMobileNavMenuOpen}
-          page={page}
-          setPage={handleNavigate}
-        />
 
         <div
           className="app-main-grid flex min-h-0 flex-1"
         >
           <main
             className={cn(
-              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-2 sm:p-4 lg:overflow-y-auto lg:pb-4",
+              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-2 sm:p-3 lg:overflow-y-auto lg:p-3",
               isMobileHeaderVisible && "mobile-header-spacer",
-              page === "overview"
-                ? "pb-[calc(7.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(7.75rem+env(safe-area-inset-bottom))] lg:pb-4"
-                : "pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.75rem+env(safe-area-inset-bottom))] lg:pb-4",
               page === "overview" && "xl:overflow-hidden",
             )}
             key={page}
@@ -1536,17 +1451,9 @@ function ConsoleApp() {
                 language={language}
                 selectedSymbol={selectedSymbol}
                 onSelectedSymbolChange={setSelectedSymbol}
-                onAnalyzeStock={(symbol) => {
-                  setPrompt(formatTemplate(i18n[language].watchlist.analysisPrompt, { symbol }));
-                  setPage("overview");
-                }}
                 onOpenFinancials={(symbol) => {
                   setSelectedSymbol(symbol);
                   setPage("fundamentals");
-                }}
-                onOpenNews={(symbol) => {
-                  setSelectedSymbol(symbol);
-                  setPage("news");
                 }}
               />
             ) : null}
@@ -1753,25 +1660,24 @@ function Header({
   return (
     <header
       className={cn(
-        "panel app-header flex shrink-0 items-center justify-between gap-2 rounded-none border-x-0 border-t-0 px-2 py-1.5 shadow-none sm:px-3 sm:py-2 lg:px-4 lg:py-3",
+        "panel app-header flex shrink-0 items-center justify-between gap-2 rounded-none border-x-0 border-t-0 px-2 py-1 shadow-none sm:px-3 lg:px-3",
         !isMobileVisible && "mobile-header-hidden",
       )}
       onTouchMove={onTouchMove}
       onTouchStart={onTouchStart}
     >
-      <button className="flex min-w-0 flex-1 items-center gap-2 text-left lg:gap-3" onClick={onHome} type="button">
-        <div className="grid size-8 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary shadow-glow lg:size-11 lg:rounded-lg">
-          <Sparkles className="size-4 lg:size-5" />
+      <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onHome} type="button">
+        <div className="grid size-7 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary shadow-glow">
+          <Sparkles className="size-3.5" />
         </div>
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold text-foreground sm:text-base lg:text-xl">Stocks Assistant</h1>
-          <p className="hidden truncate text-xs text-muted-foreground lg:block lg:text-sm">Markets, research, portfolio</p>
+          <h1 className="truncate text-sm font-semibold text-foreground">Stocks Assistant</h1>
         </div>
       </button>
-      <div className="flex shrink-0 items-center gap-1.5 lg:min-w-0 lg:flex-wrap lg:gap-2">
+      <div className="flex shrink-0 items-center gap-1.5 lg:min-w-0">
         <Button
           aria-label={hideMobileChromeLabel}
-          className="h-8 w-8 lg:hidden"
+          className="h-7 w-7 lg:hidden"
           onClick={onHideMobileChrome}
           size="icon"
           title={hideMobileChromeLabel}
@@ -1782,7 +1688,7 @@ function Header({
         </Button>
         <div
           aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
-          className="theme-toggle inline-flex h-8 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5"
+          className="theme-toggle inline-flex h-7 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5"
           role="group"
         >
           {themeOptions.map((option) => {
@@ -1796,7 +1702,7 @@ function Header({
                 aria-label={`${themeLabels.switchTo} ${title}`}
                 aria-pressed={active}
                 className={cn(
-                  "grid h-7 w-7 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5",
+                  "grid h-6 w-6 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3",
                   active && "bg-card text-foreground shadow-sm",
                 )}
                 key={option.value}
@@ -1858,7 +1764,7 @@ function readAvatarDataUrl(file: File, language: AppLanguage): Promise<string> {
 }
 
 function AvatarVisual({ user, size = "md" }: { user: AuthUser | null; size?: "md" | "lg" }) {
-  const className = size === "lg" ? "size-12 text-base" : "size-9 text-sm";
+  const className = size === "lg" ? "size-10 text-sm" : "size-7 text-xs";
   if (user?.avatar_base64) {
     return (
       <img
@@ -1925,7 +1831,7 @@ function UserAvatarMenu({
       noRoles: "暂无角色",
     };
   const navGroups = useMemo(() => {
-    return getMoreNavGroups(language)
+    return getAccountNavGroups(language)
       .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
       .filter((group) => group.items.length > 0);
   }, [canPage, language]);
@@ -1977,7 +1883,7 @@ function UserAvatarMenu({
       <button
         aria-expanded={isOpen}
         aria-label={language === "en" ? "Open account menu" : "打开账号菜单"}
-        className="flex h-9 items-center gap-1 rounded-full border border-input bg-background/70 p-0.5 pr-1.5 transition-colors hover:bg-muted/55"
+        className="flex h-8 items-center gap-1 rounded-full border border-input bg-background/70 p-0.5 pr-1.5 transition-colors hover:bg-muted/55"
         onClick={() => setIsOpen((current) => !current)}
         type="button"
       >
@@ -1987,41 +1893,41 @@ function UserAvatarMenu({
 
       {isOpen ? (
         <div
-          className="account-menu-popover absolute right-0 top-[calc(100%+0.55rem)] z-[1000] max-h-[min(720px,calc(100dvh-5rem))] w-[360px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/90 p-3 text-popover-foreground shadow-2xl ring-1 ring-border/40"
+          className="account-menu-popover absolute right-0 top-[calc(100%+0.45rem)] z-[1000] max-h-[min(680px,calc(100dvh-4rem))] w-[320px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg border border-border/90 p-2 text-popover-foreground shadow-2xl ring-1 ring-border/40"
           onPointerDown={(event) => event.stopPropagation()}
           onTouchStart={(event) => event.stopPropagation()}
         >
-          <div className="flex min-w-0 items-center gap-3 border-b border-border/65 pb-3">
+          <div className="flex min-w-0 items-center gap-2 border-b border-border/65 pb-2">
             <AvatarVisual size="lg" user={user} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{user?.display_name || user?.username || copy.account}</p>
               <p className="truncate text-xs text-muted-foreground">@{user?.username || "-"}</p>
-              <p className="mt-1 truncate text-[11px] text-muted-foreground">
+              <p className="truncate text-[11px] text-muted-foreground">
                 {(user?.permissions?.length ?? 0).toLocaleString(localeFor(language))} {copy.permissions}
               </p>
             </div>
           </div>
 
-          <div className="space-y-3 py-3">
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-md bg-muted/25 px-2.5 py-2">
+          <div className="space-y-2 py-2">
+            <div className="grid grid-cols-2 gap-1.5 text-xs">
+              <div className="rounded-md bg-muted/25 px-2 py-1.5">
                 <p className="text-muted-foreground">{copy.lastLogin}</p>
-                <p className="mt-1 truncate font-semibold">{formatProfileTime(user?.last_login_at, language)}</p>
+                <p className="truncate font-semibold">{formatProfileTime(user?.last_login_at, language)}</p>
               </div>
-              <div className="rounded-md bg-muted/25 px-2.5 py-2">
+              <div className="rounded-md bg-muted/25 px-2 py-1.5">
                 <p className="text-muted-foreground">{copy.created}</p>
-                <p className="mt-1 truncate font-semibold">{formatProfileTime(user?.created_at, language)}</p>
+                <p className="truncate font-semibold">{formatProfileTime(user?.created_at, language)}</p>
               </div>
             </div>
             <div>
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.roles}</p>
-              <div className="flex flex-wrap gap-1.5">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.roles}</p>
+              <div className="flex flex-wrap gap-1">
                 {user?.roles?.length ? user.roles.map((role) => (
                   <Badge className="border-transparent bg-muted/45 shadow-none" key={role} variant="outline">{role}</Badge>
                 )) : <span className="text-xs text-muted-foreground">{copy.noRoles}</span>}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <input
                 accept="image/png,image/jpeg,image/webp,image/gif"
                 className="hidden"
@@ -2029,12 +1935,12 @@ function UserAvatarMenu({
                 ref={inputRef}
                 type="file"
               />
-              <Button disabled={isUploading} onClick={() => inputRef.current?.click()} size="sm" type="button" variant="outline">
+              <Button className="h-7 px-2 text-xs" disabled={isUploading} onClick={() => inputRef.current?.click()} size="sm" type="button" variant="outline">
                 {isUploading ? <Loader2 className="animate-spin" /> : <Upload />}
                 {isUploading ? copy.uploading : copy.upload}
               </Button>
               {user?.avatar_base64 ? (
-                <Button disabled={isUploading} onClick={() => void handleRemoveAvatar()} size="sm" type="button" variant="ghost">
+                <Button className="h-7 px-2 text-xs" disabled={isUploading} onClick={() => void handleRemoveAvatar()} size="sm" type="button" variant="ghost">
                   <X className="size-4" />
                   {copy.remove}
                 </Button>
@@ -2043,18 +1949,21 @@ function UserAvatarMenu({
             {avatarError ? <p className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">{avatarError}</p> : null}
           </div>
 
-          <div className="border-t border-border/65 py-3">
-            <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.navigation}</p>
-            <div className="space-y-3">
+          <div className="border-t border-border/65 py-2">
+            <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.navigation}</p>
+            <div className="space-y-1">
               {navGroups.map((group) => (
-                <div className="min-w-0" key={group.id}>
-                  <p className="mb-1 px-1 text-[11px] font-semibold text-muted-foreground">{group.label}</p>
-                  <div className="grid grid-cols-2 gap-1.5">
+                <details className="group min-w-0 rounded-md" key={group.id} open={group.items.some((item) => item.id === page)}>
+                  <summary className="flex h-8 cursor-pointer list-none items-center justify-between rounded-md px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
+                    <span>{group.label}</span>
+                    <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="grid gap-0.5 pb-1 pl-1">
                     {group.items.map((item) => (
                       <button
                         aria-current={page === item.id ? "page" : undefined}
                         className={cn(
-                          "flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                          "flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm transition-colors",
                           page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                         )}
                         key={item.id}
@@ -2062,20 +1971,17 @@ function UserAvatarMenu({
                         type="button"
                       >
                         <span className="shrink-0 [&_svg]:size-4">{item.icon}</span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium">{item.label}</span>
-                          <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
-                        </span>
+                        <span className="min-w-0 truncate font-medium">{item.label}</span>
                       </button>
                     ))}
                   </div>
-                </div>
+                </details>
               ))}
             </div>
           </div>
 
-          <div className="border-t border-border/65 pt-3">
-            <Button className="w-full justify-start text-destructive hover:text-destructive" onClick={onLogout} size="sm" type="button" variant="ghost">
+          <div className="border-t border-border/65 pt-2">
+            <Button className="h-8 w-full justify-start text-destructive hover:text-destructive" onClick={onLogout} size="sm" type="button" variant="ghost">
               <LogOut />
               {copy.logout}
             </Button>
@@ -2083,290 +1989,6 @@ function UserAvatarMenu({
         </div>
       ) : null}
     </div>
-  );
-}
-
-function DesktopTopNav({
-  canPage,
-  language,
-  page,
-  setPage,
-}: {
-  canPage: (page: Page) => boolean;
-  language: AppLanguage;
-  page: Page;
-  setPage: (page: Page) => void;
-}) {
-  const primaryItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
-
-  if (!primaryItems.length) return null;
-
-  return (
-    <nav className="finance-top-nav hidden shrink-0 lg:block" aria-label={i18n[language].shell.navigation}>
-      <div className="flex h-11 w-full items-center gap-1 px-4">
-        {primaryItems.map((item) => (
-          <button
-            aria-current={page === item.id ? "page" : undefined}
-            className={cn("finance-top-nav-item", page === item.id && "finance-top-nav-item-active")}
-            key={item.id}
-            onClick={() => setPage(item.id)}
-            type="button"
-          >
-            <span className="[&_svg]:size-3.5">{item.icon}</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-    </nav>
-  );
-}
-
-function MobileNav({
-  canPage,
-  hasDashboardBottomDock,
-  isOpen,
-  language,
-  onOpenChange,
-  page,
-  setPage,
-}: {
-  canPage: (page: Page) => boolean;
-  hasDashboardBottomDock: boolean;
-  isOpen: boolean;
-  language: AppLanguage;
-  onOpenChange: (open: boolean) => void;
-  page: Page;
-  setPage: (page: Page) => void;
-}) {
-  const primaryItems = getPinnedNavItems(language).filter((item) => canPage(item.id));
-  const secondaryGroups = getMoreNavGroups(language)
-    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
-    .filter((group) => group.items.length > 0);
-  const groups: NavGroup[] = [
-    { id: "primary", label: i18n[language].groups.pinned, items: primaryItems },
-    ...secondaryGroups,
-  ].filter((group) => group.items.length > 0);
-  const copy = i18n[language].shell;
-  const openLabel = language === "en" ? "Open navigation. Drag to move." : "打开导航，可拖动调整位置";
-  const closeLabel = language === "en" ? "Close navigation" : "关闭导航";
-  const hideFabLabel = language === "en" ? "Hide navigation button" : "隐藏导航按钮";
-  const showFabLabel = language === "en" ? "Show navigation button" : "显示导航按钮";
-  const [isFabVisible, setIsFabVisible] = useState(() => readStoredText(MOBILE_NAV_FAB_VISIBLE_KEY, "true") !== "false");
-  const [fabPosition, setFabPosition] = useState<MobileNavFabPosition | null>(() => readMobileNavFabPosition());
-  const [isFabDragging, setIsFabDragging] = useState(false);
-  const fabDragRef = useRef<MobileNavFabDrag | null>(null);
-  const suppressNextFabClickRef = useRef(false);
-  const fabSide = fabPosition?.side ?? "right";
-  const fabStyle = useMemo<CSSProperties | undefined>(() => {
-    return fabPosition ? { top: `${fabPosition.top}px` } : undefined;
-  }, [fabPosition]);
-
-  useEffect(() => {
-    writeStoredValue(MOBILE_NAV_FAB_VISIBLE_KEY, isFabVisible ? "true" : "false");
-    if (!isFabVisible) onOpenChange(false);
-  }, [isFabVisible, onOpenChange]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const handleResize = () => {
-      setFabPosition((current) => {
-        if (!current) return current;
-        const next = { ...current, top: clampMobileNavFabTop(current.top) };
-        if (next.top === current.top) return current;
-        writeMobileNavFabPosition(next);
-        return next;
-      });
-    };
-    window.addEventListener("resize", handleResize);
-    window.addEventListener("orientationchange", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      window.removeEventListener("orientationchange", handleResize);
-    };
-  }, []);
-
-  function navigate(nextPage: Page) {
-    setPage(nextPage);
-    onOpenChange(false);
-  }
-
-  function hideFab() {
-    setIsFabVisible(false);
-    onOpenChange(false);
-  }
-
-  function showFab() {
-    setIsFabVisible(true);
-  }
-
-  function handleFabPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    fabDragRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      initialTop: rect.top,
-      hasMoved: false,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function handleFabPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-    const drag = fabDragRef.current;
-    if (!drag) return;
-    const deltaX = event.clientX - drag.startX;
-    const deltaY = event.clientY - drag.startY;
-    if (!drag.hasMoved && Math.hypot(deltaX, deltaY) < MOBILE_NAV_FAB_DRAG_THRESHOLD) return;
-    drag.hasMoved = true;
-    setIsFabDragging(true);
-    event.preventDefault();
-    setFabPosition(mobileNavFabPositionFromPointer(event, drag));
-  }
-
-  function finishFabPointer(event: ReactPointerEvent<HTMLButtonElement>) {
-    const drag = fabDragRef.current;
-    if (!drag) return;
-    if (drag.hasMoved) {
-      const next = mobileNavFabPositionFromPointer(event, drag);
-      setFabPosition(next);
-      writeMobileNavFabPosition(next);
-      suppressNextFabClickRef.current = true;
-      event.preventDefault();
-      if (typeof window !== "undefined") {
-        window.setTimeout(() => {
-          suppressNextFabClickRef.current = false;
-        }, 0);
-      }
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    fabDragRef.current = null;
-    setIsFabDragging(false);
-  }
-
-  function handleFabClick() {
-    if (suppressNextFabClickRef.current) {
-      suppressNextFabClickRef.current = false;
-      return;
-    }
-    onOpenChange(!isOpen);
-  }
-
-  return (
-    <>
-      {isOpen ? (
-        <div className="mobile-nav-layer fixed inset-0 z-[930] lg:hidden">
-          <button
-            aria-label={closeLabel}
-            className="absolute inset-0 bg-background/30 backdrop-blur-[1px]"
-            onClick={() => onOpenChange(false)}
-            type="button"
-          />
-          <nav
-            aria-label={copy.navigation}
-            className={cn(
-              "mobile-nav-popover absolute w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-border/80 bg-popover p-3 text-popover-foreground shadow-2xl",
-              fabSide === "left" ? "left-3" : "right-3",
-              hasDashboardBottomDock
-                ? "bottom-[calc(10.5rem+env(safe-area-inset-bottom))]"
-                : "bottom-[calc(5rem+env(safe-area-inset-bottom))]",
-            )}
-          >
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold">{copy.pageSwitch}</p>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  aria-label={hideFabLabel}
-                  className="h-8 w-8"
-                  onClick={hideFab}
-                  size="icon"
-                  title={hideFabLabel}
-                  type="button"
-                  variant="ghost"
-                >
-                  <EyeOff className="size-4" />
-                </Button>
-                <Button
-                  aria-label={closeLabel}
-                  className="h-8 w-8"
-                  onClick={() => onOpenChange(false)}
-                  size="icon"
-                  title={closeLabel}
-                  type="button"
-                  variant="ghost"
-                >
-                  <X className="size-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="max-h-[min(62dvh,31rem)] space-y-3 overflow-y-auto pr-1">
-              {groups.map((group) => (
-                <div className="min-w-0" key={group.id}>
-                  <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {group.items.map((item) => (
-                      <button
-                        aria-current={page === item.id ? "page" : undefined}
-                        className={cn(
-                          "flex min-h-14 min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
-                          page === item.id
-                            ? "bg-primary/12 text-primary"
-                            : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                        )}
-                        key={item.id}
-                        onClick={() => navigate(item.id)}
-                        type="button"
-                      >
-                        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-background/70 [&_svg]:size-4">{item.icon}</span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-semibold">{item.label}</span>
-                          <span className="block truncate text-[11px] opacity-75">{item.hint}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </nav>
-        </div>
-      ) : null}
-      {!isFabVisible ? (
-        <button
-          aria-label={showFabLabel}
-          className="app-bottom-edge-trigger mobile-nav-restore-trigger lg:hidden"
-          onClick={showFab}
-          title={showFabLabel}
-          type="button"
-        >
-          <span className="app-edge-grabber" />
-        </button>
-      ) : (
-        <button
-          aria-expanded={isOpen}
-          aria-label={openLabel}
-          className={cn(
-            "mobile-nav-fab fixed z-[940] grid size-14 cursor-grab select-none place-items-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-[0_16px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden",
-            fabSide === "left" ? "left-3" : "right-3",
-            !fabPosition && (hasDashboardBottomDock
-              ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))]"
-              : "bottom-[calc(1rem+env(safe-area-inset-bottom))]"),
-            isFabDragging && "scale-105 transition-none",
-          )}
-          onClick={handleFabClick}
-          onPointerCancel={finishFabPointer}
-          onPointerDown={handleFabPointerDown}
-          onPointerMove={handleFabPointerMove}
-          onPointerUp={finishFabPointer}
-          style={fabStyle}
-          title={openLabel}
-          type="button"
-        >
-          <Menu className="size-5" />
-        </button>
-      )}
-    </>
   );
 }
 

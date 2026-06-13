@@ -527,15 +527,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
 
   return (
     <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Newspaper className="size-5 text-secondary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <div className="inline-flex h-8 items-center rounded-md border border-border bg-muted/45 p-0.5">
             <Button size="sm" variant={newsMode === "security" ? "default" : "ghost"} onClick={() => setNewsMode("security")}>
               <Newspaper />
@@ -554,7 +546,6 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
               {common.loading}
             </Badge>
           ) : null}
-        </div>
       </div>
 
       <div className="grid min-h-0 flex-1 gap-6 py-3 lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">

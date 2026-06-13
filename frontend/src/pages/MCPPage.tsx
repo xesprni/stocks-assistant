@@ -210,15 +210,7 @@ export function MCPPage({ language }: { language: AppLanguage }) {
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Plug className="size-5 text-primary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+      <div className="page-toolbar flex flex-col items-end gap-2 sm:flex-row sm:justify-end">
           <Field label={copy.toolTimeout}>
             <Input
               className="w-32"
@@ -232,7 +224,6 @@ export function MCPPage({ language }: { language: AppLanguage }) {
             {isSavingTimeout ? <Loader2 className="animate-spin" /> : <Save />}
             {copy.save}
           </Button>
-        </div>
       </div>
 
       {error ? (

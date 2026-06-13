@@ -892,22 +892,8 @@ export function PortfolioPage({
 
   return (
     <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <BriefcaseBusiness className="size-5 shrink-0 text-primary" />
-              <p className="truncate font-semibold">{copy.title}</p>
-              <Badge variant="outline" className="hidden md:inline-flex">{currentMarket.label}</Badge>
-            </div>
-            <p className="hidden text-xs text-muted-foreground sm:block">
-              {copy.subtitle}
-              {lastUpdated ? ` · ${formatTemplate(copy.updatedAt, { time: lastUpdated })}` : ""}
-            </p>
-          </div>
+      <div className="page-toolbar flex flex-col gap-2 md:flex-row md:items-center md:justify-end">
           <div className="shrink-0 md:hidden">{renderMarketSwitcher()}</div>
-        </div>
-        <div className="flex w-full flex-col gap-2 md:flex-row md:items-center xl:w-auto">
           <div className="hidden overflow-x-auto md:block md:w-fit">{renderMarketSwitcher()}</div>
           <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
             <label className="flex h-7 min-w-0 items-center gap-2 rounded-md bg-muted/25 px-2 text-xs text-muted-foreground">
@@ -965,7 +951,6 @@ export function PortfolioPage({
               {common.add}
             </Button>
           </div>
-        </div>
       </div>
 
       <div className="panel-body flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">

@@ -238,15 +238,7 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <BrainCircuit className="size-5 text-primary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={handleSync} disabled={isSyncing}>
             {isSyncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {copy.sync}
@@ -259,7 +251,6 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
             <Plus />
             {copy.add}
           </Button>
-        </div>
       </div>
 
       {error ? (

@@ -348,15 +348,7 @@ export function UsersPage({ language }: { language: AppLanguage }) {
   return (
     <>
       <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-        <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <UserCog className="size-5 text-primary" />
-              <p className="font-semibold">{t.title}</p>
-            </div>
-            <p className="text-xs text-muted-foreground">{t.subtitle}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
             <Badge variant="outline">{users.length} {t.users}</Badge>
             <Badge variant="outline">{roles.length} {t.roles}</Badge>
             {view !== "roles" ? (
@@ -373,7 +365,6 @@ export function UsersPage({ language }: { language: AppLanguage }) {
               <UserPlus />
               {t.createUser}
             </Button>
-          </div>
         </div>
 
         <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">

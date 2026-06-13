@@ -193,21 +193,12 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Zap className="size-5 text-secondary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <Badge variant="outline">{formatTemplate(copy.count, { count: skills.length })}</Badge>
           <Button variant="outline" size="sm" onClick={loadSkills} disabled={isLoading}>
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {copy.refresh}
           </Button>
-        </div>
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">

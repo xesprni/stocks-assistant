@@ -521,17 +521,9 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <FileText className="size-5 text-primary" />
-            <p className="font-semibold">{copy.title}</p>
-            {data?.symbol ? <Badge variant="outline">{data.symbol}</Badge> : null}
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-
-        <form className="flex flex-col gap-2 sm:flex-row sm:items-center" onSubmit={handleSubmit}>
+      <div className="page-toolbar flex flex-col items-end gap-2">
+        <form className="flex w-full flex-col justify-end gap-2 sm:w-auto sm:flex-row sm:items-center" onSubmit={handleSubmit}>
+          {data?.symbol ? <Badge variant="outline" className="h-8">{data.symbol}</Badge> : null}
           <WatchlistSearchSelect
             className="sm:w-52"
             copy={copy}

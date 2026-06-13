@@ -296,15 +296,7 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Clock className="size-5 text-secondary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <Badge variant="outline">{formatTemplate(copy.taskCount, { count: tasks.length })}</Badge>
           <Button variant="outline" size="sm" onClick={loadTasks} disabled={isLoading}>
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
@@ -322,7 +314,6 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
             <Plus />
             {copy.addTask}
           </Button>
-        </div>
       </div>
 
       {error ? (

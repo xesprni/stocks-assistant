@@ -283,23 +283,12 @@ export function SubAgentsPage({
 
   return (
     <section className="panel flex min-h-0 flex-1 flex-col">
-      <div className="panel-header flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="grid size-10 place-items-center rounded-md bg-primary/10 text-primary">
-            <Bot className="size-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="font-semibold">{copy.title}</p>
-            <p className="truncate text-xs text-muted-foreground sm:text-sm">{copy.subtitle}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <Badge variant={enabled ? "default" : "muted"}>{enabled ? copy.enabledState : copy.disabledState}</Badge>
           <Button size="sm" variant="outline" onClick={onOpenConfig}>
             <Settings2 />
             {copy.config}
           </Button>
-        </div>
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-auto">

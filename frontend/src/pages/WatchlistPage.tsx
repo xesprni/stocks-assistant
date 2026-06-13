@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { BriefcaseBusiness, FileText, GripVertical, Loader2, Newspaper, Plus, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
+import { FileText, GripVertical, Loader2, RefreshCw, Search, Star, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -8,16 +8,15 @@ import { Badge } from "@/components/ui/badge";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addPortfolioItem, addWatchlistItem, deleteWatchlistItem, getWatchlistOverview, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
+import { addWatchlistItem, deleteWatchlistItem, getWatchlistOverview, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { PortfolioMarket, WatchlistCategory, WatchlistItem, WatchlistSearchResult } from "@/types/app";
+import type { WatchlistCategory, WatchlistItem, WatchlistSearchResult } from "@/types/app";
 
 type NameParts = Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">;
 
 const WATCHLIST_CATEGORY_STORAGE_KEY = "stocks-assistant-watchlist-category";
-const WATCHLIST_FILTER_STORAGE_KEY = "stocks-assistant-watchlist-filter";
 
 type DragPreviewSize = {
   width: number;
@@ -42,14 +41,6 @@ function readStoredValue<T extends string>(key: string, allowed: readonly T[], f
   }
 }
 
-function readStoredText(key: string): string {
-  try {
-    return window.localStorage.getItem(key) ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function writeStoredValue(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
@@ -62,20 +53,14 @@ function SortableWatchlistItem({
   item,
   activeSymbol,
   onDelete,
-  onAnalyze,
-  onAddToPortfolio,
   onOpenFinancials,
-  onOpenNews,
   onSelect,
   copy,
 }: {
   item: WatchlistItem;
   activeSymbol: string;
   onDelete: (item: WatchlistItem) => void;
-  onAnalyze: (symbol: string) => void;
-  onAddToPortfolio: (item: WatchlistItem) => void;
   onOpenFinancials: (symbol: string) => void;
-  onOpenNews: (symbol: string) => void;
   onSelect: (item: WatchlistItem) => void;
   copy: typeof i18n.zh.watchlist;
 }) {
@@ -102,7 +87,7 @@ function SortableWatchlistItem({
   return (
     <div
       className={cn(
-        "watchlist-sortable-row finance-row-card message-bubble select-none rounded-md border border-border/80 bg-card/80 p-2 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary sm:p-3",
+        "watchlist-sortable-row finance-row-card message-bubble select-none rounded-md border border-border/80 bg-card/80 p-1.5 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary sm:p-2",
         isDragging && "watchlist-sortable-row-dragging",
         isDropTarget && "watchlist-sortable-row-over",
         isSorting && !isDragging && "watchlist-sortable-row-sorting",
@@ -142,32 +127,28 @@ function SortableWatchlistItem({
       style={style}
       tabIndex={0}
     >
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         <button
           {...attributes}
           {...listeners}
           aria-label={copy.dragSort}
           className={cn(
-            "watchlist-drag-handle grid size-7 shrink-0 cursor-grab touch-none select-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
+            "watchlist-drag-handle grid size-6 shrink-0 cursor-grab touch-none select-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
             (isDragging || isDropTarget) && "text-primary",
           )}
           onClick={(event) => event.stopPropagation()}
           type="button"
         >
-          <GripVertical className="size-4" />
+          <GripVertical className="size-3.5" />
         </button>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold sm:text-base">{item.symbol}</p>
-          <p className="truncate text-xs text-muted-foreground sm:text-sm">{stockName(item)}</p>
+          <p className="truncate text-xs font-semibold sm:text-sm">{item.symbol}</p>
+          <p className="truncate text-[11px] text-muted-foreground sm:text-xs">{stockName(item)}</p>
         </div>
         <RowActions
-          category={item.category}
           copy={copy}
-          onAddToPortfolio={() => onAddToPortfolio(item)}
-          onAnalyze={() => onAnalyze(item.symbol)}
           onDelete={() => onDelete(item)}
           onOpenFinancials={() => onOpenFinancials(item.symbol)}
-          onOpenNews={() => onOpenNews(item.symbol)}
           showDelete
         />
       </div>
@@ -206,48 +187,23 @@ function WatchlistDragPreview({
 }
 
 function RowActions({
-  category,
   copy,
-  onAddToPortfolio,
-  onAnalyze,
   onDelete,
   onOpenFinancials,
-  onOpenNews,
   showDelete = false,
 }: {
-  category: WatchlistCategory;
   copy: typeof i18n.zh.watchlist;
-  onAddToPortfolio: () => void;
-  onAnalyze: () => void;
   onDelete?: () => void;
   onOpenFinancials: () => void;
-  onOpenNews: () => void;
   showDelete?: boolean;
 }) {
   return (
-    <div className="ml-auto grid shrink-0 grid-cols-3 justify-end gap-0.5 sm:flex sm:gap-1">
-      <Button aria-label={copy.analyze} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onAnalyze(); }} size="icon" title={copy.analyze} variant="ghost">
-        <Sparkles />
-      </Button>
-      <Button aria-label={copy.financials} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenFinancials(); }} size="icon" title={copy.financials} variant="ghost">
+    <div className="ml-auto flex shrink-0 justify-end gap-0.5">
+      <Button aria-label={copy.financials} className="h-6 w-6 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenFinancials(); }} size="icon" title={copy.financials} variant="ghost">
         <FileText />
       </Button>
-      <Button aria-label={copy.news} className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenNews(); }} size="icon" title={copy.news} variant="ghost">
-        <Newspaper />
-      </Button>
-      <Button
-        aria-label={copy.addToPortfolio}
-        className="h-7 w-7 text-muted-foreground hover:text-primary"
-        disabled={category === "H"}
-        onClick={(event) => { event.stopPropagation(); onAddToPortfolio(); }}
-        size="icon"
-        title={category === "H" ? copy.addPortfolioUnsupported : copy.addToPortfolio}
-        variant="ghost"
-      >
-        <BriefcaseBusiness />
-      </Button>
       {showDelete ? (
-        <Button aria-label={copy.deleteItem} className="h-7 w-7" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
+        <Button aria-label={copy.deleteItem} className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
           <Trash2 />
         </Button>
       ) : null}
@@ -259,16 +215,12 @@ export function WatchlistPage({
   language,
   selectedSymbol = "",
   onSelectedSymbolChange,
-  onAnalyzeStock,
   onOpenFinancials,
-  onOpenNews,
 }: {
   language: AppLanguage;
   selectedSymbol?: string;
   onSelectedSymbolChange?: (symbol: string) => void;
-  onAnalyzeStock: (symbol: string) => void;
   onOpenFinancials: (symbol: string) => void;
-  onOpenNews: (symbol: string) => void;
 }) {
   const common = i18n[language].common;
   const copy = i18n[language].watchlist;
@@ -277,7 +229,6 @@ export function WatchlistPage({
     inferCategoryFromSymbol(selectedSymbol) ?? readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["US", "A", "H"], "US"),
   );
   const [activeSymbol, setActiveSymbol] = useState(selectedSymbol);
-  const [localFilter, setLocalFilter] = useState(() => readStoredText(WATCHLIST_FILTER_STORAGE_KEY));
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
   const [activeDragSize, setActiveDragSize] = useState<DragPreviewSize | null>(null);
@@ -295,11 +246,6 @@ export function WatchlistPage({
   );
 
   const selectedCategory = watchlistCategories.find((item) => item.id === category);
-  const filteredItems = useMemo(() => {
-    const text = localFilter.trim().toLowerCase();
-    if (!text) return items;
-    return items.filter((item) => watchlistSearchText(item).includes(text));
-  }, [items, localFilter]);
   const symbolSet = useMemo(() => new Set(items.map((item) => item.symbol)), [items]);
   const activeDragItem = useMemo(
     () => items.find((item) => item.id === activeDragId) ?? null,
@@ -332,15 +278,11 @@ export function WatchlistPage({
 
   useEffect(() => {
     if (activeSymbol) return;
-    const fallback = filteredItems[0] ?? items[0];
+    const fallback = items[0];
     if (!fallback) return;
     setActiveSymbol(fallback.symbol);
     onSelectedSymbolChange?.(fallback.symbol);
-  }, [activeSymbol, filteredItems, items, onSelectedSymbolChange]);
-
-  useEffect(() => {
-    writeStoredValue(WATCHLIST_FILTER_STORAGE_KEY, localFilter);
-  }, [localFilter]);
+  }, [activeSymbol, items, onSelectedSymbolChange]);
 
   useEffect(() => {
     searchControllerRef.current?.abort();
@@ -353,13 +295,13 @@ export function WatchlistPage({
 
     const controller = new AbortController();
     searchControllerRef.current = controller;
+    setResults([]);
+    setMessage("");
     const timer = window.setTimeout(() => {
       setIsSearching(true);
-      setMessage("");
       searchWatchlist(text, category, { signal: controller.signal })
         .then((response) => {
           setResults(response.results);
-          if (response.total === 0) setMessage(copy.noMatch);
         })
         .catch((caught) => {
           if (!controller.signal.aborted) {
@@ -376,7 +318,7 @@ export function WatchlistPage({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [category, copy.noMatch, copy.searchFailed, query]);
+  }, [category, copy.searchFailed, query]);
 
   function selectCategory(next: WatchlistCategory) {
     if (next === category) return;
@@ -403,7 +345,6 @@ export function WatchlistPage({
         setItems((current) => [...current.filter((e) => e.symbol !== item.symbol), item]);
         handleSelectSymbol(item);
       }
-      setResults((current) => current.filter((e) => e.symbol !== item.symbol));
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : copy.addFailed);
     }
@@ -421,27 +362,6 @@ export function WatchlistPage({
       setItems(previous);
       if (wasActive) setActiveSymbol(item.symbol);
       setMessage(caught instanceof Error ? caught.message : copy.deleteFailed);
-    }
-  }
-
-  async function handleAddToPortfolio(item: WatchlistItem) {
-    if (item.category === "H") {
-      setMessage(copy.addPortfolioUnsupported);
-      return;
-    }
-    setMessage("");
-    try {
-      await addPortfolioItem({
-        market: item.category as PortfolioMarket,
-        symbol: item.symbol,
-        name: stockName(item) === "-" ? "" : stockName(item),
-        shares: null,
-        cost_price: null,
-        note: "",
-      });
-      setMessage(formatTemplate(copy.addPortfolioSuccess, { symbol: item.symbol }));
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : copy.addPortfolioFailed);
     }
   }
 
@@ -504,111 +424,102 @@ export function WatchlistPage({
 
   return (
     <section className="watchlist-page-shell panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="panel-header flex flex-col gap-3 border-b border-border/70 bg-background/70 px-3 py-2 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Star className="size-5 text-secondary" />
-            <p className="font-semibold">{copy.title}</p>
-          </div>
-          <p className="text-xs text-muted-foreground">{copy.subtitle}</p>
+      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
+        <div className="inline-flex h-8 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
+          {watchlistCategories.map((item) => (
+            <button
+              aria-pressed={category === item.id}
+              className={cn(
+                "h-7 min-w-[4.25rem] rounded-full px-2.5 text-xs font-medium transition-colors",
+                category === item.id
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+              key={item.id}
+              onClick={() => selectCategory(item.id)}
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
-
-        <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row xl:items-center">
-          <div className="inline-flex h-8 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
-            {watchlistCategories.map((item) => (
-              <button
-                aria-pressed={category === item.id}
-                className={cn(
-                  "h-7 min-w-[4.25rem] rounded-full px-2.5 text-xs font-medium transition-colors",
-                  category === item.id
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                )}
-                key={item.id}
-                onClick={() => selectCategory(item.id)}
-                type="button"
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <Badge variant="outline">{formatTemplate(copy.symbols, { count: items.length })}</Badge>
-        </div>
+        <Button
+          aria-label={copy.refreshQuotes}
+          className="h-8"
+          disabled={isRefreshingQuotes}
+          onClick={handleRefreshQuotes}
+          size="sm"
+          title={copy.refreshQuotes}
+          type="button"
+          variant="outline"
+        >
+          {isRefreshingQuotes ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          <span className="hidden sm:inline">{isRefreshingQuotes ? copy.quotesLoading : copy.refreshQuotes}</span>
+        </Button>
+        <Badge variant="outline">{formatTemplate(copy.symbols, { count: items.length })}</Badge>
       </div>
 
       <div className="watchlist-page-grid grid min-h-0 flex-1 gap-4 py-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
         <aside className="watchlist-list-shell finance-module flex min-h-0 flex-col overflow-hidden rounded-md border border-border/80 bg-card/45">
-          <div className="finance-module-header space-y-3 border-b border-border/70 p-3">
+          <div className="finance-module-header space-y-2 border-b border-border/70 p-2">
             <div>
               <p className="text-sm font-semibold">{formatTemplate(copy.listTitle, { label: selectedCategory?.label ?? category })}</p>
               <p className="hidden text-xs text-muted-foreground sm:block">
                 {formatTemplate(copy.dragHint, { hint: selectedCategory?.hint ?? category })}
               </p>
             </div>
-            <Button className="h-8 w-full justify-start sm:w-auto sm:justify-center" disabled={isRefreshingQuotes} onClick={handleRefreshQuotes} size="sm" type="button" variant="outline">
-              {isRefreshingQuotes ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              {isRefreshingQuotes ? copy.quotesLoading : copy.refreshQuotes}
-            </Button>
 
-            <form className="flex gap-2" onSubmit={(event) => event.preventDefault()}>
+            <div className="relative z-20">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                className="h-8"
+                aria-label={common.search}
+                className="h-8 pr-8 pl-8"
                 placeholder={selectedCategory?.placeholder}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
-              <Button className="h-8 shrink-0" disabled={isSearching || !query.trim()} size="sm" type="submit" variant="outline">
-                {isSearching ? <Loader2 className="animate-spin" /> : <Search />}
-                {common.search}
-              </Button>
-            </form>
-
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                aria-label={copy.localFilter}
-                className="h-8 pl-8"
-                placeholder={copy.localFilterPlaceholder}
-                value={localFilter}
-                onChange={(event) => setLocalFilter(event.target.value)}
-              />
+              {isSearching ? <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" /> : null}
+              {query.trim() ? (
+                <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-30 max-h-64 overflow-y-auto rounded-md border border-border/90 bg-popover p-1 text-popover-foreground shadow-xl">
+                  {isSearching && results.length === 0 ? (
+                    <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      {common.loading}
+                    </div>
+                  ) : null}
+                  {results.map((result) => {
+                    const exists = symbolSet.has(result.symbol);
+                    return (
+                      <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted/60" key={result.symbol}>
+                        <span className="min-w-0 flex-1 truncate">{searchResultName(result)}</span>
+                        <button
+                          aria-label={exists ? common.added : common.add}
+                          className={cn(
+                            "grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-primary",
+                            exists && "text-primary hover:bg-transparent",
+                          )}
+                          disabled={exists}
+                          onClick={() => void handleAdd(result)}
+                          title={exists ? common.added : common.add}
+                          type="button"
+                        >
+                          <Star className="size-4" fill={exists ? "currentColor" : "none"} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {results.length === 0 && !isSearching ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      {copy.noMatch}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             {message ? (
               <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 {message}
-              </div>
-            ) : null}
-
-            {(query.trim() || results.length > 0) ? (
-              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                {results.map((result) => {
-                  const exists = symbolSet.has(result.symbol);
-                  return (
-                    <div className="finance-row-card rounded-md border border-border/80 bg-card/80 p-2.5" key={result.symbol}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">{result.symbol}</p>
-                          <p className="truncate text-xs text-muted-foreground">{stockName(result)}</p>
-                        </div>
-                        <Button disabled={exists} onClick={() => handleAdd(result)} size="sm" variant={exists ? "outline" : "default"}>
-                          <Plus />
-                          {exists ? common.added : common.add}
-                        </Button>
-                      </div>
-                      <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs">
-                        <QuoteMetric label={copy.last} value={result.last_done ?? "-"} />
-                        <QuoteMetric label={copy.change} value={result.change_value ?? "-"} tone={rateTone(result.change_value)} />
-                        <QuoteMetric label={copy.rate} value={result.change_rate ?? "-"} tone={rateTone(result.change_rate)} />
-                      </div>
-                    </div>
-                  );
-                })}
-                {results.length === 0 && !isSearching ? (
-                  <div className="finance-soft-state rounded-md border border-dashed border-border/80 bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
-                    {copy.inputHint}
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -620,17 +531,13 @@ export function WatchlistPage({
               activeSymbol={activeSymbol}
               commonLoading={common.loading}
               copy={copy}
-              filteredItems={filteredItems}
               isLoading={isLoading}
               items={items}
-              onAddToPortfolio={handleAddToPortfolio}
-              onAnalyze={onAnalyzeStock}
               onDelete={handleDelete}
               onDragCancel={handleDragCancel}
               onDragEnd={handleDragEnd}
               onDragStart={handleDragStart}
               onOpenFinancials={onOpenFinancials}
-              onOpenNews={onOpenNews}
               onSelect={handleSelectSymbol}
               sensors={sensors}
             />
@@ -663,17 +570,13 @@ function ManageList({
   activeSymbol,
   commonLoading,
   copy,
-  filteredItems,
   isLoading,
   items,
-  onAddToPortfolio,
-  onAnalyze,
   onDelete,
   onDragCancel,
   onDragEnd,
   onDragStart,
   onOpenFinancials,
-  onOpenNews,
   onSelect,
   sensors,
 }: {
@@ -682,17 +585,13 @@ function ManageList({
   activeSymbol: string;
   commonLoading: string;
   copy: typeof i18n.zh.watchlist;
-  filteredItems: WatchlistItem[];
   isLoading: boolean;
   items: WatchlistItem[];
-  onAddToPortfolio: (item: WatchlistItem) => void;
-  onAnalyze: (symbol: string) => void;
   onDelete: (item: WatchlistItem) => void;
   onDragCancel: () => void;
   onDragEnd: (event: DragEndEvent) => void;
   onDragStart: (event: DragStartEvent) => void;
   onOpenFinancials: (symbol: string) => void;
-  onOpenNews: (symbol: string) => void;
   onSelect: (item: WatchlistItem) => void;
   sensors: ReturnType<typeof useSensors>;
 }) {
@@ -707,24 +606,18 @@ function ManageList({
       </SoftState>
     );
   }
-  if (filteredItems.length === 0) {
-    return <SoftState icon={<Search className="size-6 text-muted-foreground" />}>{copy.localNoMatch}</SoftState>;
-  }
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragCancel={onDragCancel} onDragEnd={onDragEnd} onDragStart={onDragStart}>
-      <SortableContext items={filteredItems.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-        <div className="grid gap-1.5">
-          {filteredItems.map((item) => (
+      <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+        <div className="grid gap-1">
+          {items.map((item) => (
             <SortableWatchlistItem
               activeSymbol={activeSymbol}
               copy={copy}
               item={item}
               key={item.id}
-              onAddToPortfolio={onAddToPortfolio}
-              onAnalyze={onAnalyze}
               onDelete={onDelete}
               onOpenFinancials={onOpenFinancials}
-              onOpenNews={onOpenNews}
               onSelect={onSelect}
             />
           ))}
@@ -748,45 +641,13 @@ function SoftState({ children, icon }: { children: React.ReactNode; icon?: React
   );
 }
 
-function QuoteMetric({ label, tone, value }: { label: string; tone?: "up" | "down" | "flat"; value: string }) {
-  return (
-    <div className="rounded-md bg-muted/20 px-2 py-1.5">
-      <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
-      <p
-        className={cn(
-          "mt-0.5 truncate font-semibold",
-          tone === "up" && "text-primary",
-          tone === "down" && "text-destructive",
-        )}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function stockName(item: NameParts) {
   return item.name || item.name_cn || item.name_hk || item.name_en || "-";
 }
 
-function watchlistSearchText(item: NameParts & { symbol: string; exchange?: string; currency?: string; note?: string; last_done?: string | null; change_value?: string | null; change_rate?: string | null }) {
-  return [item.symbol, item.name, item.name_cn, item.name_hk, item.name_en, item.exchange, item.currency, item.note, item.last_done, item.change_value, item.change_rate]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-function numericQuoteValue(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number(value.replace(/[%$,]/g, "").trim());
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function rateTone(value: string | null | undefined): "up" | "down" | "flat" {
-  const parsed = numericQuoteValue(value);
-  if (parsed === null || parsed === 0) return "flat";
-  if (parsed < 0) return "down";
-  return "up";
+function searchResultName(item: NameParts & { symbol: string }) {
+  const name = stockName(item);
+  return name === "-" ? item.symbol : name;
 }
 
 function formatQuoteTime(value: string | null | undefined, language: AppLanguage) {
