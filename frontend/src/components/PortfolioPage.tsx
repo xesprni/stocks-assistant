@@ -502,35 +502,64 @@ function PortfolioTrendChart({
   points: PortfolioTrendPoint[];
 }) {
   const width = 520;
-  const height = 190;
-  const padding = 18;
+  const height = 150;
+  const paddingX = 18;
+  const paddingY = 16;
   const values = points.map((point) => point.value);
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 1);
+  const rawMin = Math.min(...values, 0);
+  const rawMax = Math.max(...values, 1);
+  const singleValue = points.length <= 1 || rawMin === rawMax;
+  const band = singleValue ? Math.max(Math.abs(values[0] ?? 0) * 0.08, 1) : 0;
+  const min = singleValue ? (values[0] ?? 0) - band : rawMin;
+  const max = singleValue ? (values[0] ?? 1) + band : rawMax;
   const span = max - min || 1;
-  const coordinates = points.map((point, index) => {
-    const x = points.length <= 1 ? width / 2 : padding + (index / (points.length - 1)) * (width - padding * 2);
-    const y = height - padding - ((point.value - min) / span) * (height - padding * 2);
+  const drawablePoints = points.length === 1
+    ? [
+        { ...points[0], label: points[0].label },
+        { ...points[0], label: points[0].label },
+      ]
+    : points;
+  const coordinates = drawablePoints.map((point, index) => {
+    const x = drawablePoints.length <= 1 ? width / 2 : paddingX + (index / (drawablePoints.length - 1)) * (width - paddingX * 2);
+    const y = height - paddingY - ((point.value - min) / span) * (height - paddingY * 2);
     return { ...point, x, y };
   });
   const path = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  const areaPath = coordinates.length > 1
+    ? `${path} ${coordinates.at(-1)?.x},${height - paddingY} ${coordinates[0]?.x},${height - paddingY}`
+    : "";
 
   return (
-    <div className="h-full min-h-[220px] rounded-md border border-border/80 bg-background/55 p-3">
-      <svg className="h-44 w-full" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`} role="img">
-        <line x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} className="stroke-border" strokeWidth="1" />
-        <line x1={padding} x2={padding} y1={padding} y2={height - padding} className="stroke-border" strokeWidth="1" />
+    <div className="min-h-[190px]">
+      <svg className="h-40 w-full overflow-visible" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`} role="img">
+        <defs>
+          <linearGradient id="portfolio-trend-fill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="hsl(var(--primary) / 0.18)" />
+            <stop offset="100%" stopColor="hsl(var(--primary) / 0)" />
+          </linearGradient>
+        </defs>
+        {[0.25, 0.5, 0.75].map((ratio) => {
+          const y = paddingY + ratio * (height - paddingY * 2);
+          return <line key={ratio} x1={paddingX} x2={width - paddingX} y1={y} y2={y} className="stroke-border/70" strokeWidth="1" vectorEffect="non-scaling-stroke" />;
+        })}
+        <line x1={paddingX} x2={width - paddingX} y1={height - paddingY} y2={height - paddingY} className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        {areaPath ? <polygon points={areaPath} fill="url(#portfolio-trend-fill)" /> : null}
         {coordinates.length > 1 ? (
           <polyline points={path} fill="none" stroke="hsl(var(--primary))" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         ) : null}
-        {coordinates.map((point) => (
-          <circle key={`${point.label}-${point.x}`} cx={point.x} cy={point.y} r="4" fill="hsl(var(--primary))" vectorEffect="non-scaling-stroke" />
-        ))}
+        {points.map((point, index) => {
+          const coordinate = points.length === 1 ? coordinates[1] : coordinates[index];
+          return (
+            <circle key={`${point.label}-${index}`} cx={coordinate.x} cy={coordinate.y} r="4" fill="hsl(var(--primary))" vectorEffect="non-scaling-stroke" />
+          );
+        })}
       </svg>
-      <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+      <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center text-[11px] text-muted-foreground">
         <span>{points[0]?.label ?? "-"}</span>
-        <span className="font-mono text-foreground">{hideSensitive ? "***" : formatMoney(points.at(-1)?.value)}</span>
-        <span>{points.at(-1)?.label ?? "-"}</span>
+        <span className="rounded-full bg-primary/10 px-2 py-1 font-mono text-xs font-semibold text-primary">
+          {hideSensitive ? "***" : formatMoney(points.at(-1)?.value)}
+        </span>
+        <span className="text-right">{points.at(-1)?.label ?? "-"}</span>
       </div>
     </div>
   );
@@ -548,9 +577,9 @@ function PortfolioPieChart({
   const total = segments.reduce((sum, item) => sum + item.value, 0);
   let offset = 0;
   return (
-    <div className="rounded-md border border-border/80 bg-background/55 p-3">
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] items-center gap-3">
-        <svg className="size-28 shrink-0" viewBox="0 0 112 112" role="img" aria-hidden="true">
+    <div className="mx-auto grid min-h-[180px] w-full max-w-[760px] grid-cols-1 gap-4 sm:grid-cols-[136px_minmax(0,1fr)] sm:items-center">
+      <div className="flex items-center justify-center">
+        <svg className="size-32 shrink-0" viewBox="0 0 112 112" role="img" aria-hidden="true">
           <circle cx="56" cy="56" r="38" fill="none" stroke="hsl(var(--muted) / 0.38)" strokeWidth="18" />
           {segments.map((segment) => {
             const percent = total > 0 ? (segment.value / total) * 100 : 0;
@@ -574,23 +603,23 @@ function PortfolioPieChart({
           })}
           <circle cx="56" cy="56" r="28" fill="hsl(var(--background))" stroke="hsl(var(--border) / 0.7)" strokeWidth="1" />
         </svg>
-        <div className="min-w-0 space-y-1.5">
-          {segments.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{emptyLabel}</p>
-          ) : (
-            segments.map((segment) => (
-              <div key={segment.label} className="flex min-w-0 items-center justify-between gap-2 text-xs">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
-                  <span className="truncate">{segment.label}</span>
-                </span>
-                <span className="shrink-0 font-mono tabular-nums text-foreground">
-                  {hideSensitive ? "***" : `${segment.displayValue} · ${total > 0 ? formatPercent((segment.value / total) * 100) : "-"}`}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
+      </div>
+      <div className="min-w-0 space-y-2">
+        {segments.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{emptyLabel}</p>
+        ) : (
+          segments.map((segment) => (
+            <div key={segment.label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-xs">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
+                <span className="truncate font-medium">{segment.label}</span>
+              </span>
+              <span className="shrink-0 text-right font-mono tabular-nums text-foreground">
+                {hideSensitive ? "***" : `${segment.displayValue} · ${total > 0 ? formatPercent((segment.value / total) * 100) : "-"}`}
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -1631,9 +1660,9 @@ export function PortfolioPage({
         </SideDrawer>
 
         {viewMode === "chart" ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
-            <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="grid min-h-0 flex-1 auto-rows-max gap-4 overflow-auto pr-1">
+            <div className="rounded-md border border-border/70 bg-card/70 p-4 shadow-sm">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <TrendingUp className="size-4 text-primary" />
                   {copy.assetTrend}
@@ -1661,16 +1690,16 @@ export function PortfolioPage({
               </div>
               <PortfolioTrendChart hideSensitive={hideSensitive} points={trendPoints} />
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <div className="rounded-md border border-border/70 bg-card/70 p-4 shadow-sm">
+                <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
                   <PieChart className="size-4 text-primary" />
                   {copy.holdingDistribution}
                 </div>
                 <PortfolioPieChart emptyLabel={copy.emptyTitle} hideSensitive={hideSensitive} segments={holdingSegments} />
               </div>
-              <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+              <div className="rounded-md border border-border/70 bg-card/70 p-4 shadow-sm">
+                <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
                   <CircleDollarSign className="size-4 text-primary" />
                   {copy.assetAllocation}
                 </div>

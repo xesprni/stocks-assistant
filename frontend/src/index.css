@@ -813,6 +813,11 @@
       overscroll-behavior: contain;
       padding-right: 0.35rem;
     }
+
+    .dashboard-secondary-column.dashboard-scroll-column {
+      height: auto;
+      overflow-y: visible;
+    }
   }
 
   @media (min-width: 1280px) {

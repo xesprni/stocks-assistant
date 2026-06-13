@@ -1871,10 +1871,11 @@ export function DashboardPage({
       <div
         className={cn(
           "dashboard-wide-grid grid min-h-0 gap-4 xl:flex-1 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:grid-rows-[minmax(0,1fr)] xl:gap-5 xl:overflow-hidden 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
+          "xl:items-start",
           chatExpanded && "xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
         )}
       >
-        <main className="dashboard-primary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1">
+        <main className="dashboard-primary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 xl:self-stretch">
           {canWatchlist ? (
             <WatchlistMovers
               error=""
@@ -1941,6 +1942,7 @@ export function DashboardPage({
           <aside
             className={cn(
               "dashboard-chat-column dashboard-scroll-column finance-right-rail flex min-h-[720px] min-w-0 flex-col overflow-hidden xl:col-start-3 xl:row-start-1 xl:min-h-0",
+              "xl:self-stretch",
               chatExpanded && "xl:col-start-2 xl:col-span-2",
             )}
           >
