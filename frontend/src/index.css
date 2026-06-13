@@ -322,43 +322,16 @@
   }
 
   .finance-top-nav {
-    border-bottom: 1px solid hsl(var(--border) / 0.58);
-    background:
-      linear-gradient(180deg, hsl(var(--card) / 0.72), hsl(var(--card) / 0.36)),
-      radial-gradient(circle at 16% 0%, hsl(var(--primary) / 0.16), transparent 34%),
-      radial-gradient(circle at 86% 120%, hsl(var(--secondary) / 0.12), transparent 36%);
-    backdrop-filter: blur(24px) saturate(1.65);
-    -webkit-backdrop-filter: blur(24px) saturate(1.65);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.32),
-      0 10px 30px hsl(var(--foreground) / 0.06);
-    overflow: hidden;
+    border-bottom: 1px solid hsl(var(--border));
+    background: var(--app-header-bg);
+    backdrop-filter: blur(14px);
     position: relative;
     z-index: 30;
   }
 
-  .finance-top-nav::before {
-    background:
-      linear-gradient(105deg, transparent 0%, hsl(0 0% 100% / 0.22) 24%, transparent 46%),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.12), transparent 52%);
-    content: "";
-    inset: 0;
-    opacity: 0.7;
-    pointer-events: none;
-    position: absolute;
-  }
-
   .account-menu-popover {
-    background:
-      linear-gradient(145deg, hsl(var(--popover) / 0.78), hsl(var(--popover) / 0.54)),
-      radial-gradient(circle at 8% 0%, hsl(var(--primary) / 0.16), transparent 36%),
-      radial-gradient(circle at 98% 96%, hsl(var(--secondary) / 0.12), transparent 38%) !important;
-    backdrop-filter: blur(28px) saturate(1.8);
-    -webkit-backdrop-filter: blur(28px) saturate(1.8);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.24),
-      inset 0 -1px 0 hsl(var(--foreground) / 0.05),
-      0 24px 70px hsl(var(--foreground) / 0.2) !important;
+    background: hsl(var(--popover)) !important;
+    backdrop-filter: none;
     isolation: isolate;
     opacity: 1;
     overscroll-behavior: contain;
@@ -367,36 +340,12 @@
     touch-action: pan-y;
   }
 
-  .account-menu-popover::before,
-  .mobile-nav-popover::before {
-    background:
-      linear-gradient(115deg, transparent 0%, hsl(0 0% 100% / 0.2) 28%, transparent 48%),
-      radial-gradient(circle at 50% 0%, hsl(0 0% 100% / 0.2), transparent 44%);
-    border-radius: inherit;
-    content: "";
-    inset: 0;
-    opacity: 0.75;
-    pointer-events: none;
-    position: absolute;
-    z-index: 0;
-  }
-
-  .account-menu-popover > *,
-  .mobile-nav-popover > * {
-    position: relative;
-    z-index: 1;
-  }
-
   .dark .account-menu-popover {
-    background:
-      linear-gradient(145deg, hsl(var(--popover) / 0.76), hsl(var(--popover) / 0.48)),
-      radial-gradient(circle at 8% 0%, hsl(var(--primary) / 0.18), transparent 36%),
-      radial-gradient(circle at 98% 96%, hsl(var(--secondary) / 0.1), transparent 38%) !important;
+    background: hsl(var(--popover)) !important;
   }
 
   .finance-top-nav-item {
     align-items: center;
-    border: 1px solid transparent;
     border-radius: 999px;
     color: hsl(var(--muted-foreground));
     display: inline-flex;
@@ -404,59 +353,29 @@
     font-weight: 600;
     gap: 0.4rem;
     height: 2rem;
-    overflow: hidden;
     padding: 0 0.85rem;
-    position: relative;
     transition:
       background-color 160ms ease,
-      border-color 160ms ease,
-      box-shadow 160ms ease,
       color 160ms ease;
   }
 
-  .finance-top-nav-item::before {
-    background: linear-gradient(110deg, transparent, hsl(0 0% 100% / 0.18), transparent);
-    content: "";
-    inset: 0;
-    opacity: 0;
-    pointer-events: none;
-    position: absolute;
-    transition: opacity 160ms ease;
-  }
-
   .finance-top-nav-item:hover {
-    background: hsl(var(--background) / 0.44);
-    border-color: hsl(var(--border) / 0.62);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.24);
+    background: hsl(var(--muted) / 0.82);
     color: hsl(var(--foreground));
   }
 
-  .finance-top-nav-item:hover::before,
-  .finance-top-nav-item-active::before {
-    opacity: 1;
-  }
-
   .finance-top-nav-item-active {
-    background:
-      linear-gradient(180deg, hsl(var(--primary) / 0.18), hsl(var(--primary) / 0.08)),
-      hsl(var(--background) / 0.28);
-    border-color: hsl(var(--primary) / 0.24);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.28),
-      0 8px 18px hsl(var(--primary) / 0.12);
+    background: hsl(var(--primary) / 0.09);
     color: hsl(var(--primary));
   }
 
   .dark .finance-top-nav {
     border-bottom-color: hsl(var(--border) / 0.86);
-    background:
-      linear-gradient(180deg, hsl(0 0% 9% / 0.74), hsl(0 0% 5% / 0.42)),
-      radial-gradient(circle at 16% 0%, hsl(var(--primary) / 0.15), transparent 34%),
-      radial-gradient(circle at 86% 120%, hsl(var(--secondary) / 0.08), transparent 36%);
+    background: hsl(0 0% 6% / 0.96);
   }
 
   .dark .finance-top-nav-item:hover {
-    background: hsl(var(--muted) / 0.46);
+    background: hsl(var(--muted) / 0.82);
   }
 
   .dark .finance-top-nav-item-active {
@@ -465,27 +384,8 @@
   }
 
   .mobile-nav-fab {
-    background:
-      radial-gradient(circle at 32% 18%, hsl(0 0% 100% / 0.46), transparent 28%),
-      linear-gradient(145deg, hsl(var(--primary) / 0.94), hsl(var(--primary) / 0.7)) !important;
-    backdrop-filter: blur(18px) saturate(1.8);
-    -webkit-backdrop-filter: blur(18px) saturate(1.8);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.42),
-      inset 0 -1px 0 hsl(var(--foreground) / 0.08),
-      0 18px 42px hsl(var(--primary) / 0.28) !important;
-    overflow: hidden;
     touch-action: none;
     user-select: none;
-  }
-
-  .mobile-nav-fab::before {
-    background: linear-gradient(120deg, transparent 8%, hsl(0 0% 100% / 0.28) 38%, transparent 58%);
-    content: "";
-    inset: 0;
-    opacity: 0.72;
-    pointer-events: none;
-    position: absolute;
   }
 
   .dashboard-chat-searchbar {
@@ -494,19 +394,8 @@
 
   .mobile-nav-popover {
     animation: mobile-popover-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-    background:
-      linear-gradient(145deg, hsl(var(--popover) / 0.78), hsl(var(--popover) / 0.52)),
-      radial-gradient(circle at 12% 4%, hsl(var(--primary) / 0.18), transparent 38%),
-      radial-gradient(circle at 100% 96%, hsl(var(--secondary) / 0.12), transparent 42%) !important;
-    backdrop-filter: blur(30px) saturate(1.85);
-    -webkit-backdrop-filter: blur(30px) saturate(1.85);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.26),
-      inset 0 -1px 0 hsl(var(--foreground) / 0.05),
-      0 24px 70px hsl(var(--foreground) / 0.22) !important;
-    isolation: isolate;
+    backdrop-filter: blur(16px);
     overscroll-behavior: contain;
-    overflow: hidden;
     transform-origin: right bottom;
   }
 
