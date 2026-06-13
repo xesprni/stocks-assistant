@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import type { PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent, ReactNode } from "react";
 
 export interface NativeChartTheme {
   background: string;
@@ -38,6 +38,16 @@ export interface NativeCrosshairState {
   index: number;
   time: number;
   paneId: string | null;
+}
+
+export interface NativeCrosshairValueState extends NativeCrosshairState {
+  value: number;
+}
+
+export interface NativeChartTooltipState extends NativeCrosshairState {
+  paneValue: number | null;
+  x: number;
+  y: number;
 }
 
 export interface NativeCandlePoint {
@@ -144,6 +154,8 @@ interface NativeStockChartProps {
   onVisibleRangeChange?: (range: NativeVisibleRange | null) => void;
   onNearStart?: () => void;
   onNearEnd?: () => void;
+  formatCrosshairValueLabel?: (state: NativeCrosshairValueState) => string | null | undefined;
+  renderTooltip?: (state: NativeChartTooltipState) => ReactNode;
   enableTouchCrosshairHaptics?: boolean;
   className?: string;
 }
@@ -578,6 +590,7 @@ function drawChart(
   theme: NativeChartTheme,
   viewport: NativeChartViewport,
   crosshair: (NativeCrosshairState & { y: number }) | null,
+  formatCrosshairValueLabel?: (state: NativeCrosshairValueState) => string | null | undefined,
 ) {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = theme.background;
@@ -683,7 +696,13 @@ function drawChart(
         ctx.setLineDash([]);
         const ratio = 1 - (y - bounds.top) / bounds.height;
         const value = range.min + ratio * (range.max - range.min);
-        drawTextPill(ctx, formatNumber(value), activeLayout.axisX + activeLayout.axisWidth - 4, y, theme, "right");
+        const valueLabel = formatCrosshairValueLabel?.({
+          index: crosshair.index,
+          time: times[crosshair.index],
+          paneId: activeLayout.id,
+          value,
+        }) || formatNumber(value);
+        drawTextPill(ctx, valueLabel, activeLayout.axisX + activeLayout.axisWidth - 4, y, theme, "right");
       }
     }
 
@@ -708,6 +727,8 @@ export function NativeStockChart({
   onVisibleRangeChange,
   onNearStart,
   onNearEnd,
+  formatCrosshairValueLabel,
+  renderTooltip,
   enableTouchCrosshairHaptics = false,
   className,
 }: NativeStockChartProps) {
@@ -731,6 +752,8 @@ export function NativeStockChart({
   const lastHapticAtRef = useRef(0);
   const edgeLoadingEnabledRef = useRef(false);
   const callbacksRef = useRef({ onVisibleRangeChange, onNearStart, onNearEnd });
+  const wheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
+  const [tooltipState, setTooltipState] = useState<NativeChartTooltipState | null>(null);
 
   const cachedSeries = useMemo(() => cacheSeries(times, series), [times, series]);
   const dataRef = useRef({ times, panes, series: cachedSeries, theme, primaryRangeSeriesId });
@@ -776,7 +799,18 @@ export function NativeStockChart({
       if (!ctx) return;
       const { width, height } = sizeRef.current;
       const current = dataRef.current;
-      layoutsRef.current = drawChart(ctx, width, height, current.times, current.panes, current.series, current.theme, viewportRef.current, crosshairRef.current);
+      layoutsRef.current = drawChart(
+        ctx,
+        width,
+        height,
+        current.times,
+        current.panes,
+        current.series,
+        current.theme,
+        viewportRef.current,
+        crosshairRef.current,
+        formatCrosshairValueLabel,
+      );
     });
   };
 
@@ -862,8 +896,14 @@ export function NativeStockChart({
     const first = times[0];
     const last = times[times.length - 1];
     const fitChanged = prev.fitKey !== fitKey;
+    if (fitChanged) {
+      crosshairRef.current = null;
+      setTooltipState(null);
+    }
     if (times.length === 0) {
       viewportRef.current = { from: 0, to: 0 };
+      crosshairRef.current = null;
+      setTooltipState(null);
       lastDataRef.current = { fitKey, length: 0 };
       lastVisibleSignatureRef.current = "";
       callbacksRef.current.onVisibleRangeChange?.(null);
@@ -914,6 +954,21 @@ export function NativeStockChart({
     return layout?.id ?? null;
   };
 
+  const paneValueForY = (paneId: string | null, y: number) => {
+    const current = dataRef.current;
+    if (!paneId || current.times.length === 0) return null;
+    const layout = layoutsRef.current.find((pane) => pane.id === paneId);
+    if (!layout) return null;
+    const viewport = normalizeViewport(viewportRef.current, current.times.length);
+    const from = clamp(Math.floor(viewport.from), 0, current.times.length - 1);
+    const to = clamp(Math.ceil(viewport.to), 0, current.times.length - 1);
+    const range = paneValueRange(current.series, paneId, from, to);
+    const bounds = paddedBounds(layout);
+    const clampedY = clamp(y, bounds.top, bounds.bottom);
+    const ratio = 1 - (clampedY - bounds.top) / bounds.height;
+    return range.min + ratio * (range.max - range.min);
+  };
+
   const maybeVibrateTouchCrosshair = (index: number) => {
     if (!enableTouchCrosshairHaptics || typeof navigator.vibrate !== "function") return;
     if (typeof window.matchMedia !== "function") return;
@@ -932,10 +987,16 @@ export function NativeStockChart({
 
   const updateCrosshair = (x: number, y: number, options?: { haptic?: boolean }) => {
     const current = dataRef.current;
-    if (current.times.length === 0 || layoutsRef.current.length === 0) return;
+    if (current.times.length === 0 || layoutsRef.current.length === 0) {
+      setTooltipState(null);
+      return;
+    }
     const mapper = createXMapper(layoutsRef.current[0], normalizeViewport(viewportRef.current, current.times.length));
     const index = clamp(Math.round(mapper.xToIndex(x)), 0, current.times.length - 1);
-    crosshairRef.current = { index, time: current.times[index], paneId: paneForY(y), y };
+    const paneId = paneForY(y);
+    const next = { index, time: current.times[index], paneId, paneValue: paneValueForY(paneId, y), x, y };
+    crosshairRef.current = { index: next.index, time: next.time, paneId: next.paneId, y };
+    setTooltipState(next);
     if (options?.haptic) maybeVibrateTouchCrosshair(index);
   };
 
@@ -1016,13 +1077,15 @@ export function NativeStockChart({
     setViewport({ from: nextFrom, to: nextFrom + nextCount - 1 });
     updateCrosshair(point.x, point.y);
   };
+  wheelHandlerRef.current = handleWheel;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
-    canvas.addEventListener("wheel", handleWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", handleWheel);
-  });
+    const listener = (event: WheelEvent) => wheelHandlerRef.current(event);
+    canvas.addEventListener("wheel", listener, { passive: false });
+    return () => canvas.removeEventListener("wheel", listener);
+  }, []);
 
   const finishPointer = (event: PointerEvent<HTMLCanvasElement>) => {
     clearLongPressTimer();
@@ -1037,6 +1100,19 @@ export function NativeStockChart({
     }
     scheduleDraw();
   };
+
+  const tooltipContent = tooltipState && renderTooltip ? renderTooltip(tooltipState) : null;
+  const tooltipStyle: CSSProperties | undefined = tooltipState
+    ? {
+        left: tooltipState.x > sizeRef.current.width - 220 ? tooltipState.x - 12 : tooltipState.x + 12,
+        maxWidth: "min(14rem, calc(100% - 1rem))",
+        top: tooltipState.y > sizeRef.current.height - 150 ? tooltipState.y - 12 : tooltipState.y + 12,
+        transform: [
+          tooltipState.x > sizeRef.current.width - 220 ? "translateX(-100%)" : "",
+          tooltipState.y > sizeRef.current.height - 150 ? "translateY(-100%)" : "",
+        ].filter(Boolean).join(" ") || undefined,
+      }
+    : undefined;
 
   return (
     <div ref={containerRef} className={["native-stock-chart", className].filter(Boolean).join(" ")} style={{ minWidth: 0, position: "relative" }}>
@@ -1131,10 +1207,16 @@ export function NativeStockChart({
         onPointerLeave={() => {
           if (!dragRef.current && activePointersRef.current.size === 0) {
             crosshairRef.current = null;
+            setTooltipState(null);
             scheduleDraw();
           }
         }}
       />
+      {tooltipContent ? (
+        <div className="pointer-events-none absolute z-20 w-max" style={tooltipStyle}>
+          {tooltipContent}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -18,6 +18,8 @@ import { BarChart2, RefreshCw, TrendingUp } from "lucide-react";
 import { CapitalFlowChart } from "@/components/CapitalFlowChart";
 import {
   NativeStockChart,
+  type NativeCrosshairValueState,
+  type NativeChartTooltipState,
   type NativeChartPane,
   type NativeChartSeries,
   type NativeChartTheme,
@@ -56,7 +58,6 @@ interface Props {
   onSymbolChange: (s: string) => void;
   onBack?: () => void;
   embedded?: boolean;
-  watchlistChangeRate?: string | null;
 }
 
 type AppLanguage = "zh" | "en";
@@ -87,6 +88,11 @@ const technicalCopy = {
     subIndicators: "副图",
     overlays: "叠加",
     changeRate: "涨跌幅",
+    open: "开盘",
+    close: "收盘",
+    price: "价格",
+    volume: "成交量",
+    lineChangeRate: "横线涨跌幅",
   },
   en: {
     title: "Technical Analysis",
@@ -113,6 +119,11 @@ const technicalCopy = {
     subIndicators: "Sub",
     overlays: "Overlay",
     changeRate: "Change %",
+    open: "Open",
+    close: "Close",
+    price: "Price",
+    volume: "Volume",
+    lineChangeRate: "Line Change %",
   },
 } as const;
 
@@ -120,12 +131,6 @@ type TechnicalCopy = (typeof technicalCopy)[AppLanguage];
 
 function formatTemplate(text: string, values: Record<string, string | number>) {
   return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
-}
-
-function parsePercentValue(value: string | null | undefined) {
-  if (!value) return null;
-  const parsed = Number(value.replace(/[%$,]/g, "").trim());
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function changeRate(current: number | null | undefined, base: number | null | undefined) {
@@ -147,30 +152,68 @@ function toneForRate(rate: number | null) {
   return rate > 0 ? "up" : "down";
 }
 
-function ChartRateBadge({
-  label,
-  language,
-  rate,
-}: {
-  label: string;
-  language: AppLanguage;
-  rate: number | null;
-}) {
-  const tone = toneForRate(rate);
+function formatChartNumber(value: number | null | undefined, language: AppLanguage, options?: Intl.NumberFormatOptions) {
+  if (value == null || !Number.isFinite(value)) return "-";
+  return value.toLocaleString(language === "en" ? "en-US" : "zh-CN", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+    ...options,
+  });
+}
 
+function formatCompactVolume(value: number | null | undefined, language: AppLanguage) {
+  if (value == null || !Number.isFinite(value)) return "-";
+  return value.toLocaleString(language === "en" ? "en-US" : "zh-CN", {
+    maximumFractionDigits: 2,
+    notation: "compact",
+  });
+}
+
+function formatHoverTime(time: number, language: AppLanguage, intraday = false) {
+  const date = new Date(time * 1000);
+  const locale = language === "en" ? "en-US" : "zh-CN";
+  if (intraday) {
+    return date.toLocaleString(locale, {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  return date.toLocaleDateString(locale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function ChartHoverCard({
+  metrics,
+  title,
+}: {
+  metrics: Array<{ label: string; tone?: "up" | "down" | "flat"; value: string }>;
+  title: string;
+}) {
   return (
-    <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-muted/20 px-2 text-[10px] tabular-nums text-muted-foreground">
-      <span>{label}</span>
-      <span
-        className={cn(
-          "font-semibold text-foreground",
-          tone === "up" && "text-[var(--color-up)]",
-          tone === "down" && "text-[var(--color-down)]",
-        )}
-      >
-        {formatSignedPercent(rate, language)}
-      </span>
-    </span>
+    <div className="rounded-md border border-border/80 bg-popover/95 px-3 py-2 text-xs text-popover-foreground shadow-lg shadow-foreground/10 backdrop-blur">
+      <div className="mb-1.5 font-mono text-[11px] font-semibold text-muted-foreground">{title}</div>
+      <div className="grid gap-1.5">
+        {metrics.map((metric) => (
+          <div className="grid grid-cols-[auto_minmax(5rem,1fr)] items-center gap-3" key={metric.label}>
+            <span className="text-[10px] text-muted-foreground">{metric.label}</span>
+            <span
+              className={cn(
+                "text-right font-mono font-semibold tabular-nums text-foreground",
+                metric.tone === "up" && "text-[var(--color-up)]",
+                metric.tone === "down" && "text-[var(--color-down)]",
+              )}
+            >
+              {metric.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -640,11 +683,30 @@ function KLineChart({
     [activeIndicators, bars, theme],
   );
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
-  const latestChangeRate = useMemo(() => {
-    const latest = bars[bars.length - 1];
-    const previous = bars[bars.length - 2];
-    return latest && previous ? changeRate(latest.close, previous.close) : null;
-  }, [bars]);
+  const formatCrosshairValueLabel = useCallback((state: NativeCrosshairValueState) => {
+    if (state.paneId !== "price") return null;
+    const rate = changeRate(state.value, bars[state.index - 1]?.close);
+    const price = formatChartNumber(state.value, language);
+    return rate == null ? price : `${price} ${formatSignedPercent(rate, language)}`;
+  }, [bars, language]);
+  const renderTooltip = useCallback((state: NativeChartTooltipState) => {
+    const bar = bars[state.index];
+    if (!bar) return null;
+    const rate = changeRate(bar.close, bars[state.index - 1]?.close);
+    const lineRate = state.paneId === "price" ? changeRate(state.paneValue, bars[state.index - 1]?.close) : null;
+    return (
+      <ChartHoverCard
+        title={formatHoverTime(bar.time, language)}
+        metrics={[
+          { label: copy.changeRate, value: formatSignedPercent(rate, language), tone: toneForRate(rate) },
+          { label: copy.lineChangeRate, value: formatSignedPercent(lineRate, language), tone: toneForRate(lineRate) },
+          { label: copy.open, value: formatChartNumber(bar.open, language) },
+          { label: copy.close, value: formatChartNumber(bar.close, language) },
+          { label: copy.volume, value: formatCompactVolume(bar.volume, language) },
+        ]}
+      />
+    );
+  }, [bars, copy.changeRate, copy.close, copy.lineChangeRate, copy.open, copy.volume, language]);
 
   const loadMore = useCallback(() => {
     if (!symbolRef.current || isLoadingMoreRef.current || allDataLoadedRef.current || bars.length === 0) return;
@@ -759,7 +821,6 @@ function KLineChart({
           </span>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <ChartRateBadge label={copy.changeRate} language={language} rate={latestChangeRate} />
           {loading && (
             <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <RefreshCw size={10} className="animate-spin" />{copy.loading}
@@ -774,9 +835,11 @@ function KLineChart({
         theme={theme}
         fitKey={`${symbol}:${period}`}
         primaryRangeSeriesId="candles"
+        formatCrosshairValueLabel={formatCrosshairValueLabel}
         onVisibleRangeChange={handleVisibleRangeChange}
         onNearStart={loadMore}
         onNearEnd={refreshLatest}
+        renderTooltip={renderTooltip}
         enableTouchCrosshairHaptics
         className="technical-native-chart min-h-[440px] flex-1 lg:min-h-0"
       />
@@ -817,13 +880,11 @@ function IntradayCharts({
   copy,
   language,
   isDark,
-  watchlistChangeRate,
 }: {
   symbol: string;
   copy: TechnicalCopy;
   language: AppLanguage;
   isDark: boolean;
-  watchlistChangeRate?: string | null;
 }) {
   const { upColor, downColor } = useChartColors();
   const theme = useNativeChartTheme(isDark, upColor, downColor);
@@ -875,13 +936,28 @@ function IntradayCharts({
 
   const chartModel = useMemo(() => buildIntradayChartModel(bars, theme), [bars, theme]);
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
-  const latestChangeRate = useMemo(() => {
-    const quotedRate = parsePercentValue(watchlistChangeRate);
-    if (quotedRate != null) return quotedRate;
-    const latest = bars[bars.length - 1];
-    const first = bars[0];
-    return latest && first ? changeRate(latest.price, first.price) : null;
-  }, [bars, watchlistChangeRate]);
+  const formatCrosshairValueLabel = useCallback((state: NativeCrosshairValueState) => {
+    if (state.paneId !== "price") return null;
+    const rate = changeRate(state.value, bars[0]?.price);
+    const price = formatChartNumber(state.value, language);
+    return rate == null ? price : `${price} ${formatSignedPercent(rate, language)}`;
+  }, [bars, language]);
+  const renderTooltip = useCallback((state: NativeChartTooltipState) => {
+    const bar = bars[state.index];
+    if (!bar) return null;
+    const rate = changeRate(bar.price, bars[0]?.price);
+    const lineRate = state.paneId === "price" ? changeRate(state.paneValue, bars[0]?.price) : null;
+    return (
+      <ChartHoverCard
+        title={formatHoverTime(bar.time, language, true)}
+        metrics={[
+          { label: copy.price, value: formatChartNumber(bar.price, language) },
+          { label: copy.changeRate, value: formatSignedPercent(rate, language), tone: toneForRate(rate) },
+          { label: copy.lineChangeRate, value: formatSignedPercent(lineRate, language), tone: toneForRate(lineRate) },
+        ]}
+      />
+    );
+  }, [bars, copy.changeRate, copy.lineChangeRate, copy.price, language]);
 
   const load = useCallback((mode: "full" | "incremental" = "incremental") => {
     if (!symbol) return;
@@ -933,7 +1009,6 @@ function IntradayCharts({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-1.5">
         <span className="border-l-2 border-primary/60 pl-1.5 text-[10px] font-medium text-muted-foreground">VOL</span>
         <span className="border-l-2 border-secondary/70 pl-1.5 text-[10px] font-medium text-muted-foreground">MACD</span>
-        <ChartRateBadge label={copy.changeRate} language={language} rate={latestChangeRate} />
         <label className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
           <input
             type="checkbox"
@@ -972,6 +1047,8 @@ function IntradayCharts({
         series={chartModel.series}
         theme={theme}
         fitKey={`${symbol}:${fitKey}`}
+        formatCrosshairValueLabel={formatCrosshairValueLabel}
+        renderTooltip={renderTooltip}
         className="technical-native-chart min-h-[500px] w-full flex-1 lg:min-h-0"
       />
     </div>
@@ -1114,7 +1191,7 @@ const OVERLAY_INDICATORS: { key: OverlayIndicatorKey; label: string; color: stri
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function TechnicalAnalysis({ language, symbol, onSymbolChange, onBack, embedded = false, watchlistChangeRate }: Props) {
+export default function TechnicalAnalysis({ language, symbol, onSymbolChange, onBack, embedded = false }: Props) {
   const copy = technicalCopy[language];
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
@@ -1300,7 +1377,6 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
               copy={copy}
               language={language}
               isDark={isDark}
-              watchlistChangeRate={watchlistChangeRate}
             />
           ) : (
             <CapitalFlowChart

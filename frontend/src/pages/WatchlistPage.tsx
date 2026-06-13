@@ -305,11 +305,6 @@ export function WatchlistPage({
     () => items.find((item) => item.id === activeDragId) ?? null,
     [activeDragId, items],
   );
-  const activeItem = useMemo(
-    () => items.find((item) => item.symbol === activeSymbol) ?? null,
-    [activeSymbol, items],
-  );
-
   useEffect(() => {
     writeStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, category);
     const controller = new AbortController();
@@ -648,7 +643,6 @@ export function WatchlistPage({
               embedded
               language={language}
               symbol={activeSymbol}
-              watchlistChangeRate={activeItem?.change_rate}
               onSymbolChange={handleSelectSymbol}
             />
           ) : (
