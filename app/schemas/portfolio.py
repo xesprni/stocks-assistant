@@ -5,6 +5,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 PortfolioMarket = Literal["US", "A"]
+PortfolioTransactionSide = Literal["buy", "sell", "adjust"]
 
 
 class PortfolioSettings(BaseModel):
@@ -72,6 +73,46 @@ class PortfolioListResponse(BaseModel):
     items: list[PortfolioItem]
     total: int
     quote_error: Optional[str] = None
+
+
+class PortfolioSellRequest(BaseModel):
+    """Sell shares at a user-specified execution price."""
+
+    shares: str = Field(min_length=1)
+    price: str = Field(min_length=1)
+    note: str = ""
+
+
+class PortfolioTransaction(BaseModel):
+    """Local portfolio transaction record."""
+
+    id: int
+    market: PortfolioMarket
+    symbol: str
+    name: str = ""
+    side: PortfolioTransactionSide
+    shares: str
+    price: str
+    amount: str
+    realized_pnl: Optional[str] = None
+    note: str = ""
+    created_at: str
+
+
+class PortfolioTransactionListResponse(BaseModel):
+    """Portfolio transaction history response."""
+
+    market: PortfolioMarket
+    transactions: list[PortfolioTransaction]
+    total: int
+
+
+class PortfolioSellResponse(BaseModel):
+    """Sell result with updated local holding and transaction record."""
+
+    item: PortfolioItem
+    transaction: PortfolioTransaction
+    total_capital: str = "0"
 
 
 class PortfolioSearchResult(BaseModel):

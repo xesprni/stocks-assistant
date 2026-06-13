@@ -49,6 +49,9 @@ import type {
   PortfolioListResponse,
   PortfolioMarket,
   PortfolioSearchResponse,
+  PortfolioSellDraft,
+  PortfolioSellResponse,
+  PortfolioTransactionListResponse,
   PagePermissionUpdateRequest,
   RoleListResponse,
   RoleUpdateRequest,
@@ -653,6 +656,17 @@ export function savePortfolioSettings(market: PortfolioMarket, totalCapital: str
   return request<{ market: PortfolioMarket; total_capital: string }>(`/api/v1/portfolio/settings/${market}`, {
     method: "PUT",
     body: JSON.stringify({ total_capital: totalCapital }),
+  });
+}
+
+export function listPortfolioTransactions(market: PortfolioMarket) {
+  return request<PortfolioTransactionListResponse>(`/api/v1/portfolio/transactions?market=${market}&limit=100`);
+}
+
+export function sellPortfolioItem(id: number, payload: PortfolioSellDraft) {
+  return request<PortfolioSellResponse>(`/api/v1/portfolio/${id}/sell`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

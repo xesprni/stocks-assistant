@@ -14,8 +14,11 @@ from app.schemas.portfolio import (
     PortfolioMarket,
     PortfolioSearchResponse,
     PortfolioSearchResult,
+    PortfolioSellRequest,
+    PortfolioSellResponse,
     PortfolioSettings,
     PortfolioSettingsUpdate,
+    PortfolioTransactionListResponse,
 )
 
 router = APIRouter()
@@ -69,6 +72,33 @@ async def update_portfolio_settings(
     """Update capital denominator for one market."""
     service = get_portfolio_service()
     return PortfolioSettings(**service.save_settings(market, body.total_capital, user_id=current_user.id))
+
+
+@router.get("/transactions", response_model=PortfolioTransactionListResponse)
+async def list_portfolio_transactions(
+    market: PortfolioMarket = "US",
+    limit: int = 100,
+    current_user: CurrentUser = Depends(require_permissions("portfolio:read")),
+):
+    """List local portfolio transaction history."""
+    service = get_portfolio_service()
+    return PortfolioTransactionListResponse(**service.list_transactions(market, user_id=current_user.id, limit=limit))
+
+
+@router.post("/{item_id}/sell", response_model=PortfolioSellResponse)
+async def sell_portfolio_item(
+    item_id: int,
+    body: PortfolioSellRequest,
+    current_user: CurrentUser = Depends(require_permissions("portfolio:write")),
+):
+    """Sell shares locally at a user-specified execution price."""
+    service = get_portfolio_service()
+    try:
+        return PortfolioSellResponse(**service.sell_item(item_id, body, user_id=current_user.id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Portfolio item not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.patch("/{item_id}", response_model=PortfolioItem)

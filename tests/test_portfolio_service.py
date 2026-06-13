@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 
 from app.core.portfolio.service import PortfolioService
-from app.schemas.portfolio import PortfolioItemCreate
+from app.schemas.portfolio import PortfolioItemCreate, PortfolioSellRequest
 
 
 class FakeLongbridge:
@@ -61,6 +61,35 @@ class PortfolioServiceTest(unittest.TestCase):
         self.assertEqual(item["change_rate"], "20.00%")
         self.assertEqual(result["total_assets"], "11200.00")
         self.assertEqual(result["cash_ratio"], "89.29%")
+
+    def test_sell_item_reduces_shares_increases_cash_and_records_transaction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = PortfolioService(tmp)
+            service.save_settings("US", "100")
+            item = service.add_item(
+                PortfolioItemCreate(
+                    market="US",
+                    symbol="msft.us",
+                    name="Microsoft",
+                    shares="10",
+                    cost_price="80",
+                    note="core",
+                )
+            )
+
+            result = service.sell_item(item["id"], PortfolioSellRequest(shares="4", price="120", note=" trim "))
+            transactions = service.list_transactions("US")["transactions"]
+
+        self.assertEqual(result["item"]["shares"], "6")
+        self.assertEqual(result["total_capital"], "580")
+        self.assertEqual(len(transactions), 1)
+        self.assertEqual(transactions[0]["side"], "sell")
+        self.assertEqual(transactions[0]["symbol"], "MSFT.US")
+        self.assertEqual(transactions[0]["shares"], "4")
+        self.assertEqual(transactions[0]["price"], "120")
+        self.assertEqual(transactions[0]["amount"], "480.00")
+        self.assertEqual(transactions[0]["realized_pnl"], "160.00")
+        self.assertEqual(transactions[0]["note"], "trim")
 
 
 if __name__ == "__main__":

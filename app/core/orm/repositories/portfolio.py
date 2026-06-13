@@ -10,7 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.orm.database import create_session_factory, create_sqlite_engine, session_scope
 from app.core.orm.migrations import init_portfolio_schema
-from app.core.orm.models.portfolio import PortfolioItem, PortfolioSetting
+from app.core.orm.models.portfolio import PortfolioItem, PortfolioSetting, PortfolioTransaction
 
 
 class PortfolioRepository:
@@ -52,6 +52,16 @@ class PortfolioRepository:
                 )
             )
         return {"market": market, "user_id": user_id or "", "total_capital": total_capital}
+
+    def list_transactions(self, market: str, user_id: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+        with session_scope(self.session_factory) as session:
+            rows = session.scalars(
+                select(PortfolioTransaction)
+                .where(PortfolioTransaction.market == market, PortfolioTransaction.user_id == (user_id or ""))
+                .order_by(PortfolioTransaction.created_at.desc(), PortfolioTransaction.id.desc())
+                .limit(limit)
+            ).all()
+            return [self._transaction_to_dict(row) for row in rows]
 
     def add_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
@@ -97,6 +107,43 @@ class PortfolioRepository:
             session.flush()
             return self._item_to_dict(item)
 
+    def sell_item(
+        self,
+        item_id: int,
+        *,
+        user_id: Optional[str],
+        remaining_shares: str,
+        total_capital: str,
+        transaction: dict[str, Any],
+        updated_at: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+        with session_scope(self.session_factory) as session:
+            item = session.get(PortfolioItem, item_id)
+            if not item or (user_id and item.user_id != user_id):
+                raise KeyError(item_id)
+
+            item.shares = remaining_shares
+            item.updated_at = updated_at
+
+            setting_key = {"user_id": user_id or "", "market": item.market}
+            setting = session.get(PortfolioSetting, setting_key)
+            if setting is None:
+                setting = PortfolioSetting(
+                    user_id=user_id or "",
+                    market=item.market,
+                    total_capital=total_capital,
+                    updated_at=updated_at,
+                )
+                session.add(setting)
+            else:
+                setting.total_capital = total_capital
+                setting.updated_at = updated_at
+
+            row = PortfolioTransaction(**transaction)
+            session.add(row)
+            session.flush()
+            return self._item_to_dict(item), self._transaction_to_dict(row), self._setting_to_dict(setting)
+
     def get_item(self, item_id: int, user_id: Optional[str] = None) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
             item = session.get(PortfolioItem, item_id)
@@ -137,3 +184,19 @@ class PortfolioRepository:
             "updated_at": setting.updated_at,
         }
 
+    @staticmethod
+    def _transaction_to_dict(transaction: PortfolioTransaction) -> dict[str, Any]:
+        return {
+            "id": transaction.id,
+            "user_id": transaction.user_id,
+            "market": transaction.market,
+            "symbol": transaction.symbol,
+            "name": transaction.name,
+            "side": transaction.side,
+            "shares": transaction.shares,
+            "price": transaction.price,
+            "amount": transaction.amount,
+            "realized_pnl": transaction.realized_pnl,
+            "note": transaction.note,
+            "created_at": transaction.created_at,
+        }

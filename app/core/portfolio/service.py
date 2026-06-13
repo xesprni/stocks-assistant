@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from app.core.orm.repositories.portfolio import PortfolioRepository
 from app.core.watchlist.service import LongbridgeSearchClient, LongbridgeUnavailableError
-from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate, PortfolioMarket
+from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate, PortfolioMarket, PortfolioSellRequest
 
 
 def _now() -> str:
@@ -124,6 +124,11 @@ class PortfolioService:
         value = _decimal_text(total_capital) or "0"
         return self.repository.save_settings(market, value, user_id, _now())
 
+    def list_transactions(self, market: PortfolioMarket, user_id: Optional[str] = None, limit: int = 100) -> dict[str, Any]:
+        normalized_limit = min(max(int(limit), 1), 200)
+        transactions = self.repository.list_transactions(market, user_id=user_id, limit=normalized_limit)
+        return {"market": market, "transactions": transactions, "total": len(transactions)}
+
     def add_item(self, item: PortfolioItemCreate, user_id: Optional[str] = None) -> dict[str, Any]:
         now = _now()
         payload = item.model_dump()
@@ -154,6 +159,54 @@ class PortfolioService:
         # patch 字段来自 Pydantic schema 的白名单，动态拼接只覆盖请求中出现的列。
         patch["updated_at"] = _now()
         return self._empty_enriched_item(self.repository.update_item(item_id, patch, user_id=user_id))
+
+    def sell_item(self, item_id: int, request: PortfolioSellRequest, user_id: Optional[str] = None) -> dict[str, Any]:
+        current = self.repository.get_item(item_id, user_id=user_id)
+        shares_to_sell = _decimal(request.shares)
+        sell_price = _decimal(request.price)
+        if shares_to_sell is None or shares_to_sell <= 0:
+            raise ValueError("shares must be greater than 0")
+        if sell_price is None or sell_price <= 0:
+            raise ValueError("price must be greater than 0")
+
+        current_shares = _decimal(current.get("shares")) or Decimal("0")
+        if shares_to_sell > current_shares:
+            raise ValueError("shares exceed current holding")
+
+        amount = shares_to_sell * sell_price
+        cost_price = _decimal(current.get("cost_price"))
+        realized_pnl = (sell_price - cost_price) * shares_to_sell if cost_price is not None else None
+        market = current["market"]
+        cash = _decimal(self.get_settings(market, user_id=user_id)["total_capital"]) or Decimal("0")
+        remaining_shares = current_shares - shares_to_sell
+        updated_at = _now()
+
+        transaction = {
+            "user_id": user_id or "",
+            "market": market,
+            "symbol": current["symbol"],
+            "name": current.get("name") or "",
+            "side": "sell",
+            "shares": _decimal_text(shares_to_sell) or "0",
+            "price": _decimal_text(sell_price) or "0",
+            "amount": _money(amount) or "0.00",
+            "realized_pnl": _money(realized_pnl),
+            "note": request.note.strip(),
+            "created_at": updated_at,
+        }
+        item, saved_transaction, setting = self.repository.sell_item(
+            item_id,
+            user_id=user_id,
+            remaining_shares=_decimal_text(remaining_shares) or "0",
+            total_capital=_decimal_text(cash + amount) or "0",
+            transaction=transaction,
+            updated_at=updated_at,
+        )
+        return {
+            "item": self._empty_enriched_item(item),
+            "transaction": saved_transaction,
+            "total_capital": setting["total_capital"],
+        }
 
     def get_item(self, item_id: int, user_id: Optional[str] = None) -> dict[str, Any]:
         return self._empty_enriched_item(self.repository.get_item(item_id, user_id=user_id))

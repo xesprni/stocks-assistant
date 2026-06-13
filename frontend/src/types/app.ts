@@ -414,6 +414,38 @@ export interface PortfolioListResponse {
   quote_error?: string | null;
 }
 
+export interface PortfolioSellDraft {
+  shares: string;
+  price: string;
+  note?: string;
+}
+
+export interface PortfolioTransaction {
+  id: number;
+  market: PortfolioMarket;
+  symbol: string;
+  name: string;
+  side: "buy" | "sell" | "adjust";
+  shares: string;
+  price: string;
+  amount: string;
+  realized_pnl: string | null;
+  note: string;
+  created_at: string;
+}
+
+export interface PortfolioTransactionListResponse {
+  market: PortfolioMarket;
+  transactions: PortfolioTransaction[];
+  total: number;
+}
+
+export interface PortfolioSellResponse {
+  item: PortfolioItem;
+  transaction: PortfolioTransaction;
+  total_capital: string;
+}
+
 export interface PortfolioSearchResult {
   market: PortfolioMarket;
   symbol: string;

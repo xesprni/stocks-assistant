@@ -1,21 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
+  BarChart3,
   BriefcaseBusiness,
   ChevronDown,
   ChevronUp,
+  CircleDollarSign,
   Eye,
   EyeOff,
   FileText,
+  History,
   Loader2,
   Pencil,
+  PieChart,
   Plus,
   RefreshCw,
   Save,
   Search,
+  Settings2,
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  TrendingUp,
 } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
@@ -29,13 +34,15 @@ import {
   addPortfolioItem,
   deletePortfolioItem,
   listPortfolio,
+  listPortfolioTransactions,
   savePortfolioSettings,
   searchPortfolioSymbols,
+  sellPortfolioItem,
   updatePortfolioItem,
 } from "@/lib/api";
 import { readStoredBoolean, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
-import type { PortfolioItem, PortfolioItemDraft, PortfolioMarket, PortfolioSearchResult } from "@/types/app";
+import type { PortfolioItem, PortfolioItemDraft, PortfolioMarket, PortfolioSearchResult, PortfolioTransaction } from "@/types/app";
 
 type AppLanguage = "zh" | "en";
 
@@ -63,6 +70,29 @@ const copyByLanguage = {
       cashRatio: "现金占比",
       positionCount: "持仓数",
       totalPnl: "总盈亏",
+      overview: "总览",
+      charts: "图表",
+      manage: "管理",
+      trendDay: "日",
+      trendWeek: "周",
+      trendMonth: "月",
+      assetTrend: "资产走势",
+      holdingDistribution: "持仓分布",
+      assetAllocation: "资产占比",
+      cashAsset: "现金",
+      equityAsset: "股票",
+      management: "组合管理",
+      tradeHistory: "交易历史",
+      transactionTime: "时间",
+      transactionSide: "方向",
+      transactionAmount: "成交额",
+      realizedPnl: "已实现盈亏",
+      sellHolding: "卖出持仓",
+      sellShares: "卖出股数",
+      sellPrice: "卖出价",
+      sellFailed: "卖出失败",
+      sell: "卖出",
+      noTransactions: "暂无交易记录",
       updatedAt: "更新于 {time}",
       quoteUnavailable: "行情字段暂不可用：{message}",
       loadFailed: "加载持仓失败",
@@ -144,6 +174,29 @@ const copyByLanguage = {
       cashRatio: "Cash %",
       positionCount: "Positions",
       totalPnl: "Total P&L",
+      overview: "Overview",
+      charts: "Charts",
+      manage: "Manage",
+      trendDay: "Day",
+      trendWeek: "Week",
+      trendMonth: "Month",
+      assetTrend: "Asset trend",
+      holdingDistribution: "Holding mix",
+      assetAllocation: "Asset allocation",
+      cashAsset: "Cash",
+      equityAsset: "Stocks",
+      management: "Portfolio management",
+      tradeHistory: "Trade history",
+      transactionTime: "Time",
+      transactionSide: "Side",
+      transactionAmount: "Amount",
+      realizedPnl: "Realized P&L",
+      sellHolding: "Sell holding",
+      sellShares: "Sell shares",
+      sellPrice: "Sell price",
+      sellFailed: "Failed to sell holding",
+      sell: "Sell",
+      noTransactions: "No transactions yet",
       updatedAt: "updated at {time}",
       quoteUnavailable: "Market fields unavailable: {message}",
       loadFailed: "Failed to load portfolio",
@@ -216,6 +269,8 @@ type PortfolioSortKey =
   | "note";
 
 type PortfolioAdjustMode = "increase" | "decrease" | "set";
+type PortfolioViewMode = "overview" | "chart" | "manage";
+type PortfolioTrendRange = "day" | "week" | "month";
 
 type PortfolioAdjustmentDraft = {
   mode: PortfolioAdjustMode;
@@ -223,11 +278,35 @@ type PortfolioAdjustmentDraft = {
   price: string;
 };
 
+type PortfolioSellDraft = {
+  shares: string;
+  price: string;
+  note: string;
+};
+
 type PortfolioAdjustmentPreview = {
   currentShares: number;
   nextShares: number | null;
   nextCost: number | null;
   error: "invalid" | "negative" | null;
+};
+
+type PortfolioAssetSnapshot = {
+  market: PortfolioMarket;
+  date: string;
+  total_assets: string;
+};
+
+type PortfolioPieSegment = {
+  label: string;
+  value: number;
+  displayValue: string;
+  color: string;
+};
+
+type PortfolioTrendPoint = {
+  label: string;
+  value: number;
 };
 
 function formatTemplate(text: string, values: Record<string, string | number>) {
@@ -298,6 +377,17 @@ function formatDraftDecimal(value: number | null) {
   return String(Number(value.toFixed(8)));
 }
 
+function formatDateTime(value: string, language: AppLanguage) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(language === "en" ? "en-US" : "zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function numericTone(value: string | number | null | undefined) {
   const numeric = parseNumber(value);
   if (numeric == null || numeric === 0) return "text-muted-foreground";
@@ -308,6 +398,192 @@ function percentTone(value: string | number | null | undefined): "up" | "down" |
   const numeric = parseNumber(value);
   if (numeric == null || numeric === 0) return "flat";
   return numeric > 0 ? "up" : "down";
+}
+
+function readPortfolioSnapshots(market: PortfolioMarket): PortfolioAssetSnapshot[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PORTFOLIO_SNAPSHOTS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as PortfolioAssetSnapshot[]) : [];
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((item) => item.market === market && item.date && parseNumber(item.total_assets) != null)
+          .sort((a, b) => a.date.localeCompare(b.date))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePortfolioSnapshot(market: PortfolioMarket, totalAssets: string): PortfolioAssetSnapshot[] {
+  if (typeof window === "undefined") return [];
+  const value = parseNumber(totalAssets);
+  if (value == null) return readPortfolioSnapshots(market);
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const raw = window.localStorage.getItem(PORTFOLIO_SNAPSHOTS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as PortfolioAssetSnapshot[]) : [];
+    const snapshots = Array.isArray(parsed) ? parsed : [];
+    const next = [
+      ...snapshots.filter((item) => !(item.market === market && item.date === today)),
+      { market, date: today, total_assets: totalAssets },
+    ]
+      .filter((item) => item.date >= "2020-01-01")
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-740);
+    window.localStorage.setItem(PORTFOLIO_SNAPSHOTS_STORAGE_KEY, JSON.stringify(next));
+    return next.filter((item) => item.market === market);
+  } catch {
+    return readPortfolioSnapshots(market);
+  }
+}
+
+function periodKey(dateText: string, range: PortfolioTrendRange) {
+  const date = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateText;
+  if (range === "month") return dateText.slice(0, 7);
+  if (range === "week") {
+    const monday = new Date(date);
+    const day = monday.getDay() || 7;
+    monday.setDate(monday.getDate() - day + 1);
+    return monday.toISOString().slice(0, 10);
+  }
+  return dateText;
+}
+
+function periodLabel(key: string, range: PortfolioTrendRange) {
+  if (range === "month") return key.slice(5);
+  return key.slice(5).replace("-", "/");
+}
+
+function buildTrendPoints(snapshots: PortfolioAssetSnapshot[], range: PortfolioTrendRange, currentTotalAssets: string): PortfolioTrendPoint[] {
+  const grouped = new Map<string, PortfolioAssetSnapshot>();
+  for (const snapshot of snapshots) {
+    grouped.set(periodKey(snapshot.date, range), snapshot);
+  }
+  const points = Array.from(grouped.entries())
+    .map(([key, snapshot]) => ({ label: periodLabel(key, range), value: parseNumber(snapshot.total_assets) ?? 0 }))
+    .filter((point) => Number.isFinite(point.value));
+  const limit = range === "day" ? 30 : 12;
+  if (points.length > 0) return points.slice(-limit);
+  const current = parseNumber(currentTotalAssets);
+  return current == null ? [] : [{ label: new Date().toISOString().slice(5, 10).replace("-", "/"), value: current }];
+}
+
+function buildPieStyle(segments: PortfolioPieSegment[]): CSSProperties {
+  const total = segments.reduce((sum, item) => sum + item.value, 0);
+  if (total <= 0) return {};
+  let cursor = 0;
+  const stops = segments.map((item) => {
+    const start = (cursor / total) * 100;
+    cursor += item.value;
+    const end = (cursor / total) * 100;
+    return `${item.color} ${start}% ${end}%`;
+  });
+  return { background: `conic-gradient(${stops.join(", ")})` };
+}
+
+function buildHoldingSegments(items: PortfolioItem[]): PortfolioPieSegment[] {
+  const colors = ["#14b8a6", "#f97316", "#6366f1", "#eab308", "#ef4444", "#0ea5e9"];
+  return items
+    .map((item, index) => {
+      const value = parseNumber(item.stock_value) ?? 0;
+      return {
+        label: item.symbol,
+        value,
+        displayValue: formatMoney(value),
+        color: colors[index % colors.length],
+      };
+    })
+    .filter((item) => item.value > 0);
+}
+
+function buildAssetSegments(cash: string, marketValue: number, copy: { cashAsset: string; equityAsset: string }): PortfolioPieSegment[] {
+  const cashValue = parseNumber(cash) ?? 0;
+  return [
+    { label: copy.cashAsset, value: cashValue, displayValue: formatMoney(cashValue), color: "#22c55e" },
+    { label: copy.equityAsset, value: marketValue, displayValue: formatMoney(marketValue), color: "#3b82f6" },
+  ].filter((item) => item.value > 0);
+}
+
+function PortfolioTrendChart({
+  hideSensitive,
+  points,
+}: {
+  hideSensitive: boolean;
+  points: PortfolioTrendPoint[];
+}) {
+  const width = 520;
+  const height = 190;
+  const padding = 18;
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 1);
+  const span = max - min || 1;
+  const coordinates = points.map((point, index) => {
+    const x = points.length <= 1 ? width / 2 : padding + (index / (points.length - 1)) * (width - padding * 2);
+    const y = height - padding - ((point.value - min) / span) * (height - padding * 2);
+    return { ...point, x, y };
+  });
+  const path = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+
+  return (
+    <div className="h-full min-h-[220px] rounded-md border border-border/80 bg-background/55 p-3">
+      <svg className="h-44 w-full" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`} role="img">
+        <line x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} className="stroke-border" strokeWidth="1" />
+        <line x1={padding} x2={padding} y1={padding} y2={height - padding} className="stroke-border" strokeWidth="1" />
+        {coordinates.length > 1 ? (
+          <polyline points={path} fill="none" stroke="hsl(var(--primary))" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        ) : null}
+        {coordinates.map((point) => (
+          <circle key={`${point.label}-${point.x}`} cx={point.x} cy={point.y} r="4" fill="hsl(var(--primary))" vectorEffect="non-scaling-stroke" />
+        ))}
+      </svg>
+      <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>{points[0]?.label ?? "-"}</span>
+        <span className="font-mono text-foreground">{hideSensitive ? "***" : formatMoney(points.at(-1)?.value)}</span>
+        <span>{points.at(-1)?.label ?? "-"}</span>
+      </div>
+    </div>
+  );
+}
+
+function PortfolioPieChart({
+  emptyLabel,
+  hideSensitive,
+  segments,
+}: {
+  emptyLabel: string;
+  hideSensitive: boolean;
+  segments: PortfolioPieSegment[];
+}) {
+  const total = segments.reduce((sum, item) => sum + item.value, 0);
+  return (
+    <div className="rounded-md border border-border/80 bg-background/55 p-3">
+      <div className="grid grid-cols-[112px_minmax(0,1fr)] items-center gap-3">
+        <div className="relative size-28 rounded-full border border-border/70 bg-muted/30" style={buildPieStyle(segments)}>
+          <div className="absolute inset-7 rounded-full border border-border/70 bg-background" />
+        </div>
+        <div className="min-w-0 space-y-1.5">
+          {segments.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{emptyLabel}</p>
+          ) : (
+            segments.map((segment) => (
+              <div key={segment.label} className="flex min-w-0 items-center justify-between gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
+                  <span className="truncate">{segment.label}</span>
+                </span>
+                <span className="shrink-0 font-mono tabular-nums text-foreground">
+                  {hideSensitive ? "***" : `${segment.displayValue} · ${total > 0 ? formatPercent((segment.value / total) * 100) : "-"}`}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function portfolioSortValue(item: PortfolioItem, key: PortfolioSortKey) {
@@ -438,6 +714,7 @@ const PORTFOLIO_AUTO_REFRESH_STORAGE_KEY = "stocks-assistant.portfolio.auto-refr
 const PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY = "stocks-assistant.portfolio.hide-sensitive";
 const PORTFOLIO_MARKET_STORAGE_KEY = "stocks-assistant.portfolio.market";
 const PORTFOLIO_SORT_STORAGE_KEY = "stocks-assistant.portfolio.sort";
+const PORTFOLIO_SNAPSHOTS_STORAGE_KEY = "stocks-assistant.portfolio.asset-snapshots";
 
 function readStoredSortState(): { key: PortfolioSortKey; direction: "asc" | "desc" } {
   const fallback = { key: "symbol" as PortfolioSortKey, direction: "asc" as const };
@@ -481,7 +758,11 @@ export function PortfolioPage({
   const copy = copyByLanguage[language].portfolio;
   const portfolioMarkets = getPortfolioMarkets(language);
   const [market, setMarket] = useState<PortfolioMarket>(() => readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US"));
+  const [viewMode, setViewMode] = useState<PortfolioViewMode>("overview");
+  const [trendRange, setTrendRange] = useState<PortfolioTrendRange>("day");
   const [items, setItems] = useState<PortfolioItem[]>([]);
+  const [transactions, setTransactions] = useState<PortfolioTransaction[]>([]);
+  const [assetSnapshots, setAssetSnapshots] = useState<PortfolioAssetSnapshot[]>(() => readPortfolioSnapshots(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US")));
   const [totalCapital, setTotalCapital] = useState("0");
   const [totalAssets, setTotalAssets] = useState("0");
   const [cashRatio, setCashRatio] = useState<string | null>(null);
@@ -490,6 +771,8 @@ export function PortfolioPage({
   const [editingItem, setEditingItem] = useState<PortfolioItem | null>(null);
   const [adjustingItem, setAdjustingItem] = useState<PortfolioItem | null>(null);
   const [adjustmentDraft, setAdjustmentDraft] = useState<PortfolioAdjustmentDraft>(() => emptyAdjustmentDraft());
+  const [sellingItem, setSellingItem] = useState<PortfolioItem | null>(null);
+  const [sellDraft, setSellDraft] = useState<PortfolioSellDraft>({ shares: "", price: "", note: "" });
   const [showForm, setShowForm] = useState(false);
   const [showCashSheet, setShowCashSheet] = useState(false);
   const [query, setQuery] = useState("");
@@ -499,6 +782,7 @@ export function PortfolioPage({
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingCapital, setIsSavingCapital] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(() => readStoredBoolean(PORTFOLIO_AUTO_REFRESH_STORAGE_KEY, false));
   const [hideSensitive, setHideSensitive] = useState(() => readStoredBoolean(PORTFOLIO_HIDE_SENSITIVE_STORAGE_KEY, false));
@@ -534,6 +818,16 @@ export function PortfolioPage({
     return [...items].sort((a, b) => comparePortfolioItems(a, b, sortState.key, sortState.direction));
   }, [items, sortState]);
 
+  const trendPoints = useMemo(
+    () => buildTrendPoints(assetSnapshots, trendRange, totalAssets),
+    [assetSnapshots, totalAssets, trendRange],
+  );
+  const holdingSegments = useMemo(() => buildHoldingSegments(items), [items]);
+  const assetSegments = useMemo(
+    () => buildAssetSegments(totalCapital, portfolioStats.marketValue, { cashAsset: copy.cashAsset, equityAsset: copy.equityAsset }),
+    [copy.cashAsset, copy.equityAsset, portfolioStats.marketValue, totalCapital],
+  );
+
   const preview = useMemo(() => {
     const shares = parseNumber(form.shares);
     const cost = parseNumber(form.cost_price);
@@ -549,6 +843,14 @@ export function PortfolioPage({
     () => computeAdjustmentPreview(adjustingItem, adjustmentDraft),
     [adjustingItem, adjustmentDraft],
   );
+  const sellPreview = useMemo(() => {
+    const shares = parseNumber(sellDraft.shares);
+    const price = parseNumber(sellDraft.price);
+    const cost = parseNumber(sellingItem?.cost_price);
+    const amount = shares != null && price != null ? shares * price : null;
+    const realizedPnl = amount != null && cost != null && shares != null ? (price! - cost) * shares : null;
+    return { amount, realizedPnl };
+  }, [sellDraft.price, sellDraft.shares, sellingItem?.cost_price]);
 
   const formatUpdatedTime = useCallback(() => {
     return new Date().toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", {
@@ -580,6 +882,7 @@ export function PortfolioPage({
         setTotalCapital(response.total_capital);
         setTotalAssets(response.total_assets);
         setCashRatio(response.cash_ratio);
+        setAssetSnapshots(writePortfolioSnapshot(requestMarket, response.total_assets));
         if (syncCapitalDraft) setCapitalDraft(response.total_capital);
         setQuoteError(response.quote_error ?? "");
         setMessage("");
@@ -599,9 +902,26 @@ export function PortfolioPage({
     [copy.loadFailed, formatUpdatedTime, market],
   );
 
+  const loadTransactions = useCallback(async () => {
+    setIsLoadingTransactions(true);
+    try {
+      const response = await listPortfolioTransactions(market);
+      setTransactions(response.transactions);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : copy.loadFailed);
+    } finally {
+      setIsLoadingTransactions(false);
+    }
+  }, [copy.loadFailed, market]);
+
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
+
+  useEffect(() => {
+    if (viewMode === "overview") return;
+    void loadTransactions();
+  }, [loadTransactions, viewMode]);
 
   useEffect(() => {
     writeStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, market);
@@ -747,6 +1067,17 @@ export function PortfolioPage({
     setAdjustmentDraft(emptyAdjustmentDraft());
   }
 
+  function sellItem(item: PortfolioItem) {
+    setSellingItem(item);
+    setSellDraft({ shares: "", price: item.current_price ?? item.cost_price ?? "", note: "" });
+    setMessage("");
+  }
+
+  function closeSellSheet() {
+    setSellingItem(null);
+    setSellDraft({ shares: "", price: "", note: "" });
+  }
+
   async function handleSaveAdjustment(event?: { preventDefault: () => void }) {
     event?.preventDefault();
     if (!adjustingItem) return;
@@ -774,6 +1105,28 @@ export function PortfolioPage({
       await loadItems({ syncCapitalDraft: false });
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : copy.adjustFailed);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSellItem(event?: { preventDefault: () => void }) {
+    event?.preventDefault();
+    if (!sellingItem) return;
+
+    setIsSaving(true);
+    setMessage("");
+    try {
+      await sellPortfolioItem(sellingItem.id, {
+        shares: sellDraft.shares,
+        price: sellDraft.price,
+        note: sellDraft.note.trim(),
+      });
+      closeSellSheet();
+      await loadItems({ syncCapitalDraft: true });
+      await loadTransactions();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : copy.sellFailed);
     } finally {
       setIsSaving(false);
     }
@@ -835,9 +1188,12 @@ export function PortfolioPage({
 
   function switchMarket(nextMarket: PortfolioMarket) {
     setMarket(nextMarket);
+    setTransactions([]);
+    setAssetSnapshots(readPortfolioSnapshots(nextMarket));
     setShowForm(false);
     setShowCashSheet(false);
     closeAdjustmentSheet();
+    closeSellSheet();
     resetForm(nextMarket);
   }
 
@@ -855,7 +1211,7 @@ export function PortfolioPage({
           <button
             aria-pressed={market === item.id}
             className={cn(
-              "h-6 min-w-[4.25rem] rounded-full px-2.5 text-xs font-medium transition-colors",
+              "h-6 min-w-[3.25rem] rounded-full px-2 text-xs font-medium transition-colors sm:min-w-[4.25rem] sm:px-2.5",
               market === item.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
             )}
             key={item.id}
@@ -869,12 +1225,41 @@ export function PortfolioPage({
     );
   }
 
+  function renderViewSwitcher() {
+    const views: Array<{ id: PortfolioViewMode; label: string; icon: typeof BriefcaseBusiness }> = [
+      { id: "overview", label: copy.overview, icon: BriefcaseBusiness },
+      { id: "chart", label: copy.charts, icon: BarChart3 },
+      { id: "manage", label: copy.manage, icon: Settings2 },
+    ];
+    return (
+      <div className="inline-flex h-7 w-fit shrink-0 items-center rounded-full border border-border bg-muted/45 p-0.5">
+        {views.map(({ id, label, icon: Icon }) => (
+          <button
+            aria-label={label}
+            aria-pressed={viewMode === id}
+            className={cn(
+              "inline-flex h-6 w-7 items-center justify-center rounded-full text-xs font-medium transition-colors sm:w-8",
+              viewMode === id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+            )}
+            key={id}
+            onClick={() => setViewMode(id)}
+            title={label}
+            type="button"
+          >
+            <Icon className="size-3.5" />
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   const adjustmentErrorText = adjustmentPreview.error === "invalid"
     ? copy.adjustInvalid
     : adjustmentPreview.error === "negative"
       ? copy.adjustNegative
       : "";
   const adjustmentSaveDisabled = !adjustingItem || !adjustmentDraft.shares.trim() || adjustmentPreview.nextShares == null || Boolean(adjustmentPreview.error);
+  const sellSaveDisabled = !sellingItem || !sellDraft.shares.trim() || !sellDraft.price.trim();
 
   const emptyState = (
     <div className="finance-soft-state grid min-h-56 place-items-center rounded-lg border border-dashed border-border/80 bg-muted/15 px-4 text-center text-sm text-muted-foreground">
@@ -892,96 +1277,114 @@ export function PortfolioPage({
 
   return (
     <section className="panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="page-toolbar flex flex-col gap-2 md:flex-row md:items-center md:justify-end">
-          <div className="shrink-0 md:hidden">{renderMarketSwitcher()}</div>
-          <div className="hidden overflow-x-auto md:block md:w-fit">{renderMarketSwitcher()}</div>
-          <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
-            <label className="flex h-7 min-w-0 items-center gap-2 rounded-md bg-muted/25 px-2 text-xs text-muted-foreground">
-              <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
-              <span className="hidden whitespace-nowrap sm:inline">{copy.realtimeRefresh}</span>
-            </label>
-            {autoRefresh ? (
-              <div className="hidden h-7 items-center gap-1.5 rounded-md bg-muted/25 px-2 text-xs text-muted-foreground sm:flex">
-                <Activity className="size-3 animate-pulse text-[var(--color-up)]" />
-                <span className="whitespace-nowrap">{formatTemplate(copy.refreshCountdown, { seconds: countdown })}</span>
-              </div>
-            ) : null}
-            <Button
-              aria-label={copy.manualRefresh}
-              title={copy.manualRefresh}
-              size="icon"
-              variant="outline"
-              onClick={handleManualRefresh}
-              disabled={isLoading || isAutoRefreshing}
-            >
-              <RefreshCw className={cn((isLoading || isAutoRefreshing) && "animate-spin")} />
-            </Button>
-            <Button
-              aria-label={hideToggleLabel}
-              aria-pressed={hideSensitive}
-              title={hideToggleLabel}
-              size="icon"
-              variant="outline"
-              onClick={() => setHideSensitive((current) => !current)}
-            >
-              {hideSensitive ? <EyeOff /> : <Eye />}
-            </Button>
-            <Input
-              className="hidden min-w-[9rem] flex-1 font-mono sm:flex-none md:block md:w-32"
-              value={capitalDraft}
-              onChange={(event) => setCapitalDraft(event.target.value)}
-              placeholder={copy.cash}
-            />
-            <Button size="sm" variant="outline" onClick={handleSaveCapital} disabled={isSavingCapital} className="hidden md:inline-flex">
-              {isSavingCapital ? <Loader2 className="animate-spin" /> : <Save />}
-              {copy.saveCash}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setShowCashSheet(true)} className="md:hidden">
-              <Save />
-              {copy.saveCash}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            >
-              <Plus />
-              {common.add}
-            </Button>
-          </div>
+      <div className="page-toolbar flex flex-nowrap items-center gap-1.5 overflow-x-auto md:justify-between md:gap-2">
+        <div className="flex min-w-0 flex-none flex-nowrap items-center gap-1.5 md:gap-2">
+          {renderMarketSwitcher()}
+          {renderViewSwitcher()}
+        </div>
+        <div className="ml-auto flex flex-none flex-nowrap items-center gap-1.5 md:gap-2">
+          <label className="flex h-7 shrink-0 items-center gap-1 rounded-md bg-muted/25 px-1.5 text-xs text-muted-foreground sm:gap-2 sm:px-2">
+            <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+            <span className="hidden whitespace-nowrap sm:inline">{copy.realtimeRefresh}</span>
+          </label>
+          <Button
+            aria-label={copy.manualRefresh}
+            title={autoRefresh ? formatTemplate(copy.refreshCountdown, { seconds: countdown }) : copy.manualRefresh}
+            size={autoRefresh ? "sm" : "icon"}
+            variant="outline"
+            onClick={handleManualRefresh}
+            disabled={isLoading || isAutoRefreshing}
+            className={cn(
+              "h-7 shrink-0",
+              autoRefresh
+                ? "min-w-[3.5rem] gap-1 px-1.5 font-mono text-xs tabular-nums sm:min-w-[4.25rem] sm:gap-1.5 sm:px-2"
+                : "w-7",
+            )}
+          >
+            <RefreshCw className={cn((isLoading || isAutoRefreshing) && "animate-spin")} />
+            {autoRefresh ? <span>{countdown}s</span> : null}
+          </Button>
+          <Button
+            aria-label={hideToggleLabel}
+            aria-pressed={hideSensitive}
+            title={hideToggleLabel}
+            size="icon"
+            variant="outline"
+            className="h-7 w-7 shrink-0"
+            onClick={() => setHideSensitive((current) => !current)}
+          >
+            {hideSensitive ? <EyeOff /> : <Eye />}
+          </Button>
+        </div>
       </div>
 
       <div className="panel-body flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
-        <div className="grid shrink-0 grid-cols-3 gap-1.5 lg:grid-cols-5 lg:gap-2">
-          <div className="metric-tile hidden lg:block">
-            <p className="text-[11px] text-muted-foreground">{copy.cash}</p>
-            <p className="text-lg font-semibold tabular-nums">{sensitiveValue(formatMoney(totalCapital))}</p>
+        {viewMode === "overview" ? (
+          <div className="shrink-0 overflow-x-auto pb-1">
+            <div className="flex w-max gap-1.5 pr-1 lg:grid lg:w-full lg:grid-cols-5 lg:gap-2 lg:pr-0">
+              <div className="metric-tile w-36 shrink-0 lg:w-auto">
+                <p className="text-[11px] text-muted-foreground">{copy.cash}</p>
+                <p className="text-lg font-semibold tabular-nums">{sensitiveValue(formatMoney(totalCapital))}</p>
+              </div>
+              <div className="metric-tile w-36 shrink-0 lg:w-auto">
+                <p className="text-[11px] text-muted-foreground">{copy.totalAssets}</p>
+                <p className="text-lg font-semibold tabular-nums">{sensitiveValue(formatMoney(totalAssets))}</p>
+              </div>
+              <div className="metric-tile w-36 shrink-0 lg:w-auto">
+                <p className="text-[11px] text-muted-foreground">{copy.marketValue}</p>
+                <p className="text-lg font-semibold tabular-nums">{sensitiveValue(formatMoney(portfolioStats.marketValue))}</p>
+              </div>
+              <div className="metric-tile w-36 shrink-0 lg:w-auto">
+                <p className="text-[11px] text-muted-foreground">{copy.cashRatio}</p>
+                <p className="text-lg font-semibold tabular-nums">{formatPlain(cashRatio)}</p>
+              </div>
+              <div className="metric-tile w-44 shrink-0 lg:w-auto">
+                <p className="text-[11px] text-muted-foreground">{copy.totalPnl}</p>
+                <p className={cn("text-lg font-semibold tabular-nums", hideSensitive ? "text-muted-foreground" : numericTone(portfolioStats.pnl))}>
+                  {hideSensitive ? "***" : `${formatSignedMoney(portfolioStats.pnl)} ${portfolioStats.pnlRatio != null ? `(${formatSignedPercent(portfolioStats.pnlRatio)})` : ""}`}
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="metric-tile">
-            <p className="text-[11px] text-muted-foreground">{copy.totalAssets}</p>
-            <p className="text-lg font-semibold tabular-nums">{sensitiveValue(formatMoney(totalAssets))}</p>
-          </div>
-          <div className="metric-tile">
-            <p className="text-[11px] text-muted-foreground">{copy.marketValue}</p>
-            <p className="text-lg font-semibold tabular-nums">{sensitiveValue(formatMoney(portfolioStats.marketValue))}</p>
-          </div>
-          <div className="metric-tile hidden lg:block">
-            <p className="text-[11px] text-muted-foreground">{copy.cashRatio}</p>
-            <p className="text-lg font-semibold tabular-nums">{formatPlain(cashRatio)}</p>
-          </div>
-          <div className="metric-tile">
-            <p className="text-[11px] text-muted-foreground">{copy.totalPnl}</p>
-            <p className={cn("text-lg font-semibold tabular-nums", hideSensitive ? "text-muted-foreground" : numericTone(portfolioStats.pnl))}>
-              {hideSensitive ? "***" : `${formatSignedMoney(portfolioStats.pnl)} ${portfolioStats.pnlRatio != null ? `(${formatSignedPercent(portfolioStats.pnlRatio)})` : ""}`}
-            </p>
-          </div>
-        </div>
+        ) : null}
 
         {message || quoteError ? (
           <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             {message || formatTemplate(copy.quoteUnavailable, { message: quoteError })}
+          </div>
+        ) : null}
+
+        {viewMode === "manage" ? (
+          <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
+            <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_auto_auto_auto] md:items-end">
+              <Field label={copy.cash}>
+                <Input
+                  className="font-mono"
+                  inputMode="decimal"
+                  value={capitalDraft}
+                  onChange={(event) => setCapitalDraft(event.target.value)}
+                  placeholder={copy.cash}
+                />
+              </Field>
+              <Button size="sm" variant="outline" onClick={handleSaveCapital} disabled={isSavingCapital}>
+                {isSavingCapital ? <Loader2 className="animate-spin" /> : <Save />}
+                {copy.saveCash}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  resetForm();
+                  setShowForm(true);
+                }}
+              >
+                <Plus />
+                {common.add}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void loadTransactions()} disabled={isLoadingTransactions}>
+                {isLoadingTransactions ? <Loader2 className="animate-spin" /> : <History />}
+                {copy.tradeHistory}
+              </Button>
+            </div>
           </div>
         ) : null}
 
@@ -1079,6 +1482,56 @@ export function PortfolioPage({
         </SideDrawer>
 
         <SideDrawer
+          open={Boolean(sellingItem)}
+          title={copy.sellHolding}
+          subtitle={sellingItem ? `${sellingItem.symbol} · ${sellingItem.name || "-"}` : copy.sellHolding}
+          onClose={closeSellSheet}
+          cancelText={common.cancel}
+          formId="portfolio-sell-form"
+          isSaving={isSaving}
+          saveDisabled={sellSaveDisabled}
+          saveText={copy.sell}
+        >
+          <form id="portfolio-sell-form" className="space-y-4" onSubmit={handleSellItem}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={copy.sellShares}>
+                <Input
+                  inputMode="decimal"
+                  value={sellDraft.shares}
+                  onChange={(event) => setSellDraft((current) => ({ ...current, shares: event.target.value }))}
+                  placeholder={formatPlain(sellingItem?.shares)}
+                />
+              </Field>
+              <Field label={copy.sellPrice}>
+                <Input
+                  inputMode="decimal"
+                  value={sellDraft.price}
+                  onChange={(event) => setSellDraft((current) => ({ ...current, price: event.target.value }))}
+                  placeholder={formatPlain(sellingItem?.current_price ?? sellingItem?.cost_price)}
+                />
+              </Field>
+            </div>
+            <Field label={copy.note}>
+              <Input
+                value={sellDraft.note}
+                onChange={(event) => setSellDraft((current) => ({ ...current, note: event.target.value }))}
+                placeholder={copy.notePlaceholder}
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <QuoteMetric label={copy.currentShares} value={formatPlain(sellingItem?.shares)} />
+              <QuoteMetric label={copy.currentPrice} value={sensitiveValue(formatMoney(sellingItem?.current_price))} />
+              <QuoteMetric label={copy.transactionAmount} value={sensitiveValue(sellPreview.amount == null ? "-" : formatMoney(sellPreview.amount))} />
+              <QuoteMetric
+                label={copy.realizedPnl}
+                tone={percentTone(sellPreview.realizedPnl)}
+                value={hideSensitive ? "***" : sellPreview.realizedPnl == null ? "-" : formatSignedMoney(sellPreview.realizedPnl)}
+              />
+            </div>
+          </form>
+        </SideDrawer>
+
+        <SideDrawer
           open={showForm}
           title={editingItem ? copy.editHolding : copy.addHolding}
           subtitle={copy.formHint}
@@ -1171,116 +1624,233 @@ export function PortfolioPage({
           </form>
         </SideDrawer>
 
-        {items.length === 0 ? (
-          <div className="lg:hidden">{emptyState}</div>
-        ) : (
-          <div className="grid gap-1.5 lg:hidden">
-            {sortedItems.map((item) => (
-              <article key={item.id} className="finance-row-card portfolio-list-row rounded-md border border-border/80 bg-background/60 px-2.5 py-2">
-                <div className="grid grid-cols-[minmax(82px,1fr)_minmax(68px,0.65fr)_minmax(70px,0.7fr)_auto] items-center gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold leading-5">{item.symbol}</p>
-                    <p className="truncate text-[11px] leading-4 text-muted-foreground">{item.name || item.note || "-"}</p>
-                  </div>
-                  <div className="min-w-0 text-right">
-                    <p className="truncate text-[10px] text-muted-foreground">{copy.currentPrice}</p>
-                    <p className="truncate text-xs font-semibold tabular-nums">{sensitiveValue(formatMoney(item.current_price))}</p>
-                    <p className={cn("truncate text-[11px] tabular-nums", numericTone(item.change_rate))}>{formatPlain(item.change_rate)}</p>
-                  </div>
-                  <div className="min-w-0 text-right">
-                    <p className="truncate text-[10px] text-muted-foreground">{copy.assetRatio}</p>
-                    <p className="truncate text-xs font-semibold tabular-nums">{formatPlain(item.position_ratio)}</p>
-                    <p className={cn("truncate text-[11px] tabular-nums", numericTone(item.pnl_ratio))}>{formatPlain(item.pnl_ratio)}</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-0.5">
-                    <Button aria-label={copy.analyze} size="icon" variant="ghost" className="h-7 w-7" title={copy.analyze} onClick={() => onAnalyzeStock(item.symbol)}>
-                      <Sparkles />
-                    </Button>
-                    <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
-                      <FileText />
-                    </Button>
-                    <Button aria-label={copy.adjustHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.adjustHolding} onClick={() => adjustItem(item)}>
-                      <SlidersHorizontal />
-                    </Button>
-                    <Button aria-label={copy.edit} size="icon" variant="ghost" className="h-7 w-7" title={copy.edit} onClick={() => editItem(item)}>
-                      <Pencil />
-                    </Button>
-                    <Button aria-label={copy.delete} size="icon" variant="ghost" className="h-7 w-7" title={copy.delete} onClick={() => handleDelete(item)}>
-                      <Trash2 />
-                    </Button>
-                  </div>
+        {viewMode === "chart" ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
+            <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <TrendingUp className="size-4 text-primary" />
+                  {copy.assetTrend}
                 </div>
-                <div className="mt-1 grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
-                  <span className="truncate">{copy.stockValue}: <span className="text-foreground tabular-nums">{sensitiveValue(formatMoney(item.stock_value))}</span></span>
-                  <span className="truncate">{copy.costPrice}: <span className="text-foreground tabular-nums">{sensitiveValue(formatMoney(item.cost_price))}</span></span>
-                  <span className="truncate">{copy.pe}: <span className="text-foreground tabular-nums">{formatPlain(item.pe_ttm_ratio)}</span></span>
+                <div className="inline-flex h-7 items-center rounded-md border border-border bg-muted/30 p-0.5">
+                  {([
+                    ["day", copy.trendDay],
+                    ["week", copy.trendWeek],
+                    ["month", copy.trendMonth],
+                  ] as const).map(([range, label]) => (
+                    <button
+                      key={range}
+                      type="button"
+                      aria-pressed={trendRange === range}
+                      className={cn(
+                        "h-6 rounded-sm px-2 text-xs font-medium transition-colors",
+                        trendRange === range ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setTrendRange(range)}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-              </article>
-            ))}
+              </div>
+              <PortfolioTrendChart hideSensitive={hideSensitive} points={trendPoints} />
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                  <PieChart className="size-4 text-primary" />
+                  {copy.holdingDistribution}
+                </div>
+                <PortfolioPieChart emptyLabel={copy.emptyTitle} hideSensitive={hideSensitive} segments={holdingSegments} />
+              </div>
+              <div className="finance-module rounded-lg border border-border/80 bg-background/45 p-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                  <CircleDollarSign className="size-4 text-primary" />
+                  {copy.assetAllocation}
+                </div>
+                <PortfolioPieChart emptyLabel={copy.emptyTitle} hideSensitive={hideSensitive} segments={assetSegments} />
+              </div>
+            </div>
           </div>
+        ) : (
+          <>
+            {items.length === 0 ? (
+              <div className="lg:hidden">{emptyState}</div>
+            ) : (
+              <div className="grid gap-1.5 lg:hidden">
+                {sortedItems.map((item) => (
+                  <article key={item.id} className="finance-row-card portfolio-list-row rounded-md border border-border/80 bg-background/60 px-2.5 py-2">
+                    <div
+                      className={cn(
+                        "grid items-center gap-2",
+                        viewMode === "manage"
+                          ? "grid-cols-[minmax(82px,1fr)_minmax(68px,0.65fr)_minmax(70px,0.7fr)_auto]"
+                          : "grid-cols-[minmax(82px,1fr)_minmax(68px,0.65fr)_minmax(70px,0.7fr)]",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold leading-5">{item.symbol}</p>
+                        <p className="truncate text-[11px] leading-4 text-muted-foreground">{item.name || item.note || "-"}</p>
+                      </div>
+                      <div className="min-w-0 text-right">
+                        <p className="truncate text-[10px] text-muted-foreground">{copy.currentPrice}</p>
+                        <p className="truncate text-xs font-semibold tabular-nums">{sensitiveValue(formatMoney(item.current_price))}</p>
+                        <p className={cn("truncate text-[11px] tabular-nums", numericTone(item.change_rate))}>{formatPlain(item.change_rate)}</p>
+                      </div>
+                      <div className="min-w-0 text-right">
+                        <p className="truncate text-[10px] text-muted-foreground">{copy.assetRatio}</p>
+                        <p className="truncate text-xs font-semibold tabular-nums">{formatPlain(item.position_ratio)}</p>
+                        <p className={cn("truncate text-[11px] tabular-nums", numericTone(item.pnl_ratio))}>{formatPlain(item.pnl_ratio)}</p>
+                      </div>
+                      {viewMode === "manage" ? (
+                        <div className="grid grid-cols-3 gap-0.5">
+                          <Button aria-label={copy.analyze} size="icon" variant="ghost" className="h-7 w-7" title={copy.analyze} onClick={() => onAnalyzeStock(item.symbol)}>
+                            <Sparkles />
+                          </Button>
+                          <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
+                            <FileText />
+                          </Button>
+                          <Button aria-label={copy.adjustHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.adjustHolding} onClick={() => adjustItem(item)}>
+                            <SlidersHorizontal />
+                          </Button>
+                          <Button aria-label={copy.edit} size="icon" variant="ghost" className="h-7 w-7" title={copy.edit} onClick={() => editItem(item)}>
+                            <Pencil />
+                          </Button>
+                          <Button aria-label={copy.sellHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.sellHolding} onClick={() => sellItem(item)}>
+                            <CircleDollarSign />
+                          </Button>
+                          <Button aria-label={copy.delete} size="icon" variant="ghost" className="h-7 w-7" title={copy.delete} onClick={() => handleDelete(item)}>
+                            <Trash2 />
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
+                      <span className="truncate">{copy.stockValue}: <span className="text-foreground tabular-nums">{sensitiveValue(formatMoney(item.stock_value))}</span></span>
+                      <span className="truncate">{copy.costPrice}: <span className="text-foreground tabular-nums">{sensitiveValue(formatMoney(item.cost_price))}</span></span>
+                      <span className="truncate">{copy.pe}: <span className="text-foreground tabular-nums">{formatPlain(item.pe_ttm_ratio)}</span></span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            <div className="finance-module hidden min-h-0 flex-1 overflow-auto rounded-lg border border-border/80 bg-background/45 lg:block">
+              <table className={cn("w-full border-collapse text-sm", viewMode === "manage" ? "min-w-[1160px]" : "min-w-[980px]")}>
+                <thead className="sticky top-0 z-10 bg-card">
+                  <tr className="border-b border-border/80 text-left text-xs text-muted-foreground">
+                    <SortablePortfolioHeader label={copy.stockCode} sortKey="symbol" sortState={sortState} onSort={toggleSort} />
+                    <SortablePortfolioHeader label={copy.pe} sortKey="pe_ttm_ratio" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.costPrice} sortKey="cost_price" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.currentPrice} sortKey="current_price" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.stockValue} sortKey="stock_value" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.assetRatio} sortKey="position_ratio" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.pnlRatio} sortKey="pnl_ratio" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.dayChange} sortKey="change_rate" sortState={sortState} onSort={toggleSort} align="right" />
+                    <SortablePortfolioHeader label={copy.note} sortKey="note" sortState={sortState} onSort={toggleSort} />
+                    {viewMode === "manage" ? <th className="px-3 py-2 text-right font-medium">{copy.actions}</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedItems.map((item) => (
+                    <tr key={item.id} className="portfolio-table-row border-b border-border/60">
+                      <td className="px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold">{item.symbol}</p>
+                          <p className="max-w-[180px] truncate text-xs text-muted-foreground">{item.name || "-"}</p>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{formatPlain(item.pe_ttm_ratio)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{sensitiveValue(formatMoney(item.cost_price))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{sensitiveValue(formatMoney(item.current_price))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{sensitiveValue(formatMoney(item.stock_value))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{formatPlain(item.position_ratio)}</td>
+                      <td className={cn("px-3 py-2 text-right tabular-nums", numericTone(item.pnl_ratio))}>{formatPlain(item.pnl_ratio)}</td>
+                      <td className={cn("px-3 py-2 text-right tabular-nums", numericTone(item.change_rate))}>{formatPlain(item.change_rate)}</td>
+                      <td className="max-w-[240px] truncate px-3 py-2 text-xs text-muted-foreground">{item.note || "-"}</td>
+                      {viewMode === "manage" ? (
+                        <td className="px-3 py-2">
+                          <div className="flex justify-end gap-1">
+                            <Button aria-label={copy.analyze} size="icon" variant="ghost" className="h-7 w-7" title={copy.analyze} onClick={() => onAnalyzeStock(item.symbol)}>
+                              <Sparkles />
+                            </Button>
+                            <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
+                              <FileText />
+                            </Button>
+                            <Button aria-label={copy.adjustHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.adjustHolding} onClick={() => adjustItem(item)}>
+                              <SlidersHorizontal />
+                            </Button>
+                            <Button aria-label={copy.edit} size="icon" variant="ghost" className="h-7 w-7" title={copy.edit} onClick={() => editItem(item)}>
+                              <Pencil />
+                            </Button>
+                            <Button aria-label={copy.sellHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.sellHolding} onClick={() => sellItem(item)}>
+                              <CircleDollarSign />
+                            </Button>
+                            <Button aria-label={copy.delete} size="icon" variant="ghost" className="h-7 w-7" title={copy.delete} onClick={() => handleDelete(item)}>
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {items.length === 0 ? (
+                emptyState
+              ) : null}
+            </div>
+
+            {viewMode === "manage" ? (
+              <div className="finance-module shrink-0 overflow-hidden rounded-lg border border-border/80 bg-background/45">
+                <div className="flex items-center justify-between border-b border-border/70 px-3 py-2 text-sm font-semibold">
+                  <span className="inline-flex items-center gap-2">
+                    <History className="size-4 text-primary" />
+                    {copy.tradeHistory}
+                  </span>
+                  {isLoadingTransactions ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
+                </div>
+                {transactions.length === 0 ? (
+                  <div className="px-3 py-5 text-center text-xs text-muted-foreground">{copy.noTransactions}</div>
+                ) : (
+                  <div className="max-h-52 overflow-auto">
+                    <table className="w-full min-w-[720px] border-collapse text-xs">
+                      <thead className="sticky top-0 bg-card text-muted-foreground">
+                        <tr className="border-b border-border/70 text-left">
+                          <th className="px-3 py-2 font-medium">{copy.transactionTime}</th>
+                          <th className="px-3 py-2 font-medium">{copy.stockCode}</th>
+                          <th className="px-3 py-2 font-medium">{copy.transactionSide}</th>
+                          <th className="px-3 py-2 text-right font-medium">{copy.shares}</th>
+                          <th className="px-3 py-2 text-right font-medium">{copy.sellPrice}</th>
+                          <th className="px-3 py-2 text-right font-medium">{copy.transactionAmount}</th>
+                          <th className="px-3 py-2 text-right font-medium">{copy.realizedPnl}</th>
+                          <th className="px-3 py-2 font-medium">{copy.note}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {transactions.map((transaction) => (
+                          <tr key={transaction.id} className="border-b border-border/60">
+                            <td className="px-3 py-2 text-muted-foreground">{formatDateTime(transaction.created_at, language)}</td>
+                            <td className="px-3 py-2 font-medium">{transaction.symbol}</td>
+                            <td className="px-3 py-2">{transaction.side === "sell" ? copy.sell : transaction.side}</td>
+                            <td className="px-3 py-2 text-right font-mono tabular-nums">{formatPlain(transaction.shares)}</td>
+                            <td className="px-3 py-2 text-right font-mono tabular-nums">{sensitiveValue(formatMoney(transaction.price))}</td>
+                            <td className="px-3 py-2 text-right font-mono tabular-nums">{sensitiveValue(formatMoney(transaction.amount))}</td>
+                            <td className={cn("px-3 py-2 text-right font-mono tabular-nums", numericTone(transaction.realized_pnl))}>
+                              {hideSensitive ? "***" : formatSignedMoney(transaction.realized_pnl)}
+                            </td>
+                            <td className="max-w-[180px] truncate px-3 py-2 text-muted-foreground">{transaction.note || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </>
         )}
-
-        <div className="finance-module hidden min-h-0 flex-1 overflow-auto rounded-lg border border-border/80 bg-background/45 lg:block">
-          <table className="w-full min-w-[1080px] border-collapse text-sm">
-            <thead className="sticky top-0 z-10 bg-card">
-              <tr className="border-b border-border/80 text-left text-xs text-muted-foreground">
-                <SortablePortfolioHeader label={copy.stockCode} sortKey="symbol" sortState={sortState} onSort={toggleSort} />
-                <SortablePortfolioHeader label={copy.pe} sortKey="pe_ttm_ratio" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.costPrice} sortKey="cost_price" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.currentPrice} sortKey="current_price" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.stockValue} sortKey="stock_value" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.assetRatio} sortKey="position_ratio" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.pnlRatio} sortKey="pnl_ratio" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.dayChange} sortKey="change_rate" sortState={sortState} onSort={toggleSort} align="right" />
-                <SortablePortfolioHeader label={copy.note} sortKey="note" sortState={sortState} onSort={toggleSort} />
-                <th className="px-3 py-2 text-right font-medium">{copy.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedItems.map((item) => (
-                <tr key={item.id} className="portfolio-table-row border-b border-border/60">
-                  <td className="px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="font-semibold">{item.symbol}</p>
-                      <p className="max-w-[180px] truncate text-xs text-muted-foreground">{item.name || "-"}</p>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatPlain(item.pe_ttm_ratio)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{sensitiveValue(formatMoney(item.cost_price))}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{sensitiveValue(formatMoney(item.current_price))}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{sensitiveValue(formatMoney(item.stock_value))}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatPlain(item.position_ratio)}</td>
-                  <td className={cn("px-3 py-2 text-right tabular-nums", numericTone(item.pnl_ratio))}>{formatPlain(item.pnl_ratio)}</td>
-                  <td className={cn("px-3 py-2 text-right tabular-nums", numericTone(item.change_rate))}>{formatPlain(item.change_rate)}</td>
-                  <td className="max-w-[240px] truncate px-3 py-2 text-xs text-muted-foreground">{item.note || "-"}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex justify-end gap-1">
-                      <Button aria-label={copy.analyze} size="icon" variant="ghost" className="h-7 w-7" title={copy.analyze} onClick={() => onAnalyzeStock(item.symbol)}>
-                        <Sparkles />
-                      </Button>
-                      <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
-                        <FileText />
-                      </Button>
-                      <Button aria-label={copy.adjustHolding} size="icon" variant="ghost" className="h-7 w-7" title={copy.adjustHolding} onClick={() => adjustItem(item)}>
-                        <SlidersHorizontal />
-                      </Button>
-                      <Button aria-label={copy.edit} size="icon" variant="ghost" className="h-7 w-7" title={copy.edit} onClick={() => editItem(item)}>
-                        <Pencil />
-                      </Button>
-                      <Button aria-label={copy.delete} size="icon" variant="ghost" className="h-7 w-7" title={copy.delete} onClick={() => handleDelete(item)}>
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {items.length === 0 ? (
-            emptyState
-          ) : null}
-        </div>
       </div>
     </section>
   );

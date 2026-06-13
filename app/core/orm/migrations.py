@@ -64,6 +64,14 @@ def init_portfolio_schema(engine: Engine) -> None:
         _migrate_portfolio_user_scope(conn)
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_portfolio_market ON portfolio_items(market)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_portfolio_transactions_user_market_created "
+            "ON portfolio_transactions(user_id, market, created_at)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_portfolio_transactions_user_symbol_created "
+            "ON portfolio_transactions(user_id, symbol, created_at)"
+        )
 
 
 def migrate_sessions_db_user_scope(db_path: Path, admin_user_id: str) -> None:
@@ -112,6 +120,11 @@ def migrate_portfolio_db_user_scope(db_path: Path, admin_user_id: str) -> None:
             if "user_id" not in settings_cols:
                 conn.exec_driver_sql("ALTER TABLE portfolio_settings ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
             conn.exec_driver_sql("UPDATE portfolio_settings SET user_id = ? WHERE user_id = ''", (admin_user_id,))
+            transaction_cols = _table_columns(conn, "portfolio_transactions")
+            if transaction_cols and "user_id" not in transaction_cols:
+                conn.exec_driver_sql("ALTER TABLE portfolio_transactions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+            if transaction_cols:
+                conn.exec_driver_sql("UPDATE portfolio_transactions SET user_id = ? WHERE user_id = ''", (admin_user_id,))
             conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)")
     finally:
         engine.dispose()
@@ -248,6 +261,7 @@ def _migrate_watchlist_user_scope(conn: Connection) -> None:
 def _migrate_portfolio_user_scope(conn: Connection) -> None:
     _migrate_portfolio_items_user_scope(conn)
     _migrate_portfolio_settings_user_scope(conn)
+    _migrate_portfolio_transactions_user_scope(conn)
 
 
 def _migrate_portfolio_items_user_scope(conn: Connection) -> None:
@@ -324,3 +338,10 @@ def _migrate_portfolio_settings_user_scope(conn: Connection) -> None:
         """
     )
     conn.exec_driver_sql("DROP TABLE portfolio_settings_old")
+
+
+def _migrate_portfolio_transactions_user_scope(conn: Connection) -> None:
+    cols = _table_columns(conn, "portfolio_transactions")
+    if not cols or "user_id" in cols:
+        return
+    conn.exec_driver_sql("ALTER TABLE portfolio_transactions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
