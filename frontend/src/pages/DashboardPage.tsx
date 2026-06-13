@@ -1621,10 +1621,10 @@ function WatchlistSymbolDetail({
   );
 }
 
-function SignalDeck({ language }: { language: AppLanguage }) {
+function SignalDeck({ className, language }: { className?: string; language: AppLanguage }) {
   const copy = i18n[language].overview;
   return (
-    <FinanceSection icon={<Activity />} subtitle={copy.signalDeckSubtitle} title={copy.signalDeck}>
+    <FinanceSection className={className} icon={<Activity />} subtitle={copy.signalDeckSubtitle} title={copy.signalDeck}>
       <MarketPulse />
     </FinanceSection>
   );
@@ -1867,10 +1867,10 @@ export function DashboardPage({
   }, [selectedWatchlistSymbol, watchlistRows]);
 
   return (
-    <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3 xl:h-full xl:overflow-hidden">
+    <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3">
       <div
         className={cn(
-          "dashboard-wide-grid grid min-h-0 gap-4 xl:flex-1 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:grid-rows-[minmax(0,1fr)] xl:gap-5 xl:overflow-hidden 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
+          "dashboard-wide-grid grid min-h-0 gap-4 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:gap-5 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
           "xl:items-start",
           chatExpanded && "xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
         )}
@@ -1895,7 +1895,7 @@ export function DashboardPage({
 
         <section
           className={cn(
-            "dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-2 xl:row-start-1",
+            "dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-2 xl:row-start-1 xl:flex xl:min-h-[calc(100dvh-5.25rem)] xl:flex-col",
             chatExpanded && "xl:hidden",
           )}
         >
@@ -1933,7 +1933,7 @@ export function DashboardPage({
               ) : (
                 <PermissionHidden>{copy.portfolioHidden}</PermissionHidden>
               )}
-              <SignalDeck language={language} />
+              <SignalDeck className="xl:flex-1" language={language} />
             </>
           )}
         </section>

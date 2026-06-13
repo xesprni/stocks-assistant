@@ -818,6 +818,15 @@
       height: auto;
       overflow-y: visible;
     }
+
+    .dashboard-secondary-column > .finance-section:last-child {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .dashboard-secondary-column > .finance-section:last-child > :last-child {
+      flex: 1;
+    }
   }
 
   @media (min-width: 1280px) {
