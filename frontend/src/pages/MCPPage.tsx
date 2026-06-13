@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, CircleDot, Cpu, ExternalLink, Eye, Loader2, Pen
 
 import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -174,6 +175,7 @@ export function MCPPage({ language }: { language: AppLanguage }) {
   const [toolTimeoutSeconds, setToolTimeoutSeconds] = useState(60);
   const [isSavingTimeout, setIsSavingTimeout] = useState(false);
   const [error, setError] = useState("");
+  useErrorToast(error, copy.title);
 
   useEffect(() => {
     loadConfig()
@@ -226,12 +228,6 @@ export function MCPPage({ language }: { language: AppLanguage }) {
           </Button>
       </div>
 
-      {error ? (
-        <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
         <MCPServersPanel copy={copy} mcpServersText={mcpServersText} setMcpServersText={setMcpServersText} onServersChange={handleServersChange} />
       </div>
@@ -273,6 +269,7 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
   const [addJson, setAddJson] = useState("");
   const [addError, setAddError] = useState("");
   const [oauthError, setOauthError] = useState("");
+  useErrorToast(oauthError, copy.title);
 
   function parseMcpServers(text: string): Record<string, Record<string, unknown>> {
     try {
@@ -609,12 +606,6 @@ function MCPServersPanel({ copy, mcpServersText, setMcpServersText, onServersCha
           </Button>
         </div>
       </div>
-
-      {oauthError ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {oauthError}
-        </div>
-      ) : null}
 
       <SideDrawer
         open={showAddForm}

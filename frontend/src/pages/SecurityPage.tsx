@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock, Laptop, Loader2, LogOut, RefreshCw, ShieldCheck, Smartphone, Trash2, XCircle } from "lucide-react";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deleteLoginDevice, deleteLoginRecord, listLoginSessions, revokeLoginSession } from "@/lib/api";
@@ -158,6 +159,7 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
   const [revoking, setRevoking] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState("");
+  useErrorToast(error, t.title);
 
   const onlineCount = useMemo(() => sessions.filter((session) => session.is_online).length, [sessions]);
   const userGroups = useMemo(() => {
@@ -397,8 +399,6 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
       </div>
 
       <div className="panel-body min-h-0 flex-1 space-y-4 lg:overflow-y-auto">
-        {error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
-
         <div className="rounded-md border border-border/80 bg-background/60 p-3">
           <div className="flex items-start gap-2">
             <Clock className="mt-0.5 size-4 text-secondary" />

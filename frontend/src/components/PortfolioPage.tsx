@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   BriefcaseBusiness,
@@ -26,6 +26,7 @@ import {
 import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { SideDrawer } from "@/components/common/SideDrawer";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -470,19 +471,6 @@ function buildTrendPoints(snapshots: PortfolioAssetSnapshot[], range: PortfolioT
   return current == null ? [] : [{ label: new Date().toISOString().slice(5, 10).replace("-", "/"), value: current }];
 }
 
-function buildPieStyle(segments: PortfolioPieSegment[]): CSSProperties {
-  const total = segments.reduce((sum, item) => sum + item.value, 0);
-  if (total <= 0) return {};
-  let cursor = 0;
-  const stops = segments.map((item) => {
-    const start = (cursor / total) * 100;
-    cursor += item.value;
-    const end = (cursor / total) * 100;
-    return `${item.color} ${start}% ${end}%`;
-  });
-  return { background: `conic-gradient(${stops.join(", ")})` };
-}
-
 function buildHoldingSegments(items: PortfolioItem[]): PortfolioPieSegment[] {
   const colors = ["#14b8a6", "#f97316", "#6366f1", "#eab308", "#ef4444", "#0ea5e9"];
   return items
@@ -558,12 +546,34 @@ function PortfolioPieChart({
   segments: PortfolioPieSegment[];
 }) {
   const total = segments.reduce((sum, item) => sum + item.value, 0);
+  let offset = 0;
   return (
     <div className="rounded-md border border-border/80 bg-background/55 p-3">
       <div className="grid grid-cols-[112px_minmax(0,1fr)] items-center gap-3">
-        <div className="relative size-28 rounded-full border border-border/70 bg-muted/30" style={buildPieStyle(segments)}>
-          <div className="absolute inset-7 rounded-full border border-border/70 bg-background" />
-        </div>
+        <svg className="size-28 shrink-0" viewBox="0 0 112 112" role="img" aria-hidden="true">
+          <circle cx="56" cy="56" r="38" fill="none" stroke="hsl(var(--muted) / 0.38)" strokeWidth="18" />
+          {segments.map((segment) => {
+            const percent = total > 0 ? (segment.value / total) * 100 : 0;
+            const dashOffset = -offset;
+            offset += percent;
+            return (
+              <circle
+                key={segment.label}
+                cx="56"
+                cy="56"
+                r="38"
+                fill="none"
+                pathLength="100"
+                stroke={segment.color}
+                strokeDasharray={`${percent} ${100 - percent}`}
+                strokeDashoffset={dashOffset}
+                strokeWidth="18"
+                transform="rotate(-90 56 56)"
+              />
+            );
+          })}
+          <circle cx="56" cy="56" r="28" fill="hsl(var(--background))" stroke="hsl(var(--border) / 0.7)" strokeWidth="1" />
+        </svg>
         <div className="min-w-0 space-y-1.5">
           {segments.length === 0 ? (
             <p className="text-xs text-muted-foreground">{emptyLabel}</p>
@@ -799,6 +809,8 @@ export function PortfolioPage({
   const sensitiveText = hideSensitive ? "***" : null;
   const hideToggleLabel = hideSensitive ? copy.showSensitive : copy.hideSensitive;
   const sensitiveValue = (value: string) => sensitiveText ?? value;
+  useErrorToast(message, copy.title);
+  useErrorToast(quoteError ? formatTemplate(copy.quoteUnavailable, { message: quoteError }) : "", copy.title);
 
   const portfolioStats = useMemo(() => {
     let marketValue = 0;
@@ -1345,12 +1357,6 @@ export function PortfolioPage({
                 </p>
               </div>
             </div>
-          </div>
-        ) : null}
-
-        {message || quoteError ? (
-          <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-            {message || formatTemplate(copy.quoteUnavailable, { message: quoteError })}
           </div>
         ) : null}
 

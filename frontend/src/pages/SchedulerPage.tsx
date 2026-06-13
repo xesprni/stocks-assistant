@@ -5,6 +5,7 @@ import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { ToggleRow } from "@/components/common/ToggleRow";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,6 +162,7 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
   const [runsTaskId, setRunsTaskId] = useState<string | null>(null);
   const [runs, setRuns] = useState<SchedulerTaskRun[]>([]);
   const [isLoadingRuns, setIsLoadingRuns] = useState(false);
+  useErrorToast(error, copy.title);
 
   function loadTasks() {
     setIsLoading(true);
@@ -315,10 +317,6 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
             {copy.addTask}
           </Button>
       </div>
-
-      {error ? (
-        <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
-      ) : null}
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
         <SideDrawer

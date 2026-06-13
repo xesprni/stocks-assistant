@@ -13,6 +13,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -149,6 +150,7 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
   const [showAddDropdown, setShowAddDropdown] = useState(false);
   const addDropdownRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  useErrorToast(error, copy.title);
 
   const filteredIndices = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -309,12 +311,6 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
           </Button>
         </div>
       </div>
-
-      {error ? (
-        <div className="mx-4 mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
 
       {config ? (
         <div className={cn("min-h-0 flex-1 space-y-6", embedded ? "p-4" : "panel-body lg:overflow-y-auto")}>

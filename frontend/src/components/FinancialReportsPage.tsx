@@ -12,6 +12,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -430,6 +431,7 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
   const [isLoadingWatchlist, setIsLoadingWatchlist] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  useErrorToast(error, copy.title);
 
   const watchlistOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -564,12 +566,6 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
       </div>
 
       <div className="panel-body flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
-        {error ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-
         <div className="grid shrink-0 grid-cols-2 gap-3 md:grid-cols-3">
           <div className="metric-tile">
             <p className="text-[11px] text-muted-foreground">{copy.statements}</p>

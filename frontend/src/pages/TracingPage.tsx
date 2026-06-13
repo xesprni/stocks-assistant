@@ -3,6 +3,7 @@ import { Check, ChevronDown, ChevronRight, CircleDot, Cpu, Loader2, MessageSquar
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { getSessionTraces, listChatSessionPage } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -104,6 +105,8 @@ export function TracingPage({
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [traceError, setTraceError] = useState("");
+  useErrorToast(sessionError, "Tracing");
+  useErrorToast(traceError, "Tracing");
 
   useEffect(() => {
     loadSessionPage(sessionPage);
@@ -263,11 +266,6 @@ export function TracingPage({
 
       {!selectedSession ? (
         <div className="panel-body flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
-          {sessionError ? (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {sessionError}
-            </div>
-          ) : null}
           <div className="min-h-0 flex-1 rounded-md border border-border/80 bg-background/35 p-1.5 lg:overflow-y-auto">
             {isSessionLoading ? (
               <div className="grid place-items-center py-14 text-sm text-muted-foreground">
@@ -336,11 +334,6 @@ export function TracingPage({
               </div>
               <Badge variant="outline">{traceData?.total ?? 0}</Badge>
             </div>
-            {traceError ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {traceError}
-              </div>
-            ) : null}
             {!traceError && isLoading ? (
               <div className="grid place-items-center py-10 text-sm text-muted-foreground">
                 <Loader2 className="mb-2 size-5 animate-spin text-primary" />

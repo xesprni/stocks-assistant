@@ -4,6 +4,7 @@ import { Bot, Check, ChevronDown, Copy, Loader2, Plus, Plug, Save, Settings2, Sh
 import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { ToggleRow } from "@/components/common/ToggleRow";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +90,7 @@ export function SubAgentsPage({
   const [expandedMcpServers, setExpandedMcpServers] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  useErrorToast(error, copy.title);
 
   const dangerousTools = config?.multi_agent_dangerous_tools ?? ["bash", "write_file", "scheduler", "watchlist", "portfolio"];
   const roleNames = Object.keys(roles).sort();
@@ -355,7 +357,6 @@ export function SubAgentsPage({
 
             <div className="min-w-0 space-y-4">
               {message ? <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">{message}</div> : null}
-              {error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
 
               <div className="rounded-md border border-border/80 bg-background/50 p-4">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

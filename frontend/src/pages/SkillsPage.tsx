@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Download, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, Trash2, X, Zap } from "lucide-react";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +59,9 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
   const [detailError, setDetailError] = useState("");
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
   const [installNotice, setInstallNotice] = useState("");
+  useErrorToast(error, copy.title);
+  useErrorToast(marketError, copy.marketplaceTitle);
+  useErrorToast(detailError, copy.previewTitle);
 
   const installedSlugs = useMemo(() => {
     const slugs = new Set<string>();
@@ -202,12 +206,6 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
-        {error ? (
-          <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-
         <div className="space-y-5">
           <div className="min-w-0 space-y-3 rounded-md border border-border/80 bg-background/50 p-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -234,11 +232,6 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
             </form>
             <p className="text-xs text-muted-foreground">{copy.searchHint}</p>
 
-            {marketError ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {marketError}
-              </div>
-            ) : null}
             {installNotice ? (
               <div className="rounded-md border border-secondary/40 bg-secondary/10 px-3 py-2 text-sm text-secondary-foreground">
                 {installNotice}
@@ -443,9 +436,6 @@ function SkillPreviewDialog({
             </div>
           ) : detail ? (
             <div className="space-y-3">
-              {detailError ? (
-                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{detailError}</div>
-              ) : null}
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-semibold">{detail.name || detail.slug}</p>
@@ -487,8 +477,8 @@ function SkillPreviewDialog({
               </div>
             </div>
           ) : (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {detailError || copy.detailFailed}
+            <div className="rounded-md border border-dashed border-border/80 px-3 py-8 text-center text-sm text-muted-foreground">
+              {copy.detailFailed}
             </div>
           )}
         </div>

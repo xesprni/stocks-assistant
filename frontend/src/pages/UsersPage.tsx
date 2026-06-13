@@ -3,6 +3,7 @@ import { ArrowLeft, ListChecks, Loader2, Plus, RefreshCw, Save, ShieldCheck, Use
 
 import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -199,6 +200,7 @@ export function UsersPage({ language }: { language: AppLanguage }) {
   const defaultRole = useMemo(() => roles.find((role) => role.name === "user")?.name ?? roles[0]?.name ?? "user", [roles]);
   const permissionList = useMemo(() => permissionEntries(permissions), [permissions]);
   const pagePermissionEntries = useMemo(() => Object.entries(pagePermissions).sort(([a], [b]) => a.localeCompare(b)), [pagePermissions]);
+  useErrorToast(error, t.title);
 
   async function load() {
     setLoading(true);
@@ -368,7 +370,6 @@ export function UsersPage({ language }: { language: AppLanguage }) {
         </div>
 
         <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
-          {error ? <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
           {notice ? <div className="mb-3 rounded-md border border-secondary/30 bg-secondary/10 px-3 py-2 text-sm text-secondary">{notice}</div> : null}
 
           {view === "roles" ? (

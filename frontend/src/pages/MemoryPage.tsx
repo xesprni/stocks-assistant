@@ -5,6 +5,7 @@ import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { StatusTile } from "@/components/common/StatusTile";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,6 +113,7 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
   const [error, setError] = useState("");
+  useErrorToast(error, copy.title);
 
   useEffect(() => {
     Promise.allSettled([getMemoryStatus(), listMemoryFiles()])
@@ -252,10 +254,6 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
             {copy.add}
           </Button>
       </div>
-
-      {error ? (
-        <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
-      ) : null}
 
       {status ? (
         <div className="mx-3 mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">

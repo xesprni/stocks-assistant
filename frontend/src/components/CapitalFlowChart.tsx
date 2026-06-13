@@ -6,6 +6,7 @@ import {
   type NativeChartSeries,
   type NativeChartTheme,
 } from "@/components/charts/NativeStockChart";
+import { useErrorToast } from "@/components/common/Toast";
 import { Button } from "@/components/ui/button";
 import { getCapitalFlow } from "@/lib/api";
 import { useChartColors } from "@/lib/color-scheme";
@@ -207,6 +208,7 @@ export function CapitalFlowChart({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
+  useErrorToast(error, labels.title);
 
   const load = useCallback((signal?: AbortSignal) => {
     const requestSymbol = symbol.trim();
@@ -334,10 +336,6 @@ export function CapitalFlowChart({
               <Loader2 className="size-4 animate-spin" />
               {labels.loading}
             </div>
-          </div>
-        ) : error && points.length === 0 ? (
-          <div className="flex h-full min-h-[220px] items-center justify-center p-3">
-            <div className="rounded-md bg-muted/20 px-3 py-2 text-sm text-muted-foreground">{error}</div>
           </div>
         ) : points.length === 0 ? (
           <div className="flex h-full min-h-[220px] items-center justify-center p-3">

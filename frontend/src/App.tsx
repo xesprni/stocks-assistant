@@ -34,6 +34,7 @@ import {
 
 import { ReauthDialog } from "@/components/ReauthDialog";
 import { useConfirmDialog } from "@/components/common/ConfirmDialog";
+import { useToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -505,6 +506,7 @@ function App() {
 
 function ConsoleApp() {
   const auth = useAuth();
+  const { showToast } = useToast();
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [theme, setTheme] = useState<Theme>(() => {
@@ -518,7 +520,6 @@ function ConsoleApp() {
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
   const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [configToast, setConfigToast] = useState<ConfigToast | null>(null);
-  const [error, setError] = useState("");
   const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const [isMobileHeaderVisible, setIsMobileHeaderVisible] = useState(() => {
     const stored = readStoredText(MOBILE_HEADER_VISIBLE_KEY, "");
@@ -708,7 +709,8 @@ function ConsoleApp() {
         setConfig(configResult.value);
         setDraft(toDraft(configResult.value));
       } else {
-        setError(configResult.reason instanceof Error ? configResult.reason.message : (language === "en" ? "Failed to load configuration" : "配置加载失败"));
+        const message = configResult.reason instanceof Error ? configResult.reason.message : (language === "en" ? "Failed to load configuration" : "配置加载失败");
+        showToast({ kind: "error", message, title: language === "en" ? "Configuration" : "配置" });
       }
       if (marketConfigResult.status === "fulfilled") {
         setMarketConfig(marketConfigResult.value);
@@ -754,7 +756,6 @@ function ConsoleApp() {
     };
 
     setPrompt("");
-    setError("");
     isSendingRef.current = true;
     setIsSending(true);
     setPage("overview");
@@ -1071,7 +1072,7 @@ function ConsoleApp() {
           return;
         } catch (recoveryError) {
           const msg = chatFailureMessage(recoveryError, language);
-          setError(msg);
+          showToast({ kind: "error", message: msg, title: language === "en" ? "Chat" : "对话" });
           chatHistory.updateMessage(convId, assistantMessageId, {
             content: formatTemplate(ui.chat.requestFailed, { message: msg }),
             pending: false,
@@ -1081,7 +1082,7 @@ function ConsoleApp() {
         }
       }
       const msg = chatFailureMessage(caught, language);
-      setError(msg);
+      showToast({ kind: "error", message: msg, title: language === "en" ? "Chat" : "对话" });
       if (convId) {
         chatHistory.updateMessage(convId, assistantMessageId, {
           content: formatTemplate(ui.chat.requestFailed, { message: msg }),
@@ -1235,7 +1236,6 @@ function ConsoleApp() {
 
   async function saveDraftConfig(source: ConfigDraft, patch?: Partial<ConfigDraft>) {
     setConfigState("saving");
-    setError("");
     try {
       const changedKeys = patch ? Object.keys(patch) as Array<keyof ConfigDraft> : undefined;
       const payload = buildConfigPayload(source, changedKeys);
@@ -1253,7 +1253,6 @@ function ConsoleApp() {
       window.setTimeout(() => setConfigState("idle"), 1400);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : ui.config.saveFailed;
-      setError(message);
       setConfigState("error");
       showConfigToast("error", message);
     }
@@ -1413,12 +1412,6 @@ function ConsoleApp() {
             )}
             key={page}
           >
-            {error ? (
-              <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
-
             <Suspense fallback={<PageFallback />}>
               {page === "overview" ? (
                 <DashboardPage

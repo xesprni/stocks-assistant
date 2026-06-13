@@ -22,6 +22,7 @@ import {
 
 import { CapitalFlowChart } from "@/components/CapitalFlowChart";
 import { MarketPulse } from "@/components/MarketPulse";
+import { useErrorToast, useToast } from "@/components/common/Toast";
 import {
   NativeStockChart,
   type NativeChartSeries,
@@ -63,6 +64,7 @@ const WATCHLIST_FILTERS: Array<"ALL" | WatchlistCategory> = ["ALL", "US", "A", "
 const WATCHLIST_VIEWS: DashboardWatchlistView[] = ["movers", "gainers", "losers", "active"];
 const DASHBOARD_SNAPSHOT_KEY = "stocks_assistant_dashboard_snapshot_v1";
 const DASHBOARD_SNAPSHOT_MAX_AGE_MS = 10_000;
+const DASHBOARD_ERROR_TOAST_INTERVAL_MS = 15000;
 const DETAIL_CHART_RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
 
 const EMPTY_MARKET_MODULE: DashboardMarketModule = {
@@ -294,6 +296,25 @@ function moduleStatusLabel(status: ModuleStatus, language: AppLanguage): string 
 function sectionSubtitle(base: string, status: ModuleStatus, language: AppLanguage): string {
   const meta = moduleStatusLabel(status, language);
   return meta ? `${base} · ${meta}` : base;
+}
+
+function dashboardToastTitle(scope: DashboardModuleKey | "dashboard" | "quote", language: AppLanguage) {
+  if (language === "en") {
+    return {
+      dashboard: "Dashboard",
+      market: "Market data",
+      watchlist: "Watchlist",
+      portfolio: "Portfolio",
+      quote: "Quote data",
+    }[scope];
+  }
+  return {
+    dashboard: "Dashboard",
+    market: "市场数据",
+    watchlist: "自选股",
+    portfolio: "持仓",
+    quote: "行情数据",
+  }[scope];
 }
 
 function FinanceSection({
@@ -600,6 +621,7 @@ function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: D
   const labels = language === "en"
     ? { price: "Price", volume: "Volume", prevClose: "Prev", loading: "Loading chart", empty: "No chart data" }
     : { price: "价格", volume: "成交量", prevClose: "昨收", loading: "加载图表中", empty: "暂无图表数据" };
+  useErrorToast(error, row.symbol);
 
   useEffect(() => {
     let cancelled = false;
@@ -709,10 +731,6 @@ function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: D
           <div className="flex h-full items-center justify-center p-3">
             <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{labels.loading}</InlineState>
           </div>
-        ) : error && bars.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-3">
-            <InlineState>{error}</InlineState>
-          </div>
         ) : bars.length === 0 ? (
           <div className="flex h-full items-center justify-center p-3">
             <InlineState>{labels.empty}</InlineState>
@@ -765,6 +783,7 @@ function MarketSnapshot({
   subtitle?: string;
 }) {
   const copy = i18n[language].overview;
+  useErrorToast(error, copy.marketSnapshot);
   return (
     <FinanceSection
       action={<Button size="sm" variant="ghost" onClick={onOpenMarketConfig}>{copy.config}<Settings2 /></Button>}
@@ -774,13 +793,10 @@ function MarketSnapshot({
     >
       {loading && indices.length === 0 ? (
         <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{copy.loadingMarket}</InlineState>
-      ) : error && indices.length === 0 ? (
-        <InlineState>{error}</InlineState>
       ) : indices.length === 0 ? (
         <InlineState>{copy.emptyMarket}</InlineState>
       ) : (
         <div className="space-y-2">
-          {error ? <InlineState>{error}</InlineState> : null}
           <div className="finance-index-strip -mx-2 flex overflow-x-auto sm:mx-0">
             {indices.slice(0, 8).map((quote) => (
               <MarketPill language={language} key={quote.symbol} quote={quote} />
@@ -827,7 +843,8 @@ function WatchlistMovers({
   const pages = useMemo(() => chunkRows(rows, itemsPerPage), [itemsPerPage, rows]);
   const pageCount = pages.length;
   const total = module?.total ?? 0;
-  const moduleError = module?.error || error;
+  const moduleError = error;
+  useErrorToast(moduleError, copy.watchlistMovers);
   const previousLabel = language === "en" ? "Previous watchlist page" : "上一页自选";
   const nextLabel = language === "en" ? "Next watchlist page" : "下一页自选";
   const pageLabel = language === "en" ? `${Math.min(page + 1, pageCount || 1)} / ${pageCount || 1}` : `${Math.min(page + 1, pageCount || 1)} / ${pageCount || 1}`;
@@ -869,20 +886,19 @@ function WatchlistMovers({
   return (
     <FinanceSection
       action={<Button size="sm" variant="ghost" onClick={onOpenWatchlist}>{copy.viewWatchlist}<ArrowRight /></Button>}
+      className="dashboard-watchlist-section"
       icon={<Star />}
       subtitle={subtitle ?? copy.watchlistMoversSubtitle}
       title={copy.watchlistMovers}
     >
       {loading && total === 0 ? (
         <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{copy.loadingMarket}</InlineState>
-      ) : moduleError && total === 0 ? (
-        <InlineState>{moduleError}</InlineState>
       ) : total === 0 ? (
         <InlineState>{copy.emptyMovers}</InlineState>
       ) : (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex max-w-full gap-1 overflow-x-auto rounded-full bg-muted/40 p-0.5">
+        <div className="space-y-2.5">
+          <div className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
+            <div className="flex shrink-0 gap-1 rounded-full bg-muted/40 p-0.5">
               {WATCHLIST_VIEWS.map((item) => (
                 <button
                   aria-pressed={view === item}
@@ -898,31 +914,29 @@ function WatchlistMovers({
                 </button>
               ))}
             </div>
-            <Badge className="border-transparent bg-muted/35 shadow-none" variant="outline">{total}</Badge>
+            <div className="flex shrink-0 gap-1">
+              {WATCHLIST_FILTERS.map((item) => (
+                <button
+                  aria-pressed={filter === item}
+                  className={cn(
+                    "shrink-0 rounded-full border px-2 py-1 text-xs font-semibold transition-colors",
+                    filter === item
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                  key={item}
+                  onClick={() => setFilter(item)}
+                  type="button"
+                >
+                  {watchlistFilterLabel(item, language)}
+                  <span className="ml-1 text-muted-foreground">
+                    {item === "ALL" ? total : (module?.counts_by_category?.[item] ?? 0)}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <Badge className="ml-auto h-6 shrink-0 border-transparent bg-muted/35 px-2 shadow-none" variant="outline">{total}</Badge>
           </div>
-          <div className="flex gap-1 overflow-x-auto pb-0.5">
-            {WATCHLIST_FILTERS.map((item) => (
-              <button
-                aria-pressed={filter === item}
-                className={cn(
-                  "shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
-                  filter === item
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                )}
-                key={item}
-                onClick={() => setFilter(item)}
-                type="button"
-              >
-                {watchlistFilterLabel(item, language)}
-                <span className="ml-1 text-muted-foreground">
-                  {item === "ALL" ? total : (module?.counts_by_category?.[item] ?? 0)}
-                </span>
-              </button>
-            ))}
-          </div>
-          {moduleError ? <InlineState>{moduleError}</InlineState> : null}
-          {module?.quote_error ? <InlineState>{module.quote_error}</InlineState> : null}
           {rows.length === 0 ? (
             <InlineState>{copy.emptyMovers}</InlineState>
           ) : (
@@ -960,7 +974,7 @@ function WatchlistMovers({
               >
                 {pages.map((pageRows, pageIndex) => (
                   <div className="min-w-full snap-start pr-1" key={pageIndex}>
-                    <div className="divide-y divide-border/55 border-y border-border/55">
+                    <div className="divide-y divide-border/45">
                       {pageRows.map((row) => (
                         <QuoteRow
                           language={language}
@@ -1016,7 +1030,8 @@ function PortfolioSummary({
 }) {
   const copy = i18n[language].overview;
   const markets = module?.markets ?? [];
-  const moduleError = module?.error || error;
+  const moduleError = error;
+  useErrorToast(moduleError, copy.portfolioTitle);
 
   return (
     <FinanceSection
@@ -1027,21 +1042,15 @@ function PortfolioSummary({
     >
       {loading && markets.length === 0 ? (
         <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{copy.loadingPortfolio}</InlineState>
-      ) : moduleError && markets.length === 0 ? (
-        <InlineState>{moduleError}</InlineState>
       ) : markets.length === 0 ? (
         <InlineState>{copy.emptyPortfolio}</InlineState>
       ) : (
         <div className="space-y-4">
-          {moduleError ? <InlineState>{moduleError}</InlineState> : null}
           <div className="grid divide-y divide-border/55 border-y border-border/55 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             {markets.map((market) => (
               <PortfolioMarketSummary key={market.market} language={language} market={market} />
             ))}
           </div>
-          {markets.some((market) => market.quote_error) ? (
-            <InlineState>{markets.map((market) => market.quote_error).filter(Boolean).join(" · ")}</InlineState>
-          ) : null}
         </div>
       )}
     </FinanceSection>
@@ -1441,6 +1450,7 @@ function SymbolInsightsPanel({
     insights.corporate_actions,
     insights.filings,
   ].some((section) => sectionHasInsightContent(section) || section.error));
+  useErrorToast(error, labels.title);
 
   return (
     <div className="border-t border-border/55 pt-4">
@@ -1461,8 +1471,6 @@ function SymbolInsightsPanel({
         <InlineState>{labels.hidden}</InlineState>
       ) : loading && !insights ? (
         <InlineState icon={<Loader2 className="size-4 animate-spin" />}>{labels.loading}</InlineState>
-      ) : error && !insights ? (
-        <InlineState>{error}</InlineState>
       ) : !insights || !hasAnyContent ? (
         <InlineState>{labels.empty}</InlineState>
       ) : (
@@ -1473,7 +1481,6 @@ function SymbolInsightsPanel({
           <ListInsightSection icon={<CalendarDays />} kind="dividend" language={language} section={insights.dividends} title={labels.dividends} />
           <ListInsightSection icon={<Landmark />} kind="action" language={language} section={insights.corporate_actions} title={labels.actions} />
           <ListInsightSection icon={<FileText />} kind="filing" language={language} section={insights.filings} title={labels.filings} />
-          {error ? <InlineState>{error}</InlineState> : null}
         </div>
       )}
     </div>
@@ -1643,6 +1650,7 @@ export function DashboardPage({
   onOpenWatchlist,
   refreshInterval,
 }: DashboardPageProps) {
+  const { showToast } = useToast();
   const copy = i18n[language].overview;
   const canMarket = canPermission("market:read");
   const canPortfolio = canPermission("portfolio:read");
@@ -1662,7 +1670,22 @@ export function DashboardPage({
   const [selectedWatchlistSymbol, setSelectedWatchlistSymbol] = useState("");
   const dashboardRef = useRef<DashboardResponse | null>(dashboard);
   const modulesAbortRef = useRef<AbortController | null>(null);
+  const errorToastRef = useRef(new Map<string, { message: string; time: number }>());
   const [, startDashboardTransition] = useTransition();
+
+  const notifyDashboardError = useCallback((key: string, scope: DashboardModuleKey | "dashboard" | "quote", message: string) => {
+    const text = message.trim();
+    if (!text) return;
+    const now = Date.now();
+    const previous = errorToastRef.current.get(key);
+    if (previous?.message === text && now - previous.time < DASHBOARD_ERROR_TOAST_INTERVAL_MS) return;
+    errorToastRef.current.set(key, { message: text, time: now });
+    showToast({
+      kind: "error",
+      message: text,
+      title: dashboardToastTitle(scope, language),
+    });
+  }, [language, showToast]);
 
   useEffect(() => {
     dashboardRef.current = dashboard;
@@ -1804,11 +1827,38 @@ export function DashboardPage({
   const marketModule = dashboard?.market;
   const watchlistModule = dashboard?.watchlist;
   const portfolioModule = dashboard?.portfolio;
+  const portfolioQuoteError = useMemo(
+    () => (portfolioModule?.markets ?? []).map((market) => market.quote_error).filter(Boolean).join(" · "),
+    [portfolioModule?.markets],
+  );
   const watchlistRows = watchlistModule?.items ?? [];
   const selectedWatchlistRow = useMemo(
     () => watchlistRows.find((row) => row.symbol === selectedWatchlistSymbol) ?? null,
     [selectedWatchlistSymbol, watchlistRows],
   );
+
+  useEffect(() => {
+    notifyDashboardError("dashboard", "dashboard", dashboardError);
+    notifyDashboardError("market:status", "market", moduleStatus.market.error);
+    notifyDashboardError("market:module", "market", marketModule?.error ?? "");
+    notifyDashboardError("watchlist:status", "watchlist", moduleStatus.watchlist.error);
+    notifyDashboardError("watchlist:module", "watchlist", watchlistModule?.error ?? "");
+    notifyDashboardError("watchlist:quote", "quote", watchlistModule?.quote_error ?? "");
+    notifyDashboardError("portfolio:status", "portfolio", moduleStatus.portfolio.error);
+    notifyDashboardError("portfolio:module", "portfolio", portfolioModule?.error ?? "");
+    notifyDashboardError("portfolio:quote", "quote", portfolioQuoteError);
+  }, [
+    dashboardError,
+    marketModule?.error,
+    moduleStatus.market.error,
+    moduleStatus.portfolio.error,
+    moduleStatus.watchlist.error,
+    notifyDashboardError,
+    portfolioModule?.error,
+    portfolioQuoteError,
+    watchlistModule?.error,
+    watchlistModule?.quote_error,
+  ]);
 
   useEffect(() => {
     if (selectedWatchlistSymbol && !watchlistRows.some((row) => row.symbol === selectedWatchlistSymbol)) {
@@ -1820,14 +1870,14 @@ export function DashboardPage({
     <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3 xl:h-full xl:overflow-hidden">
       <div
         className={cn(
-          "dashboard-wide-grid grid min-h-0 gap-6 xl:flex-1 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
+          "dashboard-wide-grid grid min-h-0 gap-4 xl:flex-1 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:grid-rows-[minmax(0,1fr)] xl:gap-5 xl:overflow-hidden 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
           chatExpanded && "xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
         )}
       >
-        <main className="dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1">
+        <main className="dashboard-primary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1">
           {canWatchlist ? (
             <WatchlistMovers
-              error={moduleStatus.watchlist.error || watchlistModule?.error || dashboardError}
+              error=""
               language={language}
               loading={moduleStatus.watchlist.loading}
               module={watchlistModule}
@@ -1860,7 +1910,7 @@ export function DashboardPage({
             <>
               {canMarket ? (
                 <MarketSnapshot
-                  error={moduleStatus.market.error || marketModule?.error || dashboardError}
+                  error=""
                   indices={marketModule?.indices ?? []}
                   language={language}
                   loading={moduleStatus.market.loading}
@@ -1872,7 +1922,7 @@ export function DashboardPage({
               )}
               {canPortfolio ? (
                 <PortfolioSummary
-                  error={moduleStatus.portfolio.error || portfolioModule?.error || dashboardError}
+                  error=""
                   language={language}
                   loading={moduleStatus.portfolio.loading}
                   module={portfolioModule}

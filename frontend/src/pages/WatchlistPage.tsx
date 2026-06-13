@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { FileText, GripVertical, Loader2, RefreshCw, Search, Star, Trash2 } from "lucide-react";
+import { FileText, GripVertical, Loader2, Search, Star, Trash2 } from "lucide-react";
 import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/common/Toast";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,8 @@ import type { WatchlistCategory, WatchlistItem, WatchlistSearchResult } from "@/
 type NameParts = Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">;
 
 const WATCHLIST_CATEGORY_STORAGE_KEY = "stocks-assistant-watchlist-category";
+const DEFAULT_WATCHLIST_REFRESH_SECONDS = 5;
+const WATCHLIST_REFRESH_STORAGE_KEY = "stocks-assistant.intraday-refresh-seconds";
 
 type DragPreviewSize = {
   width: number;
@@ -46,6 +49,17 @@ function writeStoredValue(key: string, value: string) {
     window.localStorage.setItem(key, value);
   } catch {
     // 本地存储不可用时退回当前页面状态。
+  }
+}
+
+function loadStoredWatchlistRefreshSeconds() {
+  try {
+    const stored = window.localStorage.getItem(WATCHLIST_REFRESH_STORAGE_KEY);
+    const parsed = stored == null ? DEFAULT_WATCHLIST_REFRESH_SECONDS : Number(stored);
+    if (!Number.isFinite(parsed)) return DEFAULT_WATCHLIST_REFRESH_SECONDS;
+    return Math.min(10, Math.max(1, Math.round(parsed)));
+  } catch {
+    return DEFAULT_WATCHLIST_REFRESH_SECONDS;
   }
 }
 
@@ -237,9 +251,11 @@ export function WatchlistPage({
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isRefreshingQuotes, setIsRefreshingQuotes] = useState(false);
-  const [message, setMessage] = useState("");
 
   const searchControllerRef = useRef<AbortController | null>(null);
+  const quoteRefreshInFlightRef = useRef(false);
+  const lastErrorToastRef = useRef({ message: "", time: 0 });
+  const { showToast } = useToast();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -251,23 +267,31 @@ export function WatchlistPage({
     () => items.find((item) => item.id === activeDragId) ?? null,
     [activeDragId, items],
   );
+  const showWatchlistError = useCallback((text: string) => {
+    const message = text.trim();
+    if (!message) return;
+    const now = Date.now();
+    if (lastErrorToastRef.current.message === message && now - lastErrorToastRef.current.time < 15_000) return;
+    lastErrorToastRef.current = { message, time: now };
+    showToast({ kind: "error", message, title: copy.title });
+  }, [copy.title, showToast]);
+
   useEffect(() => {
     writeStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, category);
     const controller = new AbortController();
     setIsLoading(true);
-    setMessage("");
     listWatchlist(category, { signal: controller.signal })
       .then((response) => setItems(response.items))
       .catch((caught) => {
         if (!controller.signal.aborted) {
-          setMessage(caught instanceof Error ? caught.message : copy.loadFailed);
+          showWatchlistError(caught instanceof Error ? caught.message : copy.loadFailed);
         }
       })
       .finally(() => {
         if (!controller.signal.aborted) setIsLoading(false);
       });
     return () => controller.abort();
-  }, [category, copy.loadFailed]);
+  }, [category, copy.loadFailed, showWatchlistError]);
 
   useEffect(() => {
     if (!selectedSymbol || selectedSymbol === activeSymbol) return;
@@ -296,7 +320,6 @@ export function WatchlistPage({
     const controller = new AbortController();
     searchControllerRef.current = controller;
     setResults([]);
-    setMessage("");
     const timer = window.setTimeout(() => {
       setIsSearching(true);
       searchWatchlist(text, category, { signal: controller.signal })
@@ -306,7 +329,7 @@ export function WatchlistPage({
         .catch((caught) => {
           if (!controller.signal.aborted) {
             setResults([]);
-            setMessage(caught instanceof Error ? caught.message : copy.searchFailed);
+            showWatchlistError(caught instanceof Error ? caught.message : copy.searchFailed);
           }
         })
         .finally(() => {
@@ -318,7 +341,7 @@ export function WatchlistPage({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [category, copy.searchFailed, query]);
+  }, [category, copy.searchFailed, query, showWatchlistError]);
 
   function selectCategory(next: WatchlistCategory) {
     if (next === category) return;
@@ -327,7 +350,6 @@ export function WatchlistPage({
     setActiveSymbol("");
     onSelectedSymbolChange?.("");
     setResults([]);
-    setMessage("");
   }
 
   const handleSelectSymbol = useCallback((itemOrSymbol: WatchlistItem | string) => {
@@ -338,7 +360,6 @@ export function WatchlistPage({
   }, [onSelectedSymbolChange]);
 
   async function handleAdd(result: WatchlistSearchResult) {
-    setMessage("");
     try {
       const item = await addWatchlistItem(result);
       if (item.category === category) {
@@ -346,14 +367,13 @@ export function WatchlistPage({
         handleSelectSymbol(item);
       }
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : copy.addFailed);
+      showWatchlistError(caught instanceof Error ? caught.message : copy.addFailed);
     }
   }
 
   async function handleDelete(item: WatchlistItem) {
     const previous = items;
     const wasActive = item.symbol === activeSymbol;
-    setMessage("");
     setItems((current) => current.filter((e) => e.id !== item.id));
     if (wasActive) setActiveSymbol("");
     try {
@@ -361,12 +381,14 @@ export function WatchlistPage({
     } catch (caught) {
       setItems(previous);
       if (wasActive) setActiveSymbol(item.symbol);
-      setMessage(caught instanceof Error ? caught.message : copy.deleteFailed);
+      showWatchlistError(caught instanceof Error ? caught.message : copy.deleteFailed);
     }
   }
 
-  async function handleRefreshQuotes() {
-    setMessage("");
+  const handleRefreshQuotes = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (quoteRefreshInFlightRef.current) return;
+    quoteRefreshInFlightRef.current = true;
     setIsRefreshingQuotes(true);
     try {
       const response = await getWatchlistOverview();
@@ -377,18 +399,35 @@ export function WatchlistPage({
         onSelectedSymbolChange?.("");
       }
       if (response.quote_error || response.error) {
-        setMessage(response.quote_error || response.error || copy.overviewFailed);
+        showWatchlistError(response.quote_error || response.error || copy.overviewFailed);
         return;
       }
-      const time = formatQuoteTime(response.fetched_at, language);
-      const source = quoteSourceLabel(response.source, copy);
-      setMessage(formatTemplate(copy.quotesUpdated, { time, source }));
+      if (!silent) {
+        const time = formatQuoteTime(response.fetched_at, language);
+        const source = quoteSourceLabel(response.source, copy);
+        showToast({
+          kind: "success",
+          message: formatTemplate(copy.quotesUpdated, { time, source }),
+          title: copy.title,
+        });
+      }
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : copy.overviewFailed);
+      showWatchlistError(caught instanceof Error ? caught.message : copy.overviewFailed);
     } finally {
+      quoteRefreshInFlightRef.current = false;
       setIsRefreshingQuotes(false);
     }
-  }
+  }, [activeSymbol, category, copy, language, onSelectedSymbolChange, showToast, showWatchlistError]);
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    void handleRefreshQuotes({ silent: true });
+    const intervalSeconds = loadStoredWatchlistRefreshSeconds();
+    const timer = window.setInterval(() => {
+      void handleRefreshQuotes({ silent: true });
+    }, intervalSeconds * 1000);
+    return () => window.clearInterval(timer);
+  }, [category, handleRefreshQuotes, items.length]);
 
   function handleDragStart(event: DragStartEvent) {
     const initialRect = event.active.rect.current.initial;
@@ -416,7 +455,7 @@ export function WatchlistPage({
       reorderWatchlist(next.map((e) => e.id))
         .catch(() => {
           setItems(previous);
-          setMessage(copy.reorderFailed);
+          showWatchlistError(copy.reorderFailed);
         });
       return next;
     });
@@ -424,13 +463,13 @@ export function WatchlistPage({
 
   return (
     <section className="watchlist-page-shell panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-        <div className="inline-flex h-8 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
+      <div className="page-toolbar watchlist-compact-toolbar flex flex-nowrap items-center justify-between gap-1.5 overflow-x-auto md:gap-2">
+        <div className="inline-flex h-6 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
           {watchlistCategories.map((item) => (
             <button
               aria-pressed={category === item.id}
               className={cn(
-                "h-7 min-w-[4.25rem] rounded-full px-2.5 text-xs font-medium transition-colors",
+                "h-5 min-w-[3.25rem] rounded-full px-1.5 text-[11px] font-medium transition-colors sm:min-w-[4rem] sm:px-2",
                 category === item.id
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -443,23 +482,13 @@ export function WatchlistPage({
             </button>
           ))}
         </div>
-        <Button
-          aria-label={copy.refreshQuotes}
-          className="h-8"
-          disabled={isRefreshingQuotes}
-          onClick={handleRefreshQuotes}
-          size="sm"
-          title={copy.refreshQuotes}
-          type="button"
-          variant="outline"
-        >
-          {isRefreshingQuotes ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          <span className="hidden sm:inline">{isRefreshingQuotes ? copy.quotesLoading : copy.refreshQuotes}</span>
-        </Button>
-        <Badge variant="outline">{formatTemplate(copy.symbols, { count: items.length })}</Badge>
+        <Badge className="h-6 shrink-0 gap-1 px-1.5 text-[11px]" variant="outline">
+          {isRefreshingQuotes ? <Loader2 className="size-3 animate-spin" /> : null}
+          {formatTemplate(copy.symbols, { count: items.length })}
+        </Badge>
       </div>
 
-      <div className="watchlist-page-grid grid min-h-0 flex-1 gap-4 py-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:py-4">
+      <div className="watchlist-page-grid grid min-h-0 flex-1 gap-3 pt-1.5 pb-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:gap-0 lg:pt-2 lg:pb-4">
         <aside className="watchlist-list-shell finance-module flex min-h-0 flex-col overflow-hidden rounded-md border border-border/80 bg-card/45">
           <div className="finance-module-header space-y-2 border-b border-border/70 p-2">
             <div>
@@ -517,11 +546,6 @@ export function WatchlistPage({
               ) : null}
             </div>
 
-            {message ? (
-              <div className="finance-soft-state rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                {message}
-              </div>
-            ) : null}
           </div>
 
           <div className="min-h-0 flex-1 overscroll-contain p-2 lg:overflow-y-auto">

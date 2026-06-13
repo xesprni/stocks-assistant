@@ -3,6 +3,7 @@ import { BookOpen, ChevronDown, ChevronRight, FileText, Loader2, Plus, Save } fr
 
 import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,6 +99,7 @@ export function KnowledgePage({ language }: { language: AppLanguage }) {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  useErrorToast(error, copy.title);
 
   async function refreshKnowledge() {
     setIsLoading(true);
@@ -278,10 +280,6 @@ export function KnowledgePage({ language }: { language: AppLanguage }) {
             </button>
           </div>
       </div>
-
-      {error ? (
-        <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
-      ) : null}
 
       {notice ? (
         <div className="mx-3 mt-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{notice}</div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { ExternalLink, FileText, Globe2, Languages, Loader2, MessageCircle, Newspaper, Rss, Search, Share2, Star, ThumbsUp } from "lucide-react";
 
 import { SideDrawer } from "@/components/common/SideDrawer";
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -187,6 +188,8 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
   const [isLoadingWatchlist, setIsLoadingWatchlist] = useState(false);
   const [isLoadingNews, setIsLoadingNews] = useState(false);
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  useErrorToast(errorMessage, copy.title);
 
   const [guardianPresetUrl, setGuardianPresetUrl] = useState(() => readStoredValue(NEWS_GUARDIAN_PRESET_STORAGE_KEY, guardianSources.map((source) => source.url), DEFAULT_GUARDIAN_URL));
   const [guardianCustomUrl, setGuardianCustomUrl] = useState("");
@@ -254,6 +257,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     async function loadWatchlist() {
       setIsLoadingWatchlist(true);
       setMessage("");
+      setErrorMessage("");
       try {
         const response = await listWatchlist(category);
         if (!mounted) return;
@@ -268,7 +272,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
       } catch (caught) {
         if (mounted) {
           setWatchlist([]);
-          setMessage(caught instanceof Error ? caught.message : copy.loadFailed);
+          setErrorMessage(caught instanceof Error ? caught.message : copy.loadFailed);
         }
       } finally {
         if (mounted) {
@@ -296,6 +300,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     async function loadNews() {
       setIsLoadingNews(true);
       setMessage("");
+      setErrorMessage("");
       try {
         const response = await getSecurityNews(symbol);
         if (!mounted) return;
@@ -308,7 +313,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
         if (mounted) {
           setNews([]);
           setResponseSymbol("");
-          setMessage(caught instanceof Error ? caught.message : copy.loadFailed);
+          setErrorMessage(caught instanceof Error ? caught.message : copy.loadFailed);
         }
       } finally {
         if (mounted) {
@@ -337,6 +342,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     async function loadGuardianFeed() {
       setIsLoadingGuardianFeed(true);
       setGuardianMessage("");
+      setErrorMessage("");
       try {
         const response = await getGuardianFeed(url);
         if (!mounted) return;
@@ -351,7 +357,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
           setGuardianItems([]);
           setGuardianFeedUrl("");
           setGuardianFeedTitle("");
-          setGuardianMessage(caught instanceof Error ? caught.message : copy.loadFailed);
+          setErrorMessage(caught instanceof Error ? caught.message : copy.loadFailed);
         }
       } finally {
         if (mounted) {
@@ -386,13 +392,14 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
     setGuardianArticle(null);
     setArticleMessage("");
     setTranslationMessage("");
+    setErrorMessage("");
     setIsLoadingArticle(true);
     getGuardianArticle(selectedGuardianItem.url)
       .then((article) => {
         if (mounted) setGuardianArticle(article);
       })
       .catch((caught) => {
-        if (mounted) setArticleMessage(caught instanceof Error ? caught.message : copy.guardianArticleFailed);
+        if (mounted) setErrorMessage(caught instanceof Error ? caught.message : copy.guardianArticleFailed);
       })
       .finally(() => {
         if (mounted) setIsLoadingArticle(false);

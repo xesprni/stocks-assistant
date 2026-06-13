@@ -302,8 +302,8 @@
 
   .page-toolbar {
     background: transparent;
-    min-height: 2.75rem;
-    padding: 0.375rem 0.75rem;
+    min-height: 2.25rem;
+    padding: 0.25rem 0.75rem;
   }
 
   .panel-body {
@@ -689,6 +689,30 @@
     cursor: grabbing;
   }
 
+  .watchlist-compact-toolbar {
+    min-height: 1.75rem;
+    padding-bottom: 0.125rem;
+    padding-top: 0.125rem;
+  }
+
+  .watchlist-page-shell .finance-module {
+    border-top: 0 !important;
+  }
+
+  .watchlist-page-shell .watchlist-analysis-shell {
+    border-top: 1px solid hsl(var(--border) / 0.56) !important;
+    padding-top: 0.75rem;
+  }
+
+  @media (min-width: 1024px) {
+    .watchlist-page-shell .watchlist-analysis-shell {
+      border-left: 1px solid hsl(var(--border) / 0.56) !important;
+      border-top: 0 !important;
+      padding-left: 1rem;
+      padding-top: 0;
+    }
+  }
+
   .native-stock-chart,
   .native-stock-chart-canvas,
   .technical-analysis-root,
@@ -768,6 +792,15 @@
     border-top: 1px solid hsl(var(--border) / 0.54);
   }
 
+  .dashboard-primary-column .finance-section:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .dashboard-watchlist-section > div:first-child {
+    margin-bottom: 0.625rem;
+  }
+
   .dashboard-scroll-column {
     min-height: 0;
     scrollbar-width: thin;
@@ -832,11 +865,13 @@
     animation: message-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 
-  .config-toast[data-state="open"] {
+  .config-toast[data-state="open"],
+  .app-toast[data-state="open"] {
     animation: toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
-  .config-toast[data-state="closing"] {
+  .config-toast[data-state="closing"],
+  .app-toast[data-state="closing"] {
     animation: toast-out 160ms ease-in both;
   }
 
@@ -1233,7 +1268,7 @@
   }
 
   .page-toolbar {
-    padding: 0.5rem 0.75rem;
+    padding: 0.25rem 0.75rem;
   }
 
   .panel-body {
@@ -1288,6 +1323,7 @@
     border-radius: 0 !important;
     height: 100%;
     min-height: 0 !important;
+    padding: 0 !important;
   }
 
   .watchlist-analysis-shell .technical-analysis-root,
