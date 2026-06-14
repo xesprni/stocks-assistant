@@ -501,10 +501,13 @@ function PortfolioTrendChart({
   hideSensitive: boolean;
   points: PortfolioTrendPoint[];
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const width = 520;
-  const height = 150;
-  const paddingX = 18;
-  const paddingY = 16;
+  const height = 190;
+  const paddingLeft = 54;
+  const paddingRight = 18;
+  const paddingTop = 16;
+  const paddingBottom = 28;
   const values = points.map((point) => point.value);
   const rawMin = Math.min(...values, 0);
   const rawMax = Math.max(...values, 1);
@@ -513,53 +516,119 @@ function PortfolioTrendChart({
   const min = singleValue ? (values[0] ?? 0) - band : rawMin;
   const max = singleValue ? (values[0] ?? 1) + band : rawMax;
   const span = max - min || 1;
-  const drawablePoints = points.length === 1
-    ? [
-        { ...points[0], label: points[0].label },
-        { ...points[0], label: points[0].label },
-      ]
-    : points;
-  const coordinates = drawablePoints.map((point, index) => {
-    const x = drawablePoints.length <= 1 ? width / 2 : paddingX + (index / (drawablePoints.length - 1)) * (width - paddingX * 2);
-    const y = height - paddingY - ((point.value - min) / span) * (height - paddingY * 2);
+  const pointCoordinates = points.map((point, index) => {
+    const x = points.length <= 1 ? width - paddingRight : paddingLeft + (index / (points.length - 1)) * (width - paddingLeft - paddingRight);
+    const y = height - paddingBottom - ((point.value - min) / span) * (height - paddingTop - paddingBottom);
     return { ...point, x, y };
   });
-  const path = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
-  const areaPath = coordinates.length > 1
-    ? `${path} ${coordinates.at(-1)?.x},${height - paddingY} ${coordinates[0]?.x},${height - paddingY}`
-    : "";
+  const lineCoordinates = pointCoordinates.length === 1
+    ? [{ ...pointCoordinates[0], x: paddingLeft }, pointCoordinates[0]]
+    : pointCoordinates;
+  const path = lineCoordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  const yTicks = [max, min + span / 2, min];
+  const yTickCoordinates = yTicks.map((tick) => ({
+    tick,
+    y: height - paddingBottom - ((tick - min) / span) * (height - paddingTop - paddingBottom),
+  }));
+  const xTickIndexes = Array.from(new Set([
+    0,
+    Math.floor((points.length - 1) / 2),
+    Math.max(0, points.length - 1),
+  ])).filter((index) => points[index]);
+  const activeIndex = hoveredIndex ?? (points.length > 0 ? points.length - 1 : null);
+  const activePoint = activeIndex == null ? null : pointCoordinates[activeIndex];
+
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (pointCoordinates.length === 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    const x = ratio * width;
+    let nextIndex = 0;
+    let nextDistance = Number.POSITIVE_INFINITY;
+    pointCoordinates.forEach((point, index) => {
+      const distance = Math.abs(point.x - x);
+      if (distance < nextDistance) {
+        nextDistance = distance;
+        nextIndex = index;
+      }
+    });
+    setHoveredIndex(nextIndex);
+  }
 
   return (
-    <div className="min-h-[190px]">
-      <svg className="h-40 w-full overflow-visible" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`} role="img">
-        <defs>
-          <linearGradient id="portfolio-trend-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--primary) / 0.18)" />
-            <stop offset="100%" stopColor="hsl(var(--primary) / 0)" />
-          </linearGradient>
-        </defs>
-        {[0.25, 0.5, 0.75].map((ratio) => {
-          const y = paddingY + ratio * (height - paddingY * 2);
-          return <line key={ratio} x1={paddingX} x2={width - paddingX} y1={y} y2={y} className="stroke-border/70" strokeWidth="1" vectorEffect="non-scaling-stroke" />;
-        })}
-        <line x1={paddingX} x2={width - paddingX} y1={height - paddingY} y2={height - paddingY} className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-        {areaPath ? <polygon points={areaPath} fill="url(#portfolio-trend-fill)" /> : null}
-        {coordinates.length > 1 ? (
-          <polyline points={path} fill="none" stroke="hsl(var(--primary))" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        ) : null}
-        {points.map((point, index) => {
-          const coordinate = points.length === 1 ? coordinates[1] : coordinates[index];
+    <div
+      className="relative min-h-[250px] rounded-md border border-border/60 bg-background/40 p-3"
+      onPointerLeave={() => setHoveredIndex(null)}
+      onPointerMove={handlePointerMove}
+    >
+      <svg className="h-[210px] w-full" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`} role="img">
+        {yTickCoordinates.map(({ tick, y }) => {
           return (
-            <circle key={`${point.label}-${index}`} cx={coordinate.x} cy={coordinate.y} r="4" fill="hsl(var(--primary))" vectorEffect="non-scaling-stroke" />
+            <g key={tick}>
+              <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} className="stroke-border/70" strokeDasharray="3 4" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+            </g>
           );
         })}
+        <line x1={paddingLeft} x2={paddingLeft} y1={paddingTop} y2={height - paddingBottom} className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        <line x1={paddingLeft} x2={width - paddingRight} y1={height - paddingBottom} y2={height - paddingBottom} className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        {path ? (
+          <polyline points={path} fill="none" stroke="hsl(var(--primary))" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        ) : null}
+        {activePoint ? (
+          <>
+            <line x1={activePoint.x} x2={activePoint.x} y1={paddingTop} y2={height - paddingBottom} className="stroke-primary/45" strokeDasharray="4 4" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+            <circle cx={activePoint.x} cy={activePoint.y} r="7" fill="hsl(var(--primary) / 0.16)" stroke="hsl(var(--primary))" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          </>
+        ) : null}
+        {pointCoordinates.map((point, index) => (
+          <circle
+            key={`${point.label}-${index}`}
+            cx={point.x}
+            cy={point.y}
+            r={index === activeIndex ? "4.5" : "3.2"}
+            className={cn(index === activeIndex ? "fill-primary" : "fill-background stroke-primary")}
+            strokeWidth="2"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
       </svg>
-      <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center text-[11px] text-muted-foreground">
-        <span>{points[0]?.label ?? "-"}</span>
-        <span className="rounded-full bg-primary/10 px-2 py-1 font-mono text-xs font-semibold text-primary">
-          {hideSensitive ? "***" : formatMoney(points.at(-1)?.value)}
-        </span>
-        <span className="text-right">{points.at(-1)?.label ?? "-"}</span>
+
+      <div className="pointer-events-none absolute inset-x-3 top-3 h-[210px]">
+        {yTickCoordinates.map(({ tick, y }) => {
+          return (
+            <span
+              className="absolute left-0 -translate-y-1/2 rounded bg-background/85 pr-1 font-mono text-[10px] text-muted-foreground"
+              key={tick}
+              style={{ top: `${(y / height) * 100}%` }}
+            >
+              {hideSensitive ? "***" : formatMoney(tick)}
+            </span>
+          );
+        })}
+        {xTickIndexes.map((index) => {
+          const point = pointCoordinates[index];
+          return (
+            <span
+              className="absolute bottom-0 -translate-x-1/2 text-[10px] text-muted-foreground"
+              key={`${point.label}-${index}`}
+              style={{ left: `${(point.x / width) * 100}%` }}
+            >
+              {point.label}
+            </span>
+          );
+        })}
+        {activePoint ? (
+          <div
+            className="absolute z-10 min-w-28 -translate-x-1/2 rounded-md border border-border/80 bg-popover/95 px-2.5 py-2 text-xs shadow-lg"
+            style={{
+              left: `${Math.min(92, Math.max(12, (activePoint.x / width) * 100))}%`,
+              top: `${Math.max(8, (activePoint.y / height) * 100 - 22)}%`,
+            }}
+          >
+            <p className="font-medium text-foreground">{activePoint.label}</p>
+            <p className="mt-1 font-mono tabular-nums text-primary">{hideSensitive ? "***" : formatMoney(activePoint.value)}</p>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -574,34 +643,47 @@ function PortfolioPieChart({
   hideSensitive: boolean;
   segments: PortfolioPieSegment[];
 }) {
+  const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
   const total = segments.reduce((sum, item) => sum + item.value, 0);
   let offset = 0;
+  const activeSegment = segments.find((segment) => segment.label === hoveredLabel) ?? segments[0] ?? null;
   return (
-    <div className="mx-auto grid min-h-[180px] w-full max-w-[760px] grid-cols-1 gap-4 sm:grid-cols-[136px_minmax(0,1fr)] sm:items-center">
+    <div className="mx-auto grid min-h-[210px] w-full max-w-[760px] grid-cols-1 gap-4 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center">
       <div className="flex items-center justify-center">
-        <svg className="size-32 shrink-0" viewBox="0 0 112 112" role="img" aria-hidden="true">
+        <svg className="size-36 shrink-0 overflow-visible" viewBox="0 0 112 112" role="img" aria-hidden="true" onMouseLeave={() => setHoveredLabel(null)}>
           <circle cx="56" cy="56" r="38" fill="none" stroke="hsl(var(--muted) / 0.38)" strokeWidth="18" />
           {segments.map((segment) => {
             const percent = total > 0 ? (segment.value / total) * 100 : 0;
             const dashOffset = -offset;
             offset += percent;
+            const active = hoveredLabel === null || hoveredLabel === segment.label;
             return (
               <circle
                 key={segment.label}
                 cx="56"
                 cy="56"
-                r="38"
+                r={hoveredLabel === segment.label ? "39.5" : "38"}
                 fill="none"
                 pathLength="100"
                 stroke={segment.color}
                 strokeDasharray={`${percent} ${100 - percent}`}
                 strokeDashoffset={dashOffset}
-                strokeWidth="18"
+                strokeLinecap="butt"
+                strokeOpacity={active ? 1 : 0.28}
+                strokeWidth={hoveredLabel === segment.label ? "20" : "18"}
+                style={{ cursor: "pointer", transition: "stroke-opacity 160ms ease, stroke-width 160ms ease" }}
                 transform="rotate(-90 56 56)"
+                onMouseEnter={() => setHoveredLabel(segment.label)}
               />
             );
           })}
           <circle cx="56" cy="56" r="28" fill="hsl(var(--background))" stroke="hsl(var(--border) / 0.7)" strokeWidth="1" />
+          <text className="fill-foreground font-mono text-[10px] font-semibold" textAnchor="middle" x="56" y="53">
+            {activeSegment && total > 0 ? formatPercent((activeSegment.value / total) * 100) : "--"}
+          </text>
+          <text className="fill-muted-foreground text-[7px]" textAnchor="middle" x="56" y="64">
+            {activeSegment?.label ?? emptyLabel}
+          </text>
         </svg>
       </div>
       <div className="min-w-0 space-y-2">
@@ -609,15 +691,34 @@ function PortfolioPieChart({
           <p className="text-xs text-muted-foreground">{emptyLabel}</p>
         ) : (
           segments.map((segment) => (
-            <div key={segment.label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-xs">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
-                <span className="truncate font-medium">{segment.label}</span>
+            <button
+              key={segment.label}
+              className={cn(
+                "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
+                hoveredLabel === segment.label
+                  ? "border-primary/45 bg-primary/10"
+                  : hoveredLabel
+                    ? "border-transparent bg-muted/15 opacity-55"
+                    : "border-transparent bg-muted/20 hover:bg-muted/35",
+              )}
+              onBlur={() => setHoveredLabel(null)}
+              onFocus={() => setHoveredLabel(segment.label)}
+              onMouseEnter={() => setHoveredLabel(segment.label)}
+              type="button"
+            >
+              <span className="flex min-w-0 items-center gap-2.5">
+                <span className="h-7 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold text-foreground">{segment.label}</span>
+                  <span className="mt-0.5 block font-mono text-[10px] tabular-nums text-muted-foreground">
+                    {total > 0 ? formatPercent((segment.value / total) * 100) : "-"}
+                  </span>
+                </span>
               </span>
               <span className="shrink-0 text-right font-mono tabular-nums text-foreground">
-                {hideSensitive ? "***" : `${segment.displayValue} · ${total > 0 ? formatPercent((segment.value / total) * 100) : "-"}`}
+                {hideSensitive ? "***" : segment.displayValue}
               </span>
-            </div>
+            </button>
           ))
         )}
       </div>
