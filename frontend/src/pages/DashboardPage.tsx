@@ -834,7 +834,7 @@ function WatchlistMovers({
   const [view, setView] = useState<DashboardWatchlistView>("movers");
   const [filter, setFilter] = useState<"ALL" | WatchlistCategory>("ALL");
   const [page, setPage] = useState(0);
-  const [itemsPerPage, setItemsPerPage] = useState(() => (typeof window === "undefined" || window.innerWidth >= 768 ? 8 : 6));
+  const [itemsPerPage, setItemsPerPage] = useState(() => (typeof window === "undefined" || window.innerWidth >= 768 ? 10 : 6));
   const rows = useMemo(() => {
     const source = module?.views?.[view] ?? [];
     if (filter === "ALL") return source;
@@ -851,7 +851,7 @@ function WatchlistMovers({
 
   useEffect(() => {
     function updatePageSize() {
-      setItemsPerPage(window.innerWidth >= 768 ? 8 : 6);
+      setItemsPerPage(window.innerWidth >= 768 ? 10 : 6);
     }
     updatePageSize();
     window.addEventListener("resize", updatePageSize);
@@ -897,7 +897,7 @@ function WatchlistMovers({
         <InlineState>{copy.emptyMovers}</InlineState>
       ) : (
         <div className="space-y-2.5">
-          <div className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
+          <div className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto border-t border-border/55 pt-2.5 pb-0.5">
             <div className="flex shrink-0 gap-1 rounded-full bg-muted/40 p-0.5">
               {WATCHLIST_VIEWS.map((item) => (
                 <button
@@ -1941,7 +1941,7 @@ export function DashboardPage({
         {!isMobileViewport ? (
           <aside
             className={cn(
-              "dashboard-chat-column dashboard-scroll-column finance-right-rail flex min-h-[720px] min-w-0 flex-col overflow-hidden xl:col-start-3 xl:row-start-1 xl:min-h-0",
+              "dashboard-chat-column dashboard-scroll-column finance-right-rail hidden min-h-[720px] min-w-0 flex-col overflow-hidden xl:col-start-3 xl:row-start-1 xl:flex xl:min-h-0",
               "xl:self-stretch",
               chatExpanded && "xl:col-start-2 xl:col-span-2",
             )}

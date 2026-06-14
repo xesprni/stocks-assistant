@@ -798,7 +798,7 @@
   }
 
   .dashboard-watchlist-section > div:first-child {
-    margin-bottom: 0.625rem;
+    margin-bottom: 0;
   }
 
   .dashboard-scroll-column {
@@ -809,6 +809,7 @@
   @media (min-width: 1280px) {
     .dashboard-scroll-column {
       height: 100%;
+      overflow-x: hidden;
       overflow-y: auto;
       overscroll-behavior: contain;
       padding-right: 0.35rem;
