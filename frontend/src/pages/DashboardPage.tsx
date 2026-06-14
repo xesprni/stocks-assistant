@@ -334,7 +334,7 @@ function FinanceSection({
 }) {
   return (
     <section className={cn("finance-section min-w-0", className)}>
-      <div className="mb-3 flex min-w-0 items-end justify-between gap-3">
+      <div className="dashboard-section-header mb-3 flex min-w-0 items-end justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {icon ? <span className="shrink-0 text-muted-foreground [&_svg]:size-4">{icon}</span> : null}
           <div className="min-w-0">
@@ -897,7 +897,7 @@ function WatchlistMovers({
         <InlineState>{copy.emptyMovers}</InlineState>
       ) : (
         <div className="space-y-2.5">
-          <div className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto border-t border-border/55 pt-2.5 pb-0.5">
+          <div className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
             <div className="flex shrink-0 gap-1 rounded-full bg-muted/40 p-0.5">
               {WATCHLIST_VIEWS.map((item) => (
                 <button
