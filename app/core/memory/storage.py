@@ -17,6 +17,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# 向量搜索候选集上限。超过此数量的 embedding 不会被加载到内存参与相似度计算，
+# 防止大规模记忆库导致 O(n) 扫描和内存压力。实际结果仍按 limit 截断。
+VECTOR_SEARCH_MAX_CANDIDATES = 5000
+
 
 @dataclass
 class MemoryChunk:
@@ -90,7 +94,7 @@ class MemoryStorage:
                 self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
                 self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA busy_timeout=5000")
+            self.conn.execute("PRAGMA busy_timeout=15000")
         except Exception as e:
             raise RuntimeError(f"Database init failed: {e}")
 
@@ -187,7 +191,9 @@ class MemoryStorage:
         """向量搜索：基于余弦相似度的语义搜索
 
         先从数据库加载所有有嵌入的块，再在 Python 中计算相似度排序。
-        （适合中小规模数据，大规模场景可替换为专用向量数据库）
+        加了候选集上限（VECTOR_SEARCH_MAX_CANDIDATES），避免大规模记忆库
+        导致 O(n) 扫描和内存压力。（适合中小规模数据，大规模场景可替换为
+        专用向量数据库）
         """
         if scopes is None:
             scopes = ["shared"]
@@ -196,10 +202,11 @@ class MemoryStorage:
         scope_ph = ','.join('?' * len(scopes))
         params = list(scopes)
         if user_id:
-            q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND (scope='shared' OR user_id=?) AND embedding IS NOT NULL"
-            params.append(user_id)
+            q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND (scope='shared' OR user_id=?) AND embedding IS NOT NULL LIMIT ?"
+            params.extend([user_id, VECTOR_SEARCH_MAX_CANDIDATES])
         else:
-            q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND embedding IS NOT NULL"
+            q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND embedding IS NOT NULL LIMIT ?"
+            params.append(VECTOR_SEARCH_MAX_CANDIDATES)
         rows = self.conn.execute(q, params).fetchall()
         results = []
         for row in rows:

@@ -8,6 +8,7 @@ agent executor already understands.
 
 import json
 import logging
+import threading
 from typing import Any, Dict, Generator, List
 
 import httpx
@@ -15,6 +16,24 @@ import httpx
 from app.core.agent.models import LLMModel, LLMRequest
 
 logger = logging.getLogger("stocks-assistant.llm")
+
+# --- 共享 httpx 连接池 ---
+# 每个请求创建新的 Provider + httpx.Client 会浪费 TCP/TLS 连接。
+# 按 (api_base, timeout) 共享 Client，连接池跨请求复用。
+# api_key 在每次请求的 header 中传递，不影响连接复用。
+_httpx_client_pool: Dict[tuple, httpx.Client] = {}
+_httpx_client_pool_lock = threading.Lock()
+
+
+def _get_shared_httpx_client(api_base: str, timeout: int) -> httpx.Client:
+    """获取共享 httpx.Client，按 (api_base, timeout) 复用连接池。"""
+    key = (api_base.rstrip("/"), timeout)
+    with _httpx_client_pool_lock:
+        client = _httpx_client_pool.get(key)
+        if client is None:
+            client = httpx.Client(timeout=timeout)
+            _httpx_client_pool[key] = client
+        return client
 
 
 def _response_error_detail(resp: httpx.Response) -> str:
@@ -96,7 +115,7 @@ class OpenAICompatibleProvider(LLMModel):
         self.api_key = api_key  # API 密钥
         self.api_base = api_base.rstrip("/")  # API 基础地址
         self.timeout = timeout  # 请求超时（秒）
-        self.client = httpx.Client(timeout=timeout)
+        self.client = _get_shared_httpx_client(self.api_base, timeout)
 
     def call(self, request: LLMRequest) -> dict:
         """同步调用 LLM，返回完整响应"""
@@ -270,7 +289,7 @@ class OpenAIResponsesProvider(LLMModel):
         self.timeout = timeout
         self.extra_headers = extra_headers or {}
         self.store_response = store_response
-        self.client = httpx.Client(timeout=timeout)
+        self.client = _get_shared_httpx_client(self.api_base, timeout)
 
     def call(self, request: LLMRequest) -> dict:
         """Call the Responses API and return a Chat Completions shaped response."""

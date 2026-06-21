@@ -7,6 +7,8 @@
 from functools import lru_cache
 from pathlib import Path
 from datetime import datetime, timezone
+from threading import Lock
+from typing import Any
 
 from app.config import Settings, get_effective_settings, get_settings
 
@@ -177,7 +179,53 @@ def get_llm_provider():
 
 
 def create_llm_provider(settings: Settings):
-    """Create an LLM provider from a concrete Settings object."""
+    """Create an LLM provider from a concrete Settings object.
+
+    带签名 + TTL 缓存。每次 chat 请求都会调用此函数，缓存可避免重复创建
+    Provider 实例。Codex OAuth token 会定期刷新，TTL 300s 确保过期后重建。
+    """
+    sig = _llm_provider_signature(settings)
+    now = datetime.now(timezone.utc).timestamp()
+    with _llm_provider_cache_lock:
+        entry = _llm_provider_cache.get(sig)
+        if entry is not None and entry[0] > now:
+            return entry[1]
+
+    provider = _create_llm_provider_impl(settings)
+    with _llm_provider_cache_lock:
+        _llm_provider_cache[sig] = (now + _LLM_PROVIDER_CACHE_TTL, provider)
+    return provider
+
+
+# --- LLM Provider 签名缓存 ---
+_llm_provider_cache: dict[str, tuple[float, Any]] = {}
+_llm_provider_cache_lock = Lock()
+_LLM_PROVIDER_CACHE_TTL = 300.0  # 5 分钟
+
+
+def _llm_provider_signature(settings: Settings) -> str:
+    """根据影响 Provider 的配置字段生成缓存签名。"""
+    fields = (
+        "llm_provider",
+        "llm_auth_mode",
+        "llm_api_key",
+        "llm_api_base",
+        "llm_model",
+        "llm_codex_auth_file",
+        "llm_codex_api_base",
+        "llm_codex_model",
+    )
+    return "\0".join(str(getattr(settings, f, "") or "") for f in fields)
+
+
+def clear_llm_provider_cache() -> None:
+    """清除 LLM Provider 缓存。配置变更后调用。"""
+    with _llm_provider_cache_lock:
+        _llm_provider_cache.clear()
+
+
+def _create_llm_provider_impl(settings: Settings):
+    """实际创建 LLM provider 的实现。"""
     from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
     from app.config import CODEX_DEFAULT_MODEL, CODEX_OAUTH_API_BASE
 

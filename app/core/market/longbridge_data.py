@@ -22,55 +22,15 @@ from app.core.watchlist.service import LongbridgeUnavailableError
 class LongbridgeMarketDataMixin:
     """Longbridge SDK quote/market-data methods shared by APIs and builtin tools."""
 
-    def _longbridge_config(self, settings: Any = None):
-        try:
-            from longbridge.openapi import Config
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
-
-        from app.config import get_settings
-
-        settings = settings or get_settings()
-        if (
-            settings.longbridge_app_key
-            and settings.longbridge_app_secret
-            and settings.longbridge_access_token
-        ):
-            config = Config.from_apikey(
-                settings.longbridge_app_key,
-                settings.longbridge_app_secret,
-                settings.longbridge_access_token,
-                http_url=settings.longbridge_http_url or None,
-                quote_ws_url=settings.longbridge_quote_ws_url or None,
-            )
-        else:
-            try:
-                config = Config.from_apikey_env()
-            except Exception as exc:
-                raise LongbridgeUnavailableError(
-                    "Longbridge credentials are not configured. Set LONGBRIDGE_APP_KEY, "
-                    "LONGBRIDGE_APP_SECRET and LONGBRIDGE_ACCESS_TOKEN, or configure them in the app."
-                ) from exc
-
-        return config
-
     def _quote_context(self, settings: Any = None):
-        try:
-            from longbridge.openapi import QuoteContext
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+        from app.core.market.longbridge_context import get_cached_context
 
-        config = self._longbridge_config(settings=settings)
-        return QuoteContext(config)
+        return get_cached_context("QuoteContext", settings=settings)
 
     def _market_context(self, settings: Any = None):
-        try:
-            from longbridge.openapi import MarketContext
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+        from app.core.market.longbridge_context import get_cached_context
 
-        config = self._longbridge_config(settings=settings)
-        return MarketContext(config)
+        return get_cached_context("MarketContext", settings=settings)
 
     def get_realtime_quotes(self, symbols: list[str], settings: Any = None) -> dict:
         """拉取证券实时报价。"""

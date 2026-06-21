@@ -99,6 +99,9 @@ const AUTH_RETRY_EXCLUDED_PATHS = new Set([
   "/api/v1/auth/setup/status",
 ]);
 
+// GET 请求在途去重：同一 path 同时只保留一个请求，完成自动清除。
+const inflightGetRequests = new Map<string, Promise<unknown>>();
+
 class AuthRecoveryError extends Error {
   recovery: Promise<void>;
 
@@ -218,31 +221,50 @@ async function refreshAuthToken() {
 async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
   const initWithoutHeaders = init ? { ...init } : {};
   delete initWithoutHeaders.headers;
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...initWithoutHeaders,
-    headers: authHeaders(init),
-  });
 
-  if (response.status === 401 && retry && !AUTH_RETRY_EXCLUDED_PATHS.has(path)) {
-    try {
-      await refreshAuthToken();
-    } catch (error) {
-      if (error instanceof AuthRecoveryError) {
-        await error.recovery;
-      } else {
-        throw error;
+  // 对无副作用的 GET 请求做在途去重：同一 path 同时只有一个请求在飞，
+  // 后续调用复用同一个 Promise。请求完成（无论成功或失败）后自动清除。
+  const isGet = !init?.method || init.method === "GET";
+  if (isGet) {
+    const inflight = inflightGetRequests.get(path);
+    if (inflight) return inflight as Promise<T>;
+  }
+
+  const run = async (): Promise<T> => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...initWithoutHeaders,
+      headers: authHeaders(init),
+    });
+
+    if (response.status === 401 && retry && !AUTH_RETRY_EXCLUDED_PATHS.has(path)) {
+      try {
+        await refreshAuthToken();
+      } catch (error) {
+        if (error instanceof AuthRecoveryError) {
+          await error.recovery;
+        } else {
+          throw error;
+        }
       }
+      return request<T>(path, init, false);
     }
-    return request<T>(path, init, false);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
+      throw new Error(detail || "Request failed");
+    }
+
+    return response.json() as Promise<T>;
+  };
+
+  if (isGet) {
+    const promise = run().finally(() => inflightGetRequests.delete(path));
+    inflightGetRequests.set(path, promise);
+    return promise;
   }
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
-    throw new Error(detail || "Request failed");
-  }
-
-  return response.json() as Promise<T>;
+  return run();
 }
 
 export function checkHealth() {
@@ -484,21 +506,26 @@ async function streamChatOnce(
     if (event) onEvent(event);
   }
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() ?? "";
-    for (const block of blocks) {
-      flushBlock(block);
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        flushBlock(block);
+      }
     }
-  }
 
-  buffer += decoder.decode();
-  if (buffer.trim()) {
-    flushBlock(buffer);
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      flushBlock(buffer);
+    }
+  } finally {
+    // 确保异常或取消时释放 reader 锁，避免底层 stream 资源泄漏。
+    reader.releaseLock();
   }
 }
 

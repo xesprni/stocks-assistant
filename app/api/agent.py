@@ -9,6 +9,7 @@ import logging
 import queue
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,6 +31,71 @@ from app.core.security import CurrentUser, require_permissions, user_workspace_d
 
 router = APIRouter()
 logger = logging.getLogger("stocks-assistant.agent.api")
+
+# 后台记忆整理使用共享线程池，避免高频对话时无限创建线程。
+# 队列满时直接跳过（记忆整理是尽力而为的后台任务）。
+_memory_curator_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="memory-curator")
+_memory_curator_queue: queue.Queue = queue.Queue(maxsize=10)
+
+
+def _schedule_memory_curate(
+    session_id: str,
+    user_message: str,
+    assistant_response: str,
+    user_message_id: Optional[str] = None,
+    assistant_message_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from app.config import get_effective_settings
+
+    settings = get_effective_settings(user_id)
+    if not settings.memory_enabled or not settings.memory_auto_curate_enabled:
+        return
+
+    def run_curator():
+        try:
+            from app.core.memory.curator import MemoryCurator
+            from app.deps import create_memory_llm_provider
+
+            llm_provider = create_memory_llm_provider(settings)
+            if not llm_provider:
+                logger.info("Memory curator skipped: compatible LLM provider is not configured")
+                return
+
+            curator = MemoryCurator(
+                llm_provider=llm_provider,
+                memory_manager=get_memory_manager_for_user(user_id),
+                model=settings.llm_model,
+                min_importance=settings.memory_curator_min_importance,
+                min_confidence=settings.memory_curator_min_confidence,
+            )
+            curator.curate_exchange(
+                session_id=session_id,
+                user_message=user_message,
+                assistant_response=assistant_response,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            logger.warning("Memory curator failed for session %s: %s", session_id, exc)
+
+    # 入队；队列满时跳过（记忆整理是尽力而为的后台任务，不阻塞对话响应）。
+    try:
+        _memory_curator_queue.put_nowait(run_curator)
+    except queue.Full:
+        logger.debug("Memory curator queue full, skipping exchange for session %s", session_id)
+        return
+
+    def _drain():
+        while True:
+            try:
+                task = _memory_curator_queue.get_nowait()
+            except queue.Empty:
+                break
+            _memory_curator_pool.submit(task)
+
+    _drain()
 
 
 def _build_agent(user_id: Optional[str] = None):
@@ -196,51 +262,6 @@ def _finish_trace(
         final_response=final_response,
         error=error,
     )
-
-
-def _schedule_memory_curate(
-    session_id: str,
-    user_message: str,
-    assistant_response: str,
-    user_message_id: Optional[str] = None,
-    assistant_message_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> None:
-    from app.config import get_effective_settings
-
-    settings = get_effective_settings(user_id)
-    if not settings.memory_enabled or not settings.memory_auto_curate_enabled:
-        return
-
-    def run_curator():
-        try:
-            from app.core.memory.curator import MemoryCurator
-            from app.deps import create_memory_llm_provider
-
-            llm_provider = create_memory_llm_provider(settings)
-            if not llm_provider:
-                logger.info("Memory curator skipped: compatible LLM provider is not configured")
-                return
-
-            curator = MemoryCurator(
-                llm_provider=llm_provider,
-                memory_manager=get_memory_manager_for_user(user_id),
-                model=settings.llm_model,
-                min_importance=settings.memory_curator_min_importance,
-                min_confidence=settings.memory_curator_min_confidence,
-            )
-            curator.curate_exchange(
-                session_id=session_id,
-                user_message=user_message,
-                assistant_response=assistant_response,
-                user_message_id=user_message_id,
-                assistant_message_id=assistant_message_id,
-                user_id=user_id,
-            )
-        except Exception as exc:
-            logger.warning("Memory curator failed for session %s: %s", session_id, exc)
-
-    threading.Thread(target=run_curator, daemon=True, name="memory-curator").start()
 
 
 @router.post("/chat", response_model=ChatResponse)

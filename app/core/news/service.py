@@ -440,30 +440,6 @@ class NewsService:
         }
 
     def _content_context(self, settings: Any = None):
-        try:
-            from longbridge.openapi import Config, ContentContext
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+        from app.core.market.longbridge_context import get_cached_context
 
-        settings = settings or get_settings()
-        if (
-            settings.longbridge_app_key
-            and settings.longbridge_app_secret
-            and settings.longbridge_access_token
-        ):
-            config = Config.from_apikey(
-                settings.longbridge_app_key,
-                settings.longbridge_app_secret,
-                settings.longbridge_access_token,
-                http_url=settings.longbridge_http_url or None,
-                quote_ws_url=settings.longbridge_quote_ws_url or None,
-            )
-        else:
-            try:
-                config = Config.from_apikey_env()
-            except Exception as exc:
-                raise LongbridgeUnavailableError(
-                    "Longbridge credentials are not configured. Add them to your personal Longbridge config."
-                ) from exc
-
-        return ContentContext(config)
+        return get_cached_context("ContentContext", settings=settings)

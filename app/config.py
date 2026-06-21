@@ -5,6 +5,8 @@
 首次加载时会把旧 config.json 作为一次性迁移来源。
 """
 
+import threading
+import time as _time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type
@@ -435,25 +437,57 @@ def get_settings() -> Settings:
 
 
 def get_effective_config(user_id: Optional[str] = None) -> dict[str, Any]:
-    """Return system config overlaid with the user's personal config."""
+    """Return system config overlaid with the user's personal config.
+
+    结果带短 TTL 缓存，避免同一请求内多次调用（chat 流程会调用 3+ 次）
+    每次都查 SQLite。配置写入时通过 ``clear_effective_settings_cache`` 失效。
+    """
+    cache_key: tuple = (user_id,)
+    now = _time.monotonic()
+    with _effective_config_cache_lock:
+        cached = _effective_config_cache.get(cache_key)
+        if cached is not None:
+            expires_at, payload = cached
+            if expires_at > now:
+                return {**payload}
+
     from app.core.app_store import get_app_store
 
     store = get_app_store()
     store.migrate_config_json_once()
     system_config = store.get_config()
     if not user_id:
-        return system_config
-    user_config = {
-        key: value
-        for key, value in store.get_user_config(user_id).items()
-        if key in USER_CONFIG_KEYS
-    }
-    return {**system_config, **user_config}
+        result = system_config
+    else:
+        user_config = {
+            key: value
+            for key, value in store.get_user_config(user_id).items()
+            if key in USER_CONFIG_KEYS
+        }
+        result = {**system_config, **user_config}
+
+    with _effective_config_cache_lock:
+        _effective_config_cache[cache_key] = (now + _EFFECTIVE_CONFIG_TTL, deepcopy(result))
+    return {**result}
 
 
 def get_effective_settings(user_id: Optional[str] = None) -> Settings:
     """Build settings for a request/user without mutating the global singleton."""
     return Settings(**get_effective_config(user_id))
+
+
+# --- 有效配置 TTL 缓存 ---
+# 每次 chat 请求会调用 3+ 次 get_effective_settings，每次都查 SQLite 很浪费。
+# 缓存按 user_id 隔离，TTL 30s，配置写入时通过 clear_effective_settings_cache 失效。
+_effective_config_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}
+_effective_config_cache_lock = threading.Lock()
+_EFFECTIVE_CONFIG_TTL = 30.0
+
+
+def clear_effective_settings_cache() -> None:
+    """清除有效配置缓存。配置写入后调用，确保新配置立即生效。"""
+    with _effective_config_cache_lock:
+        _effective_config_cache.clear()
 
 
 def _load_settings() -> Settings:

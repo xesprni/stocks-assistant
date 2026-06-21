@@ -9,10 +9,12 @@
 还负责上下文管理：消息裁剪、token 估算、溢出恢复、工具失败重试保护。
 """
 
+import copy as _copy
 import hashlib
 import json
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.agent.models import LLMRequest
@@ -132,7 +134,7 @@ class AgentStreamExecutor:
             try:
                 self.on_event({"type": event_type, "timestamp": time.time(), "data": data or {}})
             except Exception as e:
-                logger.error(f"Event callback error: {e}")
+                logger.error("Event callback error: %s", e)
 
     def _hash_args(self, args: dict) -> str:
         """生成工具参数的哈希值（用于重复调用检测）"""
@@ -215,7 +217,7 @@ class AgentStreamExecutor:
         Returns:
             最终回复文本
         """
-        logger.info(f"User: {user_message}")
+        logger.info("User: %s", user_message)
 
         self.messages.append({
             "role": "user",
@@ -234,7 +236,7 @@ class AgentStreamExecutor:
             while turn < self.max_turns:
                 self._raise_if_cancelled()
                 turn += 1
-                logger.info(f"[Agent] Turn {turn}")
+                logger.info("[Agent] Turn %d", turn)
                 self._emit_event("turn_start", {"turn": turn})
 
                 assistant_msg, tool_calls = self._call_llm_stream(retry_on_empty=True)
@@ -262,7 +264,7 @@ class AgentStreamExecutor:
                         else:
                             final_response = "Sorry, I'm unable to generate a response. Please try again."
                     else:
-                        logger.info(f"Response: {assistant_msg[:150]}{'...' if len(assistant_msg) > 150 else ''}")
+                        logger.info("Response: %s", assistant_msg[:150] + ("..." if len(assistant_msg) > 150 else ""))
 
                     if not tool_calls:
                         self._emit_event("turn_end", {"turn": turn, "has_tool_calls": False})
@@ -283,15 +285,13 @@ class AgentStreamExecutor:
                         tool_calls_str.append(f"{tc['name']}({args_str})" if args_str else tc['name'])
                     else:
                         tool_calls_str.append(tc['name'])
-                logger.info(f"Tool calls: {', '.join(tool_calls_str)}")
+                logger.info("Tool calls: %s", ", ".join(tool_calls_str))
 
-                # Execute tools
+                # Execute tools (parallel when 2+ calls)
                 tool_result_blocks = []
                 try:
-                    for tool_call in tool_calls:
-                        self._raise_if_cancelled()
-                        result = self._execute_tool(tool_call)
-
+                    results = self._execute_tool_calls_batch(tool_calls)
+                    for tool_call, result in zip(tool_calls, results):
                         if result.get("status") == "critical_error":
                             final_response = result.get('result', 'Task execution failed')
                             return final_response
@@ -342,7 +342,7 @@ class AgentStreamExecutor:
 
             if turn >= self.max_turns:
                 self._raise_if_cancelled()
-                logger.warning(f"Max steps reached: {self.max_turns}")
+                logger.warning("Max steps reached: %d", self.max_turns)
                 prompt_insert_idx = len(self.messages)
                 self.messages.append({
                     "role": "user",
@@ -652,6 +652,37 @@ class AgentStreamExecutor:
 
         包含参数解析失败处理、连续失败保护、工具不存在提示。
         """
+        return self._execute_tool_calls_batch([tool_call])[0]
+
+    def _execute_tool_calls_batch(self, tool_calls: List[Dict]) -> List[Dict[str, Any]]:
+        """批量执行工具调用。
+
+        2 个以上工具时用线程池并行执行独立调用，缩短多工具场景延迟。
+        单工具走串行路径，避免线程池开销。
+        """
+        if not tool_calls:
+            return []
+        if len(tool_calls) == 1:
+            self._raise_if_cancelled()
+            return [self._execute_tool_impl(tool_calls[0])]
+
+        max_workers = min(len(tool_calls), 4)
+        results: List[Optional[Dict]] = [None] * len(tool_calls)
+
+        def _run(idx: int, tc: Dict) -> tuple[int, Dict[str, Any]]:
+            self._raise_if_cancelled()
+            return idx, self._execute_tool_impl(tc)
+
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="agent-tool") as pool:
+            futures = {pool.submit(_run, i, tc): i for i, tc in enumerate(tool_calls)}
+            for future in as_completed(futures):
+                idx, result = future.result()
+                results[idx] = result
+
+        return results  # type: ignore[return-value]
+
+    def _execute_tool_impl(self, tool_call: Dict) -> Dict[str, Any]:
+        """单个工具的实际执行逻辑（含参数解析、失败保护、事件发射）。"""
         tool_name = tool_call["name"]
         tool_id = tool_call["id"]
         arguments = tool_call["arguments"]
@@ -684,6 +715,9 @@ class AgentStreamExecutor:
                 available = list(self.tools.keys())
                 raise ValueError(f"Tool '{tool_name}' not found. Available: {available}")
 
+            # 浅拷贝工具实例，使并行执行时每个调用的 per-call 属性互不干扰。
+            # 重型依赖（service 等）通过引用共享，开销仅一次 dict 分配。
+            tool = _copy.copy(tool)
             tool.model = self.model
             tool.context = self.agent
             tool.event_emitter = self._emit_event

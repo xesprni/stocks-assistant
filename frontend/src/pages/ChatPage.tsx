@@ -36,12 +36,18 @@ import type { ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
 function CopyButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
 
+  // copied 变为 true 后 1.5s 自动复位；组件卸载或再次复制时清理旧定时器。
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
   async function handleCopy(e: ReactMouseEvent) {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard API not available
     }

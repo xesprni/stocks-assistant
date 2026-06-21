@@ -27,7 +27,7 @@ def create_sqlite_engine(db_path: str | Path, *, timeout: int = 30) -> Engine:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
         cursor.execute("PRAGMA journal_mode = WAL")
-        cursor.execute("PRAGMA busy_timeout = 5000")
+        cursor.execute("PRAGMA busy_timeout = 15000")
         cursor.close()
 
     return engine
@@ -60,6 +60,6 @@ def connect_sqlite(db_path: str | Path, *, timeout: int = 30) -> sqlite3.Connect
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA busy_timeout = 15000")
     return conn
 

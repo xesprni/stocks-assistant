@@ -191,6 +191,10 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
     if llm_keys & patch.keys():
         deps.get_llm_provider.cache_clear()
         deps.get_memory_llm_provider.cache_clear()
+        try:
+            deps.clear_llm_provider_cache()
+        except Exception:
+            pass
     if memory_keys & patch.keys():
         deps.get_memory_manager.cache_clear()
         deps.get_memory_manager_for_user.cache_clear()
@@ -205,6 +209,18 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
         except Exception:
             pass
         deps.get_fundamental_service.cache_clear()
+        try:
+            from app.core.market.longbridge_context import clear_context_cache
+
+            clear_context_cache()
+        except Exception:
+            pass
+
+    # 任何配置变更都可能影响有效配置，统一清除 TTL 缓存。
+    try:
+        config_module.clear_effective_settings_cache()
+    except Exception:
+        pass
 
 
 @router.get("", response_model=AppConfig)
@@ -254,6 +270,8 @@ async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> 
     if user_patch:
         get_app_store().set_user_config_values(current.id, user_patch)
         get_app_store().audit(current.id, "config.user_update", "user_config", {"keys": sorted(user_patch)})
+        # 用户个人配置写入后必须清除有效配置缓存，否则后续读取返回旧值。
+        config_module.clear_effective_settings_cache()
         settings = get_effective_settings(current.id)
         if (
             {

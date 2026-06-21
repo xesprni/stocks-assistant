@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -358,7 +358,7 @@ function InlineState({ children, icon }: { children: ReactNode; icon?: ReactNode
   );
 }
 
-function QuoteRow({
+const QuoteRow = memo(function QuoteRow({
   language,
   onOpenChart,
   onSelect,
@@ -428,7 +428,7 @@ function QuoteRow({
       ) : null}
     </div>
   );
-}
+});
 
 function MarketPill({ language, quote }: { language: AppLanguage; quote: QuoteItem }) {
   const tone = rateTone(quote.change_rate);
@@ -612,7 +612,7 @@ function chartChangePercent(bars: ParsedDetailChartBar[], row: DashboardWatchlis
   return ((latest - first) / first) * 100;
 }
 
-function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: DashboardWatchlistRow }) {
+const WatchlistSymbolChart = memo(function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: DashboardWatchlistRow }) {
   const [range, setRange] = useState<DetailChartRange>("1D");
   const [bars, setBars] = useState<ParsedDetailChartBar[]>([]);
   const [loading, setLoading] = useState(false);
@@ -705,7 +705,8 @@ function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: D
       },
     );
     return next;
-  }, [bars, labels.prevClose, labels.price, row.prev_close, theme, tone]);
+    // 只依赖实际用到的 theme 字段，避免 theme 对象引用变化时不必要重建。
+  }, [bars, labels.prevClose, labels.price, row.prev_close, theme.up, theme.down, theme.blue, theme.mutedText, tone]);
 
   return (
     <div className="overflow-hidden rounded-md border border-border/65 bg-card/70">
@@ -765,7 +766,7 @@ function WatchlistSymbolChart({ language, row }: { language: AppLanguage; row: D
       </div>
     </div>
   );
-}
+});
 
 function MarketSnapshot({
   error,
@@ -850,12 +851,17 @@ function WatchlistMovers({
   const pageLabel = language === "en" ? `${Math.min(page + 1, pageCount || 1)} / ${pageCount || 1}` : `${Math.min(page + 1, pageCount || 1)} / ${pageCount || 1}`;
 
   useEffect(() => {
+    let raf = 0;
     function updatePageSize() {
-      setItemsPerPage(window.innerWidth >= 768 ? 10 : 6);
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setItemsPerPage(window.innerWidth >= 768 ? 10 : 6));
     }
     updatePageSize();
     window.addEventListener("resize", updatePageSize);
-    return () => window.removeEventListener("resize", updatePageSize);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updatePageSize);
+    };
   }, []);
 
   useEffect(() => {
@@ -1671,6 +1677,8 @@ export function DashboardPage({
   const dashboardRef = useRef<DashboardResponse | null>(dashboard);
   const modulesAbortRef = useRef<AbortController | null>(null);
   const errorToastRef = useRef(new Map<string, { message: string; time: number }>());
+  const snapshotSerializedRef = useRef("");
+  const snapshotTimerRef = useRef(0);
   const [, startDashboardTransition] = useTransition();
 
   const notifyDashboardError = useCallback((key: string, scope: DashboardModuleKey | "dashboard" | "quote", message: string) => {
@@ -1689,7 +1697,16 @@ export function DashboardPage({
 
   useEffect(() => {
     dashboardRef.current = dashboard;
-    if (dashboard) writeDashboardSnapshot(dashboard);
+    if (!dashboard) return;
+    // 防抖写入：只在内容确实变化时序列化，避免轮询刷新时每次都全量 stringify。
+    const serialized = JSON.stringify(dashboard);
+    if (snapshotSerializedRef.current === serialized) return;
+    snapshotSerializedRef.current = serialized;
+    if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
+    snapshotTimerRef.current = window.setTimeout(() => {
+      writeDashboardSnapshot(dashboard);
+      snapshotTimerRef.current = 0;
+    }, 1000);
   }, [dashboard]);
 
   const refreshModules = useCallback((quiet = true) => {
@@ -1803,6 +1820,10 @@ export function DashboardPage({
   }, [copy.loadFailed, refreshModules, startDashboardTransition]);
 
   useEffect(() => () => modulesAbortRef.current?.abort(), []);
+
+  useEffect(() => () => {
+    if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
+  }, []);
 
   const refreshMs = useMemo(() => Math.max(8, Number(refreshInterval) || 60) * 1000, [refreshInterval]);
 

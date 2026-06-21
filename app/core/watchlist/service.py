@@ -112,34 +112,9 @@ class LongbridgeSearchClient:
         return results[:limit]
 
     def _quote_context(self, settings: Any = None):
-        try:
-            from longbridge.openapi import Config, QuoteContext
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+        from app.core.market.longbridge_context import get_cached_context
 
-        settings = settings or get_settings()
-        if (
-            settings.longbridge_app_key
-            and settings.longbridge_app_secret
-            and settings.longbridge_access_token
-        ):
-            config = Config.from_apikey(
-                settings.longbridge_app_key,
-                settings.longbridge_app_secret,
-                settings.longbridge_access_token,
-                http_url=settings.longbridge_http_url or None,
-                quote_ws_url=settings.longbridge_quote_ws_url or None,
-            )
-        else:
-            try:
-                config = Config.from_apikey_env()
-            except Exception as exc:
-                raise LongbridgeUnavailableError(
-                    "Longbridge credentials are not configured. Set LONGBRIDGE_APP_KEY, "
-                    "LONGBRIDGE_APP_SECRET and LONGBRIDGE_ACCESS_TOKEN, or add them to config.json."
-                ) from exc
-
-        return QuoteContext(config)
+        return get_cached_context("QuoteContext", settings=settings)
 
     def _candidate_symbols(self, query: str, category: Optional[WatchlistCategory]) -> list[str]:
         normalized = query.strip().upper()

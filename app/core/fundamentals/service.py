@@ -324,55 +324,21 @@ class FundamentalService:
         }
 
     def _fundamental_context(self, settings: Any = None):
+        from app.core.market.longbridge_context import get_cached_context
+
         try:
-            from longbridge.openapi import FundamentalContext
-        except ImportError as exc:
+            return get_cached_context("FundamentalContext", settings=settings)
+        except LongbridgeUnavailableError:
+            raise
+        except Exception as exc:
             raise LongbridgeUnavailableError(
                 "Longbridge SDK with FundamentalContext is not installed. Upgrade longbridge to 4.1.0 or later."
             ) from exc
 
-        return FundamentalContext(self._longbridge_config(settings=settings))
-
     def _quote_context(self, settings: Any = None):
-        try:
-            from longbridge.openapi import QuoteContext
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+        from app.core.market.longbridge_context import get_cached_context
 
-        return QuoteContext(self._longbridge_config(settings=settings))
-
-    def _longbridge_config(self, settings: Any = None):
-        try:
-            from longbridge.openapi import Config
-        except ImportError as exc:
-            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
-
-        if settings is None:
-            from app.config import get_settings
-
-            settings = get_settings()
-        if (
-            settings.longbridge_app_key
-            and settings.longbridge_app_secret
-            and settings.longbridge_access_token
-        ):
-            config = Config.from_apikey(
-                settings.longbridge_app_key,
-                settings.longbridge_app_secret,
-                settings.longbridge_access_token,
-                http_url=settings.longbridge_http_url or None,
-                quote_ws_url=settings.longbridge_quote_ws_url or None,
-            )
-        else:
-            try:
-                config = Config.from_apikey_env()
-            except Exception as exc:
-                raise LongbridgeUnavailableError(
-                    "Longbridge credentials are not configured. Set LONGBRIDGE_APP_KEY, "
-                    "LONGBRIDGE_APP_SECRET and LONGBRIDGE_ACCESS_TOKEN, or configure them in the app."
-                ) from exc
-
-        return config
+        return get_cached_context("QuoteContext", settings=settings)
 
     @staticmethod
     def _error_section(message: str) -> dict[str, Any]:
