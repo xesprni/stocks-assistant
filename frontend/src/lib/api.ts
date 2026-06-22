@@ -224,8 +224,11 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
 
   // 对无副作用的 GET 请求做在途去重：同一 path 同时只有一个请求在飞，
   // 后续调用复用同一个 Promise。请求完成（无论成功或失败）后自动清除。
+  // 携带 AbortSignal 的请求跳过去重，避免某个调用方 abort 后
+  // 其他共享同一 Promise 的调用方收到 "signal is aborted without reason" 异常。
   const isGet = !init?.method || init.method === "GET";
-  if (isGet) {
+  const hasAbortSignal = Boolean(init?.signal);
+  if (isGet && !hasAbortSignal) {
     const inflight = inflightGetRequests.get(path);
     if (inflight) return inflight as Promise<T>;
   }
@@ -258,7 +261,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
     return response.json() as Promise<T>;
   };
 
-  if (isGet) {
+  if (isGet && !hasAbortSignal) {
     const promise = run().finally(() => inflightGetRequests.delete(path));
     inflightGetRequests.set(path, promise);
     return promise;

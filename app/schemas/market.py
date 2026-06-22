@@ -78,6 +78,7 @@ class IntradayResponse(BaseModel):
     """分时数据响应。"""
 
     symbol: str
+    prev_close: Optional[str] = None
     bars: List[IntradayItem]
 
 

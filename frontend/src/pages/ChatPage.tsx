@@ -654,22 +654,22 @@ export function ChatPage({
         className={cn(
           isMobile
             ? "absolute inset-x-2 rounded-[30px] border border-border/80 bg-card/95 p-2.5 shadow-2xl backdrop-blur"
-            : cn("bg-transparent px-3 pb-4 pt-1 sm:px-4", embedded ? "block" : "hidden lg:block"),
+            : cn("bg-transparent px-2 pb-2 pt-1 sm:px-3 sm:pb-4", embedded ? "block" : "hidden lg:block"),
           isMobile && (mobileNavVisible ? "bottom-[calc(4.75rem+env(safe-area-inset-bottom))]" : "bottom-[calc(0.75rem+env(safe-area-inset-bottom))]"),
         )}
         onSubmit={handleComposerSubmit}
       >
         <div
           className={cn(
-            "mr-auto flex w-full flex-col rounded-[30px] border border-border/80 bg-background/95 px-4 py-3 shadow-[var(--control-shadow)] transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/15",
-            largeComposer ? "min-h-[150px]" : "min-h-[60px]",
+            "mr-auto flex w-full flex-col rounded-[30px] border border-border/80 bg-background/95 px-3 py-2 shadow-[var(--control-shadow)] transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/15 sm:px-4 sm:py-3",
+            largeComposer ? "min-h-[150px]" : "min-h-[48px] sm:min-h-[60px]",
           )}
         >
           <div className="flex min-h-0 flex-1 items-start gap-2">
               <Textarea
                 className={cn(
                   "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
-                  largeComposer ? "min-h-[78px]" : "min-h-10 text-[15px] leading-6",
+                  largeComposer ? "min-h-[78px]" : "min-h-8 text-[15px] leading-6 sm:min-h-10",
                   embedded && "text-[14px] leading-6",
                 )}
               disabled={isSending}
@@ -687,12 +687,12 @@ export function ChatPage({
               value={prompt}
             />
           </div>
-          <div className="mt-2 flex items-end justify-between gap-3">
+          <div className="mt-1 flex items-end justify-between gap-2 sm:mt-2 sm:gap-3">
             <div className="flex shrink-0 items-center gap-1">
               <Button
                 aria-label={common.newChat}
                 aria-busy={isCreatingConversation}
-                className="h-10 w-10 shrink-0 rounded-2xl text-muted-foreground hover:text-foreground"
+                className="h-9 w-9 shrink-0 rounded-2xl text-muted-foreground hover:text-foreground sm:h-10 sm:w-10"
                 disabled={isSending || isCreatingConversation || isNewConversation}
                 onClick={handleNew}
                 size="icon"
@@ -700,13 +700,13 @@ export function ChatPage({
                 type="button"
                 variant="ghost"
               >
-                {isCreatingConversation ? <Loader2 className="size-5 animate-spin" /> : <Plus className="size-5" />}
+                {isCreatingConversation ? <Loader2 className="size-4 animate-spin sm:size-5" /> : <Plus className="size-4 sm:size-5" />}
               </Button>
               <Button
                 aria-label={thinkingLabel}
                 aria-pressed={thinkingEnabled}
                 className={cn(
-                  "h-10 w-10 shrink-0 rounded-2xl transition-colors",
+                  "h-9 w-9 shrink-0 rounded-2xl transition-colors sm:h-10 sm:w-10",
                   thinkingEnabled
                     ? "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary"
                     : "text-muted-foreground hover:text-foreground",
@@ -717,17 +717,17 @@ export function ChatPage({
                 type="button"
                 variant="ghost"
               >
-                <BrainCircuit className="size-5" />
+                <BrainCircuit className="size-4 sm:size-5" />
               </Button>
             </div>
             {isSending ? (
-              <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
-                <Square className="fill-current" />
+              <Button className="h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10 sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
+                <Square className="fill-current size-4 sm:size-5" />
                 <span className="hidden sm:inline">{chatCopy.stop}</span>
               </Button>
             ) : (
-              <Button className="h-10 w-10 shrink-0 rounded-full sm:w-auto sm:px-4" disabled={!prompt.trim()} type="submit">
-                <Send className="size-5" />
+              <Button className="h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10 sm:w-auto sm:px-4" disabled={!prompt.trim()} type="submit">
+                <Send className="size-4 sm:size-5" />
                 <span className="hidden sm:inline">{common.send}</span>
               </Button>
             )}

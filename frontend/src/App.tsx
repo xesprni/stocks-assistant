@@ -529,6 +529,7 @@ function ConsoleApp() {
   const [isMobileViewport, setIsMobileViewport] = useState(() => isMobileShellViewport());
   const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
   const [dashboardChatDrawerOpen, setDashboardChatDrawerOpen] = useState(false);
+  const [dashboardChatFullscreen, setDashboardChatFullscreen] = useState(false);
   const [configInitialTab, setConfigInitialTab] = useState<ConfigTab>(() => configTabFromPath(window.location.pathname) ?? "model");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -586,6 +587,7 @@ function ConsoleApp() {
     mobileHeaderTouchPointRef.current = null;
     mobileTopEdgeTouchPointRef.current = null;
     setDashboardChatDrawerOpen(false);
+    setDashboardChatFullscreen(false);
   }, [page]);
 
   useEffect(() => {
@@ -596,6 +598,7 @@ function ConsoleApp() {
         mobileHeaderTouchPointRef.current = null;
         mobileTopEdgeTouchPointRef.current = null;
         setDashboardChatDrawerOpen(false);
+        setDashboardChatFullscreen(false);
       }
     };
     handleChange();
@@ -1342,7 +1345,7 @@ function ConsoleApp() {
       displayName={auth.user?.display_name || auth.user?.username || ""}
       embedded
       endRef={endRef}
-      expanded={isMobileViewport ? dashboardChatDrawerOpen : dashboardChatExpanded}
+      expanded={isMobileViewport ? dashboardChatFullscreen : dashboardChatExpanded}
       handleChatScroll={handleChatScroll}
       handleSend={handleSend}
       handleStopStreaming={handleStopStreaming}
@@ -1352,7 +1355,7 @@ function ConsoleApp() {
       mobileNavVisible={false}
       onToggleExpanded={() => {
         if (isMobileViewport) {
-          setDashboardChatDrawerOpen(false);
+          setDashboardChatFullscreen((current) => !current);
         } else {
           setDashboardChatExpanded((current) => !current);
         }
@@ -1518,9 +1521,11 @@ function ConsoleApp() {
         {page === "overview" && isMobileViewport && auth.can("chat:read") ? (
           <DashboardMobileChatDock
             chatPanel={dashboardChatPanel}
+            fullscreen={dashboardChatFullscreen}
             isOpen={dashboardChatDrawerOpen}
             language={language}
             onOpenChange={setDashboardChatDrawerOpen}
+            onFullscreenChange={setDashboardChatFullscreen}
           />
         ) : null}
       </div>
@@ -1530,17 +1535,26 @@ function ConsoleApp() {
 
 function DashboardMobileChatDock({
   chatPanel,
+  fullscreen,
   isOpen,
   language,
   onOpenChange,
+  onFullscreenChange,
 }: {
   chatPanel: ReactNode;
+  fullscreen: boolean;
   isOpen: boolean;
   language: AppLanguage;
   onOpenChange: (open: boolean) => void;
+  onFullscreenChange: (fullscreen: boolean) => void;
 }) {
   const mobileChatLabel = language === "en" ? "Search or ask" : "搜索或提问";
   const closeMobileChatLabel = language === "en" ? "Close AI drawer" : "关闭 AI 抽屉";
+
+  function handleClose() {
+    onFullscreenChange(false);
+    onOpenChange(false);
+  }
 
   return (
     <>
@@ -1548,38 +1562,43 @@ function DashboardMobileChatDock({
         <div className="dashboard-chat-searchbar fixed inset-x-0 bottom-0 z-[920] px-3 pb-[calc(0.85rem+env(safe-area-inset-bottom))] pt-3 lg:hidden">
           <button
             aria-label={mobileChatLabel}
-            className="flex h-16 w-full items-center gap-3 rounded-[2rem] border border-border/75 bg-card px-4 text-left text-lg font-semibold text-muted-foreground shadow-[0_-10px_30px_hsl(var(--background)_/_0.75),0_14px_34px_hsl(var(--foreground)_/_0.13)] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="flex h-14 w-full items-center gap-3 rounded-[2rem] border border-border/75 bg-card px-4 text-left text-base font-semibold text-muted-foreground shadow-[0_-10px_30px_hsl(var(--background)_/_0.75),0_14px_34px_hsl(var(--foreground)_/_0.13)] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             onClick={() => onOpenChange(true)}
             title={mobileChatLabel}
             type="button"
           >
-            <span className="grid size-10 shrink-0 place-items-center rounded-full text-muted-foreground">
-              <Search className="size-5" />
+            <span className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground">
+              <Search className="size-4" />
             </span>
             <span className="min-w-0 flex-1 truncate">{mobileChatLabel}</span>
-            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted/55 text-muted-foreground">
+            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/55 text-muted-foreground">
               <MessageSquareText className="size-4" />
             </span>
           </button>
         </div>
       ) : null}
       {isOpen ? (
-        <div className="dashboard-chat-drawer-layer fixed inset-0 z-[950] lg:hidden">
+        <div className={cn("dashboard-chat-drawer-layer fixed inset-0 lg:hidden", fullscreen ? "z-[980]" : "z-[950]")}>
           <button
             aria-label={closeMobileChatLabel}
             className="absolute inset-0 bg-background/45 backdrop-blur-[2px]"
-            onClick={() => onOpenChange(false)}
+            onClick={handleClose}
             type="button"
           />
           <aside
             aria-label={mobileChatLabel}
-            className="dashboard-chat-drawer absolute inset-x-0 bottom-0 flex h-[min(86dvh,46rem)] min-h-[28rem] flex-col overflow-hidden rounded-t-2xl border border-border/80 bg-background shadow-2xl"
+            className={cn(
+              "dashboard-chat-drawer absolute inset-x-0 bottom-0 flex flex-col overflow-hidden border border-border/80 bg-background shadow-2xl",
+              fullscreen
+                ? "h-[100dvh] rounded-none border-x-0 border-b-0 pt-[calc(env(safe-area-inset-top))]"
+                : "h-[min(86dvh,46rem)] min-h-[28rem] rounded-t-2xl",
+            )}
           >
             <div className="flex shrink-0 items-center justify-between border-b border-border/65 px-3 py-2">
               <button
                 aria-label={closeMobileChatLabel}
                 className="flex flex-1 items-center justify-center py-1"
-                onClick={() => onOpenChange(false)}
+                onClick={handleClose}
                 type="button"
               >
                 <span className="h-1 w-10 rounded-full bg-muted-foreground/35" />
@@ -1587,7 +1606,7 @@ function DashboardMobileChatDock({
               <Button
                 aria-label={closeMobileChatLabel}
                 className="ml-2 h-8 w-8"
-                onClick={() => onOpenChange(false)}
+                onClick={handleClose}
                 size="icon"
                 title={closeMobileChatLabel}
                 type="button"

@@ -77,7 +77,11 @@ export function calcMACD(
   // Signal EMA is computed only from index (slowPeriod - 1) onward
   const signalLine = calcEMA(macdLine.slice(slowPeriod - 1), signalPeriod);
   const result: (MACDPoint | null)[] = closes.map(() => null);
-  for (let i = slowPeriod - 1; i < closes.length; i++) {
+  // 信号线 EMA 自身也需要 signalPeriod 个数据点才能产生第一个有效值，
+  // 因此从 slowPeriod + signalPeriod - 2 开始才有有效的 MACD/Signal/Histogram，
+  // 否则信号线会从 0 开始产生错误的偏移。
+  const firstValid = slowPeriod + signalPeriod - 2;
+  for (let i = firstValid; i < closes.length; i++) {
     const signal = signalLine[i - (slowPeriod - 1)];
     const macd = macdLine[i];
     result[i] = { macd, signal, histogram: macd - signal };

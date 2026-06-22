@@ -152,12 +152,15 @@ class LongbridgeMarketDataMixin:
             raise LongbridgeUnavailableError(str(exc)) from exc
 
         bars = [self._serialize_intraday_line(item) for item in raw]
+        # 获取昨收价用于前端计算正确的涨跌幅，失败时静默忽略（不阻塞分时数据返回）
+        prev_close = self._fetch_prev_close(ctx, symbol)
         if since is not None:
             bars = [bar for bar in bars if int(bar["timestamp"]) >= since]
         return {
             "source": "Longbridge QuoteContext.intraday",
             "symbol": symbol,
             "trade_sessions": trade_sessions_name,
+            "prev_close": prev_close,
             "bars": bars,
         }
 
@@ -577,6 +580,16 @@ class LongbridgeMarketDataMixin:
             "turnover": stringify(getattr(item, "turnover", None)) or "0",
             "trade_session": enum_name(getattr(item, "trade_session", None)),
         }
+
+    def _fetch_prev_close(self, ctx: Any, symbol: str) -> Optional[str]:
+        """获取单个标的的昨收价，用于分时涨跌幅计算。失败时返回 None。"""
+        try:
+            quotes = list(ctx.quote([symbol]))
+            if quotes:
+                return stringify(getattr(quotes[0], "prev_close", None)) or None
+        except Exception:
+            pass
+        return None
 
     def _serialize_intraday_line(self, item: Any) -> dict:
         return {

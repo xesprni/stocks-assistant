@@ -852,6 +852,7 @@ function KLineChart({
 function buildIntradayChartModel(
   bars: ParsedIntradayBar[],
   theme: NativeChartTheme,
+  prevClose?: number | null,
 ): { panes: NativeChartPane[]; series: NativeChartSeries[] } {
   const closes = bars.map((bar) => bar.price);
   const macd = calcMACD(closes);
@@ -860,7 +861,20 @@ function buildIntradayChartModel(
     { id: "volume", label: "VOL", heightWeight: 0.6 },
     { id: "macd", label: "MACD", heightWeight: 0.75 },
   ];
-  const series: NativeChartSeries[] = [
+  const series: NativeChartSeries[] = [];
+  if (prevClose != null && Number.isFinite(prevClose) && prevClose > 0) {
+    series.push({
+      id: "prev-close",
+      paneId: "price",
+      type: "line",
+      title: "PREV CLOSE",
+      color: theme.mutedText,
+      lineWidth: 1,
+      dashed: true,
+      data: bars.map((bar) => ({ time: bar.time, value: prevClose })),
+    });
+  }
+  series.push(
     makeLineSeries("price", "price", "PRICE", theme.blue, bars, bars.map((bar) => bar.price)),
     makeLineSeries("avg", "price", "AVG", theme.orange, bars, bars.map((bar) => bar.avg_price), true),
     makeHistogramSeries("volume", "volume", "VOL", bars, bars.map((bar) => bar.volume), () =>
@@ -871,7 +885,7 @@ function buildIntradayChartModel(
     ),
     makeLineSeries("macd", "macd", "MACD", theme.blue, bars, macd.map((point) => point?.macd ?? null)),
     makeLineSeries("signal", "macd", "SIGNAL", theme.orange, bars, macd.map((point) => point?.signal ?? null)),
-  ];
+  );
   return { panes, series };
 }
 
@@ -900,6 +914,7 @@ function IntradayCharts({
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSeconds, setRefreshSeconds] = useState(loadStoredIntradayRefreshSeconds);
   const [bars, setBars] = useState<ParsedIntradayBar[]>([]);
+  const [prevClose, setPrevClose] = useState<number | null>(null);
   const [fitKey, setFitKey] = useState(0);
 
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
@@ -934,19 +949,20 @@ function IntradayCharts({
     }
   }, []);
 
-  const chartModel = useMemo(() => buildIntradayChartModel(bars, theme), [bars, theme]);
+  const chartModel = useMemo(() => buildIntradayChartModel(bars, theme, prevClose), [bars, theme, prevClose]);
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
+  const changeRateBase = prevClose ?? bars[0]?.price;
   const formatCrosshairValueLabel = useCallback((state: NativeCrosshairValueState) => {
     if (state.paneId !== "price") return null;
-    const rate = changeRate(state.value, bars[0]?.price);
+    const rate = changeRate(state.value, changeRateBase);
     const price = formatChartNumber(state.value, language);
     return rate == null ? price : `${price} ${formatSignedPercent(rate, language)}`;
-  }, [bars, language]);
+  }, [changeRateBase, language]);
   const renderTooltip = useCallback((state: NativeChartTooltipState) => {
     const bar = bars[state.index];
     if (!bar) return null;
-    const rate = changeRate(bar.price, bars[0]?.price);
-    const lineRate = state.paneId === "price" ? changeRate(state.paneValue, bars[0]?.price) : null;
+    const rate = changeRate(bar.price, changeRateBase);
+    const lineRate = state.paneId === "price" ? changeRate(state.paneValue, changeRateBase) : null;
     return (
       <ChartHoverCard
         title={formatHoverTime(bar.time, language, true)}
@@ -957,7 +973,7 @@ function IntradayCharts({
         ]}
       />
     );
-  }, [bars, copy.changeRate, copy.lineChangeRate, copy.price, language]);
+  }, [bars, changeRateBase, copy.changeRate, copy.lineChangeRate, copy.price, language]);
 
   const load = useCallback((mode: "full" | "incremental" = "incremental") => {
     if (!symbol) return;
@@ -975,6 +991,10 @@ function IntradayCharts({
         if (requestSeqRef.current !== requestId || symbolRef.current !== requestSymbol) return;
         const bars = parseIntraday(res.bars);
         applyBars(bars, mode === "full");
+        if (mode === "full" && res.prev_close) {
+          const parsed = parseFloat(res.prev_close);
+          setPrevClose(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+        }
         setLastUpdated(new Date().toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", {
           hour: "2-digit",
           minute: "2-digit",
@@ -994,6 +1014,7 @@ function IntradayCharts({
     barsRef.current = [];
     lastTimestampRef.current = null;
     setBars([]);
+    setPrevClose(null);
     setLastUpdated("");
     load("full");
   }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps

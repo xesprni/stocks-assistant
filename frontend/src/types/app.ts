@@ -715,6 +715,7 @@ export interface IntradayItem {
 
 export interface IntradayResponse {
   symbol: string;
+  prev_close?: string | null;
   bars: IntradayItem[];
 }
 
