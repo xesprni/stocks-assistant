@@ -856,13 +856,15 @@ function buildIntradayChartModel(
 ): { panes: NativeChartPane[]; series: NativeChartSeries[] } {
   const closes = bars.map((bar) => bar.price);
   const macd = calcMACD(closes);
+  const hasPrevClose = prevClose != null && Number.isFinite(prevClose) && prevClose > 0;
   const panes: NativeChartPane[] = [
-    { id: "price", label: "PRICE", heightWeight: 3 },
+    // 有昨收价时以昨收为中心做 Y 轴对称，使涨跌幅上下等幅显示
+    { id: "price", label: "PRICE", heightWeight: 3, centerValue: hasPrevClose ? prevClose! : undefined },
     { id: "volume", label: "VOL", heightWeight: 0.6 },
     { id: "macd", label: "MACD", heightWeight: 0.75 },
   ];
   const series: NativeChartSeries[] = [];
-  if (prevClose != null && Number.isFinite(prevClose) && prevClose > 0) {
+  if (hasPrevClose) {
     series.push({
       id: "prev-close",
       paneId: "price",

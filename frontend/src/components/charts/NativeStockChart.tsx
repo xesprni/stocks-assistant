@@ -21,6 +21,11 @@ export interface NativeChartPane {
   id: string;
   label?: string;
   heightWeight: number;
+  /**
+   * 设置后该 pane 的 Y 轴范围会以此为中心做对称展开，
+   * 常用于分时图：以昨收价为中心，上下等幅，使涨跌幅视觉对称。
+   */
+  centerValue?: number;
 }
 
 export interface NativeChartViewport {
@@ -126,6 +131,7 @@ interface PaneLayout {
   height: number;
   axisX: number;
   axisWidth: number;
+  centerValue?: number;
 }
 
 type ChartPoint = {
@@ -260,6 +266,7 @@ function buildPaneLayouts(width: number, height: number, panes: NativeChartPane[
       height: Math.max(1, h),
       axisX: plotWidth,
       axisWidth,
+      centerValue: pane.centerValue,
     };
     y += layout.height;
     return layout;
@@ -343,6 +350,25 @@ function paneValueRange(series: CachedSeries[], paneId: string, from: number, to
     return { min: min - pad, max: max + pad };
   }
   return { min, max };
+}
+
+/**
+ * 以 center 为中心构建对称 Y 轴范围。
+ * 取数据范围两端到 center 的最大偏移作为半幅，使涨跌对称显示。
+ * 当所有数据都等于 center 时退化为 ±5% 的最小范围。
+ */
+function symmetricRange(
+  range: { min: number; max: number },
+  center: number,
+): { min: number; max: number } {
+  const maxDelta = Math.max(Math.abs(range.max - center), Math.abs(center - range.min));
+  if (maxDelta === 0) {
+    const pad = Math.max(Math.abs(center) * 0.025, 0.01);
+    return { min: center - pad, max: center + pad };
+  }
+  // 额外留 6% 顶部/底部边距，避免曲线紧贴边框
+  const padded = maxDelta * 1.06;
+  return { min: center - padded, max: center + padded };
 }
 
 function valueToY(value: number, range: { min: number; max: number }, layout: PaneLayout) {
@@ -611,7 +637,13 @@ function drawChart(
 
   const paneRanges = new Map<string, { min: number; max: number }>();
   for (const layout of layouts) {
-    const range = paneValueRange(series, layout.id, Math.max(0, Math.floor(normalized.from)), Math.min(times.length - 1, Math.ceil(normalized.to)));
+    const rawRange = paneValueRange(series, layout.id, Math.max(0, Math.floor(normalized.from)), Math.min(times.length - 1, Math.ceil(normalized.to)));
+    // 分时图等场景：以 centerValue（昨收价）为中心做 Y 轴对称，
+    // 使涨跌幅在视觉上上下等幅，而非整条线贴顶或贴底。
+    const range =
+      layout.centerValue != null && Number.isFinite(layout.centerValue)
+        ? symmetricRange(rawRange, layout.centerValue)
+        : rawRange;
     paneRanges.set(layout.id, range);
 
     ctx.fillStyle = theme.background;

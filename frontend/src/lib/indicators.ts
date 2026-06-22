@@ -50,13 +50,13 @@ export function calcMA(values: number[], period: number): (number | null)[] {
 }
 
 function calcEMA(values: number[], period: number): number[] {
+  if (values.length === 0) return [];
   const k = 2 / (period + 1);
-  const result: number[] = new Array(values.length).fill(0);
-  // seed with simple mean of first `period` values
-  let seed = 0;
-  for (let i = 0; i < Math.min(period, values.length); i++) seed += values[i];
-  result[Math.min(period - 1, values.length - 1)] = seed / Math.min(period, values.length);
-  for (let i = period; i < values.length; i++) {
+  const result: number[] = new Array(values.length);
+  // 以第一个值作为 EMA 种子，从首根 K 线即开始输出，
+  // 前若干根精度略低但能快速收敛，避免分时图 MACD 前段出现大段空白。
+  result[0] = values[0];
+  for (let i = 1; i < values.length; i++) {
     result[i] = values[i] * k + result[i - 1] * (1 - k);
   }
   return result;
@@ -70,22 +70,18 @@ export function calcMACD(
   slowPeriod = 26,
   signalPeriod = 9,
 ): (MACDPoint | null)[] {
-  if (closes.length < slowPeriod) return closes.map(() => null);
+  if (closes.length === 0) return [];
   const ema12 = calcEMA(closes, fastPeriod);
   const ema26 = calcEMA(closes, slowPeriod);
   const macdLine = closes.map((_, i) => ema12[i] - ema26[i]);
-  // Signal EMA is computed only from index (slowPeriod - 1) onward
-  const signalLine = calcEMA(macdLine.slice(slowPeriod - 1), signalPeriod);
-  const result: (MACDPoint | null)[] = closes.map(() => null);
-  // 信号线 EMA 自身也需要 signalPeriod 个数据点才能产生第一个有效值，
-  // 因此从 slowPeriod + signalPeriod - 2 开始才有有效的 MACD/Signal/Histogram，
-  // 否则信号线会从 0 开始产生错误的偏移。
-  const firstValid = slowPeriod + signalPeriod - 2;
-  for (let i = firstValid; i < closes.length; i++) {
-    const signal = signalLine[i - (slowPeriod - 1)];
+  // calcEMA 从首根 K 线开始输出，信号线也可直接对完整 macdLine 求EMA，
+  // 这样 MACD/Signal/Histogram 从第一根就有值，消除分时图前段空白。
+  const signalLine = calcEMA(macdLine, signalPeriod);
+  const result: (MACDPoint | null)[] = closes.map((_, i) => {
     const macd = macdLine[i];
-    result[i] = { macd, signal, histogram: macd - signal };
-  }
+    const signal = signalLine[i];
+    return { macd, signal, histogram: macd - signal };
+  });
   return result;
 }
 
