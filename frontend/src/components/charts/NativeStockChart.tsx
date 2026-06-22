@@ -169,7 +169,7 @@ interface NativeStockChartProps {
 const AXIS_WIDTH = 58;
 const TIME_AXIS_HEIGHT = 22;
 const MIN_VISIBLE_BARS = 36;
-const PANE_VERTICAL_PADDING = 10;
+const PANE_VERTICAL_PADDING = 6;
 const EDGE_LOAD_THRESHOLD = 4;
 const TOUCH_LONG_PRESS_MS = 360;
 const TOUCH_PAN_THRESHOLD_PX = 8;
@@ -208,7 +208,7 @@ function panDeltaBars(deltaPixels: number, spacing: number, mode: PointerPanMode
 }
 
 function paddedBounds(layout: PaneLayout) {
-  const padding = Math.min(PANE_VERTICAL_PADDING, Math.max(3, layout.height * 0.08));
+  const padding = Math.min(PANE_VERTICAL_PADDING, Math.max(2, layout.height * 0.05));
   return {
     top: layout.y + padding,
     bottom: layout.y + layout.height - padding,
@@ -363,11 +363,11 @@ function symmetricRange(
 ): { min: number; max: number } {
   const maxDelta = Math.max(Math.abs(range.max - center), Math.abs(center - range.min));
   if (maxDelta === 0) {
-    const pad = Math.max(Math.abs(center) * 0.025, 0.01);
+    const pad = Math.max(Math.abs(center) * 0.015, 0.005);
     return { min: center - pad, max: center + pad };
   }
-  // 额外留 6% 顶部/底部边距，避免曲线紧贴边框
-  const padded = maxDelta * 1.06;
+  // 仅留 2.5% 顶部/底部边距，让涨跌幅在分时图上更醒目（曲线放大）
+  const padded = maxDelta * 1.025;
   return { min: center - padded, max: center + padded };
 }
 
