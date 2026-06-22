@@ -170,6 +170,9 @@ const AXIS_WIDTH = 58;
 const TIME_AXIS_HEIGHT = 22;
 const MIN_VISIBLE_BARS = 36;
 const PANE_VERTICAL_PADDING = 6;
+const RANGE_PADDING_RATIO = 0.035;
+const CENTERED_RANGE_PADDING_RATIO = 0.025;
+const FLAT_VALUE_RANGE_RATIO = 0.0005;
 const EDGE_LOAD_THRESHOLD = 4;
 const TOUCH_LONG_PRESS_MS = 360;
 const TOUCH_PAN_THRESHOLD_PX = 8;
@@ -326,12 +329,7 @@ function seriesValueRange(series: CachedSeries, from: number, to: number) {
     }
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-  if (min === max) {
-    const pad = Math.max(Math.abs(min) * 0.05, 1);
-    return { min: min - pad, max: max + pad };
-  }
-  const pad = (max - min) * 0.06;
-  return { min: min - pad, max: max + pad };
+  return { min, max };
 }
 
 function paneValueRange(series: CachedSeries[], paneId: string, from: number, to: number) {
@@ -345,30 +343,48 @@ function paneValueRange(series: CachedSeries[], paneId: string, from: number, to
     max = Math.max(max, range.max);
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 };
-  if (min === max) {
-    const pad = Math.max(Math.abs(min) * 0.05, 1);
-    return { min: min - pad, max: max + pad };
-  }
   return { min, max };
+}
+
+function flatRangeHalfSpan(value: number) {
+  const magnitude = Math.abs(value);
+  if (magnitude === 0) return 1;
+  return Math.max(magnitude * FLAT_VALUE_RANGE_RATIO, 0.000001);
+}
+
+function paddedRange(range: { min: number; max: number }): { min: number; max: number } {
+  if (range.min === range.max) {
+    const pad = flatRangeHalfSpan(range.min);
+    return { min: range.min - pad, max: range.max + pad };
+  }
+  const pad = (range.max - range.min) * RANGE_PADDING_RATIO;
+  return { min: range.min - pad, max: range.max + pad };
 }
 
 /**
  * 以 center 为中心构建对称 Y 轴范围。
  * 取数据范围两端到 center 的最大偏移作为半幅，使涨跌对称显示。
- * 当所有数据都等于 center 时退化为 ±5% 的最小范围。
+ * 常量辅助线不参与额外放大，避免小涨跌幅被昨收线撑出大留白。
  */
 function symmetricRange(
   range: { min: number; max: number },
   center: number,
 ): { min: number; max: number } {
   const maxDelta = Math.max(Math.abs(range.max - center), Math.abs(center - range.min));
-  if (maxDelta === 0) {
-    const pad = Math.max(Math.abs(center) * 0.015, 0.005);
-    return { min: center - pad, max: center + pad };
-  }
-  // 仅留 2.5% 顶部/底部边距，让涨跌幅在分时图上更醒目（曲线放大）
-  const padded = maxDelta * 1.025;
+  const padded = Math.max(maxDelta * (1 + CENTERED_RANGE_PADDING_RATIO), flatRangeHalfSpan(center));
   return { min: center - padded, max: center + padded };
+}
+
+function visiblePaneRange(
+  series: CachedSeries[],
+  pane: { id: string; centerValue?: number },
+  from: number,
+  to: number,
+) {
+  const rawRange = paneValueRange(series, pane.id, from, to);
+  return pane.centerValue != null && Number.isFinite(pane.centerValue)
+    ? symmetricRange(rawRange, pane.centerValue)
+    : paddedRange(rawRange);
 }
 
 function valueToY(value: number, range: { min: number; max: number }, layout: PaneLayout) {
@@ -637,13 +653,7 @@ function drawChart(
 
   const paneRanges = new Map<string, { min: number; max: number }>();
   for (const layout of layouts) {
-    const rawRange = paneValueRange(series, layout.id, Math.max(0, Math.floor(normalized.from)), Math.min(times.length - 1, Math.ceil(normalized.to)));
-    // 分时图等场景：以 centerValue（昨收价）为中心做 Y 轴对称，
-    // 使涨跌幅在视觉上上下等幅，而非整条线贴顶或贴底。
-    const range =
-      layout.centerValue != null && Number.isFinite(layout.centerValue)
-        ? symmetricRange(rawRange, layout.centerValue)
-        : rawRange;
+    const range = visiblePaneRange(series, layout, Math.max(0, Math.floor(normalized.from)), Math.min(times.length - 1, Math.ceil(normalized.to)));
     paneRanges.set(layout.id, range);
 
     ctx.fillStyle = theme.background;
@@ -858,7 +868,10 @@ export function NativeStockChart({
     const from = clamp(Math.floor(viewport.from), 0, current.times.length - 1);
     const to = clamp(Math.ceil(viewport.to), 0, current.times.length - 1);
     const primary = current.series.find((item) => item.id === current.primaryRangeSeriesId);
-    const price = primary ? seriesValueRange(primary, from, to) : null;
+    const primaryPane = primary
+      ? current.panes.find((pane) => pane.id === primary.paneId) ?? { id: primary.paneId, heightWeight: 1 }
+      : null;
+    const price = primaryPane ? visiblePaneRange(current.series, primaryPane, from, to) : null;
     const signature = `${from}:${to}:${price?.min.toFixed(6) ?? "na"}:${price?.max.toFixed(6) ?? "na"}`;
     if (signature !== lastVisibleSignatureRef.current) {
       lastVisibleSignatureRef.current = signature;
@@ -994,7 +1007,7 @@ export function NativeStockChart({
     const viewport = normalizeViewport(viewportRef.current, current.times.length);
     const from = clamp(Math.floor(viewport.from), 0, current.times.length - 1);
     const to = clamp(Math.ceil(viewport.to), 0, current.times.length - 1);
-    const range = paneValueRange(current.series, paneId, from, to);
+    const range = visiblePaneRange(current.series, layout, from, to);
     const bounds = paddedBounds(layout);
     const clampedY = clamp(y, bounds.top, bounds.bottom);
     const ratio = 1 - (clampedY - bounds.top) / bounds.height;

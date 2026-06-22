@@ -657,16 +657,17 @@ const WatchlistSymbolChart = memo(function WatchlistSymbolChart({ language, row 
   const latest = bars[bars.length - 1];
   const displayPrice = latest?.price ?? parseNumber(row.last_done);
   const displayVolume = parseNumber(row.volume) ?? latest?.volume ?? null;
+  const prevClose = parseNumber(row.prev_close);
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
+  const priceCenter = range === "1D" && prevClose != null && prevClose > 0 ? prevClose : undefined;
   const panes = useMemo(() => [
-    { id: "price", label: labels.price.toUpperCase(), heightWeight: 3 },
+    { id: "price", label: labels.price.toUpperCase(), heightWeight: 3, centerValue: priceCenter },
     { id: "volume", label: "VOL", heightWeight: 0.72 },
-  ], [labels.price]);
+  ], [labels.price, priceCenter]);
   const series = useMemo<NativeChartSeries[]>(() => {
     if (bars.length === 0) return [];
     const lineColor = tone === "up" ? theme.up : tone === "down" ? theme.down : theme.blue;
     const next: NativeChartSeries[] = [];
-    const prevClose = parseNumber(row.prev_close);
     if (prevClose !== null) {
       next.push({
         id: "prev-close",
@@ -706,7 +707,7 @@ const WatchlistSymbolChart = memo(function WatchlistSymbolChart({ language, row 
     );
     return next;
     // 只依赖实际用到的 theme 字段，避免 theme 对象引用变化时不必要重建。
-  }, [bars, labels.prevClose, labels.price, row.prev_close, theme.up, theme.down, theme.blue, theme.mutedText, tone]);
+  }, [bars, labels.prevClose, labels.price, prevClose, theme.up, theme.down, theme.blue, theme.mutedText, tone]);
 
   return (
     <div className="overflow-hidden rounded-md border border-border/65 bg-card/70">
