@@ -1918,6 +1918,7 @@ export function DashboardPage({
         <section
           className={cn(
             "dashboard-secondary-column dashboard-scroll-column min-w-0 xl:col-start-2 xl:row-start-1 xl:flex xl:min-h-[calc(100dvh-5.25rem)] xl:flex-col",
+            selectedWatchlistRow && "dashboard-secondary-detail-column",
             chatExpanded && "xl:hidden",
           )}
         >

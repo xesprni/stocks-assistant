@@ -826,6 +826,12 @@
       overflow-y: visible;
     }
 
+    .dashboard-secondary-column.dashboard-scroll-column.dashboard-secondary-detail-column {
+      height: calc(100dvh - 5.25rem);
+      max-height: calc(100dvh - 5.25rem);
+      overflow-y: auto;
+    }
+
     .dashboard-secondary-column > .finance-section:last-child {
       display: flex;
       flex-direction: column;
