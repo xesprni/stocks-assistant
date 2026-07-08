@@ -51,10 +51,17 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        xl: "var(--radius-lg)",
+        "2xl": "var(--radius-xl)",
       },
       boxShadow: {
         panel: "0 18px 55px rgba(0, 0, 0, 0.35)",
-        glow: "0 0 0 1px rgba(52, 211, 153, 0.2), 0 0 32px rgba(52, 211, 153, 0.12)",
+        glow: "0 0 0 1px hsl(var(--primary) / 0.2), 0 0 28px hsl(var(--primary) / 0.16)",
+        card: "var(--shadow-card)",
+        "card-hover": "var(--shadow-card-hover)",
+      },
+      backgroundImage: {
+        "gradient-primary": "linear-gradient(135deg, color-mix(in srgb, hsl(var(--primary)) 88%, #fff), color-mix(in srgb, hsl(var(--primary)) 90%, #000))",
       },
       keyframes: {
         scan: {

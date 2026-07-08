@@ -63,7 +63,7 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           aria-label={ariaLabel}
           className={cn(
             "flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-background/70 px-3 py-1.5 text-left text-sm text-foreground shadow-sm transition-all",
-            "hover:border-primary/45 hover:bg-background focus-visible:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
+            "hover:border-primary/45 hover:bg-background focus-visible:border-primary/60 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15",
             "disabled:cursor-not-allowed disabled:opacity-50",
             open && "border-primary/60 bg-background ring-2 ring-primary/15",
           )}

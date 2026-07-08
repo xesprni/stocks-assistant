@@ -9,10 +9,10 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-glow hover:bg-primary/95 hover:shadow-[0_8px_22px_hsl(var(--primary)_/_0.22)]",
-        destructive: "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 hover:shadow-[0_8px_22px_hsl(var(--destructive)_/_0.18)]",
-        outline: "border border-input bg-background/70 shadow-sm hover:border-primary/45 hover:bg-primary/10 hover:text-foreground",
-        secondary: "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/90 hover:shadow-[0_8px_22px_hsl(var(--secondary)_/_0.16)]",
+        default: "bg-gradient-primary text-primary-foreground shadow-glow hover:-translate-y-0.5 hover:shadow-[0_10px_26px_hsl(var(--primary)_/_0.3)]",
+        destructive: "bg-destructive text-destructive-foreground shadow-sm hover:-translate-y-0.5 hover:bg-destructive/90 hover:shadow-[0_10px_26px_hsl(var(--destructive)_/_0.22)]",
+        outline: "border border-input bg-background/70 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/55 hover:border-primary/45 hover:bg-primary/10 hover:text-foreground",
+        secondary: "bg-secondary text-secondary-foreground shadow-sm hover:-translate-y-0.5 hover:bg-secondary/90 hover:shadow-[0_10px_26px_hsl(var(--secondary)_/_0.18)]",
         ghost: "hover:bg-muted/80 hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },

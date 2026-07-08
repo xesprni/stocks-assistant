@@ -1678,7 +1678,7 @@ function Header({
       onTouchStart={onTouchStart}
     >
       <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onHome} type="button">
-        <div className="grid size-7 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary shadow-glow">
+        <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-gradient-primary text-primary-foreground shadow-glow">
           <Sparkles className="size-3.5" />
         </div>
         <div className="min-w-0">
@@ -1699,7 +1699,7 @@ function Header({
         </Button>
         <div
           aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
-          className="theme-toggle inline-flex h-7 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5"
+          className="theme-toggle inline-flex h-7 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5 backdrop-blur supports-[backdrop-filter]:bg-background/55"
           role="group"
         >
           {themeOptions.map((option) => {
@@ -1894,7 +1894,7 @@ function UserAvatarMenu({
       <button
         aria-expanded={isOpen}
         aria-label={language === "en" ? "Open account menu" : "打开账号菜单"}
-        className="flex h-8 items-center gap-1 rounded-full border border-input bg-background/70 p-0.5 pr-1.5 transition-colors hover:bg-muted/55"
+        className="flex h-8 items-center gap-1 rounded-full border border-input bg-background/70 p-0.5 pr-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/55 transition-colors hover:bg-muted/55"
         onClick={() => setIsOpen((current) => !current)}
         type="button"
       >

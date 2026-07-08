@@ -29,10 +29,10 @@
     --grid-line-soft: rgba(32, 33, 36, 0.026);
     --shell-primary: rgba(26, 115, 232, 0.1);
     --shell-secondary: rgba(52, 168, 83, 0.08);
-    --app-header-bg: hsl(0 0% 100% / 0.98);
+    --app-header-bg: hsl(var(--background) / 0.82);
     --app-grid-bg: hsl(210 20% 98%);
-    --app-sidebar-bg: hsl(0 0% 100% / 0.98);
-    --app-mobile-nav-bg: hsl(0 0% 100% / 0.98);
+    --app-sidebar-bg: hsl(var(--background) / 0.82);
+    --app-mobile-nav-bg: hsl(var(--background) / 0.82);
     --app-stage-bg: hsl(210 20% 98%);
     --panel-bg: hsl(0 0% 100% / 0.96);
     --tile-bg: hsl(210 17% 96% / 0.82);
@@ -41,14 +41,21 @@
     --control-shadow-hover: 0 2px 6px rgba(60, 64, 67, 0.12);
     --list-hover-bg: hsl(217 89% 45% / 0.075);
     --list-hover-border: hsl(217 89% 45% / 0.42);
-    --list-hover-shadow: inset 3px 0 0 hsl(217 89% 45% / 0.58), 0 1px 0 hsl(217 89% 45% / 0.08);
+    --list-hover-shadow: inset 3px 0 0 hsl(var(--primary) / 0.6), 0 1px 0 hsl(var(--primary) / 0.05), 0 6px 16px hsl(var(--primary) / 0.08);
     --chat-assistant-bg: hsl(0 0% 100% / 0.96);
     --chat-assistant-border: hsl(220 9% 87% / 0.76);
     --chat-user-bg: hsl(var(--primary));
     --chat-user-border: hsl(var(--primary));
     --chat-user-foreground: hsl(0 0% 100%);
     --chat-code-bg: hsl(210 17% 96%);
-    --radius: 0.5rem;
+    --radius: 0.75rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.25rem;
+    --shadow-card: 0 1px 2px hsl(225 6% 13% / 0.05), 0 6px 16px hsl(225 6% 13% / 0.06), inset 0 1px 0 hsl(0 0% 100% / 0.6);
+    --shadow-card-hover: 0 2px 6px hsl(225 6% 13% / 0.07), 0 12px 28px hsl(225 6% 13% / 0.1), inset 0 1px 0 hsl(0 0% 100% / 0.7);
+    --glass-bg: hsl(0 0% 100% / 0.72);
+    --glass-border: hsl(220 9% 87% / 0.5);
+    --glass-highlight: hsl(0 0% 100% / 0.6);
   }
 
   .dark {
@@ -89,13 +96,18 @@
     --control-shadow-hover: none;
     --list-hover-bg: hsl(217 89% 76% / 0.13);
     --list-hover-border: hsl(217 89% 76% / 0.56);
-    --list-hover-shadow: inset 3px 0 0 hsl(217 89% 76% / 0.7), 0 0 0 1px hsl(217 89% 76% / 0.09);
+    --list-hover-shadow: inset 3px 0 0 hsl(var(--primary) / 0.7), 0 0 0 1px hsl(var(--primary) / 0.12), 0 8px 20px hsl(0 0% 0% / 0.4);
     --chat-assistant-bg: hsl(0 0% 8% / 0.96);
     --chat-assistant-border: hsl(0 0% 18% / 0.78);
     --chat-user-bg: hsl(var(--primary));
     --chat-user-border: hsl(var(--primary));
     --chat-user-foreground: hsl(var(--primary-foreground));
     --chat-code-bg: hsl(0 0% 4% / 0.94);
+    --shadow-card: 0 1px 2px hsl(0 0% 0% / 0.4), 0 10px 28px hsl(0 0% 0% / 0.5), inset 0 1px 0 hsl(0 0% 100% / 0.05);
+    --shadow-card-hover: 0 2px 8px hsl(0 0% 0% / 0.45), 0 16px 38px hsl(0 0% 0% / 0.62), inset 0 1px 0 hsl(0 0% 100% / 0.07);
+    --glass-bg: hsl(0 0% 9% / 0.66);
+    --glass-border: hsl(0 0% 18% / 0.56);
+    --glass-highlight: hsl(0 0% 100% / 0.06);
   }
 
   [data-color-scheme="cn"] {
@@ -222,9 +234,9 @@
   }
 
   .auth-panel {
-    border-color: hsl(var(--border));
-    background: hsl(var(--card));
-    box-shadow: var(--panel-shadow);
+    border-color: hsl(var(--border) / 0.6);
+    background: linear-gradient(180deg, hsl(var(--card) / 0.96), hsl(var(--card) / 0.86));
+    box-shadow: var(--shadow-card-hover);
   }
 
   .dark .auth-panel {
@@ -240,7 +252,8 @@
 
   .app-header {
     background: var(--app-header-bg);
-    backdrop-filter: blur(14px);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
   }
 
   .app-main-grid {
@@ -249,12 +262,23 @@
 
   .app-mobile-nav {
     background: var(--app-mobile-nav-bg);
-    backdrop-filter: blur(14px);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
   }
 
   .app-main-stage {
-    background: var(--app-stage-bg);
+    background-color: var(--app-stage-bg);
+    background-image:
+      radial-gradient(ellipse 70% 55% at 12% -12%, hsl(var(--primary) / 0.06), transparent 60%),
+      radial-gradient(ellipse 58% 50% at 100% -8%, hsl(var(--secondary) / 0.05), transparent 55%);
+    background-repeat: no-repeat;
     background-size: auto;
+  }
+
+  .dark .app-main-stage {
+    background-image:
+      radial-gradient(ellipse 70% 55% at 12% -12%, hsl(var(--primary) / 0.1), transparent 60%),
+      radial-gradient(ellipse 58% 50% at 100% -8%, hsl(var(--secondary) / 0.07), transparent 55%);
   }
 
   .app-main-stage > .page-enter {
@@ -269,15 +293,21 @@
   }
 
   .panel {
-    @apply rounded-lg border;
-    border-color: hsl(var(--border) / 0.58);
+    @apply rounded-xl border;
+    border-color: hsl(var(--border) / 0.5);
     background: var(--panel-bg);
-    box-shadow: var(--panel-shadow);
+    box-shadow: var(--shadow-card);
     transition:
       border-color 180ms ease,
       background-color 180ms ease,
       box-shadow 220ms ease,
       transform 220ms ease;
+  }
+
+  .panel-hover:hover {
+    border-color: hsl(var(--primary) / 0.35);
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
   }
 
   .panel.app-header {
@@ -311,33 +341,36 @@
   }
 
   .metric-tile {
-    @apply rounded-md border border-border/45 px-3 py-2;
-    background: hsl(var(--muted) / 0.22);
-    box-shadow: none;
+    @apply rounded-lg border border-border/45 px-3 py-2;
+    background: linear-gradient(180deg, hsl(var(--card) / 0.66), hsl(var(--muted) / 0.34));
+    box-shadow: var(--shadow-card);
     transition:
       border-color 180ms ease,
       background-color 180ms ease,
-      box-shadow 180ms ease,
-      transform 180ms ease;
+      box-shadow 200ms ease,
+      transform 200ms ease;
   }
 
   .metric-tile:hover {
-    border-color: hsl(var(--primary) / 0.24);
-    box-shadow: none;
-    transform: none;
+    border-color: hsl(var(--primary) / 0.32);
+    box-shadow: var(--shadow-card-hover), 0 8px 22px hsl(var(--primary) / 0.1);
+    transform: translateY(-2px);
   }
 
   .finance-top-nav {
     border-bottom: 1px solid hsl(var(--border));
     background: var(--app-header-bg);
-    backdrop-filter: blur(14px);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     position: relative;
     z-index: 30;
   }
 
   .account-menu-popover {
-    background: hsl(var(--popover)) !important;
-    backdrop-filter: none;
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) saturate(1.5);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    box-shadow: var(--shadow-card-hover);
     isolation: isolate;
     opacity: 1;
     overscroll-behavior: contain;
@@ -347,7 +380,7 @@
   }
 
   .dark .account-menu-popover {
-    background: hsl(var(--popover)) !important;
+    background: var(--glass-bg) !important;
   }
 
   .finance-top-nav-item {
@@ -935,16 +968,19 @@
   }
 
   .chat-bubble-assistant {
-    background: var(--chat-assistant-bg);
+    background: var(--glass-bg);
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
     border-color: var(--chat-assistant-border);
     color: hsl(var(--foreground));
+    box-shadow: var(--shadow-card);
   }
 
   .chat-bubble-user {
-    background: var(--chat-user-bg);
-    border-color: var(--chat-user-border);
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary) / 0.82));
+    border-color: hsl(var(--primary) / 0.6);
     color: var(--chat-user-foreground);
-    box-shadow: 0 1px 2px hsl(var(--primary) / 0.12);
+    box-shadow: 0 6px 18px hsl(var(--primary) / 0.28), inset 0 1px 0 hsl(0 0% 100% / 0.18);
   }
 
   .chat-message-content {
@@ -1318,8 +1354,7 @@
   }
 
   .panel {
-    border-radius: 0.625rem;
-    box-shadow: none;
+    border-radius: 0.75rem;
   }
 
   .panel-header {
