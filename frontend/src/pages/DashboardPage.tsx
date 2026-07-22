@@ -936,9 +936,11 @@ function WatchlistMovers({
                   type="button"
                 >
                   {watchlistFilterLabel(item, language)}
-                  <span className="ml-1 text-muted-foreground">
-                    {item === "ALL" ? total : (module?.counts_by_category?.[item] ?? 0)}
-                  </span>
+                  {item !== "ALL" && (
+                    <span className="ml-1 text-muted-foreground">
+                      {module?.counts_by_category?.[item] ?? 0}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>

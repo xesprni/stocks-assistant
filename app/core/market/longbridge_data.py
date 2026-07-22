@@ -324,8 +324,31 @@ class LongbridgeMarketDataMixin:
             "series": calculation["series"],
         }
 
+    # 各市场主要指数，用于 market_temperature API 无数据时回退估算
+    _FALLBACK_INDICES: dict[str, list[str]] = {
+        "CN": [
+            "000001.SH",   # 上证综指
+            "000300.SH",   # 沪深300
+            "399001.SZ",   # 深证成指
+            "399006.SZ",   # 创业板指
+        ],
+        "HK": [
+            "HSI.HK",      # 恒生指数
+            "HSCEI.HK",    # 国企指数
+        ],
+        "US": [
+            ".SPX.US",     # S&P 500
+            ".NDX.US",     # 纳斯达克100
+            ".DJI.US",     # 道琼斯
+        ],
+    }
+
     def get_market_temperature(self, market: str = "US", settings: Any = None) -> dict:
-        """获取市场温度。market: US / HK / CN"""
+        """获取市场温度。market: US / HK / CN
+
+        优先使用 Longbridge market_temperature API；若该接口对某些市场（如 CN）无数据，
+        则基于主要指数涨跌幅估算市场温度作为回退。
+        """
         try:
             from longbridge.openapi import Market
         except ImportError as exc:
@@ -334,17 +357,95 @@ class LongbridgeMarketDataMixin:
         market_map = {"US": Market.US, "HK": Market.HK, "CN": Market.CN}
         lb_market = market_map.get(market, Market.US)
         ctx = self._quote_context(settings=settings)
+
+        # 先尝试 Longbridge 官方市场温度接口
+        api_data: Optional[dict] = None
         try:
             resp = ctx.market_temperature(lb_market)
-        except Exception as exc:
-            raise LongbridgeUnavailableError(str(exc)) from exc
+            api_data = {
+                "market": market,
+                "temperature": getattr(resp, "temperature", None),
+                "description": getattr(resp, "description", ""),
+                "valuation": getattr(resp, "valuation", None),
+                "sentiment": getattr(resp, "sentiment", None),
+                "updated_at": getattr(resp, "updated_at", None),
+            }
+        except Exception:
+            api_data = None
+
+        # API 返回了有效温度 → 直接使用
+        if api_data and api_data.get("temperature") is not None:
+            return api_data
+
+        # API 无数据 → 基于主要指数涨跌幅回退估算
+        fallback = self._compute_fallback_temperature(market, settings=settings)
+        if fallback.get("temperature") is not None:
+            return fallback
+
+        # 回退也失败时返回原始 API 数据（可能含 null 字段），保证响应结构一致
+        if api_data is not None:
+            return api_data
+        raise LongbridgeUnavailableError(
+            f"Market temperature data is not available for {market}"
+        )
+
+    def _compute_fallback_temperature(self, market: str, settings: Any = None) -> dict:
+        """基于主要指数涨跌幅估算市场温度（回退方案）。
+
+        当 Longbridge market_temperature API 对某市场（典型为 CN）无数据时调用。
+        拉取该市场核心指数实时报价，取加权平均涨跌幅映射到 0-100 温度区间。
+        """
+        indices = self._FALLBACK_INDICES.get(market)
+        if not indices:
+            return {"market": market, "temperature": None, "description": "",
+                    "valuation": None, "sentiment": None, "updated_at": None}
+
+        try:
+            quotes_data = self.get_realtime_quotes(indices, settings=settings)
+        except Exception:
+            return {"market": market, "temperature": None, "description": "",
+                    "valuation": None, "sentiment": None, "updated_at": None}
+
+        # 收集各指数涨跌幅（change_rate 格式如 "1.23%"）
+        change_rates: list[float] = []
+        for q in quotes_data.get("quotes", []):
+            cr_str = q.get("change_rate")
+            if cr_str:
+                try:
+                    change_rates.append(float(str(cr_str).rstrip("%")))
+                except (TypeError, ValueError):
+                    pass
+
+        if not change_rates:
+            return {"market": market, "temperature": None, "description": "",
+                    "valuation": None, "sentiment": None, "updated_at": None}
+
+        avg_cr = sum(change_rates) / len(change_rates)
+
+        # 涨跌幅映射到温度：0% → 50（中性），+3% → ~100（过热），-3% → ~0（冰点）
+        temperature = max(0, min(100, round(50 + avg_cr * 16.5)))
+        sentiment = max(0, min(100, round(50 + avg_cr * 16.5)))
+        # 估值水平用较小倍率，避免单日波动过度影响
+        valuation = max(0, min(100, round(50 + avg_cr * 8)))
+
+        if temperature >= 80:
+            desc = "市场情绪高涨"
+        elif temperature >= 60:
+            desc = "市场偏暖"
+        elif temperature >= 40:
+            desc = "市场情绪平稳"
+        elif temperature >= 20:
+            desc = "市场偏冷"
+        else:
+            desc = "市场情绪低迷"
+
         return {
             "market": market,
-            "temperature": getattr(resp, "temperature", None),
-            "description": getattr(resp, "description", ""),
-            "valuation": getattr(resp, "valuation", None),
-            "sentiment": getattr(resp, "sentiment", None),
-            "updated_at": getattr(resp, "updated_at", None),
+            "temperature": temperature,
+            "description": f"{desc}（基于指数涨跌幅估算）",
+            "valuation": valuation,
+            "sentiment": sentiment,
+            "updated_at": int(datetime.now().timestamp()),
         }
 
     def _longbridge_period(self, period: str):
