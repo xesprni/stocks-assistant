@@ -60,7 +60,7 @@ import type {
   WatchlistCategory,
 } from "@/types/app";
 
-const WATCHLIST_FILTERS: Array<"ALL" | WatchlistCategory> = ["ALL", "US", "A", "H"];
+const WATCHLIST_FILTERS: WatchlistCategory[] = ["US", "A", "H"];
 const WATCHLIST_VIEWS: DashboardWatchlistView[] = ["movers", "gainers", "losers", "active"];
 const DASHBOARD_SNAPSHOT_KEY = "stocks_assistant_dashboard_snapshot_v1";
 const DASHBOARD_SNAPSHOT_MAX_AGE_MS = 10_000;
@@ -193,8 +193,7 @@ function categoryLabel(category: WatchlistCategory, language: AppLanguage) {
   return language === "en" ? "HK" : "港股";
 }
 
-function watchlistFilterLabel(filter: "ALL" | WatchlistCategory, language: AppLanguage) {
-  if (filter === "ALL") return language === "en" ? "All" : "全部";
+function watchlistFilterLabel(filter: WatchlistCategory, language: AppLanguage) {
   return categoryLabel(filter, language);
 }
 
@@ -834,12 +833,12 @@ function WatchlistMovers({
   const copy = i18n[language].overview;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<DashboardWatchlistView>("movers");
-  const [filter, setFilter] = useState<"ALL" | WatchlistCategory>("ALL");
+  const [filter, setFilter] = useState<WatchlistCategory | null>(null);
   const [page, setPage] = useState(0);
   const [itemsPerPage, setItemsPerPage] = useState(() => (typeof window === "undefined" || window.innerWidth >= 768 ? 10 : 6));
   const rows = useMemo(() => {
     const source = module?.views?.[view] ?? [];
-    if (filter === "ALL") return source;
+    if (filter === null) return source;
     return source.filter((row) => row.category === filter);
   }, [filter, module?.views, view]);
   const pages = useMemo(() => chunkRows(rows, itemsPerPage), [itemsPerPage, rows]);
@@ -932,15 +931,13 @@ function WatchlistMovers({
                       : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                   key={item}
-                  onClick={() => setFilter(item)}
+                  onClick={() => setFilter(filter === item ? null : item)}
                   type="button"
                 >
                   {watchlistFilterLabel(item, language)}
-                  {item !== "ALL" && (
-                    <span className="ml-1 text-muted-foreground">
-                      {module?.counts_by_category?.[item] ?? 0}
-                    </span>
-                  )}
+                  <span className="ml-1 text-muted-foreground">
+                    {module?.counts_by_category?.[item] ?? 0}
+                  </span>
                 </button>
               ))}
             </div>
