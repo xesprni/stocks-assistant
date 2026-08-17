@@ -315,6 +315,134 @@ export interface ChatStreamEvent {
   data?: Record<string, unknown>;
 }
 
+export interface ThesisPayload {
+  business_model: string;
+  key_drivers: string[];
+  kpis: Array<Record<string, unknown>>;
+  bull_case: string;
+  base_case: string;
+  bear_case: string;
+  valuation_assumptions: Record<string, unknown>;
+  expected_range: Record<string, unknown>;
+  catalysts: string[];
+  risks: string[];
+  invalidation_conditions: string[];
+  confidence: number;
+  time_horizon: string;
+  next_review_at?: string | null;
+}
+
+export interface ThesisSnapshot {
+  id: string;
+  symbol: string;
+  version: number;
+  payload: ThesisPayload;
+  change_summary: Record<string, unknown>;
+  reason: string;
+  source_ids: string[];
+  created_at: string;
+}
+
+export interface ResearchDecision {
+  id: string;
+  symbol: string;
+  action: string;
+  rationale: string;
+  evidence_ids: string[];
+  thesis_snapshot_id?: string | null;
+  outcome: string;
+  created_at: string;
+  reviewed_at?: string | null;
+}
+
+export interface ResearchEvidence {
+  id: string;
+  symbol: string;
+  source_id: string;
+  source: SourceReference;
+  relation: "supports" | "weakens" | "neutral" | string;
+  note: string;
+  created_at: string;
+}
+
+export interface ResearchDocumentVersion {
+  id: string;
+  document_id: string;
+  version: number;
+  published_at?: string | null;
+  content_hash: string;
+  content?: string | null;
+  locator: { total_lines?: number; pages?: Array<{ page: number; start_line: number; end_line: number }> };
+  change_summary: { previous_version_id?: string | null; added_lines?: number; removed_lines?: number; diff?: string[] };
+  fetched_at: string;
+  created_at: string;
+}
+
+export interface ResearchDocument {
+  id: string;
+  symbol: string;
+  title: string;
+  document_type: "note" | "pdf" | "filing" | "transcript" | "slides" | "article";
+  source_url?: string | null;
+  latest_version: number;
+  created_at: string;
+  updated_at: string;
+  versions: ResearchDocumentVersion[];
+}
+
+export interface AlertRule {
+  id: string;
+  symbol: string;
+  name: string;
+  condition_type: "price" | "volume" | "valuation" | "kpi" | "technical" | "news" | "filing" | "keyword" | "rating" | "corporate_action" | "portfolio_risk";
+  operator: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "changed" | string;
+  threshold: unknown;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  thesis_snapshot_id?: string | null;
+  enabled: boolean;
+  channels: string[];
+  evaluation_interval_seconds: number;
+  metadata: Record<string, unknown>;
+  last_evaluated_at?: string | null;
+  next_evaluation_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertEvent {
+  id: string;
+  rule_id: string;
+  symbol: string;
+  fingerprint: string;
+  severity: AlertRule["severity"];
+  title: string;
+  explanation: string;
+  source: Record<string, unknown>;
+  portfolio_context: Record<string, unknown>;
+  thesis_context: Record<string, unknown>;
+  status: "unread" | "read" | "dismissed";
+  delivery_status: string;
+  retry_count: number;
+  last_error?: string | null;
+  occurred_at: string;
+  created_at: string;
+  read_at?: string | null;
+}
+
+export interface SecurityWorkspaceSummary {
+  symbol: string;
+  watchlisted: boolean;
+  position?: Record<string, unknown> | null;
+  latest_thesis?: ThesisSnapshot | null;
+  thesis_versions: number;
+  documents: number;
+  unread_alerts: number;
+  alert_rules: number;
+  latest_decisions: ResearchDecision[];
+  evidence_count: number;
+}
+
 export interface AgentTraceEvent {
   id: string;
   run_id: string;

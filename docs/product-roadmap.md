@@ -1,6 +1,6 @@
 # Stocks Assistant 产品路线图
 
-> 状态：Phase 0 已实现，Phase 1–2 待验证  
+> 状态：Phase 0–1 已实现，Phase 2 待验证
 > 基准日期：2026-08-17  
 > 规划周期：未来 6 个月  
 > 适用范围：产品、设计、前端、后端、数据与 Agent 能力建设
@@ -350,6 +350,7 @@ Stocks Assistant 当前的问题不是功能数量不足，而是行情、财报
 | 2026-08-17 | 优先建设 Company Workspace、证据链、Thesis OS 和组合感知提醒 | 待用户验证 |
 | 2026-08-17 | 通用筛选和回测延后，优先考虑 MCP / 外部集成 | 待用户验证 |
 | 2026-08-17 | 完成 Phase 0：证据协议、知识 RAG、配置就绪检查、研究模板、导航收敛、可靠性修复与 opt-in 本地事件 | 已实现 |
+| 2026-08-17 | 完成 Phase 1：公司工作区、Thesis/证据/决策资产、材料版本、组合感知提醒与 Daily Research Queue | 已实现 |
 
 ### Phase 0 实现清单
 
@@ -360,6 +361,16 @@ Stocks Assistant 当前的问题不是功能数量不足，而是行情、财报
 - 主导航收敛为 Today / Companies / Portfolio / Research / Alerts，工程工具归入 Developer / Admin Center。
 - Market Pulse、Scheduler 时间语义已修复；产品事件仅在用户明确开启后写入本地审计库。
 - Phase 0 验收测试位于 `tests/test_phase0_foundation.py`。
+
+### Phase 1 实现清单
+
+- 稳定路由 `/security/:symbol/:tab` 已覆盖概览、图表、财务、材料、新闻、AI 研究、Thesis、持仓和提醒；自选、持仓、新闻、Agent 来源与提醒均可直达公司上下文。
+- Thesis Snapshot 保存完整研究结构、版本差异、修改原因、来源与时间；证据支持“支持 / 削弱 / 中性”关系，决策日志支持记录当时依据与事后结果。
+- 支持文本、Markdown 与带文本层 PDF 摄取，以及 filing、transcript、slides 等材料类型；材料按内容哈希去重、保存版本与页/行定位，并写入用户知识索引供 Agent 检索。扫描 PDF 会明确提示需要 OCR，OCR 仍作为增量覆盖项。
+- Alert Inbox 覆盖价格、成交量、估值、KPI、技术、新闻、公告、关键词、评级、公司行动与组合风险；包含去重、严重度、读/忽略、失败重试、送达状态、持仓和 Thesis 解释。
+- Today 页面提供按严重度排序的 Daily Research Queue；Alerts 页面同时收纳条件提醒与原有定时任务。
+- Agent 新增只读 `get_research_context` 工具，可取得当前用户的 Thesis、证据、材料、决策、持仓与提醒上下文。
+- Phase 1 领域测试位于 `tests/test_phase1_research.py`；API 主体位于 `app/api/research.py` 与 `app/api/alerts.py`。
 
 ## 11. 竞品基线资料
 

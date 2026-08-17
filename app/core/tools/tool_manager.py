@@ -45,6 +45,7 @@ class ToolManager:
         from app.core.tools.write_file import WriteFileTool
         from app.core.tools.financial_reports import GetFinancialReportsTool
         from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
+        from app.core.tools.research_context import GetResearchContextTool
         from app.core.tools.market_data import (
             GetLongbridgeCapitalFlowTool,
             GetLongbridgeCandlesticksTool,
@@ -79,6 +80,7 @@ class ToolManager:
             GetFinancialReportsTool,
             GetSecurityNewsTool,
             GetSecurityInsightsTool,
+            GetResearchContextTool,
             GetLongbridgeRealtimeQuotesTool,
             GetLongbridgeHistoryCandlesticksTool,
             GetLongbridgeCandlesticksTool,
@@ -202,6 +204,9 @@ class ToolManager:
             return tool_class(settings=self.settings)
         if class_name in {"GetSecurityNewsTool", "GetSecurityInsightsTool"}:
             return tool_class(settings=self.settings)
+        if class_name == "GetResearchContextTool":
+            # service 在真正执行工具时才创建，避免仅生成 schema 就触碰运行时工作区。
+            return tool_class(user_id=self.user_id)
         if class_name == "WebSearchTool":
             return tool_class(
                 config={

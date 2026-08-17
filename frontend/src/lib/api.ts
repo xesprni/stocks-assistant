@@ -1,5 +1,7 @@
 import type {
   AppConfig,
+  AlertEvent,
+  AlertRule,
   AuthTokenResponse,
   AuthUser,
   CandlesticksResponse,
@@ -24,6 +26,13 @@ import type {
   DashboardResponse,
   DashboardSymbolInsightsResponse,
   DashboardWatchlistModule,
+  ResearchDecision,
+  ResearchEvidence,
+  ResearchDocument,
+  SecurityWorkspaceSummary,
+  SourceReference,
+  ThesisPayload,
+  ThesisSnapshot,
   FinancialReportKind,
   FinancialReportPeriod,
   FinancialReportsResponse,
@@ -184,8 +193,9 @@ export function addAuthExpiredListener(listener: (message: string) => void) {
 }
 
 function authHeaders(init?: RequestInit) {
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   return {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     [DEVICE_ID_HEADER]: getDeviceId(),
     ...init?.headers,
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -430,6 +440,90 @@ export function trackProductEvent(event: string, properties: Record<string, stri
     method: "POST",
     body: JSON.stringify({ event, properties }),
   });
+}
+
+export function getSecurityWorkspaceSummary(symbol: string) {
+  return request<SecurityWorkspaceSummary>(`/api/v1/research/security/${encodeURIComponent(symbol)}/summary`);
+}
+
+export function listThesisSnapshots(symbol: string) {
+  return request<ThesisSnapshot[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`);
+}
+
+export function createThesisSnapshot(symbol: string, payload: { payload: ThesisPayload; reason: string; source_ids?: string[] }) {
+  return request<ThesisSnapshot>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function listResearchDecisions(symbol: string) {
+  return request<ResearchDecision[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`);
+}
+
+export function createResearchDecision(symbol: string, payload: { action: string; rationale: string; evidence_ids?: string[]; thesis_snapshot_id?: string | null }) {
+  return request<ResearchDecision>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function listResearchEvidence(symbol: string) {
+  return request<ResearchEvidence[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`);
+}
+
+export function saveResearchEvidence(symbol: string, payload: { source_id: string; source: SourceReference; relation?: "supports" | "weakens" | "neutral"; note?: string }) {
+  return request<ResearchEvidence>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateResearchDecision(decisionId: string, outcome: string) {
+  return request<ResearchDecision>(`/api/v1/research/decisions/${encodeURIComponent(decisionId)}`, { method: "PATCH", body: JSON.stringify({ outcome }) });
+}
+
+export function listResearchDocuments(symbol: string) {
+  return request<ResearchDocument[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents`);
+}
+
+export function getResearchDocument(documentId: string) {
+  return request<ResearchDocument>(`/api/v1/research/documents/${encodeURIComponent(documentId)}`);
+}
+
+export function createResearchDocument(symbol: string, payload: Record<string, unknown>) {
+  return request<ResearchDocument>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function uploadResearchDocument(symbol: string, form: FormData) {
+  return request<ResearchDocument>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents/upload`, { method: "POST", body: form });
+}
+
+export function listAlertRules(symbol?: string) {
+  return request<AlertRule[]>(`/api/v1/alerts/rules${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`);
+}
+
+export function createAlertRule(payload: Record<string, unknown>) {
+  return request<AlertRule>("/api/v1/alerts/rules", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateAlertRule(ruleId: string, payload: Record<string, unknown>) {
+  return request<AlertRule>(`/api/v1/alerts/rules/${encodeURIComponent(ruleId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function deleteAlertRule(ruleId: string) {
+  return request<{ status: string }>(`/api/v1/alerts/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+}
+
+export function evaluateLiveAlerts() {
+  return request<{ checked: number; created: number; events: AlertEvent[]; errors: Array<Record<string, unknown>> }>("/api/v1/alerts/evaluate-live", { method: "POST" });
+}
+
+export function listAlertEvents(symbol?: string, status?: string, limit?: number) {
+  const params = new URLSearchParams();
+  if (symbol) params.set("symbol", symbol);
+  if (status) params.set("status", status);
+  if (limit) params.set("limit", String(limit));
+  return request<AlertEvent[]>(`/api/v1/alerts/events${params.size ? `?${params.toString()}` : ""}`);
+}
+
+export function setAlertEventStatus(eventId: string, status: AlertEvent["status"]) {
+  return request<AlertEvent>(`/api/v1/alerts/events/${encodeURIComponent(eventId)}/status?status=${encodeURIComponent(status)}`, { method: "PATCH" });
+}
+
+export function retryAlertDelivery(eventId: string) {
+  return request<AlertEvent>(`/api/v1/alerts/events/${encodeURIComponent(eventId)}/retry`, { method: "POST" });
 }
 
 export function sendTelegramTestMessage(payload: { message: string }) {

@@ -6,7 +6,7 @@ import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getGuardianArticle, getGuardianFeed, getSecurityNews, listWatchlist, translateGuardianArticle } from "@/lib/api";
+import { getGuardianArticle, getGuardianFeed, getSecurityNews, listWatchlist, saveResearchEvidence, translateGuardianArticle } from "@/lib/api";
 import { i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { readStoredText, readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
@@ -545,7 +545,7 @@ export function NewsPage({ initialSymbol, language }: { initialSymbol?: string; 
               Guardian
             </Button>
           </div>
-          {newsMode === "security" && responseSymbol ? <Badge variant="outline">{responseSymbol}</Badge> : null}
+          {newsMode === "security" && responseSymbol ? <><Badge variant="outline">{responseSymbol}</Badge><Button asChild size="sm" variant="outline"><a href={`/security/${encodeURIComponent(responseSymbol)}/news`}>{language === "en" ? "Company workspace" : "公司工作区"}<ExternalLink /></a></Button></> : null}
           {newsMode === "guardian" && guardianFeedUrl ? <Badge variant="outline">RSS</Badge> : null}
           {(newsMode === "security" && isLoadingNews) || (newsMode === "guardian" && isLoadingGuardianFeed) ? (
             <Badge variant="muted" className="gap-1.5">
@@ -951,7 +951,7 @@ function SecurityNewsList({
         {news.length > 0 ? (
           <div className="grid gap-3 xl:grid-cols-2">
             {news.map((item) => (
-              <NewsCard item={item} key={item.id || item.url || item.title} language={language} />
+              <NewsCard item={item} key={item.id || item.url || item.title} language={language} symbol={responseSymbol || selectedSymbol} />
             ))}
           </div>
         ) : null}
@@ -1023,8 +1023,18 @@ function EmptyState({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-function NewsCard({ item, language }: { item: SecurityNewsItem; language: AppLanguage }) {
+function NewsCard({ item, language, symbol }: { item: SecurityNewsItem; language: AppLanguage; symbol: string }) {
   const copy = i18n[language].newsPage;
+  const [saved, setSaved] = useState(false);
+  async function saveEvidence() {
+    const sourceId = String(item.id || item.url || `${symbol}:${item.title}`);
+    await saveResearchEvidence(symbol, {
+      source_id: sourceId,
+      relation: "neutral",
+      source: { id: sourceId, source_type: "news", provider: "Longbridge OpenAPI", title: item.title, url: item.url, published_at: item.published_at, fetched_at: new Date().toISOString(), stale: false, symbol },
+    });
+    setSaved(true);
+  }
   return (
     <article className="finance-row-card rounded-md border border-border/80 bg-card/80 p-3 transition-colors hover:border-primary/45">
       <div className="flex min-h-0 flex-col gap-3">
@@ -1038,7 +1048,7 @@ function NewsCard({ item, language }: { item: SecurityNewsItem; language: AppLan
           <Metric icon={<MessageCircle />} label={copy.comments} value={item.comments_count} />
           <Metric icon={<Share2 />} label={copy.shares} value={item.shares_count} />
         </div>
-        {item.url ? <SourceLink href={item.url} label={copy.openSource} /> : null}
+        <div className="flex flex-wrap gap-2">{item.url ? <SourceLink href={item.url} label={copy.openSource} /> : null}<Button disabled={saved || !symbol} onClick={() => void saveEvidence()} size="sm" variant="outline">{saved ? (language === "en" ? "Saved" : "已保存") : (language === "en" ? "Save evidence" : "保存证据")}</Button></div>
       </div>
     </article>
   );

@@ -61,6 +61,7 @@ import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
 import { CHAT_AUTO_SCROLL_THRESHOLD, useConversations } from "@/hooks/useConversations";
 import type { AppLanguage } from "@/lib/i18n";
 import type { ConfigTab } from "@/pages/ConfigPage";
+import type { CompanyTab } from "@/pages/CompanyWorkspacePage";
 import type { EffectiveTheme, Page, Theme } from "@/types/ui";
 import type {
   AppConfig,
@@ -76,13 +77,14 @@ const ChatPage = lazy(() => import("@/pages/ChatPage").then((module) => ({ defau
 const AuthPage = lazy(() => import("@/pages/AuthPage").then((module) => ({ default: module.AuthPage })));
 const ConfigPage = lazy(() => import("@/pages/ConfigPage").then((module) => ({ default: module.ConfigPage })));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+const CompanyWorkspacePage = lazy(() => import("@/pages/CompanyWorkspacePage").then((module) => ({ default: module.CompanyWorkspacePage })));
+const AlertsPage = lazy(() => import("@/pages/AlertsPage").then((module) => ({ default: module.AlertsPage })));
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
 const MCPPage = lazy(() => import("@/pages/MCPPage").then((module) => ({ default: module.MCPPage })));
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((module) => ({ default: module.MemoryPage })));
 const NewsPage = lazy(() => import("@/pages/NewsPage").then((module) => ({ default: module.NewsPage })));
 const PortfolioPage = lazy(() => import("@/components/PortfolioPage").then((module) => ({ default: module.PortfolioPage })));
-const SchedulerPage = lazy(() => import("@/pages/SchedulerPage").then((module) => ({ default: module.SchedulerPage })));
 const SecurityPage = lazy(() => import("@/pages/SecurityPage").then((module) => ({ default: module.SecurityPage })));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })));
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
@@ -97,6 +99,7 @@ const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
 
 const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   overview: "config:read",
+  company: "knowledge:read",
   tracing: "tracing:read",
   security: "config:read",
   watchlist: "watchlist:read",
@@ -115,8 +118,9 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
 
 const PAGE_PATH: Record<Page, string> = {
   overview: "/dashboard",
+  company: "/security",
   tracing: "/tracing",
-  security: "/security",
+  security: "/admin/security",
   watchlist: "/watchlist",
   portfolio: "/portfolio",
   news: "/news",
@@ -127,7 +131,7 @@ const PAGE_PATH: Record<Page, string> = {
   mcp: "/mcp",
   memory: "/memory",
   knowledge: "/knowledge",
-  scheduler: "/scheduler",
+  scheduler: "/alerts",
   users: "/users",
 };
 
@@ -140,6 +144,7 @@ const PATH_PAGE = new Map<string, Page>([
   ["/market", "overview"],
   ["/market/config", "config"],
   ["/overview", "overview"],
+  ["/scheduler", "scheduler"],
 ]);
 
 const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string[]>> = {
@@ -337,11 +342,27 @@ function normalizeRoutePath(pathname: string) {
 }
 
 function pageFromPath(pathname: string): Page {
+  if (companyRouteFromPath(pathname)) return "company";
   return PATH_PAGE.get(normalizeRoutePath(pathname)) ?? "overview";
 }
 
 function pathForPage(page: Page) {
   return PAGE_PATH[page] ?? PAGE_PATH.overview;
+}
+
+const COMPANY_TABS = new Set<CompanyTab>(["overview", "chart", "financials", "documents", "news", "ai-research", "thesis", "position", "alerts"]);
+
+function companyRouteFromPath(pathname: string): { symbol: string; tab: CompanyTab } | null {
+  const match = normalizeRoutePath(pathname).match(/^\/security\/([^/]+)(?:\/([^/]+))?$/);
+  if (!match) return null;
+  const symbol = decodeURIComponent(match[1]).trim().toUpperCase();
+  const tabValue = decodeURIComponent(match[2] || "overview") as CompanyTab;
+  if (!symbol || !COMPANY_TABS.has(tabValue)) return null;
+  return { symbol, tab: tabValue };
+}
+
+function pathForCompany(route: { symbol: string; tab: CompanyTab }) {
+  return `/security/${encodeURIComponent(route.symbol)}/${route.tab}`;
 }
 
 function configTabFromPath(pathname: string): ConfigTab | undefined {
@@ -487,6 +508,7 @@ function ConsoleApp() {
   const auth = useAuth();
   const { showToast } = useToast();
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
+  const [companyRoute, setCompanyRoute] = useState(() => companyRouteFromPath(window.location.pathname) ?? { symbol: "AAPL.US", tab: "overview" as CompanyTab });
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = readStoredValue("stocks-assistant-theme", ["system", "dark", "light"], "system");
@@ -544,6 +566,8 @@ function ConsoleApp() {
 
   useEffect(() => {
     const handlePopState = () => {
+      const nextCompanyRoute = companyRouteFromPath(window.location.pathname);
+      if (nextCompanyRoute) setCompanyRoute(nextCompanyRoute);
       const nextTab = configTabFromPath(window.location.pathname);
       if (nextTab) setConfigInitialTab(nextTab);
       setPage(pageFromPath(window.location.pathname));
@@ -557,13 +581,13 @@ function ConsoleApp() {
       routeReadyRef.current = true;
       return;
     }
-    const nextPath = pathForPage(activePage);
+    const nextPath = activePage === "company" ? pathForCompany(companyRoute) : pathForPage(activePage);
     if (normalizeRoutePath(window.location.pathname) !== nextPath) {
       const method = routeReadyRef.current && activePage === page ? "pushState" : "replaceState";
       window.history[method]({ page: activePage }, "", `${nextPath}${window.location.search}${window.location.hash}`);
     }
     routeReadyRef.current = true;
-  }, [activePage, page]);
+  }, [activePage, page, companyRoute]);
 
   useEffect(() => {
     if (!canPage(page) && firstAllowedPage) {
@@ -1301,6 +1325,14 @@ function ConsoleApp() {
     handleNavigate("config", tab);
   }
 
+  function openCompany(symbol: string, tab: CompanyTab = "overview") {
+    if (!canPage("company")) return false;
+    setCompanyRoute({ symbol: symbol.trim().toUpperCase(), tab });
+    setSelectedSymbol(symbol.trim().toUpperCase());
+    setPage("company");
+    return true;
+  }
+
   const dashboardChatPanel = (
     <ChatPage
       chatScrollRef={chatScrollRef}
@@ -1400,7 +1432,7 @@ function ConsoleApp() {
                   isMobileViewport={isMobileViewport}
                   language={language}
                   onOpenChart={(symbol) => {
-                    if (handleNavigate("watchlist")) setSelectedSymbol(symbol);
+                    openCompany(symbol, "chart");
                   }}
                   onOpenMarketConfig={() => openConfig("market")}
                   onOpenPortfolio={() => handleNavigate("portfolio")}
@@ -1417,13 +1449,29 @@ function ConsoleApp() {
               />
             ) : null}
 
+            {activePage === "company" ? (
+              <CompanyWorkspacePage
+                confirmAction={confirmDialog.confirm}
+                language={language}
+                onAskAgent={(researchPrompt) => {
+                  setPrompt(researchPrompt);
+                  handleNavigate("overview");
+                }}
+                onNavigateTab={(tab) => setCompanyRoute((current) => ({ ...current, tab }))}
+                onOpenPortfolio={() => handleNavigate("portfolio")}
+                symbol={companyRoute.symbol}
+                tab={companyRoute.tab}
+                telegramEnabled={Boolean(config?.telegram_enabled)}
+              />
+            ) : null}
+
             {activePage === "watchlist" ? (
               <WatchlistPage
                 language={language}
                 selectedSymbol={selectedSymbol}
                 onSelectedSymbolChange={setSelectedSymbol}
                 onOpenFinancials={(symbol) => {
-                  if (handleNavigate("fundamentals")) setSelectedSymbol(symbol);
+                  openCompany(symbol, "financials");
                 }}
               />
             ) : null}
@@ -1441,7 +1489,7 @@ function ConsoleApp() {
                   }
                 }}
                 onOpenFinancials={(symbol) => {
-                  if (handleNavigate("fundamentals")) setSelectedSymbol(symbol);
+                  openCompany(symbol, "financials");
                 }}
               />
             ) : null}
@@ -1464,7 +1512,7 @@ function ConsoleApp() {
 
             {activePage === "knowledge" ? <KnowledgePage language={language} /> : null}
 
-            {activePage === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
+            {activePage === "scheduler" ? <AlertsPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
 
             {activePage === "mcp" ? <MCPPage language={language} /> : null}
 

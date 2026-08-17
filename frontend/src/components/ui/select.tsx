@@ -19,13 +19,53 @@ export type SelectProps = {
   disabled?: boolean;
   id?: string;
   onValueChange: (value: string) => void;
-  options: SelectOption[];
+  options?: SelectOption[];
+  children?: React.ReactNode;
   placeholder?: string;
   value: string;
 };
 
+type SelectItemProps = { children: React.ReactNode; disabled?: boolean; value: string };
+
+function SelectItem(_props: SelectItemProps) {
+  return null;
+}
+
+function SelectContent({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
+}
+
+function SelectTrigger({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
+}
+
+function SelectValue() {
+  return null;
+}
+
+function optionsFromChildren(children: React.ReactNode): SelectOption[] {
+  const values: SelectOption[] = [];
+  function visit(node: React.ReactNode) {
+    React.Children.forEach(node, (child) => {
+      if (!React.isValidElement(child)) return;
+      if (child.type === SelectItem) {
+        const props = child.props as SelectItemProps;
+        values.push({ value: props.value, label: String(props.children), disabled: props.disabled });
+        return;
+      }
+      visit((child.props as { children?: React.ReactNode }).children);
+    });
+  }
+  visit(children);
+  return values;
+}
+
 const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
-  ({ "aria-describedby": ariaDescribedBy, "aria-invalid": ariaInvalid, "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, className, disabled, id, onValueChange, options, placeholder, value }, ref) => {
+  ({ "aria-describedby": ariaDescribedBy, "aria-invalid": ariaInvalid, "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, children, className, disabled, id, onValueChange, options: providedOptions, placeholder, value }, ref) => {
+    const options = React.useMemo(
+      () => providedOptions ?? optionsFromChildren(children),
+      [children, providedOptions],
+    );
     const [open, setOpen] = React.useState(false);
     const [present, setPresent] = React.useState(false);
     const [activeIndex, setActiveIndex] = React.useState(-1);
@@ -232,4 +272,4 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
 );
 Select.displayName = "Select";
 
-export { Select };
+export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue };

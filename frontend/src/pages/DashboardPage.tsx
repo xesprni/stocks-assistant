@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   BarChart2,
+  Bell,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -38,12 +39,14 @@ import {
   getDashboardSymbolInsights,
   getDashboardWatchlist,
   getIntraday,
+  listAlertEvents,
 } from "@/lib/api";
 import { useChartColors } from "@/lib/color-scheme";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
   CandlestickItem,
+  AlertEvent,
   DashboardMarketModule,
   DashboardModuleSource,
   DashboardPortfolioModule,
@@ -1663,6 +1666,7 @@ export function DashboardPage({
   const canWatchlist = canPermission("watchlist:read");
   const canFundamentals = canPermission("fundamentals:read");
   const canChat = canPermission("chat:read");
+  const canAlerts = canPermission("scheduler:read");
 
   const initialSnapshotRef = useRef<DashboardResponse | null | undefined>(undefined);
   if (initialSnapshotRef.current === undefined) {
@@ -1674,12 +1678,21 @@ export function DashboardPage({
   );
   const [dashboardError, setDashboardError] = useState("");
   const [selectedWatchlistSymbol, setSelectedWatchlistSymbol] = useState("");
+  const [researchQueue, setResearchQueue] = useState<AlertEvent[]>([]);
   const dashboardRef = useRef<DashboardResponse | null>(dashboard);
   const modulesAbortRef = useRef<AbortController | null>(null);
   const errorToastRef = useRef(new Map<string, { message: string; time: number }>());
   const snapshotSerializedRef = useRef("");
   const snapshotTimerRef = useRef(0);
   const [, startDashboardTransition] = useTransition();
+
+  useEffect(() => {
+    if (!canAlerts) return;
+    const priority: Record<AlertEvent["severity"], number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+    listAlertEvents(undefined, "unread", 20)
+      .then((events) => setResearchQueue(events.sort((left, right) => priority[right.severity] - priority[left.severity]).slice(0, 5)))
+      .catch(() => setResearchQueue([]));
+  }, [canAlerts]);
 
   const notifyDashboardError = useCallback((key: string, scope: DashboardModuleKey | "dashboard" | "quote", message: string) => {
     const text = message.trim();
@@ -1889,6 +1902,7 @@ export function DashboardPage({
 
   return (
     <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3">
+      {canAlerts ? <section className="rounded-lg border border-border/80 bg-card/70 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Bell className="size-4 text-primary" /><div><h2 className="text-sm font-semibold">{language === "en" ? "Daily Research Queue" : "每日研究队列"}</h2><p className="text-xs text-muted-foreground">{language === "en" ? "Unread changes ranked by severity" : "按严重度排序的待复核变化"}</p></div></div><Button asChild size="sm" variant="outline"><a href="/alerts">{language === "en" ? "Open inbox" : "打开收件箱"}</a></Button></div>{researchQueue.length ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">{researchQueue.map((event) => <a className="rounded-md border border-border/70 bg-background/55 p-2 transition hover:border-primary/45" href={`/security/${encodeURIComponent(event.symbol)}/alerts`} key={event.id}><div className="flex items-center justify-between gap-1"><Badge variant="outline">{event.severity}</Badge><span className="text-[10px] text-muted-foreground">{event.symbol}</span></div><p className="mt-2 line-clamp-2 text-xs font-medium">{event.title}</p></a>)}</div> : <p className="mt-3 text-xs text-muted-foreground">{language === "en" ? "No unread changes require review." : "目前没有需要复核的未读变化。"}</p>}</section> : null}
       <div
         className={cn(
           "dashboard-wide-grid grid min-h-0 gap-4 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:gap-5 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",

@@ -16,7 +16,7 @@ import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getFinancialReports, listWatchlist } from "@/lib/api";
+import { getFinancialReports, listWatchlist, saveResearchEvidence } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
   FinancialReportKind,
@@ -57,6 +57,8 @@ const financialReportsCopy = {
     reportPeriod: "报告期间",
     rows: "科目",
     source: "来源",
+    saveEvidence: "保存为证据",
+    evidenceSaved: "证据已保存",
     searchRows: "搜索科目",
     periods: "{count} 期",
     empty: "暂无财报数据",
@@ -88,6 +90,8 @@ const financialReportsCopy = {
     reportPeriod: "Report period",
     rows: "Rows",
     source: "Source",
+    saveEvidence: "Save evidence",
+    evidenceSaved: "Evidence saved",
     searchRows: "Search line items",
     periods: "{count} periods",
     empty: "No financial data",
@@ -430,6 +434,7 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
   const [isLoadingWatchlist, setIsLoadingWatchlist] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [evidenceSaved, setEvidenceSaved] = useState(false);
   const [error, setError] = useState("");
   useErrorToast(error, copy.title);
 
@@ -461,6 +466,7 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
     const normalized = nextSymbol.trim().toUpperCase();
     if (!normalized) return;
     setIsLoading(true);
+    setEvidenceSaved(false);
     setError("");
     try {
       const result = await getFinancialReports(normalized, kind, period);
@@ -477,6 +483,23 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function saveCurrentReportEvidence() {
+    if (!data?.symbol) return;
+    const reportPeriods = data.statements.flatMap((statement) => statement.columns).sort();
+    const latestPeriod = reportPeriods[reportPeriods.length - 1] || period || "latest";
+    const sourceId = `financial:${data.symbol}:${kind}:${latestPeriod}`;
+    await saveResearchEvidence(data.symbol, {
+      source_id: sourceId,
+      relation: "neutral",
+      source: {
+        id: sourceId, source_type: "financial_report", provider: "Longbridge OpenAPI",
+        title: `${data.symbol} ${kind} ${latestPeriod}`, fetched_at: new Date().toISOString(), stale: false,
+        symbol: data.symbol, locator: `${data.statements.length} statements / ${totalRows} rows`,
+      },
+    });
+    setEvidenceSaved(true);
   }
 
   useEffect(() => {
@@ -562,6 +585,7 @@ export function FinancialReportsPage({ initialSymbol, language }: FinancialRepor
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {copy.refresh}
           </Button>
+          <Button disabled={!data?.symbol || evidenceSaved} onClick={() => void saveCurrentReportEvidence()} type="button" variant="outline">{evidenceSaved ? copy.evidenceSaved : copy.saveEvidence}</Button>
         </form>
       </div>
 

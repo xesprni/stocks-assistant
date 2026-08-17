@@ -1,5 +1,6 @@
 export type Page =
   | "overview"
+  | "company"
   | "tracing"
   | "security"
   | "watchlist"

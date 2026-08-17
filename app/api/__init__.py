@@ -38,6 +38,9 @@ from app.api.tracing import router as tracing_router
 from app.api.users import router as users_router
 from app.api.roles import router as roles_router
 from app.api.telemetry import router as telemetry_router
+from app.api.research import router as research_router
+from app.api.alerts import router as alerts_router
+from app.api.labs import router as labs_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -60,3 +63,6 @@ router.include_router(tracing_router, prefix="/tracing", tags=["tracing"])
 router.include_router(users_router, prefix="/users", tags=["users"])
 router.include_router(roles_router, prefix="/roles", tags=["roles"])
 router.include_router(telemetry_router, prefix="/telemetry", tags=["telemetry"])
+router.include_router(research_router, prefix="/research", tags=["research"])
+router.include_router(alerts_router, prefix="/alerts", tags=["alerts"])
+router.include_router(labs_router, prefix="/labs", tags=["labs"])

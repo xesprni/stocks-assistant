@@ -342,7 +342,22 @@ def get_scheduler_service():
 
         return result
 
-    service = SchedulerService(task_store=store, run_store=run_store, execute_callback=execute_callback)
+    def evaluate_alerts_callback():
+        from app.core.research.evaluator import evaluate_due_alerts
+
+        return evaluate_due_alerts(
+            get_research_service(),
+            market_service=get_market_service(),
+            fundamental_service=get_fundamental_service(),
+            news_service=get_news_service(),
+        )
+
+    service = SchedulerService(
+        task_store=store,
+        run_store=run_store,
+        execute_callback=execute_callback,
+        alert_callback=evaluate_alerts_callback,
+    )
     return service
 
 
@@ -489,6 +504,34 @@ def get_news_service():
     from app.core.news import NewsService
 
     return NewsService()
+
+
+@lru_cache
+def get_research_service():
+    """获取 Thesis、材料版本和提醒收件箱的本地研究域服务。"""
+    from app.core.research import ResearchService
+
+    settings = get_settings()
+    return ResearchService(
+        workspace_dir=settings.workspace_dir,
+        portfolio_service=get_portfolio_service(),
+        watchlist_service=get_watchlist_service(),
+    )
+
+
+@lru_cache
+def get_investment_lab_service():
+    """获取组合、估值/同业及大中华市场实验室服务。"""
+    from app.core.labs import InvestmentLabService
+
+    settings = get_settings()
+    return InvestmentLabService(
+        workspace_dir=settings.workspace_dir,
+        portfolio_service=get_portfolio_service(),
+        market_service=get_market_service(),
+        fundamental_service=get_fundamental_service(),
+        research_service=get_research_service(),
+    )
 
 
 @lru_cache

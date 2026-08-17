@@ -28,6 +28,7 @@ import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
+import { saveResearchEvidence } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ import type { ChatHistoryState } from "@/hooks/useConversations";
 import type { ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
 
 function ChatSources({ message, language }: { message: ChatMessage; language: AppLanguage }) {
+  const [saved, setSaved] = useState<Set<string>>(() => new Set());
   if (!message.sources?.length) return null;
   return (
     <div className="not-prose mt-3 border-t border-border/60 pt-2.5">
@@ -52,13 +54,29 @@ function ChatSources({ message, language }: { message: ChatMessage; language: Ap
             </>
           );
           const className = "inline-flex min-h-7 items-center gap-1 rounded-md border border-border/75 bg-background/70 px-2 py-1 text-[11px] text-foreground transition-colors hover:border-primary/45 hover:bg-primary/5";
-          return source.url ? (
-            <a className={className} href={source.url} key={source.id} rel="noreferrer" target="_blank" title={`${source.provider} · ${source.as_of || source.fetched_at}`}>
-              {content}
-            </a>
-          ) : (
-            <span className={className} key={source.id} title={`${source.provider} · ${source.as_of || source.fetched_at}`}>
-              {content}
+          const symbol = source.symbol?.split(",")[0]?.trim();
+          return (
+            <span className="inline-flex items-center gap-1" key={source.id}>
+              {source.url ? (
+                <a className={className} href={source.url} rel="noreferrer" target="_blank" title={`${source.provider} · ${source.as_of || source.fetched_at}`}>{content}</a>
+              ) : (
+                <span className={className} title={`${source.provider} · ${source.as_of || source.fetched_at}`}>{content}</span>
+              )}
+              {symbol ? (
+                <>
+                  <Button
+                    className="h-7 px-2 text-[11px]"
+                    disabled={saved.has(source.id)}
+                    onClick={() => void saveResearchEvidence(symbol, { source_id: source.id, source, relation: "neutral" }).then(() => setSaved((current) => new Set(current).add(source.id)))}
+                    size="sm"
+                    title={language === "en" ? `Save as ${symbol} evidence` : `保存为 ${symbol} 证据`}
+                    variant="ghost"
+                  >
+                    {saved.has(source.id) ? <Check /> : <Plus />}{language === "en" ? "Evidence" : "证据"}
+                  </Button>
+                  <Button asChild className="h-7 px-2 text-[11px]" size="sm" variant="ghost"><a href={`/security/${encodeURIComponent(symbol)}/thesis`}>Thesis</a></Button>
+                </>
+              ) : null}
             </span>
           );
         })}

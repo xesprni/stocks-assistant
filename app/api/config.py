@@ -276,6 +276,14 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
         deps.get_embedding_provider.cache_clear()
     if tool_keys & patch.keys():
         deps.get_tool_manager.cache_clear()
+        try:
+            deps.get_research_service.cache_clear()
+        except Exception:
+            pass
+        try:
+            deps.get_investment_lab_service.cache_clear()
+        except Exception:
+            pass
     if skill_keys & patch.keys():
         deps.get_skill_manager.cache_clear()
     if longbridge_keys & patch.keys():
