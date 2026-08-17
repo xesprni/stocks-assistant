@@ -208,10 +208,22 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
     return session["id"], history_messages
 
 
-def _persist_exchange(session_id: str, user_message: str, assistant_response: str, was_empty: bool) -> tuple[str, str]:
+def _persist_exchange(
+    session_id: str,
+    user_message: str,
+    assistant_response: str,
+    was_empty: bool,
+    *,
+    sources: Optional[list[dict]] = None,
+) -> tuple[str, str]:
     store = get_session_store()
     user_msg = store.append_message(session_id, "user", user_message)
-    assistant_msg = store.append_message(session_id, "assistant", assistant_response)
+    assistant_msg = store.append_message(
+        session_id,
+        "assistant",
+        assistant_response,
+        {"sources": sources or []},
+    )
     if was_empty:
         store.update_title(session_id, _title_from_text(user_message))
     return user_msg["id"], assistant_msg["id"]
@@ -279,7 +291,13 @@ async def chat(request: ChatRequest, current_user: CurrentUser = Depends(require
             skill_filter=request.skill_filter,
             thinking_enabled=request.thinking_enabled,
         )
-        user_message_id, message_id = _persist_exchange(session_id, request.message, response, was_empty=len(history_messages) == 0)
+        user_message_id, message_id = _persist_exchange(
+            session_id,
+            request.message,
+            response,
+            was_empty=len(history_messages) == 0,
+            sources=agent.last_sources,
+        )
         _finish_trace(
             recorder,
             status="done",
@@ -295,7 +313,12 @@ async def chat(request: ChatRequest, current_user: CurrentUser = Depends(require
             assistant_message_id=message_id,
             user_id=current_user.id,
         )
-        return ChatResponse(response=response, session_id=session_id, message_id=message_id)
+        return ChatResponse(
+            response=response,
+            session_id=session_id,
+            message_id=message_id,
+            sources=agent.last_sources,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -359,7 +382,13 @@ async def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(
                     cancel_event=cancel_event,
                     thinking_enabled=request.thinking_enabled,
                 )
-                user_message_id, message_id = _persist_exchange(session_id, request.message, response, was_empty=len(history_messages) == 0)
+                user_message_id, message_id = _persist_exchange(
+                    session_id,
+                    request.message,
+                    response,
+                    was_empty=len(history_messages) == 0,
+                    sources=agent.last_sources,
+                )
                 _finish_trace(
                     recorder,
                     status="done",
@@ -382,6 +411,7 @@ async def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(
                         "final_response": response,
                         "session_id": session_id,
                         "message_id": message_id,
+                        "sources": agent.last_sources,
                     },
                 })
             except Exception as e:

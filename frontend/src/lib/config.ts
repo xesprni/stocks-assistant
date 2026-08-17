@@ -28,6 +28,8 @@ export function toDraft(config: AppConfig): ConfigDraft {
     longbridge_http_url: config.longbridge_http_url ?? "",
     longbridge_quote_ws_url: config.longbridge_quote_ws_url ?? "",
     guardian_api_key: "",
+    search_api_url: config.search_api_url ?? "https://api.bocha.cn/v1/web-search",
+    search_api_key: "",
     agent_tool_allowlist: config.agent_tool_allowlist ?? [],
     agent_allow_all_mcp_tools: config.agent_allow_all_mcp_tools ?? true,
     mcp_servers_text: JSON.stringify(config.mcp_servers ?? {}, null, 2),

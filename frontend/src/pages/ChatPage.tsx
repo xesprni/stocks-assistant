@@ -9,6 +9,7 @@ import {
   Check,
   CircleDot,
   Copy,
+  ExternalLink,
   History,
   Loader2,
   Maximize2,
@@ -32,6 +33,39 @@ import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { ChatHistoryState } from "@/hooks/useConversations";
 import type { ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
+
+function ChatSources({ message, language }: { message: ChatMessage; language: AppLanguage }) {
+  if (!message.sources?.length) return null;
+  return (
+    <div className="not-prose mt-3 border-t border-border/60 pt-2.5">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {language === "en" ? "Sources" : "来源"}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {message.sources.map((source) => {
+          const content = (
+            <>
+              <span className="max-w-[260px] truncate">{source.title}</span>
+              {source.locator ? <span className="text-muted-foreground">· {source.locator}</span> : null}
+              {source.stale ? <span className="text-amber-600 dark:text-amber-300">STALE</span> : null}
+              {source.url ? <ExternalLink className="size-3" /> : null}
+            </>
+          );
+          const className = "inline-flex min-h-7 items-center gap-1 rounded-md border border-border/75 bg-background/70 px-2 py-1 text-[11px] text-foreground transition-colors hover:border-primary/45 hover:bg-primary/5";
+          return source.url ? (
+            <a className={className} href={source.url} key={source.id} rel="noreferrer" target="_blank" title={`${source.provider} · ${source.as_of || source.fetched_at}`}>
+              {content}
+            </a>
+          ) : (
+            <span className={className} key={source.id} title={`${source.provider} · ${source.as_of || source.fetched_at}`}>
+              {content}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function CopyButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
@@ -524,6 +558,13 @@ export function ChatPage({
           </code>
         );
       },
+      a({ href, children }) {
+        return (
+          <a href={href} rel="noreferrer" target="_blank">
+            {children}
+          </a>
+        );
+      },
     }),
     [language],
   );
@@ -967,6 +1008,7 @@ export function ChatPage({
                       )}
                     </div>
                   )}
+                  {message.role === "assistant" && !message.pending ? <ChatSources language={language} message={message} /> : null}
                   <div
                     className={cn(
                       "mt-2 flex items-center gap-1.5",

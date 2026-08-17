@@ -170,6 +170,16 @@ class WatchlistService:
         payload["created_at"] = now
         return self.repository.add_item(payload)
 
+    def seed_sample_items(self, user_id: str) -> list[dict[str, Any]]:
+        """仅为空自选创建可删除的示例，避免污染用户已有研究列表。"""
+        if self.list_items(user_id=user_id):
+            return []
+        samples = [
+            WatchlistItemCreate(category="US", symbol="AAPL.US", name="Apple", currency="USD", note="[Sample] Company deep dive"),
+            WatchlistItemCreate(category="H", symbol="700.HK", name="Tencent", currency="HKD", note="[Sample] Earnings review"),
+        ]
+        return [self.add_item(item, user_id=user_id) for item in samples]
+
     def delete_item(self, item_id: int, user_id: Optional[str] = None) -> None:
         if not self.repository.delete_item(item_id, user_id=user_id):
             raise KeyError(item_id)

@@ -17,6 +17,20 @@ export interface ChatTraceEvent {
   createdAt: string;
 }
 
+export interface SourceReference {
+  id: string;
+  source_type: string;
+  provider: string;
+  title: string;
+  url?: string | null;
+  published_at?: string | null;
+  as_of?: string | null;
+  fetched_at: string;
+  stale: boolean;
+  symbol?: string | null;
+  locator?: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -25,6 +39,7 @@ export interface ChatMessage {
   pending?: boolean;
   status?: string;
   trace?: ChatTraceEvent[];
+  sources?: SourceReference[];
 }
 
 export interface SubAgentRoleConfig {
@@ -206,6 +221,7 @@ export interface AppConfig {
   memory_curator_min_confidence: number;
   scheduler_enabled: boolean;
   tracing_enabled: boolean;
+  product_analytics_enabled: boolean;
   debug: boolean;
   telegram_enabled: boolean;
   telegram_bot_token_masked?: string;
@@ -226,6 +242,9 @@ export interface AppConfig {
   longbridge_quote_ws_url?: string;
   guardian_api_key_masked?: string;
   has_guardian_api_key?: boolean;
+  search_api_url?: string;
+  search_api_key_masked?: string;
+  has_search_api_key?: boolean;
   personal_config_keys?: string[];
 }
 
@@ -237,7 +256,34 @@ export interface ConfigDraft extends AppConfig {
   longbridge_app_secret: string;
   longbridge_access_token: string;
   guardian_api_key: string;
+  search_api_key: string;
   mcp_servers_text: string;
+}
+
+export interface ConnectionCheck {
+  component: "llm" | "embedding" | "longbridge" | "telegram" | string;
+  status: "ready" | "missing" | "optional" | "error" | string;
+  configured: boolean;
+  detail: string;
+  depends_on: string[];
+}
+
+export interface ConfigReadinessResponse {
+  ready: boolean;
+  checks: ConnectionCheck[];
+}
+
+export interface DemoDataResponse {
+  watchlist_created: number;
+  portfolio_created: number;
+  detail: string;
+}
+
+export interface ConnectionTestResponse {
+  component: string;
+  ok: boolean;
+  detail: string;
+  checked_at: string;
 }
 
 export interface ToolInfo {
@@ -260,6 +306,7 @@ export interface ChatResponse {
   message_id?: string | null;
   tool_calls: number;
   steps: number;
+  sources: SourceReference[];
 }
 
 export interface ChatStreamEvent {

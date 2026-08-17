@@ -73,7 +73,9 @@ class SchedulerService:
 
     async def _execute_task(self, task: dict, now: datetime, trigger: str, update_schedule: bool) -> dict:
         task_id = task["id"]
-        started = datetime.now()
+        # 使用调用方注入的运行时间作为业务时间；另用墙钟差计算耗时，保证补跑和测试可复现。
+        started = now
+        wall_started = datetime.now()
         result: Optional[str] = None
         error: Optional[str] = None
         task_for_execution = self._with_execution_context(task, trigger=trigger, due_at=now, started_at=started)
@@ -83,7 +85,7 @@ class SchedulerService:
         except Exception as exc:
             error = str(exc)
             logger.error(f"Scheduled task failed {task_id}: {exc}")
-        ended = datetime.now()
+        ended = started + (datetime.now() - wall_started)
         record = self._record_run(task, trigger, started, ended, result, error)
         self._complete_task(task, now, error=error, update_schedule=update_schedule)
         return record

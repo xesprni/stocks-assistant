@@ -12,6 +12,9 @@ import type {
   ChatSessionMessage,
   ChatSessionSummary,
   ChatStreamEvent,
+  ConfigReadinessResponse,
+  DemoDataResponse,
+  ConnectionTestResponse,
   ClawHubInstallResponse,
   ClawHubSearchResponse,
   ClawHubSkillDetail,
@@ -408,6 +411,27 @@ export function saveConfig(payload: Record<string, unknown>) {
   });
 }
 
+export function getConfigReadiness() {
+  return request<ConfigReadinessResponse>("/api/v1/config/readiness");
+}
+
+export function testConfigConnection(component: "llm" | "embedding" | "longbridge") {
+  return request<ConnectionTestResponse>(`/api/v1/config/connections/${encodeURIComponent(component)}/test`, {
+    method: "POST",
+  });
+}
+
+export function seedDemoData() {
+  return request<DemoDataResponse>("/api/v1/config/demo-data", { method: "POST" });
+}
+
+export function trackProductEvent(event: string, properties: Record<string, string | number | boolean | null> = {}) {
+  return request<{ accepted: boolean }>("/api/v1/telemetry/events", {
+    method: "POST",
+    body: JSON.stringify({ event, properties }),
+  });
+}
+
 export function sendTelegramTestMessage(payload: { message: string }) {
   return request<TelegramTestResponse>("/api/v1/config/telegram/test", {
     method: "POST",
@@ -426,11 +450,15 @@ function formatChatTime(iso: string) {
 }
 
 function mapChatMessage(message: ChatSessionMessage): ChatMessage {
+  const sources = Array.isArray(message.metadata?.sources)
+    ? message.metadata.sources.filter((item): item is NonNullable<ChatMessage["sources"]>[number] => Boolean(item && typeof item === "object" && "id" in item))
+    : undefined;
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     createdAt: formatChatTime(message.created_at),
+    sources,
   };
 }
 

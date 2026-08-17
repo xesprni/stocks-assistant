@@ -57,6 +57,8 @@ class Agent:
         self.active_skill_filter = None  # 当前请求允许读取的技能集合
         self.multi_agent_depth = multi_agent_depth  # 多 Agent 委派深度
         self.settings = settings  # 当前请求/用户的有效配置
+        self.last_evidence: List[Dict[str, Any]] = []
+        self.last_sources: List[Dict[str, Any]] = []
 
         # 技能管理器（从 Markdown 文件加载技能定义）
         self.skill_manager = None
@@ -144,6 +146,15 @@ Available sub-agent roles:
         multi_agent_prompt = self.get_multi_agent_prompt()
         if multi_agent_prompt:
             parts.append(multi_agent_prompt)
+        parts.append("""<evidence_and_citation_policy>
+When tool results include evidence or sources metadata:
+- treat source, publication time, as-of time, fetch time, and stale state as part of the claim;
+- cite external web sources with descriptive Markdown links placed immediately after the supported claim;
+- cite user knowledge with its file name and exact line range;
+- never invent a URL, timestamp, locator, or source that the tool did not return;
+- clearly separate verified facts/data from inference and opinion;
+- if a material claim cannot be verified, label it as unverified instead of presenting it as fact.
+</evidence_and_citation_policy>""")
         skills_prompt = self.get_skills_prompt(skill_filter=skill_filter)
         if skills_prompt:
             parts.append(skills_prompt)
@@ -329,6 +340,8 @@ Available sub-agent roles:
             self._last_run_new_messages = list(executor.messages[trim_adjusted_start:])
 
         self.stream_executor = executor
+        self.last_evidence = list(executor.evidence)
+        self.last_sources = list(executor.sources)
         return response
 
     def clear_history(self):

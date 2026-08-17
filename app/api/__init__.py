@@ -37,6 +37,7 @@ from app.api.mcp import router as mcp_router
 from app.api.tracing import router as tracing_router
 from app.api.users import router as users_router
 from app.api.roles import router as roles_router
+from app.api.telemetry import router as telemetry_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -58,3 +59,4 @@ router.include_router(mcp_router, prefix="/mcp", tags=["mcp"])
 router.include_router(tracing_router, prefix="/tracing", tags=["tracing"])
 router.include_router(users_router, prefix="/users", tags=["users"])
 router.include_router(roles_router, prefix="/roles", tags=["roles"])
+router.include_router(telemetry_router, prefix="/telemetry", tags=["telemetry"])

@@ -116,54 +116,11 @@ npm install
 
 ### 配置
 
-复制配置文件并填写 API 密钥：
+业务配置统一保存在应用级 SQLite 中。首次启动后完成管理员初始化，再到 **Settings / 设置** 页面配置模型、Embedding、Longbridge、网页搜索和通知渠道；页面顶部会显示依赖状态，并提供只读连接测试。修改后点击 **Save / 保存** 才会持久化。
 
-```bash
-cp config.example.json config.json
-```
+应用数据库默认位于 `~/stocks-assistant/stocks-assistant.db`。只有 `STOCKS_ASSISTANT_DB_PATH` 是启动级环境变量，可用于更改数据库位置。旧版 `config.json` 仅在数据库尚无配置时作为一次性迁移来源，`APP_*` 不再覆盖业务配置。
 
-编辑 `config.json`：
-
-```json
-{
-  "llm_api_key": "your-api-key",
-  "llm_provider": "openai_compatible",
-  "llm_auth_mode": "api_key",
-  "llm_api_base": "https://api.openai.com/v1",
-  "llm_model": "gpt-4o",
-  "llm_codex_auth_file": "",
-  "llm_codex_api_base": "https://chatgpt.com/backend-api/codex",
-  "llm_codex_model": "gpt-5.5",
-  "embedding_auth_mode": "api_key",
-  "embedding_api_key": "",
-  "embedding_api_base": "https://api.openai.com/v1",
-  "embedding_model": "text-embedding-3-small",
-  "embedding_codex_auth_file": "",
-  "embedding_codex_api_base": "https://chatgpt.com/backend-api/codex",
-  "embedding_codex_model": "text-embedding-3-small",
-  "workspace_dir": "~/stocks-assistant"
-}
-```
-
-也可通过环境变量覆盖任意配置项（前缀 `APP_`），例如：
-
-```bash
-export APP_LLM_API_KEY=your-api-key
-export APP_LLM_MODEL=gpt-4o
-```
-
-如需启用行情、自选股搜索、财报和新闻能力，请在配置页或 `config.json` 中补充 `longbridge_app_key`、`longbridge_app_secret`、`longbridge_access_token`。如需调度任务完成后推送消息，请启用 `telegram_enabled` 并配置 `telegram_bot_token` 与 `telegram_chat_id`。
-
-如需使用 Codex 的 ChatGPT OAuth 登录态，先在本机执行 `codex login`，再设置：
-
-```json
-{
-  "llm_provider": "openai_responses",
-  "llm_auth_mode": "codex",
-  "llm_codex_api_base": "https://chatgpt.com/backend-api/codex",
-  "llm_codex_model": "gpt-5.2-codex"
-}
-```
+如需使用 Codex 的 ChatGPT OAuth 登录态，先在本机执行 `codex login`，然后在设置页选择 `OpenAI Responses + Codex OAuth`。如需启用行情、财报、标的新闻和公司洞察，请保存 Longbridge App Key、App Secret 与 Access Token；网页搜索需要 Search API Key；Telegram 为可选通知渠道。
 
 ### 多 Agent 编排
 
@@ -180,7 +137,7 @@ export APP_LLM_MODEL=gpt-4o
     "researcher": {
       "description": "Gather facts and source context.",
       "system_prompt": "You are a focused research sub-agent. Return a concise evidence-grounded brief.",
-      "tool_allowlist": ["web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"],
+      "tool_allowlist": ["web_search", "web_fetch", "knowledge_search", "knowledge_get", "get_financial_reports", "get_security_news", "get_security_insights"],
       "max_steps": 8,
       "allow_dangerous_tools": false
     }
@@ -234,6 +191,8 @@ Vite 开发模式默认会尝试自动获取开发登录态；后端未启动时
 | `/api/v1/knowledge` | 知识库（目录树 / 内容 / 图谱） |
 | `/api/v1/skills` | 技能管理（列表 / 切换 / 刷新） |
 | `/api/v1/tools` | 工具管理（列表 / 执行） |
+| `/api/v1/config` | 应用配置、依赖就绪状态与连接测试 |
+| `/api/v1/telemetry` | 用户明确开启后的本地匿名产品事件 |
 | `/api/v1/scheduler` | 调度任务 CRUD |
 | `/api/v1/fundamentals` | Longbridge 基本面财报数据 |
 | `/api/v1/watchlist` | 自选股列表、Longbridge 标的搜索、排序和删除 |
@@ -288,14 +247,13 @@ app/
 │   ├── watchlist/       # 自选股服务
 │   └── llm/             # LLM 提供商封装
 └── schemas/             # Pydantic 数据模型
-config.example.json      # 配置文件示例
 docs/                    # 文档
 workspace/               # 运行时工作空间（记忆 / 知识 / 技能）
 ```
 
 ## MCP 扩展
 
-在 `config.json` 中配置 MCP 服务器以扩展工具能力：
+在设置页的 MCP Servers 编辑器中配置服务器以扩展工具能力，例如：
 
 ```json
 {

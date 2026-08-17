@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 from app.core.fundamentals.service import FundamentalService
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.evidence import longbridge_evidence
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 
@@ -65,4 +66,12 @@ class GetFinancialReportsTool(BaseTool):
             )
         except (ValueError, LongbridgeUnavailableError) as exc:
             return ToolResult.fail(str(exc))
-        return ToolResult.success(data)
+        return ToolResult.success(
+            data,
+            ext_data=longbridge_evidence(
+                title=f"{symbol} {kind} financial reports",
+                data=data,
+                symbols=[symbol],
+                source_type="financial_report",
+            ),
+        )

@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.evidence import SourceReference
+
 
 class ChatRequest(BaseModel):
     """聊天请求"""
@@ -26,6 +28,7 @@ class ChatResponse(BaseModel):
     message_id: Optional[str] = None  # 助手回复消息 ID
     tool_calls: int = 0  # 工具调用次数
     steps: int = 0  # 执行步数
+    sources: List[SourceReference] = Field(default_factory=list)
 
 
 class ChatSessionCreateRequest(BaseModel):

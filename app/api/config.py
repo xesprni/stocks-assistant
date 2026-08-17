@@ -1,6 +1,7 @@
 """应用配置管理 API。"""
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,9 +12,79 @@ from app.config import ALWAYS_USER_CONFIG_KEYS, Settings, USER_CONFIG_KEYS, get_
 from app.core.app_store import get_app_store
 from app.core.notifications.telegram import TelegramConfigError, TelegramSender
 from app.core.security import CurrentUser, require_permissions
-from app.schemas.config import AppConfig, ConfigUpdate, TelegramTestRequest, TelegramTestResponse
+from app.schemas.config import (
+    AppConfig,
+    ConfigReadinessResponse,
+    ConfigUpdate,
+    ConnectionCheck,
+    ConnectionTestResponse,
+    DemoDataResponse,
+    TelegramTestRequest,
+    TelegramTestResponse,
+)
 
 router = APIRouter()
+
+
+def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
+    llm_codex = settings.llm_auth_mode == "codex"
+    llm_configured = bool(
+        (llm_codex and _codex_oauth_status(settings).get("available"))
+        or (not llm_codex and settings.llm_api_key and settings.llm_api_base and settings.llm_model)
+    )
+    embedding_codex = settings.embedding_auth_mode == "codex"
+    embedding_configured = bool(
+        (embedding_codex and _embedding_codex_oauth_status(settings).get("available"))
+        or (
+            not embedding_codex
+            and (settings.embedding_api_key or settings.llm_api_key)
+            and (settings.embedding_api_base or settings.llm_api_base)
+            and settings.embedding_model
+        )
+    )
+    longbridge_configured = bool(
+        settings.longbridge_app_key and settings.longbridge_app_secret and settings.longbridge_access_token
+    )
+    telegram_configured = bool(
+        settings.telegram_enabled and settings.telegram_bot_token and settings.telegram_chat_id
+    )
+    search_configured = bool(settings.search_api_url and settings.search_api_key)
+    return [
+        ConnectionCheck(
+            component="llm",
+            status="ready" if llm_configured else "missing",
+            configured=llm_configured,
+            detail="主模型配置可用" if llm_configured else "请配置主模型认证、地址和模型名称",
+        ),
+        ConnectionCheck(
+            component="embedding",
+            status="ready" if embedding_configured else "missing",
+            configured=embedding_configured,
+            detail="Embedding 配置可用" if embedding_configured else "请配置 Embedding 认证和模型",
+            depends_on=["memory", "knowledge_search"],
+        ),
+        ConnectionCheck(
+            component="longbridge",
+            status="ready" if longbridge_configured else "missing",
+            configured=longbridge_configured,
+            detail="Longbridge 凭据已配置" if longbridge_configured else "请配置 App Key、App Secret 和 Access Token",
+            depends_on=["market", "financials", "watchlist"],
+        ),
+        ConnectionCheck(
+            component="web_search",
+            status="ready" if search_configured else "optional",
+            configured=search_configured,
+            detail="网页搜索已配置" if search_configured else "可选：配置搜索 API 后可检索公开网页",
+            depends_on=["research"],
+        ),
+        ConnectionCheck(
+            component="telegram",
+            status="ready" if telegram_configured else "optional",
+            configured=telegram_configured,
+            detail="Telegram 通知已配置" if telegram_configured else "可选：启用后用于投递提醒",
+            depends_on=["alerts"],
+        ),
+    ]
 
 
 def _mask_secret(value: str) -> str:
@@ -93,6 +164,7 @@ def _settings_to_response(
         memory_curator_min_confidence=settings.memory_curator_min_confidence,
         scheduler_enabled=settings.scheduler_enabled,
         tracing_enabled=settings.tracing_enabled,
+        product_analytics_enabled=settings.product_analytics_enabled,
         debug=settings.debug,
         telegram_enabled=settings.telegram_enabled,
         telegram_bot_token_masked=_mask_secret(settings.telegram_bot_token) if show_all or owns("telegram_bot_token") else "",
@@ -113,6 +185,9 @@ def _settings_to_response(
         longbridge_quote_ws_url=settings.longbridge_quote_ws_url if show_all or owns("longbridge_quote_ws_url") else "",
         guardian_api_key_masked=_mask_secret(settings.guardian_api_key) if show_all or owns("guardian_api_key") else "",
         has_guardian_api_key=(show_all or owns("guardian_api_key")) and bool(settings.guardian_api_key),
+        search_api_url=settings.search_api_url if show_all or owns("search_api_url") else "",
+        search_api_key_masked=_mask_secret(settings.search_api_key) if show_all or owns("search_api_key") else "",
+        has_search_api_key=(show_all or owns("search_api_key")) and bool(settings.search_api_key),
         personal_config_keys=sorted(personal_keys),
     )
 
@@ -359,6 +434,93 @@ async def patch_config(update: ConfigUpdate, current: CurrentUser = Depends(requ
 async def update_config(update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))):
     """兼容旧前端：PUT 仍按局部更新处理。"""
     return await _persist_config_update(update, current)
+
+
+@router.get("/readiness", response_model=ConfigReadinessResponse)
+async def config_readiness(current: CurrentUser = Depends(require_permissions("config:read"))):
+    """返回首次使用所需依赖的配置就绪状态，不发起外部请求。"""
+    checks = _readiness_checks(get_effective_settings(current.id))
+    required = [check for check in checks if check.component in {"llm", "embedding", "longbridge"}]
+    return ConfigReadinessResponse(ready=all(check.configured for check in required), checks=checks)
+
+
+@router.post("/connections/{component}/test", response_model=ConnectionTestResponse)
+async def test_connection(
+    component: str,
+    current: CurrentUser = Depends(require_permissions("config:read")),
+):
+    """在用户明确点击测试后，对已保存的外部依赖执行最小只读检查。"""
+    component = component.strip().lower()
+    if component not in {"llm", "embedding", "longbridge"}:
+        raise HTTPException(status_code=404, detail="Unsupported connection component")
+    settings = get_effective_settings(current.id)
+    readiness = {item.component: item for item in _readiness_checks(settings)}[component]
+    if not readiness.configured:
+        raise HTTPException(status_code=400, detail=readiness.detail)
+
+    try:
+        if component == "llm":
+            from app.core.agent.models import LLMRequest
+            from app.deps import create_llm_provider
+
+            provider = create_llm_provider(settings)
+            request = LLMRequest(
+                messages=[{"role": "user", "content": [{"type": "text", "text": "Reply with OK."}]}],
+                model=settings.llm_codex_model if settings.llm_auth_mode == "codex" else settings.llm_model,
+                temperature=0,
+                max_tokens=8,
+            )
+            await asyncio.wait_for(asyncio.to_thread(provider.call, request), timeout=45)
+            detail = "主模型连接成功"
+        elif component == "embedding":
+            from app.deps import create_embedding_provider_from_settings
+
+            provider = create_embedding_provider_from_settings(settings)
+            if provider is None:
+                raise ValueError("Embedding provider could not be initialized")
+            vector = await asyncio.wait_for(asyncio.to_thread(provider.embed, "connection check"), timeout=30)
+            if not vector:
+                raise ValueError("Embedding provider returned an empty vector")
+            detail = f"Embedding 连接成功，向量维度 {len(vector)}"
+        else:
+            from app.deps import get_market_service
+
+            await asyncio.wait_for(
+                asyncio.to_thread(get_market_service().get_market_status, settings=settings),
+                timeout=30,
+            )
+            detail = "Longbridge 行情连接成功"
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"{component} connection test failed: {exc}") from exc
+
+    return ConnectionTestResponse(
+        component=component,
+        ok=True,
+        detail=detail,
+        checked_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@router.post("/demo-data", response_model=DemoDataResponse)
+async def seed_demo_data(
+    current_user: CurrentUser = Depends(require_permissions("watchlist:write", "portfolio:write")),
+):
+    """用户明确触发后初始化教学数据；已有自选或组合时不会写入。"""
+    from app.deps import get_portfolio_service, get_watchlist_service
+
+    watchlist = get_watchlist_service().seed_sample_items(current_user.id)
+    portfolio = get_portfolio_service().seed_sample_items(current_user.id)
+    get_app_store().audit(
+        current_user.id,
+        "onboarding.demo_data",
+        "user_workspace",
+        {"watchlist_created": len(watchlist), "portfolio_created": len(portfolio)},
+    )
+    return DemoDataResponse(
+        watchlist_created=len(watchlist),
+        portfolio_created=len(portfolio),
+        detail="示例数据已创建" if watchlist or portfolio else "已有数据，未写入示例",
+    )
 
 
 @router.post("/telegram/test", response_model=TelegramTestResponse)

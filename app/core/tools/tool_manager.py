@@ -44,6 +44,7 @@ class ToolManager:
         from app.core.tools.read_skill import ReadSkillTool
         from app.core.tools.write_file import WriteFileTool
         from app.core.tools.financial_reports import GetFinancialReportsTool
+        from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
         from app.core.tools.market_data import (
             GetLongbridgeCapitalFlowTool,
             GetLongbridgeCandlesticksTool,
@@ -63,16 +64,21 @@ class ToolManager:
         from app.core.tools.delegate_agent import DelegateAgentTool
         from app.core.tools.memory_search import MemorySearchTool
         from app.core.tools.memory_get import MemoryGetTool
+        from app.core.tools.knowledge_search import KnowledgeSearchTool
+        from app.core.tools.knowledge_get import KnowledgeGetTool
         from app.core.tools.scheduler.tool import SchedulerTool
 
         # builtin = [BashTool, WebSearchTool, WebFetchTool, ReadFileTool, WriteFileTool]
         builtin = [
             BashTool,
+            WebSearchTool,
             WebFetchTool,
             ReadFileTool,
             ReadSkillTool,
             WriteFileTool,
             GetFinancialReportsTool,
+            GetSecurityNewsTool,
+            GetSecurityInsightsTool,
             GetLongbridgeRealtimeQuotesTool,
             GetLongbridgeHistoryCandlesticksTool,
             GetLongbridgeCandlesticksTool,
@@ -94,6 +100,8 @@ class ToolManager:
             self.memory_manager = memory_manager
             builtin.append(MemorySearchTool)
             builtin.append(MemoryGetTool)
+            builtin.append(KnowledgeSearchTool)
+            builtin.append(KnowledgeGetTool)
         if user_id is not None:
             self.user_id = user_id
             try:
@@ -188,10 +196,19 @@ class ToolManager:
             return tool_class(workspace_dir=self.workspace_dir or ".")
         if class_name == "BashTool" and self.workspace_dir:
             return tool_class(config={"cwd": self.workspace_dir})
-        if class_name in {"MemorySearchTool", "MemoryGetTool"}:
+        if class_name in {"MemorySearchTool", "MemoryGetTool", "KnowledgeSearchTool", "KnowledgeGetTool"}:
             return tool_class(memory_manager=self.memory_manager, user_id=self.user_id)
         if class_name == "GetFinancialReportsTool":
             return tool_class(settings=self.settings)
+        if class_name in {"GetSecurityNewsTool", "GetSecurityInsightsTool"}:
+            return tool_class(settings=self.settings)
+        if class_name == "WebSearchTool":
+            return tool_class(
+                config={
+                    "api_url": getattr(self.settings, "search_api_url", "") if self.settings else "",
+                    "api_key": getattr(self.settings, "search_api_key", "") if self.settings else "",
+                }
+            )
         if class_name in {"GetPortfolioPositionsTool", "PortfolioTool"}:
             return tool_class(user_id=self.user_id, settings=self.settings)
         if class_name == "WatchlistTool":

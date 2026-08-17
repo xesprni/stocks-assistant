@@ -9,13 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { changeOwnPassword, listTools, sendTelegramTestMessage } from "@/lib/api";
+import { changeOwnPassword, getConfigReadiness, listTools, seedDemoData, sendTelegramTestMessage, testConfigConnection } from "@/lib/api";
 import { useColorScheme } from "@/lib/color-scheme";
 import { toDraft } from "@/lib/config";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { AppConfig, ConfigDraft, MarketDashboardConfig, ToolInfo } from "@/types/app";
+import type { AppConfig, ConfigDraft, ConfigReadinessResponse, MarketDashboardConfig, ToolInfo } from "@/types/app";
 
 function isMcpToolName(name: string): boolean {
   return name.startsWith("mcp_");
@@ -48,7 +48,6 @@ export function ConfigPage({
   handleSaveConfig,
   initialTab,
   language,
-  onConfigBlur,
   onMarketConfigSaved,
   patchDraft,
   setDraft,
@@ -63,7 +62,6 @@ export function ConfigPage({
   handleSaveConfig: () => void;
   initialTab?: ConfigTab;
   language: AppLanguage;
-  onConfigBlur: () => void;
   onMarketConfigSaved: (config: MarketDashboardConfig) => void;
   patchDraft: (patch: Partial<ConfigDraft>) => void;
   setDraft: (draft: ConfigDraft) => void;
@@ -82,6 +80,11 @@ export function ConfigPage({
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [expandedMcpServers, setExpandedMcpServers] = useState<Record<string, boolean>>({});
   const [compatibleSnapshot, setCompatibleSnapshot] = useState({ apiBase: "", model: "" });
+  const [readiness, setReadiness] = useState<ConfigReadinessResponse | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [testingComponent, setTestingComponent] = useState<string | null>(null);
+  const [connectionMessage, setConnectionMessage] = useState("");
+  const [demoDataLoading, setDemoDataLoading] = useState(false);
 
   const dangerousTools = ["bash", "write_file", "scheduler", "watchlist", "portfolio"];
   const builtinTools = useMemo(() => tools.filter((tool) => !isMcpToolName(tool.name)), [tools]);
@@ -140,6 +143,15 @@ export function ConfigPage({
   }, [canManageSystem]);
 
   useEffect(() => {
+    if (!config) return;
+    setReadinessLoading(true);
+    getConfigReadiness()
+      .then(setReadiness)
+      .catch(() => setReadiness(null))
+      .finally(() => setReadinessLoading(false));
+  }, [config]);
+
+  useEffect(() => {
     if (mcpToolGroups.length === 0) return;
     setExpandedMcpServers((current) => {
       const next = { ...current };
@@ -169,6 +181,40 @@ export function ConfigPage({
     } catch (caught) {
       setTelegramTestState("error");
       setTelegramTestResult(caught instanceof Error ? caught.message : copy.telegramTestFailed);
+    }
+  }
+
+  async function handleConnectionTest(component: "llm" | "embedding" | "longbridge") {
+    setTestingComponent(component);
+    setConnectionMessage("");
+    try {
+      const result = await testConfigConnection(component);
+      setConnectionMessage(result.detail);
+      setReadiness((current) => current ? {
+        ...current,
+        checks: current.checks.map((check) => check.component === component ? { ...check, configured: true, status: "ready", detail: result.detail } : check),
+      } : current);
+    } catch (caught) {
+      setConnectionMessage(caught instanceof Error ? caught.message : (language === "en" ? "Connection test failed" : "连接测试失败"));
+    } finally {
+      setTestingComponent(null);
+    }
+  }
+
+  async function handleSeedDemoData() {
+    setDemoDataLoading(true);
+    setConnectionMessage("");
+    try {
+      const result = await seedDemoData();
+      setConnectionMessage(
+        language === "en"
+          ? `${result.detail}: ${result.watchlist_created} watchlist, ${result.portfolio_created} portfolio items.`
+          : `${result.detail}：自选 ${result.watchlist_created} 条，组合 ${result.portfolio_created} 条。`,
+      );
+    } catch (caught) {
+      setConnectionMessage(caught instanceof Error ? caught.message : (language === "en" ? "Could not create sample data" : "无法创建示例数据"));
+    } finally {
+      setDemoDataLoading(false);
     }
   }
 
@@ -280,7 +326,7 @@ export function ConfigPage({
   }
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full" onBlurCapture={onConfigBlur}>
+    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
           <Badge variant="outline">{enabledCount}/4 ON</Badge>
           <Button
@@ -302,6 +348,50 @@ export function ConfigPage({
       {draft ? (
         <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
           <div className="space-y-4">
+          <ConfigSection
+            description={language === "en" ? "Complete required connections before starting evidence-backed research." : "开始可验证投研前，请先完成必要连接。"}
+            icon={<ShieldCheck className="size-4 text-primary" />}
+            title={language === "en" ? "Setup readiness" : "首次使用就绪检查"}
+          >
+            {readinessLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{copy.loading}</div>
+            ) : readiness ? (
+              <div className="grid gap-2 lg:grid-cols-2">
+                {readiness.checks.map((check) => {
+                  const testable = check.component === "llm" || check.component === "embedding" || check.component === "longbridge";
+                  return (
+                    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/75 bg-background/55 p-3" key={check.component}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold uppercase">{check.component}</p>
+                          <Badge variant={check.configured ? "secondary" : "outline"}>{check.status}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{check.detail}</p>
+                      </div>
+                      {testable ? (
+                        <Button disabled={!check.configured || testingComponent !== null} onClick={() => handleConnectionTest(check.component as "llm" | "embedding" | "longbridge")} size="sm" type="button" variant="outline">
+                          {testingComponent === check.component ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                          {language === "en" ? "Test" : "测试"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{language === "en" ? "Readiness check unavailable." : "暂时无法获取就绪状态。"}</p>
+            )}
+            {connectionMessage ? <p className="mt-2 text-xs text-muted-foreground">{connectionMessage}</p> : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+              <Button disabled={demoDataLoading} onClick={handleSeedDemoData} size="sm" type="button" variant="outline">
+                {demoDataLoading ? <Loader2 className="animate-spin" /> : <WandSparkles />}
+                {language === "en" ? "Load sample watchlist & portfolio" : "载入示例自选与组合"}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {language === "en" ? "Only writes to each empty area; sample rows are clearly labeled." : "仅在对应区域为空时写入，且所有示例均有明确标记。"}
+              </span>
+            </div>
+          </ConfigSection>
           <ConfigSection
             description={copy.accountSecurityHint}
             icon={<LockKeyhole className="size-4 text-secondary" />}
@@ -792,6 +882,28 @@ export function ConfigPage({
                   </div>
                 </div>
               </ConfigSection>
+              <ConfigSection
+                description={copy.webSearchSectionHint}
+                icon={<Globe2 className="size-4 text-secondary" />}
+                title={copy.webSearchSection}
+              >
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <Field label={copy.webSearchApiUrl}>
+                    <Input
+                      value={draft.search_api_url ?? ""}
+                      onChange={(event) => patchDraft({ search_api_url: event.target.value })}
+                    />
+                  </Field>
+                  <Field label={copy.webSearchApiKey}>
+                    <Input
+                      placeholder={draft.has_search_api_key ? draft.search_api_key_masked : "Bocha API key"}
+                      type="password"
+                      value={draft.search_api_key}
+                      onChange={(event) => patchDraft({ search_api_key: event.target.value })}
+                    />
+                  </Field>
+                </div>
+              </ConfigSection>
             </TabsContent>
 
             {canReadMarket ? (
@@ -945,6 +1057,12 @@ export function ConfigPage({
                     icon={<Cpu className="size-4 text-primary" />}
                     label={copy.tracing}
                     onCheckedChange={(checked) => patchDraft({ tracing_enabled: checked })}
+                  />
+                  <ToggleRow
+                    checked={draft.product_analytics_enabled}
+                    icon={<TrendingUp className="size-4 text-secondary" />}
+                    label={language === "en" ? "Private product analytics (opt-in)" : "隐私产品分析（主动开启）"}
+                    onCheckedChange={(checked) => patchDraft({ product_analytics_enabled: checked })}
                   />
                   <ToggleRow
                     checked={draft.memory_auto_curate_enabled}

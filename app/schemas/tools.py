@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ToolInfo(BaseModel):
@@ -30,4 +30,6 @@ class ToolExecuteResponse(BaseModel):
     """工具执行响应"""
     status: str  # 执行状态（success/error）
     result: Any  # 执行结果
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
     execution_time: float = 0.0  # 执行耗时（秒）

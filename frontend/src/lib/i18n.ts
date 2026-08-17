@@ -3,9 +3,9 @@ export type AppLanguage = "zh" | "en";
 export const i18n = {
   zh: {
     quickPrompts: [
-      "总结今天值得关注的美股科技股信号",
-      "帮我制定一份低波动组合观察清单",
-      "基于知识库检查最近的交易规则",
+      "使用第一方资料和可点击来源，对一家公司做完整 Deep Dive：商业模式、关键驱动、估值、催化剂、风险与待验证问题",
+      "复盘一家公司最近一期财报：关键数据变化、管理层措辞、与市场预期的差异及需要更新的投资假设",
+      "检查我的持仓风险：集中度、相关风险因子、潜在催化剂与下一步监控条件",
       "使用market-analysis技能分析今天的美股",
       "使用market-analysis技能分析今天的A股",
     ],
@@ -346,6 +346,10 @@ export const i18n = {
       guardianSectionHint: "Guardian RSS 列表无需密钥；获取正文时需要个人 API Key。",
       guardianApiKey: "Guardian API Key",
       guardianApiKeyHint: "用于读取 Guardian 正文。密钥加密保存在本地应用数据库，浏览器只显示掩码状态。",
+      webSearchSection: "网页搜索",
+      webSearchSectionHint: "为 Agent 配置公开网页搜索；当前兼容 Bocha Web Search API。",
+      webSearchApiUrl: "Search API URL",
+      webSearchApiKey: "Search API Key",
       telegramSection: "Telegram 通知",
       telegramSectionHint: "用于定时任务和通知测试。",
       telegramChannel: "Telegram 渠道",
@@ -546,9 +550,9 @@ export const i18n = {
   },
   en: {
     quickPrompts: [
-      "Summarize notable US tech stock signals today",
-      "Help me build a low-volatility watchlist",
-      "Check recent trading rules from the knowledge base",
+      "Use first-party materials and clickable sources to run a company Deep Dive covering business model, key drivers, valuation, catalysts, risks, and open questions",
+      "Review a company's latest earnings: key changes, management language, expectation gaps, and investment assumptions that need updating",
+      "Review my portfolio risks: concentration, correlated drivers, catalysts, and monitoring conditions to add next",
       "Use the market-analysis skill to analyze today's US market",
       "Use the market-analysis skill to analyze today's A-share market",
     ],
@@ -889,6 +893,10 @@ export const i18n = {
       guardianSectionHint: "Guardian RSS lists do not need a key. Article body requests require your personal API key.",
       guardianApiKey: "Guardian API Key",
       guardianApiKeyHint: "Used to read Guardian article bodies. The key is encrypted in the local app database and only masked status is shown in the browser.",
+      webSearchSection: "Web Search",
+      webSearchSectionHint: "Configure public web search for the Agent; currently compatible with the Bocha Web Search API.",
+      webSearchApiUrl: "Search API URL",
+      webSearchApiKey: "Search API Key",
       telegramSection: "Telegram Notifications",
       telegramSectionHint: "Used by scheduled tasks and notification tests.",
       telegramChannel: "Telegram Channel",

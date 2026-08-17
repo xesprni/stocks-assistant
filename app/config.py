@@ -32,12 +32,17 @@ Always remind users that your analysis is for research and educational purposes 
 
 
 DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
+    "web_search",
     "web_fetch",
     "read_file",
     "read_skill",
     "memory_search",
     "memory_get",
+    "knowledge_search",
+    "knowledge_get",
     "get_financial_reports",
+    "get_security_news",
+    "get_security_insights",
     "get_longbridge_realtime_quotes",
     "get_longbridge_history_candlesticks",
     "get_longbridge_candlesticks",
@@ -60,12 +65,16 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "read_skill",
     "write_file",
     "get_financial_reports",
+    "get_security_news",
+    "get_security_insights",
     "get_portfolio_positions",
     "portfolio",
     "watchlist",
     "delegate_agent",
     "memory_search",
     "memory_get",
+    "knowledge_search",
+    "knowledge_get",
     "scheduler",
     "get_longbridge_realtime_quotes",
     "get_longbridge_history_candlesticks",
@@ -119,6 +128,8 @@ USER_CONFIG_KEYS = {
     "longbridge_http_url",
     "longbridge_quote_ws_url",
     "guardian_api_key",
+    "search_api_url",
+    "search_api_key",
     "app_language",
     "agent_max_steps",
     "agent_max_context_tokens",
@@ -134,6 +145,7 @@ USER_CONFIG_KEYS = {
     "memory_curator_min_confidence",
     "scheduler_enabled",
     "tracing_enabled",
+    "product_analytics_enabled",
     "debug",
 }
 
@@ -143,6 +155,7 @@ ALWAYS_USER_CONFIG_KEYS = {
     "memory_enabled",
     "scheduler_enabled",
     "tracing_enabled",
+    "product_analytics_enabled",
 }
 
 
@@ -268,6 +281,7 @@ class Settings(BaseSettings):
     memory_curator_min_confidence: float = 0.7  # 自动记忆置信度阈值
     scheduler_enabled: bool = True  # 是否启用定时任务
     tracing_enabled: bool = False  # 是否启用 Agent 调用追踪
+    product_analytics_enabled: bool = False  # 隐私优先的本地产品事件，仅在用户明确开启后记录
     clawhub_registry_url: str = "https://clawhub.ai"  # ClawHub HTTP API 根地址
 
     # ---- Telegram 通知配置 ----
@@ -292,6 +306,10 @@ class Settings(BaseSettings):
 
     # ---- Guardian Open Platform 配置 ----
     guardian_api_key: str = ""  # 获取 Guardian 正文时使用；RSS 列表无需配置
+
+    # ---- Web Search 配置 ----
+    search_api_url: str = "https://api.bocha.cn/v1/web-search"
+    search_api_key: str = ""  # 仅在服务端使用，不会明文返回前端
 
     # ---- 系统提示词 ----
     system_prompt: str = DEFAULT_SYSTEM_PROMPT

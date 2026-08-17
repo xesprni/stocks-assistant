@@ -68,5 +68,7 @@ async def execute_tool(
     return ToolExecuteResponse(
         status=result.status,
         result=result.result,
+        evidence=result.ext_data.get("evidence", []) if isinstance(result.ext_data, dict) else [],
+        sources=result.ext_data.get("sources", []) if isinstance(result.ext_data, dict) else [],
         execution_time=execution_time,
     )

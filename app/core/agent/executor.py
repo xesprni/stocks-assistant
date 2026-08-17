@@ -12,6 +12,7 @@
 import copy as _copy
 import hashlib
 import json
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -93,6 +94,28 @@ class AgentStreamExecutor:
         self.cancel_event = cancel_event
         self.thinking_enabled = thinking_enabled
         self.tool_failure_history = []  # 工具执行历史（用于失败重试保护）
+        self.evidence: list[dict[str, Any]] = []
+        self.sources: list[dict[str, Any]] = []
+        self._evidence_lock = threading.Lock()
+
+    def _collect_evidence(self, result: dict[str, Any]) -> None:
+        with self._evidence_lock:
+            seen_evidence = {str(item.get("id") or "") for item in self.evidence}
+            seen_sources = {str(item.get("id") or "") for item in self.sources}
+            for item in result.get("evidence") or []:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id") or "")
+                if item_id and item_id not in seen_evidence:
+                    seen_evidence.add(item_id)
+                    self.evidence.append(item)
+            for item in result.get("sources") or []:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id") or "")
+                if item_id and item_id not in seen_sources:
+                    seen_sources.add(item_id)
+                    self.sources.append(item)
 
     def _raise_if_cancelled(self):
         if self.cancel_event is not None and self.cancel_event.is_set():
@@ -292,6 +315,7 @@ class AgentStreamExecutor:
                 try:
                     results = self._execute_tool_calls_batch(tool_calls)
                     for tool_call, result in zip(tool_calls, results):
+                        self._collect_evidence(result)
                         if result.get("status") == "critical_error":
                             final_response = result.get('result', 'Task execution failed')
                             return final_response
@@ -299,8 +323,15 @@ class AgentStreamExecutor:
                         is_error = result.get("status") == "error"
                         result_data = result.get('result', '')
 
+                        evidence_items = result.get("evidence") or []
+                        source_items = result.get("sources") or []
                         if is_error:
                             result_content = f"Error: {result_data}"
+                        elif evidence_items or source_items:
+                            result_content = json.dumps(
+                                {"data": result_data, "evidence": evidence_items, "sources": source_items},
+                                ensure_ascii=False,
+                            )
                         elif isinstance(result_data, dict):
                             result_content = json.dumps(result_data, ensure_ascii=False)
                         elif isinstance(result_data, str):
@@ -735,10 +766,16 @@ class AgentStreamExecutor:
                 "result": result.result,
                 "execution_time": execution_time,
             }
+            if isinstance(result.ext_data, dict):
+                result_dict["evidence"] = result.ext_data.get("evidence", [])
+                result_dict["sources"] = result.ext_data.get("sources", [])
 
             self._record_tool_result(tool_name, arguments, result.status == "success")
             self._emit_event("tool_execution_end", {
-                "tool_call_id": tool_id, "tool_name": tool_name, **result_dict,
+                "tool_call_id": tool_id,
+                "tool_name": tool_name,
+                **result_dict,
+                "source_count": len(result_dict.get("sources", [])),
             })
             return result_dict
 

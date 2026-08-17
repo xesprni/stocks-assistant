@@ -46,6 +46,8 @@ export function MarketPulse() {
       );
       if (!cancelled) {
         setData(results);
+        const available = Object.values(results).some((item) => item?.temperature != null);
+        setError(available ? null : "market_unavailable");
         setIsLoading(false);
       }
     }
@@ -84,11 +86,13 @@ export function MarketPulse() {
         </div>
         {isLoading ? (
           <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-        ) : (
+        ) : hasData ? (
           <div className="flex items-center gap-1.5 text-xs text-primary">
             <Activity className="size-3.5 animate-pulse" />
             LIVE
           </div>
+        ) : (
+          <div className="text-[10px] font-semibold text-muted-foreground">UNAVAILABLE</div>
         )}
       </div>
 

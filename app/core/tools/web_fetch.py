@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.evidence import evidence_for_source, evidence_metadata, source_reference, utc_now_iso
 
 import logging
 
@@ -43,7 +44,19 @@ class WebFetchTool(BaseTool):
             html = resp.text
             title = self._extract_title(html)
             text = self._extract_text(html)
-            return ToolResult.success(f"Title: {title}\n\nContent:\n{text}")
+            fetched_at = utc_now_iso()
+            source = source_reference(
+                source_type="web_page",
+                provider=resp.url.host or parsed.netloc,
+                title=title,
+                url=str(resp.url),
+                published_at=resp.headers.get("last-modified"),
+                fetched_at=fetched_at,
+            )
+            return ToolResult.success(
+                {"title": title, "url": str(resp.url), "content": text, "fetched_at": fetched_at},
+                ext_data=evidence_metadata([evidence_for_source(source, excerpt=text[:500] or None)]),
+            )
         except httpx.TimeoutException:
             return ToolResult.fail("Error: Request timed out")
         except httpx.HTTPStatusError as e:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.evidence import longbridge_evidence
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 
@@ -51,7 +52,21 @@ class _LongbridgeMarketTool(BaseTool):
             data = getattr(service, func_name)(*args, settings=self.settings, **kwargs)
         except (ValueError, LongbridgeUnavailableError) as exc:
             return ToolResult.fail(str(exc))
-        return ToolResult.success(data)
+        symbols: list[str] = []
+        if args:
+            first = args[0]
+            if isinstance(first, (list, tuple, set)):
+                symbols = [str(value) for value in first]
+            elif isinstance(first, str):
+                symbols = [first]
+        return ToolResult.success(
+            data,
+            ext_data=longbridge_evidence(
+                title=f"Longbridge {func_name.replace('_', ' ')}",
+                data=data,
+                symbols=symbols,
+            ),
+        )
 
 
 class GetLongbridgeRealtimeQuotesTool(_LongbridgeMarketTool):

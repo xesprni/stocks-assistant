@@ -72,7 +72,8 @@ class MemoryManager:
         )
 
         self._init_workspace()
-        self._dirty = bool(self.config.embedding_signature)
+        # 首次检索前至少同步一次，确保进程启动前已存在的用户知识也进入索引。
+        self._dirty = True
 
     def _init_workspace(self):
         memory_dir = self.config.get_memory_dir()
@@ -183,6 +184,22 @@ class MemoryManager:
                     if any(part.startswith('.') for part in file_path.relative_to(workspace_dir).parts):
                         continue
                     await self._sync_file(file_path, "memory", "user", self.owner_user_id)
+            user_workspace = workspace_dir / "users" / self.owner_user_id
+            user_memory_file = user_workspace / "MEMORY.md"
+            if user_memory_file.exists():
+                await self._sync_file(user_memory_file, "memory", "user", self.owner_user_id)
+            user_memory_dir = user_workspace / "memory"
+            if user_memory_dir.exists():
+                for file_path in user_memory_dir.rglob("*.md"):
+                    if any(part.startswith(".") for part in file_path.relative_to(workspace_dir).parts):
+                        continue
+                    await self._sync_file(file_path, "memory", "user", self.owner_user_id)
+            user_knowledge_dir = user_workspace / "knowledge"
+            if user_knowledge_dir.exists():
+                for file_path in user_knowledge_dir.rglob("*.md"):
+                    if any(part.startswith(".") for part in file_path.relative_to(workspace_dir).parts):
+                        continue
+                    await self._sync_file(file_path, "knowledge", "user", self.owner_user_id)
             self._dirty = False
             return
 
@@ -222,6 +239,25 @@ class MemoryManager:
                 await self._sync_file(file_path, "knowledge", "shared", None)
 
         self._dirty = False
+
+    async def index_file(
+        self,
+        file_path: Path,
+        *,
+        source: str,
+        scope: str = "user",
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """增量索引一个已写入工作空间的文件。"""
+        workspace_dir = self.config.get_workspace().resolve()
+        resolved = file_path.resolve()
+        if not resolved.is_relative_to(workspace_dir):
+            raise ValueError("Index path outside workspace")
+        effective_user_id = user_id or self.owner_user_id
+        if self.owner_user_id and effective_user_id != self.owner_user_id:
+            raise ValueError("Cannot index another user's file")
+        await self._sync_file(resolved, source, scope, effective_user_id, metadata=metadata)
 
     async def _sync_file(
         self,

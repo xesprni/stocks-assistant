@@ -1,7 +1,6 @@
 """网页搜索工具
 
-通过 HTTP API 执行网页搜索，返回搜索结果摘要。
-使用 SEARCH_API_KEY 环境变量配置 API 密钥。
+通过 HTTP API 执行网页搜索，返回搜索结果摘要和来源元数据。
 """
 
 import os
@@ -10,6 +9,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.evidence import evidence_for_source, evidence_metadata, source_reference, utc_now_iso
 
 import logging
 
@@ -37,8 +37,13 @@ class WebSearchTool(BaseTool):
         if not query:
             return ToolResult.fail("Error: query is required")
         count = min(max(args.get("count", 10), 1), 50)
-        api_url = os.environ.get("SEARCH_API_URL", "https://api.bocha.cn/v1/web-search")
-        api_key = os.environ.get("SEARCH_API_KEY") or os.environ.get("BOCHA_API_KEY", "")
+        # SQLite 中的用户有效配置优先；环境变量仅保留给旧部署做兼容回退。
+        api_url = str(self.config.get("api_url") or os.environ.get("SEARCH_API_URL") or "https://api.bocha.cn/v1/web-search")
+        api_key = str(
+            self.config.get("api_key")
+            or os.environ.get("SEARCH_API_KEY")
+            or os.environ.get("BOCHA_API_KEY", "")
+        )
         if not api_key:
             return ToolResult.fail("Error: No SEARCH_API_KEY or BOCHA_API_KEY configured")
         try:
@@ -55,7 +60,21 @@ class WebSearchTool(BaseTool):
                 {"title": p.get("name", ""), "url": p.get("url", ""), "snippet": p.get("snippet", "")}
                 for p in pages
             ]
-            return ToolResult.success({"query": query, "count": len(results), "results": results})
+            fetched_at = utc_now_iso()
+            evidence = []
+            for item in results:
+                source = source_reference(
+                    source_type="web_search_result",
+                    provider="Bocha Web Search",
+                    title=item["title"] or item["url"] or query,
+                    url=item["url"] or None,
+                    fetched_at=fetched_at,
+                )
+                evidence.append(evidence_for_source(source, excerpt=item["snippet"] or None))
+            return ToolResult.success(
+                {"query": query, "count": len(results), "results": results, "fetched_at": fetched_at},
+                ext_data=evidence_metadata(evidence),
+            )
         except httpx.HTTPStatusError as e:
             return ToolResult.fail(f"Search API error: HTTP {e.response.status_code}")
         except Exception as e:

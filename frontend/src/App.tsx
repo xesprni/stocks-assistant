@@ -11,14 +11,12 @@ import {
   CircleAlert,
   Clock,
   Cpu,
-  FileText,
   Home,
   Loader2,
   LogOut,
   MessageSquareText,
   Monitor,
   Moon,
-  Newspaper,
   Plug,
   Search,
   Settings2,
@@ -51,6 +49,7 @@ import {
   sendChat,
   saveConfig,
   streamChat,
+  trackProductEvent,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
@@ -185,6 +184,7 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   memory_curator_min_confidence: ["memory_curator_min_confidence"],
   scheduler_enabled: ["scheduler_enabled"],
   tracing_enabled: ["tracing_enabled"],
+  product_analytics_enabled: ["product_analytics_enabled"],
   telegram_enabled: ["telegram_enabled"],
   telegram_bot_token: ["telegram_bot_token"],
   telegram_chat_id: ["telegram_chat_id"],
@@ -199,6 +199,8 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   longbridge_http_url: ["longbridge_http_url"],
   longbridge_quote_ws_url: ["longbridge_quote_ws_url"],
   guardian_api_key: ["guardian_api_key"],
+  search_api_url: ["search_api_url"],
+  search_api_key: ["search_api_key"],
   debug: ["debug"],
 };
 
@@ -236,6 +238,8 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "longbridge_http_url",
   "longbridge_quote_ws_url",
   "guardian_api_key",
+  "search_api_url",
+  "search_api_key",
   "app_language",
   "agent_max_steps",
   "agent_max_context_tokens",
@@ -251,56 +255,45 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "memory_curator_min_confidence",
   "scheduler_enabled",
   "tracing_enabled",
+  "product_analytics_enabled",
   "debug",
 ]);
 
-function navItem(language: AppLanguage, id: Page, icon: ReactNode): AppNavItem {
+function navItem(language: AppLanguage, id: Page, icon: ReactNode, labelOverride?: string, hintOverride?: string): AppNavItem {
   const [label, hint] = i18n[language].nav[id as keyof typeof i18n.zh.nav];
-  return { id, label, icon, hint, href: PAGE_PATH[id] };
+  return { id, label: labelOverride ?? label, icon, hint: hintOverride ?? hint, href: PAGE_PATH[id] };
 }
 
 function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
-  const groups = i18n[language].groups;
+  const primary = language === "en"
+    ? { group: "Workspace", today: "Today", companies: "Companies", portfolio: "Portfolio", research: "Research", alerts: "Alerts" }
+    : { group: "工作台", today: "今日", companies: "公司", portfolio: "组合", research: "研究", alerts: "提醒" };
   return [
     {
-      id: "market",
-      label: groups.market,
+      id: "primary",
+      label: primary.group,
       items: [
-        navItem(language, "overview", <Home />),
-        navItem(language, "watchlist", <Star />),
-        navItem(language, "portfolio", <BriefcaseBusiness />),
-        navItem(language, "fundamentals", <FileText />),
-        navItem(language, "news", <Newspaper />),
+        navItem(language, "overview", <Home />, primary.today),
+        navItem(language, "watchlist", <Star />, primary.companies),
+        navItem(language, "portfolio", <BriefcaseBusiness />, primary.portfolio),
+        navItem(language, "knowledge", <BookOpen />, primary.research),
+        navItem(language, "scheduler", <Clock />, primary.alerts),
       ],
     },
     {
-      id: "automation",
-      label: groups.automation,
-      items: [
-        navItem(language, "scheduler", <Clock />),
-      ],
-    },
-    {
-      id: "agents",
-      label: groups.agents,
+      id: "developer",
+      label: language === "en" ? "Developer Center" : "开发者中心",
       items: [
         navItem(language, "tracing", <Cpu />),
         navItem(language, "skills", <Zap />),
         navItem(language, "subagents", <Bot />),
         navItem(language, "mcp", <Plug />),
-      ],
-    },
-    {
-      id: "workspace",
-      label: groups.workspace,
-      items: [
         navItem(language, "memory", <BrainCircuit />),
-        navItem(language, "knowledge", <BookOpen />),
       ],
     },
     {
-      id: "system",
-      label: groups.system,
+      id: "admin",
+      label: language === "en" ? "Administration" : "系统管理",
       items: [
         navItem(language, "security", <ShieldCheck />),
         navItem(language, "users", <UserCog />),
@@ -524,9 +517,7 @@ function ConsoleApp() {
   const shouldAutoScrollChatRef = useRef(true);
   const streamAbortRef = useRef<AbortController | null>(null);
   const isSendingRef = useRef(false);
-  const configAutoSaveTimerRef = useRef<number | null>(null);
-  const configAutoSaveDraftRef = useRef<ConfigDraft | null>(null);
-  const configAutoSavePatchRef = useRef<Partial<ConfigDraft>>({});
+  const configDirtyPatchRef = useRef<Partial<ConfigDraft>>({});
   const configToastTimerRef = useRef<number | null>(null);
   const configToastExitTimerRef = useRef<number | null>(null);
   const routeReadyRef = useRef(false);
@@ -742,6 +733,9 @@ function ConsoleApp() {
     setPrompt("");
     isSendingRef.current = true;
     setIsSending(true);
+    if (config?.product_analytics_enabled) {
+      void trackProductEvent("research_started").catch(() => undefined);
+    }
     handleNavigate("overview");
 
     const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
@@ -964,6 +958,12 @@ function ConsoleApp() {
           sawAgentEnd = true;
           const finalResponse = getStreamText(data, "final_response");
           const messageId = getStreamText(data, "message_id");
+          const sources = Array.isArray(data?.sources)
+            ? data.sources.filter((item): item is NonNullable<ChatMessage["sources"]>[number] => Boolean(item && typeof item === "object" && "id" in item))
+            : [];
+          if (config?.product_analytics_enabled) {
+            void trackProductEvent("research_response_completed", { source_count: sources.length }).catch(() => undefined);
+          }
           streamedContent = finalResponse || streamedContent || ui.chat.empty;
           currentStatus = ui.chat.complete;
           trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
@@ -973,6 +973,7 @@ function ConsoleApp() {
             pending: false,
             status: currentStatus,
             trace,
+            sources,
             createdAt: chatTime(language),
           });
         }
@@ -1035,6 +1036,7 @@ function ConsoleApp() {
               pending: false,
               status: ui.chat.complete,
               trace: [...trace, makeTrace(ui.chat.streamRecovered, "done")],
+              sources: persistedAssistant.sources,
               createdAt: persistedAssistant.createdAt,
             });
             return;
@@ -1051,6 +1053,7 @@ function ConsoleApp() {
             pending: false,
             status: ui.chat.complete,
             trace: [...trace, makeTrace(ui.chat.streamRecovered, "done")],
+            sources: recovered.sources,
             createdAt: chatTime(language),
           });
           return;
@@ -1151,6 +1154,7 @@ function ConsoleApp() {
       memory_curator_min_confidence: Number(source.memory_curator_min_confidence),
       scheduler_enabled: source.scheduler_enabled,
       tracing_enabled: source.tracing_enabled,
+      product_analytics_enabled: source.product_analytics_enabled,
       telegram_enabled: source.telegram_enabled,
       telegram_chat_id: source.telegram_chat_id ?? "",
       telegram_api_base: source.telegram_api_base ?? "https://api.telegram.org",
@@ -1161,6 +1165,7 @@ function ConsoleApp() {
       mcp_tool_timeout_seconds: Number(source.mcp_tool_timeout_seconds) || 60,
       longbridge_http_url: source.longbridge_http_url ?? "",
       longbridge_quote_ws_url: source.longbridge_quote_ws_url ?? "",
+      search_api_url: source.search_api_url ?? "https://api.bocha.cn/v1/web-search",
     };
 
     if (source.llm_api_key.trim()) {
@@ -1183,6 +1188,9 @@ function ConsoleApp() {
     }
     if (source.guardian_api_key.trim()) {
       payload.guardian_api_key = source.guardian_api_key.trim();
+    }
+    if (source.search_api_key.trim()) {
+      payload.search_api_key = source.search_api_key.trim();
     }
     return Object.fromEntries(
       Object.entries(payload).filter(([key]) => shouldInclude(key)),
@@ -1231,7 +1239,7 @@ function ConsoleApp() {
       const next = await saveConfig(payload);
       setConfig(next);
       setDraft(toDraft(next));
-      configAutoSavePatchRef.current = {};
+      configDirtyPatchRef.current = {};
       setConfigState("saved");
       showConfigToast("success", ui.config.saved);
       window.setTimeout(() => setConfigState("idle"), 1400);
@@ -1243,58 +1251,18 @@ function ConsoleApp() {
   }
 
   async function handleSaveConfig() {
-    const source = configAutoSaveDraftRef.current ?? draft;
+    const source = draft;
     if (!source) return;
-    if (configAutoSaveTimerRef.current) {
-      window.clearTimeout(configAutoSaveTimerRef.current);
-      configAutoSaveTimerRef.current = null;
-    }
-    const pendingPatch = configAutoSavePatchRef.current;
+    const pendingPatch = configDirtyPatchRef.current;
     const patch = Object.keys(pendingPatch).length ? pendingPatch : undefined;
-    configAutoSaveDraftRef.current = null;
-    configAutoSavePatchRef.current = {};
     await saveDraftConfig(source, patch);
   }
 
-  function scheduleConfigAutoSave(nextDraft: ConfigDraft, patch: Partial<ConfigDraft>) {
-    configAutoSaveDraftRef.current = nextDraft;
-    configAutoSavePatchRef.current = { ...configAutoSavePatchRef.current, ...patch };
-    if (configAutoSaveTimerRef.current) {
-      window.clearTimeout(configAutoSaveTimerRef.current);
-    }
-    const keys = Object.keys(patch);
-    const immediate = keys.some((key) => typeof patch[key as keyof ConfigDraft] === "boolean");
-    const longEdit = keys.some((key) => key === "system_prompt" || key === "mcp_servers_text");
-    const delay = immediate ? 0 : longEdit ? 1200 : 800;
-    configAutoSaveTimerRef.current = window.setTimeout(() => {
-      configAutoSaveTimerRef.current = null;
-      const source = configAutoSaveDraftRef.current;
-      const pendingPatch = configAutoSavePatchRef.current;
-      configAutoSaveDraftRef.current = null;
-      configAutoSavePatchRef.current = {};
-      if (source) void saveDraftConfig(source, pendingPatch);
-    }, delay);
-  }
-
-  function flushConfigAutoSave() {
-    if (!configAutoSaveDraftRef.current) return;
-    if (configAutoSaveTimerRef.current) {
-      window.clearTimeout(configAutoSaveTimerRef.current);
-      configAutoSaveTimerRef.current = null;
-    }
-    const source = configAutoSaveDraftRef.current;
-    const pendingPatch = configAutoSavePatchRef.current;
-    configAutoSaveDraftRef.current = null;
-    configAutoSavePatchRef.current = {};
-    void saveDraftConfig(source, pendingPatch);
-  }
-
   function patchDraft(patch: Partial<ConfigDraft>) {
+    configDirtyPatchRef.current = { ...configDirtyPatchRef.current, ...patch };
     setDraft((current) => {
       if (!current) return current;
-      const next = { ...current, ...patch };
-      scheduleConfigAutoSave(next, patch);
-      return next;
+      return { ...current, ...patch };
     });
   }
 
@@ -1315,6 +1283,9 @@ function ConsoleApp() {
         message: formatTemplate(ui.shell.pageAccessRestrictedBody, { page: targetLabel }),
       });
       return false;
+    }
+    if (config?.product_analytics_enabled && nextPage !== activePage) {
+      void trackProductEvent("page_navigated", { from: activePage, to: nextPage }).catch(() => undefined);
     }
     if (nextPage === "fundamentals") {
       setSelectedSymbol("");
@@ -1513,10 +1484,12 @@ function ConsoleApp() {
                   handleSaveConfig={handleSaveConfig}
                   initialTab={configInitialTab}
                   language={language}
-                  onConfigBlur={flushConfigAutoSave}
                   onMarketConfigSaved={setMarketConfig}
                   patchDraft={patchDraft}
-                  setDraft={setDraft}
+                  setDraft={(next) => {
+                    configDirtyPatchRef.current = {};
+                    setDraft(next);
+                  }}
                 />
               ) : null}
             </Suspense>

@@ -63,6 +63,7 @@ class AppConfig(BaseModel):
     memory_curator_min_confidence: float = 0.7
     scheduler_enabled: bool
     tracing_enabled: bool = False
+    product_analytics_enabled: bool = False
     debug: bool
 
     telegram_enabled: bool = False
@@ -86,6 +87,9 @@ class AppConfig(BaseModel):
     longbridge_quote_ws_url: str = ""
     guardian_api_key_masked: str = ""
     has_guardian_api_key: bool = False
+    search_api_url: str = "https://api.bocha.cn/v1/web-search"
+    search_api_key_masked: str = ""
+    has_search_api_key: bool = False
     personal_config_keys: list[str] = Field(default_factory=list)
 
 
@@ -139,6 +143,7 @@ class ConfigUpdate(BaseModel):
     memory_curator_min_confidence: Optional[float] = None
     scheduler_enabled: Optional[bool] = None
     tracing_enabled: Optional[bool] = None
+    product_analytics_enabled: Optional[bool] = None
     debug: Optional[bool] = None
 
     telegram_enabled: Optional[bool] = None
@@ -157,6 +162,8 @@ class ConfigUpdate(BaseModel):
     longbridge_http_url: Optional[str] = None
     longbridge_quote_ws_url: Optional[str] = None
     guardian_api_key: Optional[str] = None
+    search_api_url: Optional[str] = None
+    search_api_key: Optional[str] = None
 
     @field_validator("llm_reasoning_effort", mode="before")
     @classmethod
@@ -199,4 +206,34 @@ class TelegramTestResponse(BaseModel):
 
     ok: bool
     chunks: int = 0
+    detail: str = ""
+
+
+class ConnectionCheck(BaseModel):
+    """单个外部依赖的就绪状态。"""
+
+    component: str
+    status: str
+    configured: bool
+    detail: str
+    depends_on: list[str] = Field(default_factory=list)
+
+
+class ConfigReadinessResponse(BaseModel):
+    """首次使用向导所需的连接与功能就绪状态。"""
+
+    ready: bool
+    checks: list[ConnectionCheck] = Field(default_factory=list)
+
+
+class ConnectionTestResponse(BaseModel):
+    component: str
+    ok: bool
+    detail: str
+    checked_at: str
+
+
+class DemoDataResponse(BaseModel):
+    watchlist_created: int = 0
+    portfolio_created: int = 0
     detail: str = ""

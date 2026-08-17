@@ -140,6 +140,31 @@ class PortfolioService:
         payload["created_at"] = now
         return self._empty_enriched_item(self.repository.add_item(payload))
 
+    def seed_sample_items(self, user_id: str) -> list[dict[str, Any]]:
+        """仅为空组合创建显式标记的教学持仓，不请求行情也不覆盖真实数据。"""
+        existing = self.repository.list_items("US", user_id=user_id) + self.repository.list_items("A", user_id=user_id)
+        if existing:
+            return []
+        samples = [
+            PortfolioItemCreate(
+                market="US",
+                symbol="AAPL.US",
+                name="Apple",
+                shares="10",
+                cost_price="150",
+                note="[Sample] Replace with your actual holding",
+            ),
+            PortfolioItemCreate(
+                market="A",
+                symbol="600519.SH",
+                name="贵州茅台",
+                shares="1",
+                cost_price="1500",
+                note="[Sample] 请替换为真实持仓",
+            ),
+        ]
+        return [self.add_item(item, user_id=user_id) for item in samples]
+
     def update_item(self, item_id: int, item: PortfolioItemUpdate, user_id: Optional[str] = None) -> dict[str, Any]:
         patch = item.model_dump(exclude_unset=True)
         if not patch:

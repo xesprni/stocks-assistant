@@ -218,6 +218,9 @@ class MarketDataToolsTest(unittest.TestCase):
         self.assertIn("get_longbridge_capital_flow", names)
         self.assertIn("get_longbridge_quote_indicators", names)
         self.assertIn("get_technical_indicators", names)
+        self.assertIn("web_search", names)
+        self.assertIn("get_security_news", names)
+        self.assertIn("get_security_insights", names)
 
 
 if __name__ == "__main__":
