@@ -30,7 +30,8 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 function toastDuration(kind: ToastKind, duration?: number) {
   if (typeof duration === "number") return duration;
-  return kind === "success" ? 2200 : 4600;
+  if (kind === "success") return 4000;
+  return kind === "error" ? 7000 : 5000;
 }
 
 function ToastIcon({ kind }: { kind: ToastKind }) {
@@ -95,17 +96,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed right-4 top-4 z-[1300] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2">
+      <div className="pointer-events-none fixed right-4 top-[calc(1rem+env(safe-area-inset-top))] z-[1300] flex w-[min(390px,calc(100vw-2rem))] flex-col gap-2">
         {toasts.map((toast) => (
           <div
             className={cn(
-              "app-toast pointer-events-auto flex items-start gap-3 rounded-md border bg-popover px-3 py-3 text-sm text-popover-foreground shadow-lg",
+              "app-toast apple-material-popover pointer-events-auto flex items-start gap-3 rounded-[1rem] border px-3.5 py-3.5 text-sm text-popover-foreground shadow-xl",
               toast.kind === "success" && "border-primary/35",
               toast.kind === "error" && "border-destructive/45",
               toast.kind === "info" && "border-secondary/45",
             )}
             data-state={toast.state}
             key={toast.id}
+            aria-atomic="true"
             role={toast.kind === "error" ? "alert" : "status"}
           >
             <ToastIcon kind={toast.kind} />
@@ -115,7 +117,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             </div>
             <button
               aria-label="Close"
-              className="rounded-sm p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="apple-pressable grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => dismissToast(toast.id)}
               type="button"
             >

@@ -1896,7 +1896,7 @@ export function DashboardPage({
           chatExpanded && "xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",
         )}
       >
-        <main className="dashboard-primary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 xl:self-stretch">
+        <section className="dashboard-primary-column dashboard-scroll-column min-w-0 xl:col-start-1 xl:row-start-1 xl:self-stretch">
           {canWatchlist ? (
             <WatchlistMovers
               error=""
@@ -1912,7 +1912,7 @@ export function DashboardPage({
           ) : (
             <PermissionHidden>{copy.watchlistHidden}</PermissionHidden>
           )}
-        </main>
+        </section>
 
         <section
           className={cn(

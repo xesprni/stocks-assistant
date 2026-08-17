@@ -5,22 +5,22 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "apple-button apple-pressable inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[0.625rem] text-[0.8125rem] font-semibold transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-gradient-primary text-primary-foreground shadow-glow hover:-translate-y-0.5 hover:shadow-[0_10px_26px_hsl(var(--primary)_/_0.3)]",
-        destructive: "bg-destructive text-destructive-foreground shadow-sm hover:-translate-y-0.5 hover:bg-destructive/90 hover:shadow-[0_10px_26px_hsl(var(--destructive)_/_0.22)]",
-        outline: "border border-input bg-background/70 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/55 hover:border-primary/45 hover:bg-primary/10 hover:text-foreground",
-        secondary: "bg-secondary text-secondary-foreground shadow-sm hover:-translate-y-0.5 hover:bg-secondary/90 hover:shadow-[0_10px_26px_hsl(var(--secondary)_/_0.18)]",
-        ghost: "hover:bg-muted/80 hover:text-foreground",
+        default: "border border-primary/70 bg-primary text-primary-foreground shadow-[0_1px_2px_hsl(var(--primary)_/_0.22),inset_0_1px_0_hsl(0_0%_100%_/_0.18)] hover:bg-primary/90",
+        destructive: "border border-destructive/70 bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
+        outline: "border border-input bg-[var(--control-bg)] text-foreground shadow-[var(--control-shadow)] hover:border-primary/45 hover:bg-[var(--control-hover-bg)]",
+        secondary: "border border-secondary/55 bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/88",
+        ghost: "border border-transparent hover:bg-muted/75 hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-8 px-3 py-1.5 text-xs",
-        sm: "h-7 px-2.5 text-xs",
-        lg: "h-10 px-4",
-        icon: "h-8 w-8",
+        default: "min-h-9 px-3.5 py-2",
+        sm: "min-h-8 px-3 py-1.5 text-xs",
+        lg: "min-h-11 px-5 text-sm",
+        icon: "size-9",
       },
     },
     defaultVariants: {

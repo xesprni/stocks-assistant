@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode, TouchEvent } from "react";
+import type { ReactNode } from "react";
 import {
   BookOpen,
   Bot,
@@ -35,8 +35,15 @@ import {
 import { ReauthDialog } from "@/components/ReauthDialog";
 import { useConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useToast } from "@/components/common/Toast";
+import {
+  AppNavigationPopover,
+  type AppNavGroup,
+  type AppNavItem,
+} from "@/components/shell/AppNavigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { useFluidSheet } from "@/hooks/useFluidSheet";
 import {
   getChatSession,
   getMarketConfig,
@@ -84,12 +91,8 @@ const TracingPage = lazy(() => import("@/pages/TracingPage").then((module) => ({
 const UsersPage = lazy(() => import("@/pages/UsersPage").then((module) => ({ default: module.UsersPage })));
 const WatchlistPage = lazy(() => import("@/pages/WatchlistPage").then((module) => ({ default: module.WatchlistPage })));
 
-type NavItem = { id: Page; label: string; icon: ReactNode; hint: string };
-type NavGroup = { id: string; label: string; items: NavItem[] };
 type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
-type TouchPoint = { x: number; y: number };
 
-const MOBILE_GESTURE_DELTA = 28;
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
 const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
 
@@ -251,12 +254,12 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "debug",
 ]);
 
-function navItem(language: AppLanguage, id: Page, icon: ReactNode): NavItem {
+function navItem(language: AppLanguage, id: Page, icon: ReactNode): AppNavItem {
   const [label, hint] = i18n[language].nav[id as keyof typeof i18n.zh.nav];
-  return { id, label, icon, hint };
+  return { id, label, icon, hint, href: PAGE_PATH[id] };
 }
 
-function getAccountNavGroups(language: AppLanguage): NavGroup[] {
+function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
   const groups = i18n[language].groups;
   return [
     {
@@ -408,23 +411,6 @@ function isMobileShellViewport(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
 }
 
-function touchPointFromEvent<T extends Element>(event: TouchEvent<T>): TouchPoint | null {
-  const touch = event.touches[0];
-  return touch ? { x: touch.clientX, y: touch.clientY } : null;
-}
-
-function isInteractiveTouchTarget(target: EventTarget | null) {
-  return target instanceof Element && Boolean(target.closest("button, a, input, textarea, select, [role='button'], [data-touch-gesture-ignore='true']"));
-}
-
-function verticalGesture(previous: TouchPoint | null, next: TouchPoint | null) {
-  if (!previous || !next) return null;
-  const deltaX = next.x - previous.x;
-  const deltaY = next.y - previous.y;
-  if (Math.abs(deltaY) < MOBILE_GESTURE_DELTA || Math.abs(deltaY) < Math.abs(deltaX) * 1.2) return null;
-  return deltaY > 0 ? "down" : "up";
-}
-
 function systemTheme(): EffectiveTheme {
   if (typeof window === "undefined") return "dark";
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -533,9 +519,9 @@ function ConsoleApp() {
   const [configInitialTab, setConfigInitialTab] = useState<ConfigTab>(() => configTabFromPath(window.location.pathname) ?? "model");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const mainContentRef = useRef<HTMLElement | null>(null);
+  const previousPageRef = useRef<Page | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
-  const mobileHeaderTouchPointRef = useRef<TouchPoint | null>(null);
-  const mobileTopEdgeTouchPointRef = useRef<TouchPoint | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const isSendingRef = useRef(false);
   const configAutoSaveTimerRef = useRef<number | null>(null);
@@ -557,6 +543,13 @@ function ConsoleApp() {
     const permission = pagePermissions[target] ?? DEFAULT_PAGE_PERMISSION[target];
     return !permission || auth.can(permission);
   };
+  const navigationGroups = getNavigationGroups(language)
+    .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
+    .filter((group) => group.items.length > 0);
+  const firstAllowedPage = navigationGroups[0]?.items[0]?.id ?? null;
+  // 权限在前端渲染前即生效，避免未授权页面先挂载并发起数据请求。
+  const activePage = canPage(page) ? page : firstAllowedPage;
+  const activeNavItem = navigationGroups.flatMap((group) => group.items).find((item) => item.id === activePage);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -569,23 +562,25 @@ function ConsoleApp() {
   }, []);
 
   useEffect(() => {
-    const nextPath = pathForPage(page);
+    if (!activePage) {
+      routeReadyRef.current = true;
+      return;
+    }
+    const nextPath = pathForPage(activePage);
     if (normalizeRoutePath(window.location.pathname) !== nextPath) {
-      const method = routeReadyRef.current ? "pushState" : "replaceState";
-      window.history[method]({ page }, "", `${nextPath}${window.location.search}${window.location.hash}`);
+      const method = routeReadyRef.current && activePage === page ? "pushState" : "replaceState";
+      window.history[method]({ page: activePage }, "", `${nextPath}${window.location.search}${window.location.hash}`);
     }
     routeReadyRef.current = true;
-  }, [page]);
+  }, [activePage, page]);
 
   useEffect(() => {
-    if (!canPage(page)) {
-      setPage("overview");
+    if (!canPage(page) && firstAllowedPage) {
+      setPage(firstAllowedPage);
     }
-  }, [page, auth.permissions]);
+  }, [page, auth.permissions, firstAllowedPage, pagePermissions]);
 
   useEffect(() => {
-    mobileHeaderTouchPointRef.current = null;
-    mobileTopEdgeTouchPointRef.current = null;
     setDashboardChatDrawerOpen(false);
     setDashboardChatFullscreen(false);
   }, [page]);
@@ -595,8 +590,6 @@ function ConsoleApp() {
     const handleChange = () => {
       setIsMobileViewport(media.matches);
       if (!media.matches) {
-        mobileHeaderTouchPointRef.current = null;
-        mobileTopEdgeTouchPointRef.current = null;
         setDashboardChatDrawerOpen(false);
         setDashboardChatFullscreen(false);
       }
@@ -635,38 +628,6 @@ function ConsoleApp() {
     shouldAutoScrollChatRef.current = isChatScrolledToBottom(element);
   }
 
-  function handleTopEdgeTouchStart(event: TouchEvent<HTMLButtonElement>) {
-    if (!isMobileShellViewport()) return;
-    mobileTopEdgeTouchPointRef.current = touchPointFromEvent(event);
-  }
-
-  function handleTopEdgeTouchMove(event: TouchEvent<HTMLButtonElement>) {
-    if (!isMobileShellViewport()) return;
-    const point = touchPointFromEvent(event);
-    if (verticalGesture(mobileTopEdgeTouchPointRef.current, point) === "down") {
-      setIsMobileHeaderVisible(true);
-      mobileTopEdgeTouchPointRef.current = point;
-    }
-  }
-
-  function handleHeaderTouchStart(event: TouchEvent<HTMLElement>) {
-    if (!isMobileShellViewport()) return;
-    if (isInteractiveTouchTarget(event.target)) {
-      mobileHeaderTouchPointRef.current = null;
-      return;
-    }
-    mobileHeaderTouchPointRef.current = touchPointFromEvent(event);
-  }
-
-  function handleHeaderTouchMove(event: TouchEvent<HTMLElement>) {
-    if (!isMobileShellViewport()) return;
-    const point = touchPointFromEvent(event);
-    if (verticalGesture(mobileHeaderTouchPointRef.current, point) === "up") {
-      setIsMobileHeaderVisible(false);
-      mobileHeaderTouchPointRef.current = point;
-    }
-  }
-
   const resolvedTheme = effectiveTheme(theme, systemPreference);
 
   useEffect(() => {
@@ -693,6 +654,26 @@ function ConsoleApp() {
     document.documentElement.style.colorScheme = resolvedTheme;
     writeStoredValue("stocks-assistant-theme", theme);
   }, [resolvedTheme, theme]);
+
+  useEffect(() => {
+    document.documentElement.lang = language === "en" ? "en" : "zh-CN";
+    document.title = `${activeNavItem?.label ?? ui.shell.noPageAccessTitle} — Stocks Assistant`;
+  }, [activeNavItem?.label, language, ui.shell.noPageAccessTitle]);
+
+  useEffect(() => {
+    if (previousPageRef.current === null) {
+      previousPageRef.current = activePage;
+      return;
+    }
+    if (previousPageRef.current === activePage) return;
+    previousPageRef.current = activePage;
+    const frame = window.requestAnimationFrame(() => {
+      if (!mainContentRef.current) return;
+      mainContentRef.current.scrollTop = 0;
+      mainContentRef.current.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePage]);
 
   useEffect(() => {
     writeStoredBoolean(MOBILE_HEADER_VISIBLE_KEY, isMobileHeaderVisible);
@@ -761,7 +742,7 @@ function ConsoleApp() {
     setPrompt("");
     isSendingRef.current = true;
     setIsSending(true);
-    setPage("overview");
+    handleNavigate("overview");
 
     const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
     if (shouldCreateNewSession && options.thinkingEnabled !== true) {
@@ -1323,19 +1304,30 @@ function ConsoleApp() {
     setConfigState("saved");
   }
 
-  function handleNavigate(nextPage: Page) {
+  function handleNavigate(nextPage: Page, configTab?: ConfigTab) {
+    if (!canPage(nextPage)) {
+      const targetLabel = getNavigationGroups(language)
+        .flatMap((group) => group.items)
+        .find((item) => item.id === nextPage)?.label ?? nextPage;
+      showToast({
+        kind: "info",
+        title: ui.shell.pageAccessRestrictedTitle,
+        message: formatTemplate(ui.shell.pageAccessRestrictedBody, { page: targetLabel }),
+      });
+      return false;
+    }
     if (nextPage === "fundamentals") {
       setSelectedSymbol("");
     }
     if (nextPage === "config") {
-      setConfigInitialTab("model");
+      setConfigInitialTab(configTab ?? "model");
     }
     setPage(nextPage);
+    return true;
   }
 
   function openConfig(tab: ConfigTab = "model") {
-    setConfigInitialTab(tab);
-    setPage("config");
+    handleNavigate("config", tab);
   }
 
   const dashboardChatPanel = (
@@ -1368,36 +1360,35 @@ function ConsoleApp() {
   );
 
   return (
-    <div className={cn("console-shell h-[100dvh] overflow-hidden", page === "watchlist" && "console-shell-watchlist")}>
+    <div className={cn("console-shell h-[100dvh] overflow-hidden", activePage === "watchlist" && "console-shell-watchlist")}>
+      <a className="skip-link" href="#main-content">{language === "en" ? "Skip to content" : "跳到主要内容"}</a>
       {confirmDialog.dialog}
       <ReauthDialog />
       <ConfigSaveToast key={configToast?.id ?? "empty"} toast={configToast} onClose={dismissConfigToast} />
       <div className="app-frame flex h-full min-h-0 w-full flex-col gap-0 p-0">
         <button
+          aria-hidden={isMobileHeaderVisible}
           aria-label={language === "en" ? "Show top bar" : "显示顶部栏"}
-          className={cn("app-top-edge-trigger lg:hidden", isMobileHeaderVisible && "pointer-events-none opacity-0")}
+          className={cn("app-top-edge-trigger lg:hidden", isMobileHeaderVisible && "app-edge-trigger-hidden")}
+          disabled={isMobileHeaderVisible}
           onClick={() => setIsMobileHeaderVisible(true)}
-          onTouchMove={handleTopEdgeTouchMove}
-          onTouchStart={handleTopEdgeTouchStart}
           tabIndex={isMobileHeaderVisible ? -1 : 0}
           type="button"
         >
           <span className="app-edge-grabber" />
         </button>
         <Header
-          canPage={canPage}
           isMobileVisible={isMobileHeaderVisible}
           language={language}
           onHideMobileChrome={() => {
             setIsMobileHeaderVisible(false);
           }}
-          onHome={() => setPage("overview")}
+          onHome={firstAllowedPage ? () => handleNavigate(canPage("overview") ? "overview" : firstAllowedPage) : undefined}
           onLogout={auth.logout}
           onUpdateProfile={auth.updateProfile}
-          page={page}
+          navigationGroups={navigationGroups}
+          page={activePage}
           setPage={handleNavigate}
-          onTouchMove={handleHeaderTouchMove}
-          onTouchStart={handleHeaderTouchStart}
           onThemeChange={setTheme}
           resolvedTheme={resolvedTheme}
           theme={theme}
@@ -1408,14 +1399,29 @@ function ConsoleApp() {
           className="app-main-grid flex min-h-0 flex-1"
         >
           <main
+            aria-label={activeNavItem?.label ?? ui.shell.noPageAccessTitle}
             className={cn(
-              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-2 sm:p-3 lg:overflow-y-auto lg:p-3",
+              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-3 focus-visible:outline-none sm:p-4 lg:overflow-y-auto lg:p-5",
               isMobileHeaderVisible && "mobile-header-spacer",
+              activePage === "overview" && isMobileViewport && auth.can("chat:read") && "mobile-chat-dock-space",
             )}
-            key={page}
+            id="main-content"
+            ref={mainContentRef}
+            tabIndex={-1}
           >
             <Suspense fallback={<PageFallback />}>
-              {page === "overview" ? (
+              {!activePage ? (
+                <section className="grid min-h-[min(32rem,70dvh)] place-items-center" role="status">
+                  <div className="apple-material-thick max-w-md rounded-[1.75rem] border border-border/60 px-7 py-8 text-center shadow-xl">
+                    <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                      <ShieldCheck className="size-5" />
+                    </span>
+                    <h1 className="mt-4 text-xl font-semibold tracking-[-0.02em] text-foreground">{ui.shell.noPageAccessTitle}</h1>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{ui.shell.noPageAccessBody}</p>
+                  </div>
+                </section>
+              ) : null}
+              {activePage === "overview" ? (
                 <DashboardPage
                   canPermission={auth.can}
                   chatExpanded={dashboardChatExpanded}
@@ -1423,17 +1429,16 @@ function ConsoleApp() {
                   isMobileViewport={isMobileViewport}
                   language={language}
                   onOpenChart={(symbol) => {
-                    setSelectedSymbol(symbol);
-                    setPage("watchlist");
+                    if (handleNavigate("watchlist")) setSelectedSymbol(symbol);
                   }}
                   onOpenMarketConfig={() => openConfig("market")}
-                  onOpenPortfolio={() => setPage("portfolio")}
-                  onOpenWatchlist={() => setPage("watchlist")}
+                  onOpenPortfolio={() => handleNavigate("portfolio")}
+                  onOpenWatchlist={() => handleNavigate("watchlist")}
                   refreshInterval={marketConfig.refresh_interval}
                 />
               ) : null}
 
-            {page === "tracing" ? (
+            {activePage === "tracing" ? (
               <TracingPage
                 activeSessionId={activeConvId}
                 onOpenConfig={() => openConfig()}
@@ -1441,41 +1446,40 @@ function ConsoleApp() {
               />
             ) : null}
 
-            {page === "watchlist" ? (
+            {activePage === "watchlist" ? (
               <WatchlistPage
                 language={language}
                 selectedSymbol={selectedSymbol}
                 onSelectedSymbolChange={setSelectedSymbol}
                 onOpenFinancials={(symbol) => {
-                  setSelectedSymbol(symbol);
-                  setPage("fundamentals");
+                  if (handleNavigate("fundamentals")) setSelectedSymbol(symbol);
                 }}
               />
             ) : null}
 
-            {page === "news" ? <NewsPage initialSymbol={selectedSymbol || undefined} language={language} /> : null}
+            {activePage === "news" ? <NewsPage initialSymbol={selectedSymbol || undefined} language={language} /> : null}
 
-            {page === "portfolio" ? (
+            {activePage === "portfolio" ? (
               <PortfolioPage
                 confirmAction={confirmDialog.confirm}
                 language={language}
                 refreshInterval={marketConfig.refresh_interval}
                 onAnalyzeStock={(symbol) => {
-                  setPrompt(formatTemplate(i18n[language].portfolio.analysisPrompt, { symbol }));
-                  setPage("overview");
+                  if (handleNavigate("overview")) {
+                    setPrompt(formatTemplate(i18n[language].portfolio.analysisPrompt, { symbol }));
+                  }
                 }}
                 onOpenFinancials={(symbol) => {
-                  setSelectedSymbol(symbol);
-                  setPage("fundamentals");
+                  if (handleNavigate("fundamentals")) setSelectedSymbol(symbol);
                 }}
               />
             ) : null}
 
-            {page === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
+            {activePage === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
 
-            {page === "skills" ? <SkillsPage confirmAction={confirmDialog.confirm} language={language} /> : null}
+            {activePage === "skills" ? <SkillsPage confirmAction={confirmDialog.confirm} language={language} /> : null}
 
-            {page === "subagents" ? (
+            {activePage === "subagents" ? (
               <SubAgentsPage
                 config={config}
                 confirmAction={confirmDialog.confirm}
@@ -1485,19 +1489,19 @@ function ConsoleApp() {
               />
             ) : null}
 
-            {page === "memory" ? <MemoryPage confirmAction={confirmDialog.confirm} language={language} /> : null}
+            {activePage === "memory" ? <MemoryPage confirmAction={confirmDialog.confirm} language={language} /> : null}
 
-            {page === "knowledge" ? <KnowledgePage language={language} /> : null}
+            {activePage === "knowledge" ? <KnowledgePage language={language} /> : null}
 
-            {page === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
+            {activePage === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
 
-            {page === "mcp" ? <MCPPage language={language} /> : null}
+            {activePage === "mcp" ? <MCPPage language={language} /> : null}
 
-            {page === "security" ? <SecurityPage confirmAction={confirmDialog.confirm} language={language} /> : null}
+            {activePage === "security" ? <SecurityPage confirmAction={confirmDialog.confirm} language={language} /> : null}
 
-            {page === "users" ? <UsersPage language={language} /> : null}
+            {activePage === "users" ? <UsersPage language={language} /> : null}
 
-              {page === "config" ? (
+              {activePage === "config" ? (
                 <ConfigPage
                   canManageSystem={auth.can("config:write")}
                   canReadMarket={auth.can("market:read")}
@@ -1518,7 +1522,7 @@ function ConsoleApp() {
             </Suspense>
           </main>
         </div>
-        {page === "overview" && isMobileViewport && auth.can("chat:read") ? (
+        {activePage === "overview" && isMobileViewport && auth.can("chat:read") ? (
           <DashboardMobileChatDock
             chatPanel={dashboardChatPanel}
             fullscreen={dashboardChatFullscreen}
@@ -1550,15 +1554,22 @@ function DashboardMobileChatDock({
 }) {
   const mobileChatLabel = language === "en" ? "Search or ask" : "搜索或提问";
   const closeMobileChatLabel = language === "en" ? "Close AI drawer" : "关闭 AI 抽屉";
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  function handleClose() {
+  function finishClose() {
     onFullscreenChange(false);
     onOpenChange(false);
   }
+  const { dragHandleProps, layerRef, panelRef, present: drawerPresent, requestClose } = useFluidSheet<HTMLElement>({
+    axis: "y",
+    onDismiss: finishClose,
+    open: isOpen,
+  });
+  useDialogFocus(isOpen, panelRef, requestClose, closeButtonRef);
 
   return (
     <>
-      {!isOpen ? (
+      {!drawerPresent ? (
         <div className="dashboard-chat-searchbar fixed inset-x-0 bottom-0 z-[920] px-3 pb-[calc(0.85rem+env(safe-area-inset-bottom))] pt-3 lg:hidden">
           <button
             aria-label={mobileChatLabel}
@@ -1577,36 +1588,42 @@ function DashboardMobileChatDock({
           </button>
         </div>
       ) : null}
-      {isOpen ? (
-        <div className={cn("dashboard-chat-drawer-layer fixed inset-0 lg:hidden", fullscreen ? "z-[980]" : "z-[950]")}>
-          <button
-            aria-label={closeMobileChatLabel}
-            className="absolute inset-0 bg-background/45 backdrop-blur-[2px]"
-            onClick={handleClose}
-            type="button"
+      {drawerPresent ? (
+        <div
+          className={cn("dashboard-chat-drawer-layer fluid-sheet-layer fixed inset-0 lg:hidden", fullscreen ? "z-[980]" : "z-[950]")}
+          ref={layerRef}
+        >
+          <div
+            aria-hidden="true"
+            className="fluid-sheet-backdrop absolute inset-0"
+            onClick={requestClose}
           />
           <aside
             aria-label={mobileChatLabel}
+            aria-modal="true"
             className={cn(
-              "dashboard-chat-drawer absolute inset-x-0 bottom-0 flex flex-col overflow-hidden border border-border/80 bg-background shadow-2xl",
+              "dashboard-chat-drawer fluid-sheet-panel apple-material-thick absolute inset-x-0 bottom-0 flex flex-col overflow-hidden border border-border/60 shadow-2xl",
               fullscreen
                 ? "h-[100dvh] rounded-none border-x-0 border-b-0 pt-[calc(env(safe-area-inset-top))]"
-                : "h-[min(86dvh,46rem)] min-h-[28rem] rounded-t-2xl",
+                : "h-[min(86dvh,46rem)] rounded-t-[1.5rem]",
             )}
+            ref={panelRef}
+            role="dialog"
+            tabIndex={-1}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-border/65 px-3 py-2">
-              <button
-                aria-label={closeMobileChatLabel}
-                className="flex flex-1 items-center justify-center py-1"
-                onClick={handleClose}
-                type="button"
+            <div className="sheet-header flex shrink-0 items-center justify-between px-3 py-2">
+              <div
+                aria-hidden="true"
+                className="sheet-drag-handle flex h-8 flex-1 touch-none items-center justify-center"
+                {...dragHandleProps}
               >
                 <span className="h-1 w-10 rounded-full bg-muted-foreground/35" />
-              </button>
+              </div>
               <Button
                 aria-label={closeMobileChatLabel}
-                className="ml-2 h-8 w-8"
-                onClick={handleClose}
+                className="ml-2 rounded-full"
+                onClick={requestClose}
+                ref={closeButtonRef}
                 size="icon"
                 title={closeMobileChatLabel}
                 type="button"
@@ -1626,33 +1643,29 @@ function DashboardMobileChatDock({
 }
 
 function Header({
-  canPage,
   isMobileVisible,
   language,
+  navigationGroups,
   onHideMobileChrome,
   onHome,
   onLogout,
   onUpdateProfile,
   page,
   setPage,
-  onTouchMove,
-  onTouchStart,
   onThemeChange,
   resolvedTheme,
   theme,
   user,
 }: {
-  canPage: (page: Page) => boolean;
   isMobileVisible: boolean;
   language: AppLanguage;
+  navigationGroups: AppNavGroup[];
   onHideMobileChrome: () => void;
-  onHome: () => void;
+  onHome?: () => void;
   onLogout: () => void;
   onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
-  page: Page;
+  page: Page | null;
   setPage: (page: Page) => void;
-  onTouchMove: (event: TouchEvent<HTMLElement>) => void;
-  onTouchStart: (event: TouchEvent<HTMLElement>) => void;
   onThemeChange: (theme: Theme) => void;
   resolvedTheme: EffectiveTheme;
   theme: Theme;
@@ -1667,28 +1680,52 @@ function Header({
     { value: "light", label: themeLabels.light, icon: <Sun /> },
   ];
   const hideMobileChromeLabel = language === "en" ? "Hide header" : "隐藏顶部栏";
+  const navigationLabel = language === "en" ? "Open navigation" : "打开导航";
+  const closeNavigationLabel = language === "en" ? "Close navigation" : "关闭导航";
+  const currentItem = navigationGroups.flatMap((group) => group.items).find((item) => item.id === page);
+  const nextTheme: Theme = theme === "system" ? "dark" : theme === "dark" ? "light" : "system";
+  const activeThemeIcon = theme === "system" ? <Monitor /> : theme === "dark" ? <Moon /> : <Sun />;
+  const nextThemeLabel = themeOptions.find((option) => option.value === nextTheme)?.label ?? nextTheme;
 
   return (
     <header
       className={cn(
-        "panel app-header flex shrink-0 items-center justify-between gap-2 rounded-none border-x-0 border-t-0 px-2 py-1 shadow-none sm:px-3 lg:px-3",
+        "panel app-header flex min-h-14 shrink-0 items-center justify-between gap-3 rounded-none border-x-0 border-t-0 px-2.5 py-2 shadow-none sm:px-4 lg:px-5",
         !isMobileVisible && "mobile-header-hidden",
       )}
-      onTouchMove={onTouchMove}
-      onTouchStart={onTouchStart}
     >
-      <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onHome} type="button">
-        <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-gradient-primary text-primary-foreground shadow-glow">
-          <Sparkles className="size-3.5" />
+      <div className="flex min-w-0 items-center gap-2.5">
+        <AppNavigationPopover
+          closeLabel={closeNavigationLabel}
+          currentPage={page}
+          groups={navigationGroups}
+          label={navigationLabel}
+          onNavigate={setPage}
+        />
+        <button
+          aria-label={i18n[language].shell.goToStartPage}
+          className="apple-pressable flex shrink-0 items-center gap-2 rounded-xl text-left"
+          disabled={!onHome}
+          onClick={onHome}
+          type="button"
+        >
+          <span className="app-mark grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
+            <Sparkles className="size-4" />
+          </span>
+          <span className="hidden min-w-0 sm:block">
+            <span className="block truncate text-sm font-semibold tracking-[-0.012em] text-foreground">Stocks Assistant</span>
+          </span>
+        </button>
+        <span aria-hidden="true" className="hidden h-6 w-px bg-border/70 sm:block" />
+        <div className="min-w-0" aria-live="polite">
+          <p className="truncate text-sm font-semibold tracking-[-0.012em] text-foreground">{currentItem?.label}</p>
+          <p className="hidden truncate text-[0.6875rem] leading-4 text-muted-foreground md:block">{currentItem?.hint}</p>
         </div>
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold text-foreground">Stocks Assistant</h1>
-        </div>
-      </button>
-      <div className="flex shrink-0 items-center gap-1.5 lg:min-w-0">
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
         <Button
           aria-label={hideMobileChromeLabel}
-          className="h-7 w-7 lg:hidden"
+          className="rounded-full lg:hidden"
           onClick={onHideMobileChrome}
           size="icon"
           title={hideMobileChromeLabel}
@@ -1697,9 +1734,20 @@ function Header({
         >
           <ChevronUp className="size-4" />
         </Button>
+        <Button
+          aria-label={`${themeLabels.switchTo} ${nextThemeLabel}`}
+          className="rounded-full sm:hidden"
+          onClick={() => onThemeChange(nextTheme)}
+          size="icon"
+          title={`${themeLabels.switchTo} ${nextThemeLabel}`}
+          type="button"
+          variant="outline"
+        >
+          {activeThemeIcon}
+        </Button>
         <div
           aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
-          className="theme-toggle inline-flex h-7 shrink-0 items-center rounded-full border border-input bg-background/70 p-0.5 backdrop-blur supports-[backdrop-filter]:bg-background/55"
+          className="theme-toggle hidden h-9 shrink-0 items-center rounded-full border border-input bg-[var(--control-bg)] p-0.5 sm:inline-flex"
           role="group"
         >
           {themeOptions.map((option) => {
@@ -1713,8 +1761,8 @@ function Header({
                 aria-label={`${themeLabels.switchTo} ${title}`}
                 aria-pressed={active}
                 className={cn(
-                  "grid h-6 w-6 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3",
-                  active && "bg-card text-foreground shadow-sm",
+                  "apple-pressable grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5",
+                  active && "bg-[var(--control-selected-bg)] text-foreground shadow-sm",
                 )}
                 key={option.value}
                 onClick={() => onThemeChange(option.value)}
@@ -1727,12 +1775,9 @@ function Header({
           })}
         </div>
         <UserAvatarMenu
-          canPage={canPage}
           language={language}
           onLogout={onLogout}
           onUpdateProfile={onUpdateProfile}
-          page={page}
-          setPage={setPage}
           user={user}
         />
       </div>
@@ -1775,7 +1820,7 @@ function readAvatarDataUrl(file: File, language: AppLanguage): Promise<string> {
 }
 
 function AvatarVisual({ user, size = "md" }: { user: AuthUser | null; size?: "md" | "lg" }) {
-  const className = size === "lg" ? "size-10 text-sm" : "size-7 text-xs";
+  const className = size === "lg" ? "size-11 text-sm" : "size-8 text-xs";
   if (user?.avatar_base64) {
     return (
       <img
@@ -1793,26 +1838,21 @@ function AvatarVisual({ user, size = "md" }: { user: AuthUser | null; size?: "md
 }
 
 function UserAvatarMenu({
-  canPage,
   language,
   onLogout,
   onUpdateProfile,
-  page,
-  setPage,
   user,
 }: {
-  canPage: (page: Page) => boolean;
   language: AppLanguage;
   onLogout: () => void;
   onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
-  page: Page;
-  setPage: (page: Page) => void;
   user: AuthUser | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [avatarError, setAvatarError] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const copy = language === "en"
     ? {
@@ -1823,7 +1863,6 @@ function UserAvatarMenu({
       roles: "Roles",
       lastLogin: "Last login",
       created: "Created",
-      navigation: "More",
       logout: "Log out",
       permissions: "permissions",
       noRoles: "No roles",
@@ -1836,31 +1875,28 @@ function UserAvatarMenu({
       roles: "角色",
       lastLogin: "最近登录",
       created: "创建时间",
-      navigation: "更多入口",
       logout: "退出登录",
       permissions: "项权限",
       noRoles: "暂无角色",
     };
-  const navGroups = useMemo(() => {
-    return getAccountNavGroups(language)
-      .map((group) => ({ ...group, items: group.items.filter((item) => canPage(item.id)) }))
-      .filter((group) => group.items.length > 0);
-  }, [canPage, language]);
-
   useEffect(() => {
     if (!isOpen) return undefined;
     function handlePointerDown(event: PointerEvent) {
       const path = event.composedPath();
       if (!menuRef.current || !path.includes(menuRef.current)) setIsOpen(false);
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setIsOpen(false);
+      triggerRef.current?.focus({ preventScroll: true });
+    }
     document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isOpen]);
-
-  function navigate(nextPage: Page) {
-    setIsOpen(false);
-    setPage(nextPage);
-  }
 
   async function handleAvatarFile(file: File | undefined) {
     if (!file) return;
@@ -1893,9 +1929,11 @@ function UserAvatarMenu({
     <div className="relative" ref={menuRef}>
       <button
         aria-expanded={isOpen}
+        aria-haspopup="dialog"
         aria-label={language === "en" ? "Open account menu" : "打开账号菜单"}
-        className="flex h-8 items-center gap-1 rounded-full border border-input bg-background/70 p-0.5 pr-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/55 transition-colors hover:bg-muted/55"
+        className="apple-pressable flex h-10 items-center gap-1 rounded-full border border-input bg-[var(--control-bg)] p-0.5 pr-2 shadow-[var(--control-shadow)] transition-[background-color,border-color,transform] hover:bg-[var(--control-hover-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setIsOpen((current) => !current)}
+        ref={triggerRef}
         type="button"
       >
         <AvatarVisual user={user} />
@@ -1905,8 +1943,10 @@ function UserAvatarMenu({
       {isOpen ? (
         <div
           className="account-menu-popover absolute right-0 top-[calc(100%+0.45rem)] z-[1000] max-h-[min(680px,calc(100dvh-4rem))] w-[320px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg border border-border/90 p-2 text-popover-foreground shadow-2xl ring-1 ring-border/40"
+          aria-label={copy.account}
           onPointerDown={(event) => event.stopPropagation()}
           onTouchStart={(event) => event.stopPropagation()}
+          role="dialog"
         >
           <div className="flex min-w-0 items-center gap-2 border-b border-border/65 pb-2">
             <AvatarVisual size="lg" user={user} />
@@ -1958,37 +1998,6 @@ function UserAvatarMenu({
               ) : null}
             </div>
             {avatarError ? <p className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">{avatarError}</p> : null}
-          </div>
-
-          <div className="border-t border-border/65 py-2">
-            <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.navigation}</p>
-            <div className="space-y-1">
-              {navGroups.map((group) => (
-                <details className="group min-w-0 rounded-md" key={group.id} open={group.items.some((item) => item.id === page)}>
-                  <summary className="flex h-8 cursor-pointer list-none items-center justify-between rounded-md px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
-                    <span>{group.label}</span>
-                    <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-                  </summary>
-                  <div className="grid gap-0.5 pb-1 pl-1">
-                    {group.items.map((item) => (
-                      <button
-                        aria-current={page === item.id ? "page" : undefined}
-                        className={cn(
-                          "flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm transition-colors",
-                          page === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                        )}
-                        key={item.id}
-                        onClick={() => navigate(item.id)}
-                        type="button"
-                      >
-                        <span className="shrink-0 [&_svg]:size-4">{item.icon}</span>
-                        <span className="min-w-0 truncate font-medium">{item.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </details>
-              ))}
-            </div>
           </div>
 
           <div className="border-t border-border/65 pt-2">

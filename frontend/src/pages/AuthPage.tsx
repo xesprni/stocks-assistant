@@ -40,33 +40,33 @@ export function AuthPage() {
   }
 
   return (
-    <div className="auth-fluid-shell console-shell grid min-h-[100dvh] place-items-center p-4">
+    <div className="auth-fluid-shell console-shell flex h-[100dvh] min-h-0 items-start justify-center overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch]">
       <form
-        className="auth-panel panel motion-panel relative z-10 w-full max-w-[420px] rounded-md p-5 shadow-xl"
+        className="auth-panel panel motion-panel relative z-10 my-auto w-full max-w-[430px] shrink-0 rounded-[1.5rem] p-6 shadow-xl sm:p-8"
         onSubmit={submit}
       >
-        <div className="mb-5 flex items-center gap-3">
-          <div className="grid size-11 place-items-center rounded-lg border border-primary/35 bg-primary/10 text-primary shadow-glow">
+        <div className="mb-7 flex items-start gap-3.5">
+          <div className="grid size-12 shrink-0 place-items-center rounded-[1rem] border border-primary/25 bg-primary text-primary-foreground shadow-[0_10px_28px_hsl(var(--primary)_/_0.22)]">
             {isSetup ? <ShieldCheck className="size-5" /> : <Sparkles className="size-5" />}
           </div>
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold">{title}</h1>
-            <p className="text-xs leading-5 text-muted-foreground">{subtitle}</p>
+            <h1 className="text-xl font-semibold leading-7 tracking-[-0.02em]">{title}</h1>
+            <p className="mt-1 text-sm leading-5 text-muted-foreground">{subtitle}</p>
           </div>
         </div>
 
-        <div className="space-y-3">
-          <label className="block space-y-1.5 text-sm font-medium">
+        <div className="space-y-4">
+          <label className="block space-y-2 text-sm font-medium">
             <span>Username</span>
             <Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
           </label>
           {isSetup ? (
-            <label className="block space-y-1.5 text-sm font-medium">
+            <label className="block space-y-2 text-sm font-medium">
               <span>Display name</span>
               <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
             </label>
           ) : null}
-          <label className="block space-y-1.5 text-sm font-medium">
+          <label className="block space-y-2 text-sm font-medium">
             <span>Password</span>
             <Input
               type="password"
@@ -76,7 +76,7 @@ export function AuthPage() {
             />
           </label>
           {isSetup ? (
-            <label className="block space-y-1.5 text-sm font-medium">
+            <label className="block space-y-2 text-sm font-medium">
               <span>Confirm password</span>
               <Input
                 type="password"
@@ -90,7 +90,7 @@ export function AuthPage() {
 
         {error ? <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
 
-        <Button className="mt-5 w-full" disabled={disabled} type="submit">
+        <Button className="mt-6 w-full" disabled={disabled} size="lg" type="submit">
           {submitting ? <Loader2 className="animate-spin" /> : <KeyRound />}
           {isSetup ? "Create administrator" : "Sign in"}
         </Button>

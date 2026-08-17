@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 export type ConfirmDialogOptions = {
   cancelText: string;
@@ -21,35 +23,73 @@ export function ConfirmDialog({
   onConfirm: () => void;
   options: ConfirmDialogOptions | null;
 }) {
-  if (!options) return null;
+  const [renderedOptions, setRenderedOptions] = useState(options);
+  const [visible, setVisible] = useState(Boolean(options));
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
-  return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center px-4">
-      <button
-        aria-label={options.cancelText}
-        className="absolute inset-0 bg-background/60 backdrop-blur-[2px]"
-        onClick={onCancel}
-        type="button"
+  useEffect(() => {
+    if (options) {
+      setRenderedOptions(options);
+      const frame = window.requestAnimationFrame(() => setVisible(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (!renderedOptions) return undefined;
+    setVisible(false);
+    const timer = window.setTimeout(() => setRenderedOptions(null), 230);
+    return () => window.clearTimeout(timer);
+  }, [options, renderedOptions]);
+
+  const initialFocusRef = renderedOptions?.destructive ? cancelRef : confirmRef;
+  useDialogFocus(Boolean(renderedOptions), formRef, () => {
+    if (visible) onCancel();
+  }, initialFocusRef);
+
+  if (!renderedOptions || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="apple-dialog-layer fixed inset-0 z-[1100] flex items-center justify-center px-4"
+      data-state={visible ? "open" : "closed"}
+    >
+      <div
+        aria-hidden="true"
+        className="apple-dialog-backdrop absolute inset-0"
+        onClick={() => {
+          if (visible) onCancel();
+        }}
       />
       <form
-        className="relative w-full max-w-sm rounded-lg border border-border bg-card p-4 shadow-2xl"
+        aria-describedby={renderedOptions.description ? descriptionId : undefined}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="apple-dialog-surface apple-material-thick relative w-full max-w-sm rounded-[1.375rem] border border-border/60 p-5 shadow-2xl"
         onSubmit={(event) => {
           event.preventDefault();
           onConfirm();
         }}
+        ref={formRef}
+        role="alertdialog"
+        tabIndex={-1}
       >
-        <p className="text-sm font-semibold">{options.title}</p>
-        {options.description ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{options.description}</p> : null}
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" size="sm" type="button" onClick={onCancel}>
-            {options.cancelText}
+        <h2 className="text-[1.05rem] font-semibold leading-6 tracking-[-0.012em]" id={titleId}>{renderedOptions.title}</h2>
+        {renderedOptions.description ? (
+          <p className="mt-2 text-sm leading-5 text-muted-foreground" id={descriptionId}>{renderedOptions.description}</p>
+        ) : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button ref={cancelRef} variant="outline" type="button" onClick={onCancel}>
+            {renderedOptions.cancelText}
           </Button>
-          <Button variant={options.destructive ? "destructive" : "default"} size="sm" type="submit">
-            {options.confirmText}
+          <Button ref={confirmRef} variant={renderedOptions.destructive ? "destructive" : "default"} type="submit">
+            {renderedOptions.confirmText}
           </Button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
