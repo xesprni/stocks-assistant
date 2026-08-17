@@ -69,6 +69,8 @@ def _canonical_symbol(symbol: str, market: Optional[PortfolioMarket] = None) -> 
         return normalized
     if market == "US":
         return f"{normalized}.US"
+    if market == "H":
+        return f"{normalized.zfill(5)}.HK"
     # A 股根据代码段推断交易所后缀，满足 Longbridge 报价接口的标准 symbol 格式。
     suffix = "SH" if normalized.startswith(("5", "6", "9")) else "SZ"
     return f"{normalized}.{suffix}"
@@ -76,7 +78,7 @@ def _canonical_symbol(symbol: str, market: Optional[PortfolioMarket] = None) -> 
 
 def _market_from_symbol(symbol: str) -> PortfolioMarket:
     suffix = symbol.rsplit(".", 1)[-1].upper() if "." in symbol else ""
-    return "US" if suffix == "US" else "A"
+    return "US" if suffix == "US" else "H" if suffix == "HK" else "A"
 
 
 class PortfolioService:
@@ -142,7 +144,7 @@ class PortfolioService:
 
     def seed_sample_items(self, user_id: str) -> list[dict[str, Any]]:
         """仅为空组合创建显式标记的教学持仓，不请求行情也不覆盖真实数据。"""
-        existing = self.repository.list_items("US", user_id=user_id) + self.repository.list_items("A", user_id=user_id)
+        existing = sum((self.repository.list_items(market, user_id=user_id) for market in ("US", "A", "H")), [])
         if existing:
             return []
         samples = [
@@ -243,7 +245,7 @@ class PortfolioService:
     def search(self, query: str, market: PortfolioMarket, limit: int, settings: Any = None) -> list[dict[str, Any]]:
         results = []
         for item in self.longbridge.search(query=query, category=market, limit=limit, settings=settings):
-            if item.get("category") not in ("US", "A"):
+            if item.get("category") not in ("US", "A", "H"):
                 continue
             results.append(
                 {

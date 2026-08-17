@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-PortfolioMarket = Literal["US", "A"]
+PortfolioMarket = Literal["US", "A", "H"]
 PortfolioTransactionSide = Literal["buy", "sell", "adjust"]
 
 

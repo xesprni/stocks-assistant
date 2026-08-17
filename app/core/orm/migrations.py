@@ -270,6 +270,8 @@ def _migrate_portfolio_items_user_scope(conn: Connection) -> None:
     if not needs_rebuild:
         needs_rebuild = any(index_cols == ["symbol"] for index_cols in _unique_index_columns(conn, "portfolio_items"))
     if not needs_rebuild:
+        needs_rebuild = not _table_supports_portfolio_h(conn, "portfolio_items")
+    if not needs_rebuild:
         return
 
     conn.exec_driver_sql("ALTER TABLE portfolio_items RENAME TO portfolio_items_old")
@@ -278,7 +280,7 @@ def _migrate_portfolio_items_user_scope(conn: Connection) -> None:
         CREATE TABLE portfolio_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL DEFAULT '',
-            market TEXT NOT NULL CHECK (market IN ('US', 'A')),
+            market TEXT NOT NULL CHECK (market IN ('US', 'A', 'H')),
             symbol TEXT NOT NULL,
             name TEXT NOT NULL DEFAULT '',
             shares TEXT,
@@ -314,6 +316,8 @@ def _migrate_portfolio_settings_user_scope(conn: Connection) -> None:
     if not needs_rebuild:
         needs_rebuild = any(index_cols == ["market"] for index_cols in _unique_index_columns(conn, "portfolio_settings"))
     if not needs_rebuild:
+        needs_rebuild = not _table_supports_portfolio_h(conn, "portfolio_settings")
+    if not needs_rebuild:
         return
 
     conn.exec_driver_sql("ALTER TABLE portfolio_settings RENAME TO portfolio_settings_old")
@@ -321,7 +325,7 @@ def _migrate_portfolio_settings_user_scope(conn: Connection) -> None:
         """
         CREATE TABLE portfolio_settings (
             user_id TEXT NOT NULL DEFAULT '',
-            market TEXT NOT NULL CHECK (market IN ('US', 'A')),
+            market TEXT NOT NULL CHECK (market IN ('US', 'A', 'H')),
             total_capital TEXT NOT NULL DEFAULT '0',
             updated_at TEXT NOT NULL,
             PRIMARY KEY(user_id, market)
@@ -342,6 +346,39 @@ def _migrate_portfolio_settings_user_scope(conn: Connection) -> None:
 
 def _migrate_portfolio_transactions_user_scope(conn: Connection) -> None:
     cols = _table_columns(conn, "portfolio_transactions")
-    if not cols or "user_id" in cols:
+    if not cols:
         return
-    conn.exec_driver_sql("ALTER TABLE portfolio_transactions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    if "user_id" in cols and _table_supports_portfolio_h(conn, "portfolio_transactions"):
+        return
+    conn.exec_driver_sql("ALTER TABLE portfolio_transactions RENAME TO portfolio_transactions_old")
+    conn.exec_driver_sql(
+        """
+        CREATE TABLE portfolio_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT '',
+            market TEXT NOT NULL CHECK (market IN ('US', 'A', 'H')),
+            symbol TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            side TEXT NOT NULL CHECK (side IN ('buy', 'sell', 'adjust')),
+            shares TEXT NOT NULL,
+            price TEXT NOT NULL,
+            amount TEXT NOT NULL,
+            realized_pnl TEXT,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    user_expr = "user_id" if "user_id" in cols else "'' AS user_id"
+    conn.exec_driver_sql(
+        f"""INSERT INTO portfolio_transactions
+            (id,user_id,market,symbol,name,side,shares,price,amount,realized_pnl,note,created_at)
+            SELECT id,{user_expr},market,symbol,name,side,shares,price,amount,realized_pnl,note,created_at
+            FROM portfolio_transactions_old"""
+    )
+    conn.exec_driver_sql("DROP TABLE portfolio_transactions_old")
+
+
+def _table_supports_portfolio_h(conn: Connection, table: str) -> bool:
+    row = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    return bool(row and row[0] and "'H'" in row[0])

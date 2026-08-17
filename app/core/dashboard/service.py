@@ -14,7 +14,7 @@ from app.core.market.utils import canonical_symbol, normalize_symbol_map, normal
 from app.schemas.portfolio import PortfolioMarket
 
 WATCHLIST_CATEGORIES = ("US", "A", "H")
-PORTFOLIO_MARKETS: tuple[PortfolioMarket, ...] = ("US", "A")
+PORTFOLIO_MARKETS: tuple[PortfolioMarket, ...] = ("US", "A", "H")
 DASHBOARD_QUOTE_TTL_SECONDS = 8
 DashboardMode = Literal["bootstrap", "full"]
 DashboardSource = Literal["local", "cache", "live"]

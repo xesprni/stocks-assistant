@@ -43,7 +43,7 @@ async def list_valuation_models(
 async def create_valuation_model(
     symbol: str,
     body: ValuationModelCreate,
-    current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
+    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
 ):
     try:
         return get_investment_lab_service().create_valuation_model(current_user.id, symbol, body)
@@ -77,4 +77,3 @@ async def greater_china_context(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-

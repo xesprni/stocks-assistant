@@ -13,6 +13,7 @@ class PortfolioLabRequest(BaseModel):
     lookback_days: int = Field(default=252, ge=30, le=1000)
     scenario_shocks: dict[str, float] = Field(default_factory=dict)
     target_weights: dict[str, float] = Field(default_factory=dict)
+    cash_flows: list[dict[str, Any]] = Field(default_factory=list, max_length=5000)
 
     @field_validator("markets")
     @classmethod
@@ -56,4 +57,3 @@ class GreaterChinaRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=40)
     paired_symbol: Optional[str] = Field(default=None, max_length=40)
     china_related_us_listing: bool = False
-

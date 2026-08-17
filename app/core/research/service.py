@@ -647,7 +647,7 @@ class ResearchService:
     def _portfolio_context(self, user_id: str, symbol: str) -> dict[str, Any]:
         if not self.portfolio_service:
             return {}
-        for market in ("US", "A"):
+        for market in ("US", "A", "H"):
             for item in self.portfolio_service.repository.list_items(market, user_id=user_id):
                 if str(item.get("symbol") or "").upper() == symbol:
                     return {"held": True, "market": market, "shares": item.get("shares"), "cost_price": item.get("cost_price"), "note": item.get("note", "")}

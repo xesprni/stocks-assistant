@@ -22,8 +22,8 @@ class GetPortfolioPositionsTool(BaseTool):
         "properties": {
             "market": {
                 "type": "string",
-                "enum": ["US", "A", "ALL"],
-                "description": "Portfolio market to read. Use US for US stocks, A for A-shares, or ALL for both. Default: US.",
+                "enum": ["US", "A", "H", "ALL"],
+                "description": "Portfolio market to read. Use US, A, H for Hong Kong, or ALL. Default: US.",
                 "default": "US",
             },
         },
@@ -42,10 +42,10 @@ class GetPortfolioPositionsTool(BaseTool):
         market = str(args.get("market") or "US").strip().upper()
         if market in {"BOTH", "*"}:
             market = "ALL"
-        if market not in {"US", "A", "ALL"}:
-            return ToolResult.fail("market must be one of: US, A, ALL")
+        if market not in {"US", "A", "H", "ALL"}:
+            return ToolResult.fail("market must be one of: US, A, H, ALL")
 
-        markets = ["US", "A"] if market == "ALL" else [market]
+        markets = ["US", "A", "H"] if market == "ALL" else [market]
         try:
             results = [
                 self._sanitize_portfolio_list(

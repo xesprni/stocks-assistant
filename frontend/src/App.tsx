@@ -11,6 +11,7 @@ import {
   CircleAlert,
   Clock,
   Cpu,
+  FlaskConical,
   Home,
   Loader2,
   LogOut,
@@ -85,6 +86,7 @@ const MCPPage = lazy(() => import("@/pages/MCPPage").then((module) => ({ default
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((module) => ({ default: module.MemoryPage })));
 const NewsPage = lazy(() => import("@/pages/NewsPage").then((module) => ({ default: module.NewsPage })));
 const PortfolioPage = lazy(() => import("@/components/PortfolioPage").then((module) => ({ default: module.PortfolioPage })));
+const InvestmentLabsPage = lazy(() => import("@/pages/InvestmentLabsPage").then((module) => ({ default: module.InvestmentLabsPage })));
 const SecurityPage = lazy(() => import("@/pages/SecurityPage").then((module) => ({ default: module.SecurityPage })));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })));
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
@@ -104,6 +106,7 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   security: "config:read",
   watchlist: "watchlist:read",
   portfolio: "portfolio:read",
+  labs: "portfolio:read",
   news: "market:read",
   config: "config:read",
   fundamentals: "fundamentals:read",
@@ -123,6 +126,7 @@ const PAGE_PATH: Record<Page, string> = {
   security: "/admin/security",
   watchlist: "/watchlist",
   portfolio: "/portfolio",
+  labs: "/labs",
   news: "/news",
   config: "/settings",
   fundamentals: "/fundamentals",
@@ -271,8 +275,8 @@ function navItem(language: AppLanguage, id: Page, icon: ReactNode, labelOverride
 
 function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
   const primary = language === "en"
-    ? { group: "Workspace", today: "Today", companies: "Companies", portfolio: "Portfolio", research: "Research", alerts: "Alerts" }
-    : { group: "工作台", today: "今日", companies: "公司", portfolio: "组合", research: "研究", alerts: "提醒" };
+    ? { group: "Workspace", today: "Today", companies: "Companies", portfolio: "Portfolio", labs: "Labs", research: "Research", alerts: "Alerts" }
+    : { group: "工作台", today: "今日", companies: "公司", portfolio: "组合", labs: "实验室", research: "研究", alerts: "提醒" };
   return [
     {
       id: "primary",
@@ -281,6 +285,7 @@ function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
         navItem(language, "overview", <Home />, primary.today),
         navItem(language, "watchlist", <Star />, primary.companies),
         navItem(language, "portfolio", <BriefcaseBusiness />, primary.portfolio),
+        navItem(language, "labs", <FlaskConical />, primary.labs),
         navItem(language, "knowledge", <BookOpen />, primary.research),
         navItem(language, "scheduler", <Clock />, primary.alerts),
       ],
@@ -350,7 +355,7 @@ function pathForPage(page: Page) {
   return PAGE_PATH[page] ?? PAGE_PATH.overview;
 }
 
-const COMPANY_TABS = new Set<CompanyTab>(["overview", "chart", "financials", "documents", "news", "ai-research", "thesis", "position", "alerts"]);
+const COMPANY_TABS = new Set<CompanyTab>(["overview", "chart", "financials", "documents", "news", "ai-research", "thesis", "valuation", "position", "alerts"]);
 
 function companyRouteFromPath(pathname: string): { symbol: string; tab: CompanyTab } | null {
   const match = normalizeRoutePath(pathname).match(/^\/security\/([^/]+)(?:\/([^/]+))?$/);
@@ -1493,6 +1498,8 @@ function ConsoleApp() {
                 }}
               />
             ) : null}
+
+            {activePage === "labs" ? <InvestmentLabsPage language={language} /> : null}
 
             {activePage === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
 

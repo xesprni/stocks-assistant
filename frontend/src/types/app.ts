@@ -443,6 +443,65 @@ export interface SecurityWorkspaceSummary {
   evidence_count: number;
 }
 
+export interface PortfolioLabResult {
+  as_of: string;
+  methodology: string;
+  lookback_days: number;
+  benchmark_symbol: string;
+  total_value: number;
+  equity_value: number;
+  cash_value: number;
+  metrics: Record<string, number | null>;
+  contribution: Array<{ symbol: string; market: string; weight: number; period_return?: number | null; return_contribution?: number | null; data_available: boolean }>;
+  exposures: { market?: Record<string, number>; currency?: Record<string, number>; country_listing?: Record<string, number>; thesis_risk?: Record<string, number> };
+  scenario: { estimated_return?: number; holding_impacts?: Array<Record<string, unknown>>; method?: string };
+  rebalance: Array<{ symbol: string; current_weight: number; target_weight: number; delta_weight: number }>;
+  thesis_links: Array<{ symbol: string; weight: number; thesis_snapshot_id?: string | null; confidence?: number | null; risks: string[]; invalidation_conditions: string[] }>;
+  coverage: { holdings: number; history_available: number; history_weight: number };
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface ValuationModel {
+  id: string;
+  model_key: string;
+  symbol: string;
+  version: number;
+  model_type: "dcf" | "reverse_dcf" | "relative" | string;
+  title: string;
+  assumptions: Record<string, unknown>;
+  peer_symbols: string[];
+  result: Record<string, unknown>;
+  source_ids: string[];
+  thesis_snapshot_id?: string | null;
+  reason: string;
+  created_at: string;
+}
+
+export interface PeerComparisonResult {
+  as_of: string;
+  rows: Array<{ symbol: string; name: string; metrics: Record<string, string | number | null>; source?: string; fetched_at?: string; available: boolean }>;
+  medians: Record<string, number | null>;
+  errors: Array<{ symbol: string; error: string }>;
+  methodology: string;
+}
+
+export interface GreaterChinaContext {
+  symbol: string;
+  market: "HK" | "A" | "US_CHINA" | "OTHER";
+  currency: string;
+  timezone: string;
+  disclosure_languages: string[];
+  static_info: Record<string, unknown>;
+  insights: Record<string, unknown>;
+  paired_comparison?: PeerComparisonResult | null;
+  fetched_at?: string | null;
+  errors: string[];
+  research_checklist: string[];
+  risk_dimensions: string[];
+  source_note: string;
+}
+
 export interface AgentTraceEvent {
   id: string;
   run_id: string;
@@ -548,7 +607,7 @@ export interface WatchlistOverviewResponse {
 
 // ── Portfolio ───────────────────────────────────────────────────────────────
 
-export type PortfolioMarket = "US" | "A";
+export type PortfolioMarket = "US" | "A" | "H";
 
 export interface PortfolioItem {
   id: number;

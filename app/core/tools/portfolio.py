@@ -66,8 +66,8 @@ class PortfolioTool(BaseTool):
             },
             "market": {
                 "type": "string",
-                "enum": ["US", "A", "ALL"],
-                "description": "Portfolio market. US = US stocks, A = A-shares, ALL is only valid for list.",
+                "enum": ["US", "A", "H", "ALL"],
+                "description": "Portfolio market. US = US stocks, A = A-shares, H = Hong Kong, ALL is only valid for list.",
             },
             "item_id": {"type": "integer", "description": "Portfolio item id for get/update/delete."},
             "id": {"type": "integer", "description": "Alias for item_id."},
@@ -76,7 +76,7 @@ class PortfolioTool(BaseTool):
                 "description": "Symbol to select or create. For update/delete/get, this selects the existing holding.",
             },
             "new_symbol": {"type": "string", "description": "Optional replacement symbol when action=update."},
-            "new_market": {"type": "string", "enum": ["US", "A"], "description": "Optional replacement market when action=update."},
+            "new_market": {"type": "string", "enum": ["US", "A", "H"], "description": "Optional replacement market when action=update."},
             "name": {"type": "string", "description": "Holding display name."},
             "shares": {"type": "string", "description": "Final share quantity to store."},
             "shares_delta": {
@@ -153,7 +153,7 @@ class PortfolioTool(BaseTool):
 
     def _list(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
         market = self._market(params.get("market") or "US", allow_all=True)
-        markets = ["US", "A"] if market == "ALL" else [market]
+        markets = ["US", "A", "H"] if market == "ALL" else [market]
         results = [
             self._sanitize_portfolio_list(
                 service.list_items(item_market, user_id=self.user_id, settings=self.settings)
@@ -392,11 +392,15 @@ class PortfolioTool(BaseTool):
             "CHINA": "A",
             "ASHARE": "A",
             "ASHARES": "A",
+            "港股": "H",
+            "香港": "H",
+            "HK": "H",
+            "HKSTOCK": "H",
         }
         market = aliases.get(normalized, normalized)
-        allowed = {"US", "A"} | ({"ALL"} if allow_all else set())
+        allowed = {"US", "A", "H"} | ({"ALL"} if allow_all else set())
         if market not in allowed:
-            suffix = "ALL" if allow_all else "US, A"
+            suffix = "US, A, H, ALL" if allow_all else "US, A, H"
             raise ValueError(f"market must be one of: {suffix}")
         return market
 
@@ -410,7 +414,9 @@ class PortfolioTool(BaseTool):
             return ["US"]
         if suffix in {"SH", "SZ"}:
             return ["A"]
-        return ["US", "A"]
+        if suffix == "HK":
+            return ["H"]
+        return ["US", "A", "H"]
 
     @staticmethod
     def _canonical_symbol(symbol: str, market: Optional[str] = None) -> str:
@@ -419,6 +425,8 @@ class PortfolioTool(BaseTool):
             return normalized
         if market == "US":
             return f"{normalized}.US"
+        if market == "H":
+            return f"{normalized.zfill(5)}.HK"
         suffix = "SH" if normalized.startswith(("5", "6", "9")) else "SZ"
         return f"{normalized}.{suffix}"
 

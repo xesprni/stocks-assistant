@@ -64,6 +64,10 @@ import type {
   PortfolioSellDraft,
   PortfolioSellResponse,
   PortfolioTransactionListResponse,
+  PortfolioLabResult,
+  ValuationModel,
+  PeerComparisonResult,
+  GreaterChinaContext,
   PagePermissionUpdateRequest,
   RoleListResponse,
   RoleUpdateRequest,
@@ -516,6 +520,34 @@ export function listAlertEvents(symbol?: string, status?: string, limit?: number
   if (status) params.set("status", status);
   if (limit) params.set("limit", String(limit));
   return request<AlertEvent[]>(`/api/v1/alerts/events${params.size ? `?${params.toString()}` : ""}`);
+}
+
+export function analyzePortfolioLab(payload: {
+  markets?: PortfolioMarket[];
+  benchmark_symbol?: string;
+  lookback_days?: number;
+  scenario_shocks?: Record<string, number>;
+  target_weights?: Record<string, number>;
+  cash_flows?: Array<{ date: string; amount: number }>;
+}) {
+  return request<PortfolioLabResult>("/api/v1/labs/portfolio/analyze", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function listValuationModels(symbol?: string) {
+  const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
+  return request<ValuationModel[]>(`/api/v1/labs/valuation/models${query}`);
+}
+
+export function createValuationModel(symbol: string, payload: Record<string, unknown>) {
+  return request<ValuationModel>(`/api/v1/labs/valuation/${encodeURIComponent(symbol)}/models`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function compareValuationPeers(symbols: string[], metrics?: string[]) {
+  return request<PeerComparisonResult>("/api/v1/labs/valuation/peers", { method: "POST", body: JSON.stringify({ symbols, metrics }) });
+}
+
+export function getGreaterChinaContext(payload: { symbol: string; paired_symbol?: string; china_related_us_listing?: boolean }) {
+  return request<GreaterChinaContext>("/api/v1/labs/greater-china/context", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function setAlertEventStatus(eventId: string, status: AlertEvent["status"]) {

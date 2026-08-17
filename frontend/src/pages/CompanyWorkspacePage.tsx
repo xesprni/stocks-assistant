@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Bell, BookOpen, Bot, BriefcaseBusiness, Building2, ExternalLink, FileText, Loader2, Plus, RefreshCw, Save, ScrollText, Sparkles, Upload } from "lucide-react";
+import { BarChart3, Bell, BookOpen, Bot, BriefcaseBusiness, Building2, Calculator, ExternalLink, FileText, Loader2, Plus, RefreshCw, Save, ScrollText, Sparkles, Upload } from "lucide-react";
 
 import { FinancialReportsPage } from "@/components/FinancialReportsPage";
 import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { AlertsPage } from "@/pages/AlertsPage";
 import { NewsPage } from "@/pages/NewsPage";
+import { InvestmentLabsPage } from "@/pages/InvestmentLabsPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,17 +21,17 @@ import {
 import type { AppLanguage } from "@/lib/i18n";
 import type { CandlestickItem, DashboardSymbolInsightsResponse, ResearchDecision, ResearchDocument, ResearchEvidence, SecurityWorkspaceSummary, ThesisPayload, ThesisSnapshot } from "@/types/app";
 
-export type CompanyTab = "overview" | "chart" | "financials" | "documents" | "news" | "ai-research" | "thesis" | "position" | "alerts";
+export type CompanyTab = "overview" | "chart" | "financials" | "documents" | "news" | "ai-research" | "thesis" | "valuation" | "position" | "alerts";
 
 const tabs: Array<{ id: CompanyTab; icon: typeof Building2 }> = [
   { id: "overview", icon: Building2 }, { id: "chart", icon: BarChart3 }, { id: "financials", icon: ScrollText },
   { id: "documents", icon: FileText }, { id: "news", icon: BookOpen }, { id: "ai-research", icon: Bot },
-  { id: "thesis", icon: Sparkles }, { id: "position", icon: BriefcaseBusiness }, { id: "alerts", icon: Bell },
+  { id: "thesis", icon: Sparkles }, { id: "valuation", icon: Calculator }, { id: "position", icon: BriefcaseBusiness }, { id: "alerts", icon: Bell },
 ];
 
 const labels: Record<AppLanguage, Record<CompanyTab, string>> = {
-  zh: { overview: "概览", chart: "图表", financials: "财务", documents: "材料", news: "新闻", "ai-research": "AI 研究", thesis: "Thesis", position: "持仓", alerts: "提醒" },
-  en: { overview: "Overview", chart: "Chart", financials: "Financials", documents: "Documents", news: "News", "ai-research": "AI Research", thesis: "Thesis", position: "Position", alerts: "Alerts" },
+  zh: { overview: "概览", chart: "图表", financials: "财务", documents: "材料", news: "新闻", "ai-research": "AI 研究", thesis: "Thesis", valuation: "估值", position: "持仓", alerts: "提醒" },
+  en: { overview: "Overview", chart: "Chart", financials: "Financials", documents: "Documents", news: "News", "ai-research": "AI Research", thesis: "Thesis", valuation: "Valuation", position: "Position", alerts: "Alerts" },
 };
 
 const emptyThesis: ThesisPayload = {
@@ -88,6 +89,7 @@ export function CompanyWorkspacePage({
         {tab === "news" ? <NewsPage initialSymbol={symbol} language={language} /> : null}
         {tab === "ai-research" ? <AIResearch language={language} onAskAgent={onAskAgent} symbol={symbol} /> : null}
         {tab === "thesis" ? <ThesisTab language={language} onChanged={loadSummary} symbol={symbol} /> : null}
+        {tab === "valuation" ? <InvestmentLabsPage initialSymbol={symbol} initialTab="valuation" language={language} /> : null}
         {tab === "position" ? <PositionTab language={language} onOpenPortfolio={onOpenPortfolio} summary={summary} symbol={symbol} /> : null}
         {tab === "alerts" ? <AlertsPage confirmAction={confirmAction} initialSymbol={symbol} language={language} telegramEnabled={telegramEnabled} /> : null}
       </div>

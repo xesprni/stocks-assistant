@@ -1,6 +1,6 @@
 # Stocks Assistant 产品路线图
 
-> 状态：Phase 0–1 已实现，Phase 2 待验证
+> 状态：Phase 0–1 已实现；Phase 2 的 Portfolio Lab、估值/同业实验室和大中华专项已实现，完整交易账本待验证
 > 基准日期：2026-08-17  
 > 规划周期：未来 6 个月  
 > 适用范围：产品、设计、前端、后端、数据与 Agent 能力建设
@@ -351,6 +351,7 @@ Stocks Assistant 当前的问题不是功能数量不足，而是行情、财报
 | 2026-08-17 | 通用筛选和回测延后，优先考虑 MCP / 外部集成 | 待用户验证 |
 | 2026-08-17 | 完成 Phase 0：证据协议、知识 RAG、配置就绪检查、研究模板、导航收敛、可靠性修复与 opt-in 本地事件 | 已实现 |
 | 2026-08-17 | 完成 Phase 1：公司工作区、Thesis/证据/决策资产、材料版本、组合感知提醒与 Daily Research Queue | 已实现 |
+| 2026-08-17 | 完成 Portfolio Lab、版本化 DCF/reverse DCF/相对估值与同业比较、大中华市场专项；港股持仓进入统一组合范围 | 已实现 |
 
 ### Phase 0 实现清单
 
@@ -371,6 +372,18 @@ Stocks Assistant 当前的问题不是功能数量不足，而是行情、财报
 - Today 页面提供按严重度排序的 Daily Research Queue；Alerts 页面同时收纳条件提醒与原有定时任务。
 - Agent 新增只读 `get_research_context` 工具，可取得当前用户的 Thesis、证据、材料、决策、持仓与提醒上下文。
 - Phase 1 领域测试位于 `tests/test_phase1_research.py`；API 主体位于 `app/api/research.py` 与 `app/api/alerts.py`。
+
+### Phase 2 Labs 实现清单
+
+- Portfolio Lab 支持 benchmark、当前权重历史回放、模拟 TWR、用户现金流 IRR、波动、回撤、Beta、相关性、收益贡献和 HHI。
+- 风险暴露覆盖市场、上市地、币种和共用 Thesis 风险；支持线性压力情景、目标权重比较、历史数据覆盖率和方法限制说明。
+- DCF、reverse DCF 与相对估值模型按版本持久化，保存假设、结果、敏感性、同业、证据、Thesis 和修改原因，并可生成价格复核提醒。
+- 同业比较保留 Longbridge 来源、抓取时间和缺失字段，不对缺失估值做插补。
+- 大中华专项支持 A 股、港股、中概美股分类、A/H/ADR 对照、双语披露语境、公司行动与市场特定研究清单。
+- 本地持仓正式支持 H 市场，旧数据库启动时安全迁移 `US/A` 约束为 `US/A/H`。
+- Agent 通过只读 `get_investment_labs` 访问组合、估值模型、同业和大中华上下文。
+- 使用与方法说明见 `docs/investment-labs.md`，领域测试位于 `tests/test_investment_labs.py`。
+- 完整交易流水、历史净值重建、FX 序列和交易账本级真实 TWR 仍属于 Epic 2.1 后续范围；当前结果会明确标注数据覆盖和方法限制。
 
 ## 11. 竞品基线资料
 

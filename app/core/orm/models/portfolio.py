@@ -11,7 +11,7 @@ from app.core.orm.base import PortfolioBase
 class PortfolioItem(PortfolioBase):
     __tablename__ = "portfolio_items"
     __table_args__ = (
-        CheckConstraint("market IN ('US', 'A')"),
+        CheckConstraint("market IN ('US', 'A', 'H')"),
         UniqueConstraint("user_id", "symbol"),
         Index("idx_portfolio_market", "market"),
         Index("idx_portfolio_user_market", "user_id", "market"),
@@ -43,7 +43,7 @@ class PortfolioSetting(PortfolioBase):
 class PortfolioTransaction(PortfolioBase):
     __tablename__ = "portfolio_transactions"
     __table_args__ = (
-        CheckConstraint("market IN ('US', 'A')"),
+        CheckConstraint("market IN ('US', 'A', 'H')"),
         CheckConstraint("side IN ('buy', 'sell', 'adjust')"),
         Index("idx_portfolio_transactions_user_market_created", "user_id", "market", "created_at"),
         Index("idx_portfolio_transactions_user_symbol_created", "user_id", "symbol", "created_at"),

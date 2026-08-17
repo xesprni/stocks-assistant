@@ -58,8 +58,10 @@ const copyByLanguage = {
     markets: {
       us: "美股",
       a: "A股",
+      h: "港股",
       usPlaceholder: "AAPL / MSFT",
       aPlaceholder: "600519 / 000001",
+      hPlaceholder: "00700 / 09988",
     },
     portfolio: {
       title: "持仓列表",
@@ -162,8 +164,10 @@ const copyByLanguage = {
     markets: {
       us: "US",
       a: "A-shares",
+      h: "Hong Kong",
       usPlaceholder: "AAPL / MSFT",
       aPlaceholder: "600519 / 000001",
+      hPlaceholder: "00700 / 09988",
     },
     portfolio: {
       title: "Portfolio",
@@ -319,6 +323,7 @@ function getPortfolioMarkets(language: AppLanguage): Array<{ id: PortfolioMarket
   return [
     { id: "US", label: markets.us, hint: "USD", placeholder: markets.usPlaceholder },
     { id: "A", label: markets.a, hint: "CNY", placeholder: markets.aPlaceholder },
+    { id: "H", label: markets.h, hint: "HKD", placeholder: markets.hPlaceholder },
   ];
 }
 
@@ -897,17 +902,17 @@ export function PortfolioPage({
   const common = copyByLanguage[language].common;
   const copy = copyByLanguage[language].portfolio;
   const portfolioMarkets = getPortfolioMarkets(language);
-  const [market, setMarket] = useState<PortfolioMarket>(() => readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US"));
+  const [market, setMarket] = useState<PortfolioMarket>(() => readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A", "H"], "US"));
   const [viewMode, setViewMode] = useState<PortfolioViewMode>("overview");
   const [trendRange, setTrendRange] = useState<PortfolioTrendRange>("day");
   const [items, setItems] = useState<PortfolioItem[]>([]);
   const [transactions, setTransactions] = useState<PortfolioTransaction[]>([]);
-  const [assetSnapshots, setAssetSnapshots] = useState<PortfolioAssetSnapshot[]>(() => readPortfolioSnapshots(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US")));
+  const [assetSnapshots, setAssetSnapshots] = useState<PortfolioAssetSnapshot[]>(() => readPortfolioSnapshots(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A", "H"], "US")));
   const [totalCapital, setTotalCapital] = useState("0");
   const [totalAssets, setTotalAssets] = useState("0");
   const [cashRatio, setCashRatio] = useState<string | null>(null);
   const [capitalDraft, setCapitalDraft] = useState("0");
-  const [form, setForm] = useState<PortfolioItemDraft>(() => emptyPortfolioDraft(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A"], "US")));
+  const [form, setForm] = useState<PortfolioItemDraft>(() => emptyPortfolioDraft(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A", "H"], "US")));
   const [editingItem, setEditingItem] = useState<PortfolioItem | null>(null);
   const [adjustingItem, setAdjustingItem] = useState<PortfolioItem | null>(null);
   const [adjustmentDraft, setAdjustmentDraft] = useState<PortfolioAdjustmentDraft>(() => emptyAdjustmentDraft());

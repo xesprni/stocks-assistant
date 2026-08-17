@@ -25,6 +25,9 @@
 - **Thesis 与证据链** — 版本化保存商业模式、KPI、情景、估值、催化剂、风险和证伪条件，并记录来源、变化原因、决策与事后结果
 - **第一方材料** — 摄取文本、Markdown、公告、逐字稿、演示稿和带文本层 PDF，保存版本、页/行定位及跨版本差异，并进入知识检索
 - **条件提醒收件箱** — 按价格、成交量、估值、KPI、技术、新闻、公告、关键词、评级和组合风险持续检查，支持去重、严重度、阅读状态和通知重试
+- **Portfolio Lab** — 支持 US/A/H 持仓、benchmark、模拟 TWR、现金流 IRR、波动/回撤/Beta/相关性、收益贡献、集中度、风险暴露、压力情景和再平衡比较
+- **估值与同业实验室** — 版本化保存 DCF、reverse DCF 和相对估值假设、敏感性、来源与 Thesis 关联，并通过 Longbridge 对比同业估值
+- **大中华市场专项** — 覆盖 A 股、港股和中概美股语境，支持 A/H/ADR 对照、双语披露、币种/上市结构和市场特定研究清单
 - **长期记忆** — 持久化对话记忆，支持向量语义搜索、FTS5 关键词检索、自动摘要和用户级隔离
 - **知识库** — 基于 Markdown 文件的知识管理，支持目录树、内容读取、索引同步和知识图谱浏览
 - **技能系统** — Markdown + frontmatter 格式定义分析技能，运行时动态加载、切换和刷新
@@ -90,6 +93,7 @@ Stocks Assistant 的核心不是普通聊天框，而是一个能调用工具的
 | `get_financial_reports` | 通过 Longbridge SDK 查询利润表、资产负债表、现金流量表 |
 | `get_longbridge_capital_flow` | 通过 Longbridge SDK 查询标的当日资金净流入时序 |
 | `get_research_context` | 读取当前用户的公司 Thesis、证据、材料、决策、持仓与提醒上下文 |
+| `get_investment_labs` | 运行组合风险/归因、同业估值和大中华市场专项分析，或读取已保存估值模型 |
 | `delegate_agent` | 批量委派智能体执行独立研究/分析任务 |
 
 ## 快速开始
@@ -201,6 +205,7 @@ Vite 开发模式默认会尝试自动获取开发登录态；后端未启动时
 | `/api/v1/scheduler` | 调度任务 CRUD |
 | `/api/v1/research` | 公司工作区摘要、Thesis、证据、决策和材料版本 |
 | `/api/v1/alerts` | 条件规则、实时求值、提醒收件箱和通知重试 |
+| `/api/v1/labs` | Portfolio Lab、版本化估值/同业比较和大中华市场专项上下文 |
 | `/api/v1/fundamentals` | Longbridge 基本面财报数据 |
 | `/api/v1/watchlist` | 自选股列表、Longbridge 标的搜索、排序和删除 |
 | `/api/v1/portfolio` | 持仓列表、资产设置、实时估值、仓位和盈亏计算 |

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import sqlite3
@@ -127,6 +126,8 @@ class InvestmentLabService:
             warnings.append(f"Benchmark {request.benchmark_symbol}: {exc}")
 
         metrics = self._risk_metrics(portfolio_returns, benchmark_returns)
+        metrics["simulated_twr"] = metrics.get("period_return")
+        metrics["money_weighted_irr"] = self._cash_flow_irr(request.cash_flows, total_value)
         metrics.update({"concentration_hhi": round(sum(item["weight"] ** 2 for item in holdings), 6), "cash_weight": round(cash_value / total_value, 6)})
         contribution = []
         for item in holdings:
@@ -144,6 +145,11 @@ class InvestmentLabService:
         scenario = self._scenario(holdings, cash_value / total_value, request.scenario_shocks)
         rebalance = self._rebalance(holdings, request.target_weights)
         thesis_links = self._thesis_links(user_id, holdings)
+        thesis_risks: dict[str, float] = {}
+        for link in thesis_links:
+            for risk in link["risks"]:
+                thesis_risks[str(risk)] = thesis_risks.get(str(risk), 0) + link["weight"]
+        exposures["thesis_risk"] = {key: round(value, 6) for key, value in sorted(thesis_risks.items(), key=lambda item: item[1], reverse=True)}
         return {
             "as_of": _now(), "methodology": "current_weight_historical_replay", "lookback_days": request.lookback_days,
             "benchmark_symbol": request.benchmark_symbol, "total_value": round(total_value, 2), "equity_value": round(equity_value, 2),
@@ -153,6 +159,7 @@ class InvestmentLabService:
             "warnings": warnings,
             "limitations": [
                 "Returns replay current weights over history; they are not transaction-aware TWR or IRR.",
+                "Money-weighted IRR is only calculated when complete user-supplied cash flows are provided.",
                 "Cross-currency values are not FX-normalized unless the source portfolio already uses a common denominator.",
                 "Missing histories are excluded and reported in coverage.",
             ],
@@ -224,6 +231,7 @@ class InvestmentLabService:
     def _exposures(holdings: list[dict[str, Any]], cash_by_market: dict[str, float], total: float) -> dict[str, Any]:
         markets: dict[str, float] = {}
         currencies: dict[str, float] = {}
+        countries: dict[str, float] = {}
         defaults = {"US": "USD", "A": "CNY", "H": "HKD"}
         for item in holdings:
             weight = item["weight"]
@@ -231,10 +239,49 @@ class InvestmentLabService:
             currency = item.get("currency") or defaults.get(market, "UNKNOWN")
             markets[market] = markets.get(market, 0) + weight
             currencies[currency] = currencies.get(currency, 0) + weight
+            country = {"US": "United States listing", "A": "Mainland China listing", "H": "Hong Kong listing"}.get(market, "Other")
+            countries[country] = countries.get(country, 0) + weight
         for market, cash in cash_by_market.items():
             currencies[defaults.get(market, "UNKNOWN")] = currencies.get(defaults.get(market, "UNKNOWN"), 0) + cash / total
         return {"market": {key: round(value, 6) for key, value in markets.items()},
-                "currency": {key: round(value, 6) for key, value in currencies.items()}}
+                "currency": {key: round(value, 6) for key, value in currencies.items()},
+                "country_listing": {key: round(value, 6) for key, value in countries.items()}}
+
+    @staticmethod
+    def _cash_flow_irr(cash_flows: list[dict[str, Any]], terminal_value: float) -> Optional[float]:
+        if not cash_flows:
+            return None
+        parsed = []
+        for item in cash_flows:
+            amount = _number(item.get("amount"))
+            occurred_at = str(item.get("date") or item.get("occurred_at") or "")
+            try:
+                date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=timezone.utc)
+            if amount is not None:
+                parsed.append((date, amount))
+        parsed.append((datetime.now(timezone.utc), terminal_value))
+        if len(parsed) < 2 or not any(amount < 0 for _, amount in parsed) or not any(amount > 0 for _, amount in parsed):
+            return None
+        parsed.sort(key=lambda item: item[0])
+        start = parsed[0][0]
+
+        def npv(rate: float) -> float:
+            return sum(amount / ((1 + rate) ** max((date - start).total_seconds() / 31_557_600, 0)) for date, amount in parsed)
+
+        low, high = -0.9999, 10.0
+        if npv(low) * npv(high) > 0:
+            return None
+        for _ in range(100):
+            middle = (low + high) / 2
+            if npv(low) * npv(middle) <= 0:
+                high = middle
+            else:
+                low = middle
+        return round((low + high) / 2, 6)
 
     @staticmethod
     def _scenario(holdings: list[dict[str, Any]], cash_weight: float, shocks: dict[str, float]) -> dict[str, Any]:
