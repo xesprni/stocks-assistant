@@ -34,10 +34,7 @@ import { Button } from "@/components/ui/button";
 import {
   getCandlesticks,
   getDashboard,
-  getDashboardMarket,
-  getDashboardPortfolio,
   getDashboardSymbolInsights,
-  getDashboardWatchlist,
   getIntraday,
   listAlertEvents,
 } from "@/lib/api";
@@ -1727,56 +1724,52 @@ export function DashboardPage({
     const controller = new AbortController();
     modulesAbortRef.current = controller;
     const signal = controller.signal;
-    const loaders: Array<[DashboardModuleKey, () => Promise<DashboardResponse[DashboardModuleKey]>]> = [
-      ["market", () => getDashboardMarket({ signal })],
-      ["watchlist", () => getDashboardWatchlist({ signal })],
-      ["portfolio", () => getDashboardPortfolio({ signal })],
-    ];
-
-    const tasks = loaders.map(async ([key, loader]) => {
-      const hasData = dashboardHasModuleData(dashboardRef.current, key);
-      setModuleStatus((previous) => ({
-        ...previous,
-        [key]: {
-          ...previous[key],
+    setModuleStatus((previous) => {
+      const next = { ...previous };
+      for (const key of DASHBOARD_MODULE_KEYS) {
+        const hasData = dashboardHasModuleData(dashboardRef.current, key);
+        next[key] = {
+          ...next[key],
           loading: !quiet && !hasData,
           refreshing: quiet || hasData,
-          error: quiet ? previous[key].error : "",
-        },
-      }));
+          error: quiet ? next[key].error : "",
+        };
+      }
+      return next;
+    });
 
-      try {
-        const module = await loader();
+    // 聚合接口在后端先合并并去重全部标的，只触发一轮 Longbridge 批量行情；
+    // 分别请求三个模块会把同一次 Dashboard 刷新拆成多轮上游调用。
+    return getDashboard("full", { signal })
+      .then((response) => {
         if (signal.aborted) return;
         startDashboardTransition(() => {
           setDashboardError("");
-          setDashboard((previous) => mergeDashboard(previous, { [key]: module } as Partial<DashboardResponse>));
-          setModuleStatus((previous) => ({
-            ...previous,
-            [key]: moduleStatusFromModule(module),
-          }));
+          setDashboard((previous) => mergeDashboard(previous, response));
+          setModuleStatus({
+            market: moduleStatusFromModule(response.market),
+            watchlist: moduleStatusFromModule(response.watchlist),
+            portfolio: moduleStatusFromModule(response.portfolio),
+          });
         });
-      } catch (caught) {
+      })
+      .catch((caught) => {
         if (signal.aborted) return;
         const message = caught instanceof Error ? caught.message : copy.loadFailed;
         startDashboardTransition(() => {
-          setModuleStatus((previous) => ({
-            ...previous,
-            [key]: {
-              ...previous[key],
-              loading: false,
-              refreshing: false,
-              error: message,
-              stale: true,
-            },
-          }));
+          setDashboardError(message);
+          setModuleStatus((previous) => {
+            const next = { ...previous };
+            for (const key of DASHBOARD_MODULE_KEYS) {
+              next[key] = { ...next[key], loading: false, refreshing: false, error: message, stale: true };
+            }
+            return next;
+          });
         });
-      }
-    });
-
-    return Promise.allSettled(tasks).finally(() => {
-      if (modulesAbortRef.current === controller) modulesAbortRef.current = null;
-    });
+      })
+      .finally(() => {
+        if (modulesAbortRef.current === controller) modulesAbortRef.current = null;
+      });
   }, [copy.loadFailed, startDashboardTransition]);
 
   useEffect(() => {

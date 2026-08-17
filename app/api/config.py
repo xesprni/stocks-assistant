@@ -298,6 +298,12 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
             clear_context_cache()
         except Exception:
             pass
+        try:
+            from app.core.dashboard.service import clear_dashboard_cache
+
+            clear_dashboard_cache()
+        except Exception:
+            pass
 
     # 任何配置变更都可能影响有效配置，统一清除 TTL 缓存。
     try:
@@ -307,7 +313,7 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
 
 
 @router.get("", response_model=AppConfig)
-async def get_config(current: CurrentUser = Depends(require_permissions("config:read"))):
+def get_config(current: CurrentUser = Depends(require_permissions("config:read"))):
     """读取当前用户的有效配置。"""
     personal_keys = set(get_app_store().get_user_config(current.id).keys())
     return _settings_to_response(
@@ -420,7 +426,7 @@ async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> 
             manager = get_mcp_manager() if "mcp_servers" in system_patch else get_mcp_manager_for_user(current.id)
             manager.set_tool_timeout_seconds(settings.mcp_tool_timeout_seconds)
             if "mcp_servers" in patch:
-                manager.reconnect_sync(settings.mcp_servers)
+                await asyncio.to_thread(manager.reconnect_sync, settings.mcp_servers)
         except Exception:
             # 连接错误会体现在 /mcp/status 中；配置保存不因此失败。
             pass
@@ -445,7 +451,7 @@ async def update_config(update: ConfigUpdate, current: CurrentUser = Depends(req
 
 
 @router.get("/readiness", response_model=ConfigReadinessResponse)
-async def config_readiness(current: CurrentUser = Depends(require_permissions("config:read"))):
+def config_readiness(current: CurrentUser = Depends(require_permissions("config:read"))):
     """返回首次使用所需依赖的配置就绪状态，不发起外部请求。"""
     checks = _readiness_checks(get_effective_settings(current.id))
     required = [check for check in checks if check.component in {"llm", "embedding", "longbridge"}]
@@ -510,7 +516,7 @@ async def test_connection(
 
 
 @router.post("/demo-data", response_model=DemoDataResponse)
-async def seed_demo_data(
+def seed_demo_data(
     current_user: CurrentUser = Depends(require_permissions("watchlist:write", "portfolio:write")),
 ):
     """用户明确触发后初始化教学数据；已有自选或组合时不会写入。"""

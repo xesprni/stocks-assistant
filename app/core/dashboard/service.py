@@ -16,6 +16,8 @@ from app.schemas.portfolio import PortfolioMarket
 WATCHLIST_CATEGORIES = ("US", "A", "H")
 PORTFOLIO_MARKETS: tuple[PortfolioMarket, ...] = ("US", "A", "H")
 DASHBOARD_QUOTE_TTL_SECONDS = 8
+DASHBOARD_STATIC_INFO_TTL_SECONDS = 3600
+DASHBOARD_CACHE_MAX_ENTRIES = 2000
 DashboardMode = Literal["bootstrap", "full"]
 DashboardSource = Literal["local", "cache", "live"]
 
@@ -196,11 +198,28 @@ class QuoteFailureEntry:
 class DashboardQuoteCache:
     """Small process-local cache for Dashboard quote bursts."""
 
-    def __init__(self, ttl_seconds: int = DASHBOARD_QUOTE_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        ttl_seconds: int = DASHBOARD_QUOTE_TTL_SECONDS,
+        *,
+        static_ttl_seconds: int = DASHBOARD_STATIC_INFO_TTL_SECONDS,
+        max_entries: int = DASHBOARD_CACHE_MAX_ENTRIES,
+    ) -> None:
         self.ttl_seconds = ttl_seconds
+        self.static_ttl_seconds = static_ttl_seconds
+        self.max_entries = max(1, max_entries)
         self._lock = RLock()
         self._quotes: dict[tuple[str, str, str], QuoteCacheEntry] = {}
         self._failures: dict[tuple[str, str, tuple[str, ...]], QuoteFailureEntry] = {}
+        self._static_info: dict[tuple[str, str], QuoteCacheEntry] = {}
+
+    def _prune_locked(self, cache: dict, now: float) -> None:
+        for key in [key for key, entry in cache.items() if entry.expires_at <= now]:
+            cache.pop(key, None)
+        overflow = len(cache) - self.max_entries
+        if overflow > 0:
+            for key, _ in sorted(cache.items(), key=lambda item: item[1].expires_at)[:overflow]:
+                cache.pop(key, None)
 
     def get_many(self, user_key: str, settings_key: str, symbols: list[str]) -> tuple[dict[str, dict[str, Any]], list[str], str | None]:
         now = monotonic()
@@ -208,6 +227,7 @@ class DashboardQuoteCache:
         missing: list[str] = []
         fetched_at: str | None = None
         with self._lock:
+            self._prune_locked(self._quotes, now)
             for symbol in symbols:
                 key = (user_key, settings_key, symbol)
                 entry = self._quotes.get(key)
@@ -231,11 +251,13 @@ class DashboardQuoteCache:
                     fetched_at=fetched_at,
                     row=dict(row),
                 )
+            self._prune_locked(self._quotes, monotonic())
 
     def get_failure(self, user_key: str, settings_key: str, symbols: list[str]) -> QuoteFailureEntry | None:
         key = (user_key, settings_key, tuple(symbols))
         now = monotonic()
         with self._lock:
+            self._prune_locked(self._failures, now)
             entry = self._failures.get(key)
             if entry and entry.expires_at > now:
                 return entry
@@ -250,9 +272,49 @@ class DashboardQuoteCache:
                 fetched_at=fetched_at,
                 error=error,
             )
+            self._prune_locked(self._failures, monotonic())
+
+    def get_static_info(self, settings_key: str, symbols: list[str]) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        now = monotonic()
+        hits: dict[str, dict[str, Any]] = {}
+        missing: list[str] = []
+        with self._lock:
+            self._prune_locked(self._static_info, now)
+            for symbol in symbols:
+                entry = self._static_info.get((settings_key, symbol))
+                if entry:
+                    hits[symbol] = dict(entry.row)
+                else:
+                    missing.append(symbol)
+        return hits, missing
+
+    def set_static_info(self, settings_key: str, rows: list[dict[str, Any]]) -> None:
+        now = monotonic()
+        fetched_at = _iso_now()
+        with self._lock:
+            for row in rows:
+                symbol = canonical_symbol(row.get("symbol", ""))
+                if symbol:
+                    self._static_info[(settings_key, symbol)] = QuoteCacheEntry(
+                        expires_at=now + self.static_ttl_seconds,
+                        fetched_at=fetched_at,
+                        row=dict(row),
+                    )
+            self._prune_locked(self._static_info, now)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._quotes.clear()
+            self._failures.clear()
+            self._static_info.clear()
 
 
 _QUOTE_CACHE = DashboardQuoteCache()
+
+
+def clear_dashboard_cache() -> None:
+    """Invalidate quote/static caches after Longbridge configuration changes."""
+    _QUOTE_CACHE.clear()
 
 
 class DashboardService:
@@ -441,15 +503,21 @@ class DashboardService:
     def _fetch_static_info(self, *, settings: Any, symbols: list[str], allow_remote: bool) -> dict[str, dict[str, Any]]:
         if not allow_remote or not symbols or not hasattr(self.market_service, "get_security_static_info"):
             return {}
+        normalized = normalize_symbols(symbols)
+        settings_key = _settings_signature(settings)
+        cached, missing = _QUOTE_CACHE.get_static_info(settings_key, normalized)
+        if not missing:
+            return cached
         try:
-            rows = self.market_service.get_security_static_info(symbols, settings=settings)
+            rows = self.market_service.get_security_static_info(missing, settings=settings)
         except Exception:
-            return {}
-        return {
-            canonical_symbol(row.get("symbol", "")): row
-            for row in rows
-            if canonical_symbol(row.get("symbol", ""))
-        }
+            return cached
+        _QUOTE_CACHE.set_static_info(settings_key, rows)
+        for row in rows:
+            symbol = canonical_symbol(row.get("symbol", ""))
+            if symbol:
+                cached[symbol] = row
+        return cached
 
     def _market_context(self, *, user: Any) -> dict[str, Any]:
         if not user.can("market:read"):

@@ -143,7 +143,7 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
 
 
 @router.get("/status", response_model=MCPStatusResponse)
-async def get_mcp_status(current_user: CurrentUser = Depends(require_permissions("mcp:read"))):
+def get_mcp_status(current_user: CurrentUser = Depends(require_permissions("mcp:read"))):
     """获取所有 MCP 服务器的连接状态。"""
     servers = _build_server_statuses(current_user)
     return MCPStatusResponse(servers=servers, total=len(servers))
@@ -220,7 +220,7 @@ async def mcp_oauth_callback(
 
 
 @router.post("/reconnect", response_model=MCPStatusResponse)
-async def reconnect_mcp_servers(current_user: CurrentUser = Depends(require_permissions("mcp:write"))):
+def reconnect_mcp_servers(current_user: CurrentUser = Depends(require_permissions("mcp:write"))):
     """重新连接所有已配置 MCP 服务器。"""
     settings = get_effective_settings(current_user.id)
     try:
@@ -252,7 +252,7 @@ async def delete_mcp_oauth(server_name: str, current_user: CurrentUser = Depends
 
 
 @router.get("/{server_name}/tools", response_model=MCPServerToolsResponse)
-async def get_mcp_server_tools(server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:read"))):
+def get_mcp_server_tools(server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:read"))):
     """获取指定 MCP 服务器的工具列表。"""
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:

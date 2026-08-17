@@ -448,6 +448,8 @@ export interface PortfolioLabResult {
   methodology: string;
   lookback_days: number;
   benchmark_symbol: string;
+  base_currency: string;
+  fx_rates_used: Record<string, number>;
   total_value: number;
   equity_value: number;
   cash_value: number;
@@ -457,7 +459,7 @@ export interface PortfolioLabResult {
   scenario: { estimated_return?: number; holding_impacts?: Array<Record<string, unknown>>; method?: string };
   rebalance: Array<{ symbol: string; current_weight: number; target_weight: number; delta_weight: number }>;
   thesis_links: Array<{ symbol: string; weight: number; thesis_snapshot_id?: string | null; confidence?: number | null; risks: string[]; invalidation_conditions: string[] }>;
-  coverage: { holdings: number; history_available: number; history_weight: number };
+  coverage: { holdings: number; valued_holdings: number; excluded_fx_holdings: number; history_available: number; history_weight: number };
   warnings: string[];
   limitations: string[];
 }
@@ -625,6 +627,7 @@ export interface PortfolioItem {
   stock_value: string | null;
   position_ratio: string | null;
   pnl_ratio: string | null;
+  valuation_price_source: "live" | "cost" | "unavailable";
   created_at: string;
   updated_at: string;
 }
@@ -646,6 +649,8 @@ export interface PortfolioListResponse {
   items: PortfolioItem[];
   total: number;
   quote_error?: string | null;
+  valuation_complete: boolean;
+  unpriced_symbols: string[];
 }
 
 export interface PortfolioSellDraft {

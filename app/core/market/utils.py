@@ -18,7 +18,11 @@ SYMBOL_ALIASES = {
 
 def canonical_symbol(symbol: Any) -> str:
     raw = str(symbol or "").strip().upper()
-    return SYMBOL_ALIASES.get(raw, raw)
+    normalized = SYMBOL_ALIASES.get(raw, raw)
+    base, separator, suffix = normalized.rpartition(".")
+    if separator and suffix == "HK" and base.isdigit():
+        return f"{int(base)}.HK"
+    return normalized
 
 
 def normalize_symbol_map(symbol_map: Optional[dict]) -> dict:

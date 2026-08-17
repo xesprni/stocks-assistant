@@ -20,16 +20,19 @@ async def analyze_portfolio(
     body: PortfolioLabRequest,
     current_user: CurrentUser = Depends(require_permissions("portfolio:read")),
 ):
-    return await run_in_threadpool(
-        get_investment_lab_service().analyze_portfolio,
-        current_user.id,
-        body,
-        settings=get_effective_settings(current_user.id),
-    )
+    try:
+        return await run_in_threadpool(
+            get_investment_lab_service().analyze_portfolio,
+            current_user.id,
+            body,
+            settings=get_effective_settings(current_user.id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/valuation/models", response_model=list[ValuationModelResponse])
-async def list_valuation_models(
+def list_valuation_models(
     symbol: Optional[str] = None,
     current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
 ):
@@ -40,7 +43,7 @@ async def list_valuation_models(
 
 
 @router.post("/valuation/{symbol}/models", response_model=ValuationModelResponse)
-async def create_valuation_model(
+def create_valuation_model(
     symbol: str,
     body: ValuationModelCreate,
     current_user: CurrentUser = Depends(require_permissions("knowledge:write")),

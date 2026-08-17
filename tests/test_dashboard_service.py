@@ -1,7 +1,7 @@
 import unittest
 
 from app.api.watchlist import _strip_watchlist_quote_payload
-from app.core.dashboard.service import DashboardService
+from app.core.dashboard.service import DashboardService, clear_dashboard_cache
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 
@@ -124,6 +124,9 @@ def portfolio_item(symbol, shares, cost, price, change, stock_value, position_ra
 
 
 class DashboardServiceTest(unittest.TestCase):
+    def setUp(self):
+        clear_dashboard_cache()
+
     def test_watchlist_views_keep_all_rows_and_sort(self):
         items = [watchlist_item(index, "A" if index % 3 == 0 else "US") for index in range(10)]
         quotes = [
@@ -210,9 +213,11 @@ class DashboardServiceTest(unittest.TestCase):
         service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
 
         payload = service.watchlist(user=FakeUser(), settings=None)
+        cached_payload = service.watchlist(user=FakeUser(), settings=None)
         row = payload["items"][0]
 
         self.assertEqual(market_service.static_info_calls, 1)
+        self.assertEqual(cached_payload["items"][0]["name_cn"], "静态名称")
         self.assertEqual(row["name"], "Static Name")
         self.assertEqual(row["name_cn"], "静态名称")
         self.assertEqual(row["exchange"], "NYSE")

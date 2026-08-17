@@ -12,9 +12,11 @@ from app.schemas.fundamentals import FinancialReportsResponse
 
 router = APIRouter()
 
+# FundamentalContext 是同步 SDK；同步路由会由 FastAPI 在线程池执行。
+
 
 @router.get("/financial-reports", response_model=FinancialReportsResponse)
-async def get_financial_reports(
+def get_financial_reports(
     symbol: str,
     kind: str = "All",
     period: Optional[str] = None,

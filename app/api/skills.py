@@ -34,7 +34,7 @@ def get_clawhub_service() -> ClawHubService:
 
 
 @router.get("", response_model=SkillListResponse)
-async def list_skills(_: CurrentUser = Depends(require_permissions("skills:read"))):
+def list_skills(_: CurrentUser = Depends(require_permissions("skills:read"))):
     mgr = get_skill_manager()
     skills = mgr.list_skills()
     skills_config = mgr.get_skills_config()
@@ -58,7 +58,7 @@ async def list_skills(_: CurrentUser = Depends(require_permissions("skills:read"
 
 
 @router.get("/clawhub/search", response_model=ClawHubSearchResponse)
-async def search_clawhub_skills(
+def search_clawhub_skills(
     q: str = Query(default=""),
     limit: int = Query(default=20, ge=1, le=50),
     _: CurrentUser = Depends(require_permissions("skills:read")),
@@ -70,7 +70,7 @@ async def search_clawhub_skills(
 
 
 @router.get("/clawhub/{slug}", response_model=ClawHubSkillDetail)
-async def get_clawhub_skill(slug: str, _: CurrentUser = Depends(require_permissions("skills:read"))):
+def get_clawhub_skill(slug: str, _: CurrentUser = Depends(require_permissions("skills:read"))):
     try:
         return get_clawhub_service().get_detail(slug)
     except ClawHubError as e:
@@ -78,7 +78,7 @@ async def get_clawhub_skill(slug: str, _: CurrentUser = Depends(require_permissi
 
 
 @router.post("/clawhub/{slug}/install", response_model=ClawHubInstallResponse)
-async def install_clawhub_skill(
+def install_clawhub_skill(
     slug: str,
     request: ClawHubInstallRequest,
     _: CurrentUser = Depends(require_permissions("skills:write")),
@@ -90,7 +90,7 @@ async def install_clawhub_skill(
 
 
 @router.post("/{name}/toggle")
-async def toggle_skill(
+def toggle_skill(
     name: str,
     request: SkillToggleRequest,
     _: CurrentUser = Depends(require_permissions("skills:write")),
@@ -104,7 +104,7 @@ async def toggle_skill(
 
 
 @router.delete("/{name}")
-async def delete_skill(name: str, _: CurrentUser = Depends(require_permissions("skills:write"))):
+def delete_skill(name: str, _: CurrentUser = Depends(require_permissions("skills:write"))):
     mgr = get_skill_manager()
     try:
         deleted_path = mgr.delete_skill(name)
@@ -116,7 +116,7 @@ async def delete_skill(name: str, _: CurrentUser = Depends(require_permissions("
 
 
 @router.post("/refresh")
-async def refresh_skills(_: CurrentUser = Depends(require_permissions("skills:write"))):
+def refresh_skills(_: CurrentUser = Depends(require_permissions("skills:write"))):
     mgr = get_skill_manager()
     mgr.refresh_skills()
     return {"status": "ok", "total": len(mgr.skills)}

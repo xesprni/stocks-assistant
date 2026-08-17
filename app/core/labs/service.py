@@ -6,10 +6,13 @@ import json
 import math
 import sqlite3
 import statistics
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from zoneinfo import ZoneInfo
 
 from app.schemas.labs import GreaterChinaRequest, PeerComparisonRequest, PortfolioLabRequest, ValuationModelCreate
 
@@ -22,9 +25,19 @@ def _number(value: Any, default: Optional[float] = None) -> Optional[float]:
     if value is None:
         return default
     try:
-        return float(str(value).replace(",", "").replace("%", "").strip())
+        text = str(value).replace(",", "").strip()
+        is_percent = text.endswith("%")
+        number = float(text[:-1] if is_percent else text)
+        if not math.isfinite(number):
+            return default
+        return number / 100 if is_percent else number
     except (TypeError, ValueError):
         return default
+
+
+_MARKET_CURRENCIES = {"US": "USD", "A": "CNY", "H": "HKD"}
+_MARKET_TIMEZONES = {"US": "America/New_York", "A": "Asia/Shanghai", "H": "Asia/Hong_Kong"}
+_LONGBRIDGE_MAX_CONCURRENCY = 5
 
 
 def _json(value: Any) -> str:
@@ -49,16 +62,21 @@ class InvestmentLabService:
         self.market = market_service
         self.fundamentals = fundamental_service
         self.research = research_service
+        self._write_lock = threading.RLock()
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=15000")
         return connection
 
     def _init_schema(self) -> None:
         with self._connect() as connection:
+            # journal_mode 是数据库级持久设置，只在初始化时协商，避免每次查询
+            # 都触发额外锁竞争。
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute(
                 """CREATE TABLE IF NOT EXISTS valuation_models (
                     id TEXT PRIMARY KEY, model_key TEXT NOT NULL, user_id TEXT NOT NULL, symbol TEXT NOT NULL,
@@ -76,70 +94,155 @@ class InvestmentLabService:
         warnings: list[str] = []
         holdings: list[dict[str, Any]] = []
         cash_by_market: dict[str, float] = {}
+        payloads: dict[str, dict[str, Any]] = {}
+
+        # 各市场持仓估值相互独立；并发数不超过 Longbridge 的账户级限制。
+        with ThreadPoolExecutor(max_workers=min(len(request.markets), _LONGBRIDGE_MAX_CONCURRENCY)) as executor:
+            futures = {
+                executor.submit(self.portfolio.list_items, market, user_id=user_id, settings=settings): market
+                for market in request.markets
+            }
+            for future in as_completed(futures):
+                market = futures[future]
+                try:
+                    payloads[market] = future.result()
+                except Exception as exc:
+                    warnings.append(f"{market} portfolio unavailable: {exc}")
+                    payloads[market] = {"market": market, "total_capital": "0", "items": []}
+
+        base_currency = request.base_currency
+        fx_rates = {base_currency: 1.0, **request.fx_rates}
+        missing_fx: set[str] = set()
+        excluded_fx_holdings = 0
+        total_holdings = sum(len(payloads[market].get("items", [])) for market in request.markets)
         for market in request.markets:
-            payload = self.portfolio.list_items(market, user_id=user_id, settings=settings)
-            cash_by_market[market] = _number(payload.get("total_capital"), 0.0) or 0.0
+            payload = payloads[market]
+            market_currency = _MARKET_CURRENCIES[market]
+            market_rate = fx_rates.get(market_currency)
+            native_cash = _number(payload.get("total_capital"), 0.0) or 0.0
+            if market_rate is None:
+                if native_cash:
+                    missing_fx.add(market_currency)
+            else:
+                cash_by_market[market] = native_cash * market_rate
             if payload.get("quote_error"):
                 warnings.append(f"{market} live valuation unavailable: {payload['quote_error']}")
             for item in payload.get("items", []):
                 shares = _number(item.get("shares"), 0.0) or 0.0
                 price = _number(item.get("current_price")) or _number(item.get("cost_price"), 0.0) or 0.0
-                value = _number(item.get("stock_value"))
-                if value is None:
-                    value = shares * price
-                holdings.append({**item, "market": market, "analysis_value": value})
+                native_value = _number(item.get("stock_value"))
+                if native_value is None:
+                    native_value = shares * price
+                currency = str(item.get("currency") or market_currency).rsplit(".", 1)[-1].upper()
+                rate = fx_rates.get(currency)
+                if rate is None:
+                    if native_value:
+                        missing_fx.add(currency)
+                    excluded_fx_holdings += 1
+                    continue
+                holdings.append(
+                    {
+                        **item,
+                        "market": market,
+                        "currency": currency,
+                        "analysis_value_native": native_value,
+                        "fx_rate": rate,
+                        "analysis_value": native_value * rate,
+                    }
+                )
+
+        if missing_fx:
+            raise ValueError(
+                "Missing FX rates for " + ", ".join(sorted(missing_fx))
+                + f"; provide units of {base_currency} per one unit of each currency"
+            )
 
         equity_value = sum(item["analysis_value"] for item in holdings)
         cash_value = sum(cash_by_market.values())
         total_value = equity_value + cash_value
         if total_value <= 0:
-            return self._empty_portfolio_result(request, warnings + ["No valued holdings or cash were available."])
+            return self._empty_portfolio_result(
+                request,
+                warnings + ["No FX-normalized holdings or cash were available."],
+                holdings=total_holdings,
+                excluded_fx_holdings=excluded_fx_holdings,
+            )
 
         for item in holdings:
             item["weight"] = item["analysis_value"] / total_value
 
         return_series: dict[str, dict[int, float]] = {}
-        history_errors = []
-        for item in holdings:
-            symbol = str(item.get("symbol") or "")
-            try:
-                bars = self.market.get_candlesticks(symbol, "1D", request.lookback_days + 1, settings=settings).get("bars", [])
-                series = self._returns_from_bars(bars)
-                if series:
-                    return_series[symbol] = series
-                else:
-                    history_errors.append(f"{symbol}: insufficient history")
-            except Exception as exc:
-                history_errors.append(f"{symbol}: {exc}")
+        history_errors: list[str] = []
+        history_symbols = list(dict.fromkeys([str(item.get("symbol") or "") for item in holdings] + [request.benchmark_symbol]))
+
+        def load_history(symbol: str) -> dict[int, float]:
+            bars = self.market.get_candlesticks(
+                symbol, "1D", request.lookback_days + 1, settings=settings
+            ).get("bars", [])
+            return self._returns_from_bars(bars, symbol)
+
+        with ThreadPoolExecutor(max_workers=min(len(history_symbols), _LONGBRIDGE_MAX_CONCURRENCY)) as executor:
+            futures = {executor.submit(load_history, symbol): symbol for symbol in history_symbols if symbol}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    series = future.result()
+                    if series:
+                        return_series[symbol] = series
+                    else:
+                        history_errors.append(f"{symbol}: insufficient history")
+                except Exception as exc:
+                    history_errors.append(f"{symbol}: {exc}")
         warnings.extend(history_errors)
 
         available_holdings = [item for item in holdings if item.get("symbol") in return_series]
         available_weight = sum(item["weight"] for item in available_holdings)
-        portfolio_returns = self._weighted_returns(available_holdings, return_series, available_weight)
-        benchmark_returns: dict[int, float] = {}
-        try:
-            benchmark_bars = self.market.get_candlesticks(
-                request.benchmark_symbol, "1D", request.lookback_days + 1, settings=settings
-            ).get("bars", [])
-            benchmark_returns = self._returns_from_bars(benchmark_bars)
-        except Exception as exc:
-            warnings.append(f"Benchmark {request.benchmark_symbol}: {exc}")
+        portfolio_returns = self._weighted_returns(available_holdings, return_series)
+        benchmark_returns = return_series.get(request.benchmark_symbol, {})
 
         metrics = self._risk_metrics(portfolio_returns, benchmark_returns)
         metrics["simulated_twr"] = metrics.get("period_return")
-        metrics["money_weighted_irr"] = self._cash_flow_irr(request.cash_flows, total_value)
+        normalized_cash_flows = []
+        for cash_flow in request.cash_flows:
+            currency = cash_flow.currency or base_currency
+            rate = fx_rates.get(currency)
+            if rate is None:
+                raise ValueError(f"Missing FX rate for cash-flow currency {currency}")
+            normalized_cash_flows.append({"date": cash_flow.date, "amount": cash_flow.amount * rate})
+        metrics["money_weighted_irr"] = self._cash_flow_irr(normalized_cash_flows, total_value)
         metrics.update({"concentration_hhi": round(sum(item["weight"] ** 2 for item in holdings), 6), "cash_weight": round(cash_value / total_value, 6)})
+        common_dates = set(portfolio_returns)
+        arithmetic_contributions = {
+            item["symbol"]: sum(item["weight"] * return_series[item["symbol"]][date] for date in common_dates)
+            for item in available_holdings
+        }
+        arithmetic_total = sum(arithmetic_contributions.values())
+        period_return = metrics.get("period_return")
+        attribution_scale = (
+            float(period_return) / arithmetic_total
+            if period_return is not None and abs(arithmetic_total) > 1e-15
+            else 0.0
+        )
         contribution = []
         for item in holdings:
             series = return_series.get(item.get("symbol"), {})
-            period_return = self._compound(series.values()) if series else None
+            holding_period_return = self._compound(series[date] for date in sorted(common_dates)) if series and common_dates else None
+            return_contribution = (
+                arithmetic_contributions[item["symbol"]] * attribution_scale
+                if item["symbol"] in arithmetic_contributions
+                else None
+            )
             contribution.append({
                 "symbol": item.get("symbol"), "market": item["market"], "weight": round(item["weight"], 6),
-                "period_return": round(period_return, 6) if period_return is not None else None,
-                "return_contribution": round(item["weight"] * period_return, 6) if period_return is not None else None,
+                "period_return": round(holding_period_return, 6) if holding_period_return is not None else None,
+                "return_contribution": round(return_contribution, 6) if return_contribution is not None else None,
                 "data_available": bool(series),
             })
         contribution.sort(key=lambda row: abs(row.get("return_contribution") or 0), reverse=True)
+        attributed_return = sum(item.get("return_contribution") or 0 for item in contribution)
+        metrics["contribution_residual"] = (
+            round(float(period_return) - attributed_return, 6) if period_return is not None else None
+        )
 
         exposures = self._exposures(holdings, cash_by_market, total_value)
         scenario = self._scenario(holdings, cash_value / total_value, request.scenario_shocks)
@@ -152,28 +255,48 @@ class InvestmentLabService:
         exposures["thesis_risk"] = {key: round(value, 6) for key, value in sorted(thesis_risks.items(), key=lambda item: item[1], reverse=True)}
         return {
             "as_of": _now(), "methodology": "current_weight_historical_replay", "lookback_days": request.lookback_days,
+            "base_currency": base_currency, "fx_rates_used": fx_rates,
             "benchmark_symbol": request.benchmark_symbol, "total_value": round(total_value, 2), "equity_value": round(equity_value, 2),
             "cash_value": round(cash_value, 2), "metrics": metrics, "contribution": contribution,
             "exposures": exposures, "scenario": scenario, "rebalance": rebalance, "thesis_links": thesis_links,
-            "coverage": {"holdings": len(holdings), "history_available": len(available_holdings), "history_weight": round(available_weight, 6)},
+            "coverage": {"holdings": total_holdings, "valued_holdings": len(holdings), "excluded_fx_holdings": excluded_fx_holdings,
+                         "history_available": len(available_holdings), "history_weight": round(available_weight, 6)},
             "warnings": warnings,
             "limitations": [
                 "Returns replay current weights over history; they are not transaction-aware TWR or IRR.",
                 "Money-weighted IRR is only calculated when complete user-supplied cash flows are provided.",
-                "Cross-currency values are not FX-normalized unless the source portfolio already uses a common denominator.",
+                "FX rates are user-supplied spot assumptions; historical currency movements are not replayed.",
                 "Missing histories are excluded and reported in coverage.",
+                "Return contribution uses scaled daily arithmetic attribution so contributions reconcile to simulated return.",
             ],
         }
 
-    def _empty_portfolio_result(self, request: PortfolioLabRequest, warnings: list[str]) -> dict[str, Any]:
+    def _empty_portfolio_result(
+        self,
+        request: PortfolioLabRequest,
+        warnings: list[str],
+        *,
+        holdings: int = 0,
+        excluded_fx_holdings: int = 0,
+    ) -> dict[str, Any]:
         return {"as_of": _now(), "methodology": "current_weight_historical_replay", "lookback_days": request.lookback_days,
+                "base_currency": request.base_currency, "fx_rates_used": {request.base_currency: 1.0, **request.fx_rates},
                 "benchmark_symbol": request.benchmark_symbol, "total_value": 0, "equity_value": 0, "cash_value": 0,
                 "metrics": {}, "contribution": [], "exposures": {}, "scenario": {}, "rebalance": [],
-                "thesis_links": [], "coverage": {"holdings": 0, "history_available": 0, "history_weight": 0},
+                "thesis_links": [], "coverage": {"holdings": holdings, "valued_holdings": 0,
+                                                    "excluded_fx_holdings": excluded_fx_holdings,
+                                                    "history_available": 0, "history_weight": 0},
                 "warnings": warnings, "limitations": ["No analyzable portfolio data."]}
 
     @staticmethod
-    def _returns_from_bars(bars: list[dict[str, Any]]) -> dict[int, float]:
+    def _returns_from_bars(bars: list[dict[str, Any]], symbol: str = "") -> dict[int, float]:
+        suffix = symbol.rsplit(".", 1)[-1].upper() if "." in symbol else ""
+        market = "US" if suffix == "US" else "H" if suffix == "HK" else "A" if suffix in {"SH", "SZ"} else "US"
+        market_timezone = ZoneInfo(_MARKET_TIMEZONES[market])
+
+        def trading_day(timestamp: int) -> int:
+            return datetime.fromtimestamp(timestamp, timezone.utc).astimezone(market_timezone).date().toordinal()
+
         ordered = sorted(
             ((int(bar.get("timestamp") or 0), _number(bar.get("close"))) for bar in bars), key=lambda item: item[0]
         )
@@ -181,17 +304,21 @@ class InvestmentLabService:
         for index in range(1, len(ordered)):
             timestamp, close = ordered[index]
             previous = ordered[index - 1][1]
-            if close is not None and previous not in (None, 0):
-                result[timestamp] = close / previous - 1
+            if timestamp > 0 and close is not None and previous not in (None, 0):
+                # 日 K 以各交易所本地日期对齐，避免 US/HK/A 同一交易日因
+                # epoch 时刻不同而没有交集。
+                result[trading_day(timestamp)] = close / previous - 1
         return result
 
     @staticmethod
-    def _weighted_returns(holdings: list[dict[str, Any]], series: dict[str, dict[int, float]], denominator: float) -> dict[int, float]:
-        if not holdings or denominator <= 0:
+    def _weighted_returns(holdings: list[dict[str, Any]], series: dict[str, dict[int, float]]) -> dict[int, float]:
+        if not holdings:
             return {}
         dates = set.intersection(*(set(series[item["symbol"]]) for item in holdings))
         return {
-            timestamp: sum((item["weight"] / denominator) * series[item["symbol"]][timestamp] for item in holdings)
+            # 权重以含现金的总资产为分母；现金隐含零收益，不应把股票重新
+            # 归一到 100%，否则组合收益会系统性虚高。
+            timestamp: sum(item["weight"] * series[item["symbol"]][timestamp] for item in holdings)
             for timestamp in sorted(dates)
         }
 
@@ -219,7 +346,9 @@ class InvestmentLabService:
             left = [portfolio[key] for key in common]
             right = [benchmark[key] for key in common]
             variance = statistics.variance(right)
-            covariance = sum((a - statistics.mean(left)) * (b - statistics.mean(right)) for a, b in zip(left, right)) / (len(common) - 1)
+            left_mean = statistics.mean(left)
+            right_mean = statistics.mean(right)
+            covariance = sum((a - left_mean) * (b - right_mean) for a, b in zip(left, right)) / (len(common) - 1)
             beta = covariance / variance if variance else None
             stdev_product = statistics.stdev(left) * statistics.stdev(right)
             correlation = covariance / stdev_product if stdev_product else None
@@ -254,16 +383,25 @@ class InvestmentLabService:
         parsed = []
         for item in cash_flows:
             amount = _number(item.get("amount"))
-            occurred_at = str(item.get("date") or item.get("occurred_at") or "")
-            try:
-                date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
-            except ValueError:
-                continue
+            raw_date = item.get("date") or item.get("occurred_at")
+            if isinstance(raw_date, datetime):
+                date = raw_date
+            else:
+                occurred_at = str(raw_date or "")
+                try:
+                    date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+                except ValueError as exc:
+                    raise ValueError(f"Invalid cash-flow date: {occurred_at}") from exc
             if date.tzinfo is None:
                 date = date.replace(tzinfo=timezone.utc)
+            else:
+                date = date.astimezone(timezone.utc)
             if amount is not None:
                 parsed.append((date, amount))
-        parsed.append((datetime.now(timezone.utc), terminal_value))
+        valuation_time = datetime.now(timezone.utc)
+        if any(date > valuation_time for date, _ in parsed):
+            raise ValueError("Cash flows cannot occur after the valuation time")
+        parsed.append((valuation_time, terminal_value))
         if len(parsed) < 2 or not any(amount < 0 for _, amount in parsed) or not any(amount > 0 for _, amount in parsed):
             return None
         parsed.sort(key=lambda item: item[0])
@@ -273,14 +411,19 @@ class InvestmentLabService:
             return sum(amount / ((1 + rate) ** max((date - start).total_seconds() / 31_557_600, 0)) for date, amount in parsed)
 
         low, high = -0.9999, 10.0
-        if npv(low) * npv(high) > 0:
+        low_npv = npv(low)
+        high_npv = npv(high)
+        if low_npv * high_npv > 0:
             return None
         for _ in range(100):
             middle = (low + high) / 2
-            if npv(low) * npv(middle) <= 0:
+            middle_npv = npv(middle)
+            if low_npv * middle_npv <= 0:
                 high = middle
+                high_npv = middle_npv
             else:
                 low = middle
+                low_npv = middle_npv
         return round((low + high) / 2, 6)
 
     @staticmethod
@@ -307,10 +450,10 @@ class InvestmentLabService:
                  "delta_weight": round(float(target) - current.get(symbol, 0), 6)} for symbol, target in targets.items()]
 
     def _thesis_links(self, user_id: str, holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        latest_by_symbol = self.research.latest_theses(user_id, [item["symbol"] for item in holdings])
         links = []
         for item in holdings:
-            theses = self.research.list_theses(user_id, item["symbol"])
-            thesis = theses[0] if theses else None
+            thesis = latest_by_symbol.get(item["symbol"])
             links.append({"symbol": item["symbol"], "weight": round(item["weight"], 6), "thesis_snapshot_id": thesis["id"] if thesis else None,
                           "confidence": thesis["payload"].get("confidence") if thesis else None,
                           "risks": thesis["payload"].get("risks", []) if thesis else [],
@@ -320,7 +463,7 @@ class InvestmentLabService:
     def create_valuation_model(self, user_id: str, symbol: str, request: ValuationModelCreate) -> dict[str, Any]:
         symbol = self.research.normalize_symbol(symbol)
         if request.thesis_snapshot_id:
-            self.research.get_thesis(user_id, request.thesis_snapshot_id)
+            self.research.validate_thesis_symbol(user_id, request.thesis_snapshot_id, symbol)
         if request.model_id:
             previous = self.get_valuation_model(user_id, request.model_id)
             if previous["symbol"] != symbol:
@@ -328,13 +471,15 @@ class InvestmentLabService:
             model_key = previous["model_key"]
         else:
             model_key = f"valuation_{uuid.uuid4().hex[:16]}"
-        with self._connect() as connection:
+        result = self._calculate_valuation(request.model_type, request.assumptions)
+        model_id = f"val_{uuid.uuid4().hex[:20]}"
+        # 版本分配和写入必须在同一写事务中；否则两个并发请求会拿到
+        # 相同 MAX(version)+1 并撞 UNIQUE 约束。
+        with self._write_lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             version = int(connection.execute(
                 "SELECT COALESCE(MAX(version),0)+1 FROM valuation_models WHERE user_id=? AND model_key=?", (user_id, model_key)
             ).fetchone()[0])
-        result = self._calculate_valuation(request.model_type, request.assumptions)
-        model_id = f"val_{uuid.uuid4().hex[:20]}"
-        with self._connect() as connection:
             connection.execute(
                 """INSERT INTO valuation_models
                    (id,model_key,user_id,symbol,version,model_type,title,assumptions_json,peer_symbols_json,result_json,
@@ -375,14 +520,23 @@ class InvestmentLabService:
                     "implied_equity_value": round(peer_median * target_metric, 4), "formula": "peer_median × target_metric"}
         if model_type == "reverse_dcf":
             target_price = _number(assumptions.get("target_price"))
-            if target_price is None:
-                raise ValueError("reverse DCF requires target_price")
+            if target_price is None or target_price <= 0:
+                raise ValueError("reverse DCF requires a finite positive target_price")
             low, high = -0.5, 1.0
+            low_price = InvestmentLabService._dcf({**assumptions, "revenue_growth": low})["value_per_share"]
+            high_price = InvestmentLabService._dcf({**assumptions, "revenue_growth": high})["value_per_share"]
+            lower_price, upper_price = sorted((low_price, high_price))
+            if target_price < lower_price or target_price > upper_price:
+                raise ValueError(
+                    "reverse DCF target is outside the solvable growth range "
+                    f"[-50%, 100%] ({lower_price:.4f} to {upper_price:.4f} per share)"
+                )
+            increasing = high_price >= low_price
             for _ in range(80):
                 growth = (low + high) / 2
                 trial = {**assumptions, "revenue_growth": growth}
                 price = InvestmentLabService._dcf(trial)["value_per_share"]
-                if price < target_price:
+                if (price < target_price) == increasing:
                     low = growth
                 else:
                     high = growth
@@ -400,20 +554,36 @@ class InvestmentLabService:
         shares = _number(assumptions.get("shares_outstanding"))
         if None in {revenue, fcf_margin, growth, wacc, terminal_growth, shares}:
             raise ValueError("DCF requires revenue, fcf_margin, revenue_growth, wacc, terminal_growth and shares_outstanding")
-        years = int(_number(assumptions.get("years"), 5) or 5)
-        if years < 1 or years > 20 or wacc <= terminal_growth or shares <= 0:
+        years_value = _number(assumptions.get("years")) if "years" in assumptions else 5.0
+        if years_value is None or not years_value.is_integer():
+            raise ValueError("DCF years must be a whole number")
+        years = int(years_value)
+        if (
+            years < 1
+            or years > 20
+            or revenue < 0
+            or growth <= -1
+            or wacc <= -1
+            or terminal_growth <= -1
+            or wacc <= terminal_growth
+            or shares <= 0
+        ):
             raise ValueError("invalid DCF horizon, discount rate, terminal growth or share count")
-        cash = _number(assumptions.get("cash"), 0) or 0
-        debt = _number(assumptions.get("debt"), 0) or 0
+        cash = _number(assumptions.get("cash")) if "cash" in assumptions else 0.0
+        debt = _number(assumptions.get("debt")) if "debt" in assumptions else 0.0
+        if cash is None or debt is None or cash < 0 or debt < 0:
+            raise ValueError("cash and debt must be finite non-negative numbers")
         forecasts, present_value = [], 0.0
+        raw_forecasts: list[tuple[int, float]] = []
         current_revenue = revenue
         for year in range(1, years + 1):
             current_revenue *= 1 + growth
             fcf = current_revenue * fcf_margin
             pv = fcf / ((1 + wacc) ** year)
             present_value += pv
+            raw_forecasts.append((year, fcf))
             forecasts.append({"year": year, "revenue": round(current_revenue, 4), "fcf": round(fcf, 4), "present_value": round(pv, 4)})
-        terminal_value = forecasts[-1]["fcf"] * (1 + terminal_growth) / (wacc - terminal_growth)
+        terminal_value = raw_forecasts[-1][1] * (1 + terminal_growth) / (wacc - terminal_growth)
         terminal_pv = terminal_value / ((1 + wacc) ** years)
         enterprise_value = present_value + terminal_pv
         equity_value = enterprise_value + cash - debt
@@ -426,8 +596,8 @@ class InvestmentLabService:
                 if test_wacc <= test_terminal:
                     value = None
                 else:
-                    tv = forecasts[-1]["fcf"] * (1 + test_terminal) / (test_wacc - test_terminal)
-                    ev = sum(item["fcf"] / ((1 + test_wacc) ** item["year"]) for item in forecasts) + tv / ((1 + test_wacc) ** years)
+                    tv = raw_forecasts[-1][1] * (1 + test_terminal) / (test_wacc - test_terminal)
+                    ev = sum(fcf / ((1 + test_wacc) ** year) for year, fcf in raw_forecasts) + tv / ((1 + test_wacc) ** years)
                     value = round((ev + cash - debt) / shares, 4)
                 row.append({"wacc": round(test_wacc, 4), "terminal_growth": round(test_terminal, 4), "value_per_share": value})
             sensitivity.extend(row)
@@ -436,20 +606,41 @@ class InvestmentLabService:
                 "forecast": forecasts, "sensitivity": sensitivity}
 
     def compare_peers(self, request: PeerComparisonRequest, *, settings=None) -> dict[str, Any]:
-        rows, errors = [], []
-        for raw_symbol in request.symbols:
-            symbol = self.research.normalize_symbol(raw_symbol)
-            try:
-                payload = self.fundamentals.get_security_insights(symbol, settings=settings)
-                valuation = payload.get("valuation") or {}
-                company = payload.get("company") or {}
-                metrics = {metric: self._find_metric(valuation, metric) for metric in request.metrics}
-                rows.append({"symbol": symbol, "name": self._find_metric(company, "name") or symbol, "metrics": metrics,
-                             "source": payload.get("source"), "fetched_at": payload.get("fetched_at"),
-                             "available": any(value is not None for value in metrics.values())})
-            except Exception as exc:
-                errors.append({"symbol": symbol, "error": str(exc)})
-                rows.append({"symbol": symbol, "name": symbol, "metrics": {metric: None for metric in request.metrics}, "available": False})
+        errors: list[dict[str, str]] = []
+        normalized_symbols = list(dict.fromkeys(self.research.normalize_symbol(symbol) for symbol in request.symbols))
+        if len(normalized_symbols) < 2:
+            raise ValueError("at least two distinct canonical symbols are required")
+
+        def load_peer(symbol: str) -> dict[str, Any]:
+            payload = self.fundamentals.get_security_insights(symbol, settings=settings)
+            valuation = payload.get("valuation") or {}
+            company = payload.get("company") or {}
+            metrics = {metric: self._find_metric(valuation, metric) for metric in request.metrics}
+            return {
+                "symbol": symbol,
+                "name": self._find_metric(company, "name") or symbol,
+                "metrics": metrics,
+                "source": payload.get("source"),
+                "fetched_at": payload.get("fetched_at"),
+                "available": any(value is not None for value in metrics.values()),
+            }
+
+        rows_by_symbol: dict[str, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=min(len(normalized_symbols), _LONGBRIDGE_MAX_CONCURRENCY)) as executor:
+            futures = {executor.submit(load_peer, symbol): symbol for symbol in normalized_symbols}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    rows_by_symbol[symbol] = future.result()
+                except Exception as exc:
+                    errors.append({"symbol": symbol, "error": str(exc)})
+                    rows_by_symbol[symbol] = {
+                        "symbol": symbol,
+                        "name": symbol,
+                        "metrics": {metric: None for metric in request.metrics},
+                        "available": False,
+                    }
+        rows = [rows_by_symbol[symbol] for symbol in normalized_symbols]
         medians = {}
         for metric in request.metrics:
             values = [_number(row["metrics"].get(metric)) for row in rows]
@@ -461,14 +652,17 @@ class InvestmentLabService:
     @classmethod
     def _find_metric(cls, value: Any, key: str) -> Any:
         aliases = {
-            "pe_ttm_ratio": {"pe_ttm_ratio", "pe_ttm", "pe_ratio"}, "pb_ratio": {"pb_ratio", "pb"},
-            "ps_ttm_ratio": {"ps_ttm_ratio", "ps_ttm", "ps_ratio"}, "market_cap": {"market_cap", "total_market_cap"},
-            "name": {"name", "name_cn", "name_hk", "name_en"},
-        }.get(key, {key})
+            "pe_ttm_ratio": ("pe_ttm_ratio", "pe_ttm", "pe_ratio", "pe"),
+            "pb_ratio": ("pb_ratio", "pb"),
+            "ps_ttm_ratio": ("ps_ttm_ratio", "ps_ttm", "ps_ratio", "ps"),
+            "market_cap": ("market_cap", "total_market_cap", "total_market_value"),
+            "name": ("name", "name_cn", "name_hk", "name_en"),
+        }.get(key, (key,))
         if isinstance(value, dict):
             for alias in aliases:
                 if alias in value and value[alias] not in (None, ""):
-                    return value[alias]
+                    candidate = value[alias]
+                    return candidate if key == "name" else cls._latest_numeric_metric(candidate)
             for child in value.values():
                 found = cls._find_metric(child, key)
                 if found not in (None, ""):
@@ -477,6 +671,31 @@ class InvestmentLabService:
             for child in value:
                 found = cls._find_metric(child, key)
                 if found not in (None, ""):
+                    return found
+        return None
+
+    @classmethod
+    def _latest_numeric_metric(cls, value: Any) -> Optional[float]:
+        direct = _number(value)
+        if direct is not None:
+            return direct
+        if isinstance(value, list):
+            for item in reversed(value):
+                found = cls._latest_numeric_metric(item)
+                if found is not None:
+                    return found
+        elif isinstance(value, dict):
+            # Longbridge valuation metrics can be a latest-value object or a
+            # date-keyed/list time series. Prefer explicit value fields, then
+            # walk newest entries first.
+            for key in ("value", "current", "latest", "last", "ttm"):
+                if key in value:
+                    found = cls._latest_numeric_metric(value[key])
+                    if found is not None:
+                        return found
+            for child in reversed(list(value.values())):
+                found = cls._latest_numeric_metric(child)
+                if found is not None:
                     return found
         return None
 
@@ -491,18 +710,24 @@ class InvestmentLabService:
             "OTHER": {"currency": "", "timezone": "", "languages": []},
         }[market]
         static_info, insights, errors = {}, {}, []
-        try:
-            infos = self.market.get_security_static_info([symbol], settings=settings)
-            static_info = infos[0] if infos else {}
-        except Exception as exc:
-            errors.append(f"static_info: {exc}")
-        try:
-            payload = self.fundamentals.get_security_insights(symbol, settings=settings)
-            insights = {key: payload.get(key) for key in ("filings", "company", "valuation", "dividends", "institution_rating", "corporate_actions")}
-            fetched_at = payload.get("fetched_at")
-        except Exception as exc:
-            errors.append(f"fundamentals: {exc}")
-            fetched_at = None
+        fetched_at = None
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            static_future = executor.submit(self.market.get_security_static_info, [symbol], settings=settings)
+            fundamentals_future = executor.submit(self.fundamentals.get_security_insights, symbol, settings=settings)
+            try:
+                infos = static_future.result()
+                static_info = infos[0] if infos else {}
+            except Exception as exc:
+                errors.append(f"static_info: {exc}")
+            try:
+                payload = fundamentals_future.result()
+                insights = {
+                    key: payload.get(key)
+                    for key in ("filings", "company", "valuation", "dividends", "institution_rating", "corporate_actions")
+                }
+                fetched_at = payload.get("fetched_at")
+            except Exception as exc:
+                errors.append(f"fundamentals: {exc}")
         paired = None
         if request.paired_symbol:
             paired = self.compare_peers(PeerComparisonRequest(symbols=[symbol, request.paired_symbol]), settings=settings)

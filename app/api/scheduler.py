@@ -33,7 +33,7 @@ def _run_to_response(run: dict) -> TaskRunResponse:
 
 
 @router.get("/tasks", response_model=TaskListResponse)
-async def list_tasks(current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
+def list_tasks(current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
     service = get_scheduler_service()
     tasks = service.task_store.for_user(current_user.id).list_tasks()
     return TaskListResponse(
@@ -43,7 +43,7 @@ async def list_tasks(current_user: CurrentUser = Depends(require_permissions("sc
 
 
 @router.post("/tasks", response_model=TaskResponse)
-async def create_task(request: TaskCreateRequest, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def create_task(request: TaskCreateRequest, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task_id = str(uuid.uuid4())[:8]
@@ -77,7 +77,7 @@ async def create_task(request: TaskCreateRequest, current_user: CurrentUser = De
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
+def get_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
     service = get_scheduler_service()
     task = service.task_store.for_user(current_user.id).get_task(task_id)
     if not task:
@@ -86,7 +86,7 @@ async def get_task(task_id: str, current_user: CurrentUser = Depends(require_per
 
 
 @router.put("/tasks/{task_id}", response_model=TaskResponse)
-async def update_task(
+def update_task(
     task_id: str,
     request: TaskUpdateRequest,
     current_user: CurrentUser = Depends(require_permissions("scheduler:write")),
@@ -148,7 +148,7 @@ async def run_task_now(task_id: str, current_user: CurrentUser = Depends(require
 
 
 @router.get("/tasks/{task_id}/runs", response_model=TaskRunListResponse)
-async def list_task_runs(
+def list_task_runs(
     task_id: str,
     limit: int = Query(default=50, ge=1, le=200),
     current_user: CurrentUser = Depends(require_permissions("scheduler:read")),
@@ -162,7 +162,7 @@ async def list_task_runs(
 
 
 @router.get("/runs", response_model=TaskRunListResponse)
-async def list_runs(
+def list_runs(
     limit: int = Query(default=50, ge=1, le=200),
     current_user: CurrentUser = Depends(require_permissions("scheduler:read")),
 ):
@@ -172,7 +172,7 @@ async def list_runs(
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def delete_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     service = get_scheduler_service()
     try:
         service.task_store.for_user(current_user.id).delete_task(task_id)
@@ -182,7 +182,7 @@ async def delete_task(task_id: str, current_user: CurrentUser = Depends(require_
 
 
 @router.post("/tasks/{task_id}/toggle")
-async def toggle_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def toggle_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task = task_store.get_task(task_id)

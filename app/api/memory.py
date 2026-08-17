@@ -84,13 +84,13 @@ async def sync_memory(current_user: CurrentUser = Depends(require_permissions("m
 
 
 @router.get("/status", response_model=MemoryStatusResponse)
-async def memory_status(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
+def memory_status(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
     mgr = get_memory_manager_for_user(current_user.id)
     return MemoryStatusResponse(**mgr.get_status())
 
 
 @router.delete("/clear")
-async def clear_memory(current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+def clear_memory(current_user: CurrentUser = Depends(require_permissions("memory:write"))):
     mgr = get_memory_manager_for_user(current_user.id)
     try:
         # 一键清除只作用于当前账号的用户记忆，避免误删共享记忆或其他用户数据。
@@ -101,7 +101,7 @@ async def clear_memory(current_user: CurrentUser = Depends(require_permissions("
 
 
 @router.get("/files")
-async def list_memory_files(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
+def list_memory_files(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
     from pathlib import Path
     from app.config import get_settings
 
@@ -149,7 +149,7 @@ async def list_memory_files(current_user: CurrentUser = Depends(require_permissi
 
 
 @router.delete("/files/{name:path}")
-async def delete_memory_file(name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+def delete_memory_file(name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
     if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
         raise HTTPException(status_code=403, detail="Cannot delete another user's memory")
     mgr = _manager_for_memory_path(name, current_user)
@@ -163,7 +163,7 @@ async def delete_memory_file(name: str, current_user: CurrentUser = Depends(requ
 
 
 @router.delete("/index/{name:path}")
-async def delete_memory_index(name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+def delete_memory_index(name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))):
     if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
         raise HTTPException(status_code=403, detail="Cannot delete another user's memory")
     mgr = _manager_for_memory_path(name, current_user)
@@ -174,7 +174,7 @@ async def delete_memory_index(name: str, current_user: CurrentUser = Depends(req
 
 
 @router.get("/files/{name:path}")
-async def get_memory_file(name: str, current_user: CurrentUser = Depends(require_permissions("memory:read"))):
+def get_memory_file(name: str, current_user: CurrentUser = Depends(require_permissions("memory:read"))):
     from pathlib import Path
     from app.config import get_settings
 
@@ -182,7 +182,7 @@ async def get_memory_file(name: str, current_user: CurrentUser = Depends(require
     workspace = Path(settings.workspace_dir).expanduser()
     file_path = (workspace / name).resolve()
 
-    if not str(file_path).startswith(str(workspace.resolve())):
+    if not file_path.is_relative_to(workspace.resolve()):
         raise HTTPException(status_code=403, detail="Path outside workspace")
     if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
         raise HTTPException(status_code=403, detail="Cannot read another user's memory")

@@ -1,7 +1,9 @@
+import asyncio
 import hashlib
 import os
 import re
 import math
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -39,6 +41,7 @@ class MemoryManager:
 
         db_path = self.config.get_db_path()
         self.storage = MemoryStorage(db_path)
+        self._index_lock = threading.RLock()
 
         self.chunker = TextChunker(
             max_tokens=self.config.chunk_max_tokens,
@@ -104,6 +107,24 @@ class MemoryManager:
         if self.config.sync_on_search and self._dirty:
             await self.sync()
 
+        return await asyncio.to_thread(
+            self._search_sync,
+            query,
+            user_id,
+            scopes,
+            max_results,
+            min_score,
+        )
+
+    def _search_sync(
+        self,
+        query: str,
+        user_id: Optional[str],
+        scopes: list[str],
+        max_results: int,
+        min_score: float,
+    ) -> List[SearchResult]:
+        """在线程池执行 embedding 与 SQLite 检索，避免阻塞 API 事件循环。"""
         vector_results = []
         if self.embedding_provider:
             try:
@@ -143,6 +164,25 @@ class MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
     ):
         """添加新的记忆内容（追加到固定文件后重新索引）"""
+        await asyncio.to_thread(
+            self._add_memory_sync,
+            content,
+            user_id,
+            scope,
+            source,
+            path,
+            metadata,
+        )
+
+    def _add_memory_sync(
+        self,
+        content: str,
+        user_id: Optional[str],
+        scope: str,
+        source: str,
+        path: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> None:
         if not content.strip():
             return
 
@@ -154,20 +194,23 @@ class MemoryManager:
 
         workspace_dir = self.config.get_workspace().resolve()
         file_path = (workspace_dir / path).resolve()
-        if not str(file_path).startswith(str(workspace_dir.resolve())):
+        if not file_path.is_relative_to(workspace_dir):
             raise ValueError("Memory path outside workspace")
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = f"## {timestamp}\n\n{content.strip()}\n"
-        separator = "\n" if existing.strip() else ""
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        file_path.write_text(f"{existing}{separator}{entry}", encoding="utf-8")
+        # add_memory 现在在线程池执行，同一文件的“读旧内容 → 追加 → 重建索引”
+        # 必须整体串行，否则两个并发追加会互相覆盖。RLock 允许索引阶段重入。
+        with self._index_lock:
+            existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            entry = f"## {timestamp}\n\n{content.strip()}\n"
+            separator = "\n" if existing.strip() else ""
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            file_path.write_text(f"{existing}{separator}{entry}", encoding="utf-8")
 
-        # 同一文件追加后整文件重建索引，避免旧 chunk 行号与新内容失配。
-        await self._sync_file(file_path, source, scope, user_id, metadata=metadata)
+            # 同一文件追加后整文件重建索引，避免旧 chunk 行号与新内容失配。
+            self._sync_file_sync(file_path, source, scope, user_id, metadata=metadata)
 
     async def sync(self, force: bool = False):
         """同步记忆文件到索引
@@ -268,6 +311,29 @@ class MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
     ):
         """同步单个文件到索引（基于哈希的增量更新）"""
+        await asyncio.to_thread(self._sync_file_sync, file_path, source, scope, user_id, metadata)
+
+    def _sync_file_sync(
+        self,
+        file_path: Path,
+        source: str,
+        scope: str,
+        user_id: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # 同一用户的索引更新串行执行，保证“删除旧 chunks → 写新 chunks →
+        # 更新文件 hash”是不可交错的，同时避免共享 embedding provider 被并发调用。
+        with self._index_lock:
+            self._sync_file_locked(file_path, source, scope, user_id, metadata)
+
+    def _sync_file_locked(
+        self,
+        file_path: Path,
+        source: str,
+        scope: str,
+        user_id: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         file_path = file_path.resolve()
         content = file_path.read_text(encoding='utf-8')
         file_hash = self._index_hash(content)
@@ -278,14 +344,9 @@ class MemoryManager:
         if stored_hash == file_hash:
             return
 
-        self.storage.delete_by_path(rel_path)
-
         chunks = self.chunker.chunk_text(content)
-        if not chunks:
-            return
-
         texts = [chunk.text for chunk in chunks]
-        if self.embedding_provider:
+        if texts and self.embedding_provider:
             embeddings = self.embedding_provider.embed_batch(texts)
         else:
             embeddings = [None] * len(texts)
@@ -300,10 +361,11 @@ class MemoryManager:
                 text=chunk.text, embedding=embedding, hash=chunk_hash, metadata=metadata,
             ))
 
-        self.storage.save_chunks_batch(memory_chunks)
-
         stat = file_path.stat()
-        self.storage.update_file_metadata(
+        # 在 embedding 全部成功后再用单一事务替换旧索引；失败时保留上一版，
+        # 搜索线程也不会观察到“旧 chunks 已删、新 chunks 未写”的中间态。
+        self.storage.replace_file_chunks(
+            memory_chunks,
             path=rel_path, source=source, file_hash=file_hash,
             mtime=int(stat.st_mtime), size=stat.st_size,
         )
@@ -348,7 +410,7 @@ class MemoryManager:
         """Delete a memory path from the index and optionally from disk."""
         workspace_dir = self.config.get_workspace().resolve()
         file_path = (workspace_dir / path).resolve()
-        if not str(file_path).startswith(str(workspace_dir)):
+        if not file_path.is_relative_to(workspace_dir):
             raise ValueError("Memory path outside workspace")
 
         deleted_file = False
@@ -372,7 +434,7 @@ class MemoryManager:
         workspace_dir = self.config.get_workspace().resolve()
         user_prefix = f"memory/users/{user_id}/"
         user_dir = (workspace_dir / user_prefix).resolve()
-        if not str(user_dir).startswith(str(workspace_dir)):
+        if not user_dir.is_relative_to(workspace_dir):
             raise ValueError("Memory path outside workspace")
 
         deleted_files = 0

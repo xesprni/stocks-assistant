@@ -22,7 +22,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=SecurityNewsResponse)
-async def get_security_news(
+def get_security_news(
     symbol: str = Query(..., min_length=1),
     limit: int = Query(50, ge=1, le=100),
     current_user: CurrentUser = Depends(require_permissions("market:read")),
@@ -42,7 +42,7 @@ async def get_security_news(
 
 
 @router.get("/guardian/feed", response_model=GuardianFeedResponse)
-async def get_guardian_feed(
+def get_guardian_feed(
     url: str = Query(..., min_length=1),
     limit: int = Query(30, ge=1, le=100),
     current_user: CurrentUser = Depends(require_permissions("market:read")),
@@ -58,7 +58,7 @@ async def get_guardian_feed(
 
 
 @router.get("/guardian/article", response_model=GuardianArticleResponse)
-async def get_guardian_article(
+def get_guardian_article(
     url: str = Query(..., min_length=1),
     current_user: CurrentUser = Depends(require_permissions("market:read")),
 ):

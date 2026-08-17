@@ -14,6 +14,7 @@ import httpx
 
 from app.core.agent.models import LLMRequest
 from app.config import get_settings
+from app.core.market.utils import canonical_symbol
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 GUARDIAN_ALLOWED_HOSTS = {"theguardian.com", "www.theguardian.com"}
@@ -103,7 +104,7 @@ def normalize_news_symbol(symbol: str) -> str:
     if not value:
         raise ValueError("Symbol is required")
     if "." in value:
-        return value
+        return canonical_symbol(value)
     if value.isdigit():
         if len(value) >= 6:
             suffix = "SH" if value.startswith(("5", "6", "9")) else "SZ"

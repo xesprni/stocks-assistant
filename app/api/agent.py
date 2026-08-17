@@ -277,7 +277,9 @@ def _finish_trace(
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+    # Agent provider/tool 链是同步执行模型；普通 def 由 FastAPI 放入线程池，
+    # 避免非流式长对话占住整个 ASGI 事件循环。
     recorder = None
     try:
         session_id, history_messages = _prepare_session(request, current_user)
@@ -327,7 +329,7 @@ async def chat(request: ChatRequest, current_user: CurrentUser = Depends(require
 
 
 @router.post("/stream")
-async def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     session_id, history_messages = _prepare_session(request, current_user)
     request.user_id = current_user.id
     recorder = _start_trace(session_id, request.message, current_user.id)
@@ -455,7 +457,7 @@ async def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(
 
 
 @router.get("/sessions", response_model=ChatSessionListResponse)
-async def list_sessions(
+def list_sessions(
     user_id: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -468,7 +470,7 @@ async def list_sessions(
 
 
 @router.post("/sessions", response_model=ChatSessionDetail)
-async def create_session(request: ChatSessionCreateRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def create_session(request: ChatSessionCreateRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     session = get_session_store().create_session(
         user_id=current_user.id,
         title=request.title or "新对话",
@@ -477,20 +479,20 @@ async def create_session(request: ChatSessionCreateRequest, current_user: Curren
 
 
 @router.delete("/sessions")
-async def delete_sessions(current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def delete_sessions(current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     deleted = get_session_store().delete_sessions(user_id=current_user.id)
     return {"status": "ok", "deleted": deleted, "tracing": "cleared_by_session_cascade"}
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSessionDetail)
-async def get_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))):
+def get_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))):
     session = _session_or_404(session_id)
     _assert_session_owner(session, current_user)
     return session
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionSummary)
-async def update_session(
+def update_session(
     session_id: str,
     request: ChatSessionUpdateRequest,
     current_user: CurrentUser = Depends(require_permissions("chat:write")),
@@ -503,7 +505,7 @@ async def update_session(
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def delete_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     try:
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         get_session_store().delete_session(session_id)
@@ -513,7 +515,7 @@ async def delete_session(session_id: str, current_user: CurrentUser = Depends(re
 
 
 @router.delete("/sessions/{session_id}/messages")
-async def clear_session_messages(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def clear_session_messages(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
     try:
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         deleted = get_session_store().clear_messages(session_id)
@@ -523,7 +525,7 @@ async def clear_session_messages(session_id: str, current_user: CurrentUser = De
 
 
 @router.delete("/history")
-async def clear_history(
+def clear_history(
     session_id: Optional[str] = None,
     current_user: CurrentUser = Depends(require_permissions("chat:write")),
 ):

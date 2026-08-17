@@ -1,12 +1,13 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 from app.core.portfolio.service import PortfolioService
 from app.core.research.evaluator import evaluate_due_alerts
 from app.core.research.service import ResearchService
 from app.core.watchlist.service import WatchlistService
 from app.schemas.portfolio import PortfolioItemCreate
-from app.schemas.research import AlertRuleCreate, DecisionCreate, ResearchDocumentCreate, ThesisPayload, ThesisSnapshotCreate
+from app.schemas.research import AlertRuleCreate, AlertRuleUpdate, DecisionCreate, ResearchDocumentCreate, ThesisPayload, ThesisSnapshotCreate
 
 
 class Phase1ResearchServiceTest(unittest.TestCase):
@@ -133,6 +134,61 @@ class Phase1ResearchServiceTest(unittest.TestCase):
         self.assertEqual("Thesis confirmed after earnings", reviewed["outcome"])
         self.assertIsNotNone(reviewed["reviewed_at"])
 
+    def test_cross_symbol_thesis_links_are_rejected(self):
+        thesis = self.service.create_thesis(
+            "user-1",
+            "MSFT.US",
+            ThesisSnapshotCreate(payload=ThesisPayload(confidence=0.6), reason="Microsoft thesis"),
+        )
+        with self.assertRaisesRegex(ValueError, "different symbol"):
+            self.service.create_decision(
+                "user-1",
+                "AAPL.US",
+                DecisionCreate(action="Hold", rationale="Wrong link", thesis_snapshot_id=thesis["id"]),
+            )
+        with self.assertRaisesRegex(ValueError, "different symbol"):
+            self.service.create_alert_rule(
+                "user-1",
+                AlertRuleCreate(
+                    symbol="AAPL.US",
+                    name="Wrong link",
+                    condition_type="price",
+                    operator="gt",
+                    threshold=200,
+                    thesis_snapshot_id=thesis["id"],
+                ),
+            )
+        rule = self.service.create_alert_rule(
+            "user-1",
+            AlertRuleCreate(symbol="AAPL.US", name="Valid", condition_type="price", operator="gt", threshold=200),
+        )
+        with self.assertRaisesRegex(ValueError, "different symbol"):
+            self.service.update_alert_rule(
+                "user-1", rule["id"], AlertRuleUpdate(thesis_snapshot_id=thesis["id"])
+            )
+
+    def test_epoch_alert_timestamp_is_normalized_and_included_in_metrics(self):
+        rule = self.service.create_alert_rule(
+            "user-1",
+            AlertRuleCreate(
+                symbol="AAPL.US",
+                name="Epoch timestamp",
+                condition_type="price",
+                operator="gt",
+                threshold=200,
+                severity="high",
+            ),
+        )
+        observed_at = int(datetime.now(timezone.utc).timestamp())
+        event = self.service.record_evaluation(
+            "user-1", rule["id"], observed_value=210, observed_at=observed_at, event_key="epoch-event"
+        )
+
+        parsed = datetime.fromisoformat(event["occurred_at"])
+        self.assertIsNotNone(parsed.tzinfo)
+        self.assertEqual(observed_at, int(parsed.timestamp()))
+        self.assertEqual(1, self.service.research_metrics("user-1", days=1)["significant_events"])
+
     def test_research_metrics_are_computable_from_audited_records(self):
         self.service.create_thesis(
             "user-1", "AAPL.US", ThesisSnapshotCreate(payload=ThesisPayload(confidence=0.6), reason="Baseline")
@@ -172,7 +228,7 @@ class Phase1ResearchServiceTest(unittest.TestCase):
 
 class _Market:
     def get_realtime_quotes(self, symbols, settings=None):
-        return {"quotes": [{"symbol": symbols[0], "last_done": "210", "timestamp": "2026-08-17T10:00:00Z"}]}
+        return {"quotes": [{"symbol": symbols[0], "last_done": "210", "timestamp": 1_776_422_400}]}
 
 
 class _Fundamentals:
@@ -199,6 +255,7 @@ class Phase1AlertEvaluatorTest(unittest.TestCase):
             )
             self.assertEqual(1, result["checked"])
             self.assertEqual(1, result["created"])
+            self.assertIn("T", result["events"][0]["occurred_at"])
 
     def test_kpi_evaluation_uses_named_fundamental_metric(self):
         with tempfile.TemporaryDirectory() as tmp:

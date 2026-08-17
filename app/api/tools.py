@@ -24,7 +24,7 @@ def _tool_manager_for_user(current_user: CurrentUser, settings) -> ToolManager:
 
 
 @router.get("", response_model=ToolListResponse)
-async def list_tools(current_user: CurrentUser = Depends(require_permissions("tools:read"))):
+def list_tools(current_user: CurrentUser = Depends(require_permissions("tools:read"))):
     settings = get_effective_settings(current_user.id)
     mgr = _tool_manager_for_user(current_user, settings)
     tools = mgr.get_all_tools()
@@ -47,7 +47,7 @@ async def list_tools(current_user: CurrentUser = Depends(require_permissions("to
 
 
 @router.post("/{name}/execute", response_model=ToolExecuteResponse)
-async def execute_tool(
+def execute_tool(
     name: str,
     request: ToolExecuteRequest,
     current_user: CurrentUser = Depends(require_permissions("tools:execute")),

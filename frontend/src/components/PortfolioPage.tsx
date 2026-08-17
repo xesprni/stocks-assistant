@@ -937,6 +937,12 @@ export function PortfolioPage({
   const [countdown, setCountdown] = useState(refreshInterval);
   const inFlightMarketRef = useRef<PortfolioMarket | null>(null);
   const requestSeqRef = useRef(0);
+  const queuedRefreshRef = useRef<{
+    market: PortfolioMarket;
+    quiet: boolean;
+    syncCapitalDraft: boolean;
+    resolve: Array<() => void>;
+  } | null>(null);
   const [sortState, setSortState] = useState<{ key: PortfolioSortKey; direction: "asc" | "desc" }>(() => readStoredSortState());
 
   const effectiveRefreshInterval = Math.max(1, Number.isFinite(refreshInterval) ? Math.floor(refreshInterval) : 60);
@@ -1007,10 +1013,28 @@ export function PortfolioPage({
     });
   }, [language]);
 
-  const loadItems = useCallback(
+  const loadItems: (options?: LoadPortfolioOptions) => Promise<void> = useCallback(
     async ({ quiet = false, syncCapitalDraft = true }: LoadPortfolioOptions = {}) => {
       const requestMarket = market;
-      if (inFlightMarketRef.current === requestMarket) return;
+      if (inFlightMarketRef.current === requestMarket) {
+        return new Promise<void>((resolve) => {
+          const queued = queuedRefreshRef.current;
+          if (queued?.market === requestMarket) {
+            // 写操作触发的前台刷新优先级高于自动刷新，并保留任何一次同步现金草稿的需求。
+            queued.quiet = queued.quiet && quiet;
+            queued.syncCapitalDraft = queued.syncCapitalDraft || syncCapitalDraft;
+            queued.resolve.push(resolve);
+          } else {
+            queuedRefreshRef.current = { market: requestMarket, quiet, syncCapitalDraft, resolve: [resolve] };
+          }
+        });
+      }
+
+      if (inFlightMarketRef.current && inFlightMarketRef.current !== requestMarket) {
+        const staleQueue = queuedRefreshRef.current;
+        queuedRefreshRef.current = null;
+        staleQueue?.resolve.forEach((resolve) => resolve());
+      }
 
       const requestId = requestSeqRef.current + 1;
       requestSeqRef.current = requestId;
@@ -1038,11 +1062,18 @@ export function PortfolioPage({
         if (requestSeqRef.current !== requestId) return;
         setMessage(caught instanceof Error ? caught.message : copy.loadFailed);
       } finally {
-        if (requestSeqRef.current === requestId) inFlightMarketRef.current = null;
+        const isCurrentRequest = requestSeqRef.current === requestId;
+        if (isCurrentRequest) inFlightMarketRef.current = null;
         if (quiet) {
           setIsAutoRefreshing(false);
-        } else if (requestSeqRef.current === requestId) {
+        } else if (isCurrentRequest) {
           setIsLoading(false);
+        }
+        const queued = queuedRefreshRef.current;
+        if (isCurrentRequest && queued?.market === requestMarket) {
+          queuedRefreshRef.current = null;
+          void loadItems({ quiet: queued.quiet, syncCapitalDraft: queued.syncCapitalDraft })
+            .finally(() => queued.resolve.forEach((resolve) => resolve()));
         }
       }
     },

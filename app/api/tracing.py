@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/sessions/{session_id}", response_model=TraceSessionResponse)
-async def get_session_traces(
+def get_session_traces(
     session_id: str,
     limit: int = Query(default=20, ge=1, le=100),
     current_user: CurrentUser = Depends(require_permissions("tracing:read")),

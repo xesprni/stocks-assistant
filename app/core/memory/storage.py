@@ -13,6 +13,8 @@
 import hashlib
 import json
 import sqlite3
+import threading
+from functools import wraps
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,6 +22,17 @@ from typing import Any, Dict, List, Optional
 # 向量搜索候选集上限。超过此数量的 embedding 不会被加载到内存参与相似度计算，
 # 防止大规模记忆库导致 O(n) 扫描和内存压力。实际结果仍按 limit 截断。
 VECTOR_SEARCH_MAX_CANDIDATES = 5000
+
+
+def _locked(method):
+    """Serialize access to the shared check_same_thread=False SQLite connection."""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 @dataclass
@@ -63,6 +76,7 @@ class MemoryStorage:
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
         self.fts5_available = False
+        self._lock = threading.RLock()
         self._init_db()
 
     def _check_fts5(self) -> bool:
@@ -129,6 +143,7 @@ class MemoryStorage:
         """)
         self.conn.commit()
 
+    @_locked
     def save_chunks_batch(self, chunks: List[MemoryChunk]):
         """批量保存记忆块（INSERT OR REPLACE）"""
         self.conn.executemany(
@@ -138,17 +153,65 @@ class MemoryStorage:
               json.dumps(c.metadata) if c.metadata else None) for c in chunks])
         self.conn.commit()
 
+    @_locked
+    def replace_file_chunks(
+        self,
+        chunks: List[MemoryChunk],
+        *,
+        path: str,
+        source: str,
+        file_hash: str,
+        mtime: int,
+        size: int,
+    ) -> None:
+        """Atomically replace one file's chunks and metadata."""
+        rows = [
+            (
+                chunk.id,
+                chunk.user_id,
+                chunk.scope,
+                chunk.source,
+                chunk.path,
+                chunk.start_line,
+                chunk.end_line,
+                chunk.text,
+                json.dumps(chunk.embedding) if chunk.embedding else None,
+                chunk.hash,
+                json.dumps(chunk.metadata) if chunk.metadata else None,
+            )
+            for chunk in chunks
+        ]
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
+            if rows:
+                self.conn.executemany(
+                    "INSERT OR REPLACE INTO chunks (id,user_id,scope,source,path,start_line,end_line,text,embedding,hash,metadata,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,strftime('%s','now'))",
+                    rows,
+                )
+            self.conn.execute(
+                "INSERT OR REPLACE INTO files (path,source,hash,mtime,size,updated_at) VALUES (?,?,?,?,?,strftime('%s','now'))",
+                (path, source, file_hash, mtime, size),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    @_locked
     def delete_by_path(self, path: str):
         """按文件路径删除所有关联的记忆块"""
         self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
         self.conn.commit()
 
+    @_locked
     def delete_file_metadata(self, path: str) -> int:
         """Delete indexed file metadata for a path."""
         cursor = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
         self.conn.commit()
         return cursor.rowcount
 
+    @_locked
     def delete_indexed_file(self, path: str) -> Dict[str, int]:
         """Delete both chunks and file metadata for a path."""
         chunk_cursor = self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
@@ -156,6 +219,7 @@ class MemoryStorage:
         self.conn.commit()
         return {"deleted_chunks": chunk_cursor.rowcount, "deleted_index_files": file_cursor.rowcount}
 
+    @_locked
     def list_indexed_files(self, source: Optional[str] = None) -> List[dict]:
         """List files tracked in the memory index."""
         if source:
@@ -169,17 +233,20 @@ class MemoryStorage:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @_locked
     def get_chunks_by_path(self, path: str) -> List[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM chunks WHERE path = ? ORDER BY start_line ASC",
             (path,),
         ).fetchall()
 
+    @_locked
     def get_file_hash(self, path: str) -> Optional[str]:
         """获取已存储的文件内容哈希（用于增量同步）"""
         row = self.conn.execute("SELECT hash FROM files WHERE path = ?", (path,)).fetchone()
         return row['hash'] if row else None
 
+    @_locked
     def update_file_metadata(self, path: str, source: str, file_hash: str, mtime: int, size: int):
         self.conn.execute(
             "INSERT OR REPLACE INTO files (path,source,hash,mtime,size,updated_at) VALUES (?,?,?,?,?,strftime('%s','now'))",
@@ -207,7 +274,10 @@ class MemoryStorage:
         else:
             q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND embedding IS NOT NULL LIMIT ?"
             params.append(VECTOR_SEARCH_MAX_CANDIDATES)
-        rows = self.conn.execute(q, params).fetchall()
+        # 共享连接只在读取候选行时加锁；最多 5000 个向量的余弦计算在锁外
+        # 完成，避免一次检索长时间阻塞记忆写入和文件索引更新。
+        with self._lock:
+            rows = self.conn.execute(q, params).fetchall()
         results = []
         for row in rows:
             emb = json.loads(row['embedding'])
@@ -219,6 +289,7 @@ class MemoryStorage:
                              score=s, snippet=self._truncate(r['text'], 500), source=r['source'],
                              user_id=r['user_id']) for s, r in results[:limit]]
 
+    @_locked
     def search_keyword(self, query: str, user_id: Optional[str] = None,
                        scopes: List[str] = None, limit: int = 10) -> List[SearchResult]:
         """关键词搜索：FTS5 全文搜索 + CJK 词汇 LIKE 匹配
@@ -277,6 +348,7 @@ class MemoryStorage:
         except Exception:
             return []
 
+    @_locked
     def get_stats(self) -> Dict[str, int]:
         """获取存储统计信息"""
         return {
@@ -284,6 +356,7 @@ class MemoryStorage:
             'files': self.conn.execute("SELECT COUNT(*) as c FROM files").fetchone()['c'],
         }
 
+    @_locked
     def close(self):
         if self.conn:
             try:

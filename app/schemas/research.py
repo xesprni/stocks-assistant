@@ -1,5 +1,6 @@
 """公司研究工作区、Thesis、材料与提醒的数据协议。"""
 
+from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -177,7 +178,7 @@ class AlertRuleResponse(BaseModel):
 
 class AlertEvaluationRequest(BaseModel):
     observed_value: Any = None
-    observed_at: Optional[str] = None
+    observed_at: Optional[datetime] = None
     event_key: Optional[str] = Field(default=None, max_length=500)
     title: Optional[str] = Field(default=None, max_length=500)
     source: dict[str, Any] = Field(default_factory=dict)

@@ -42,7 +42,7 @@ async def _index_saved_knowledge(user: CurrentUser, result: dict) -> None:
 
 
 @router.get("/tree")
-async def knowledge_tree(current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def knowledge_tree(current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
     service = _knowledge_service(current_user)
     try:
         tree = service.list_tree()
@@ -52,7 +52,7 @@ async def knowledge_tree(current_user: CurrentUser = Depends(require_permissions
 
 
 @router.get("/read")
-async def read_knowledge_file(
+def read_knowledge_file(
     path: str = Query(..., description="File path relative to knowledge dir"),
     current_user: CurrentUser = Depends(require_permissions("knowledge:read")),
 ):
@@ -79,7 +79,8 @@ async def save_knowledge_file(
 ):
     service = _knowledge_service(current_user)
     try:
-        result = service.save_text_file(
+        result = await run_in_threadpool(
+            service.save_text_file,
             filename=payload.filename,
             content=payload.content,
             directory=payload.directory,
@@ -114,7 +115,7 @@ async def save_knowledge_url(
 
 
 @router.get("/graph")
-async def knowledge_graph(current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def knowledge_graph(current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
     service = _knowledge_service(current_user)
     try:
         graph = service.build_graph()

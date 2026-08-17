@@ -16,6 +16,9 @@ from app.core.watchlist.service import LongbridgeUnavailableError
 # context_type -> credential_sig -> context_instance
 _context_cache: dict[str, dict[str, Any]] = {}
 _context_cache_lock = threading.Lock()
+# Context 构造可能建立长连接。按凭据和类型串行冷启动，避免并发 miss 时
+# 为同一账户创建多个 QuoteContext，并泄漏竞争失败的连接。
+_context_creation_locks: dict[tuple[str, str], threading.Lock] = {}
 
 
 def longbridge_config(settings: Any = None):
@@ -85,42 +88,42 @@ def get_cached_context(context_type: str, settings: Any = None):
         raise ValueError(f"Unknown Longbridge context type: {context_type}")
 
     sig = credential_signature(settings)
-    cache_key = f"{context_type}:{sig}"
     with _context_cache_lock:
         ctx = _context_cache.get(context_type, {}).get(sig)
         if ctx is not None:
             return ctx
+        creation_lock = _context_creation_locks.setdefault((context_type, sig), threading.Lock())
 
-    # 在锁外创建 context（可能涉及网络连接）
-    config = longbridge_config(settings)
-    try:
-        from longbridge.openapi import (
-            ContentContext,
-            FundamentalContext,
-            MarketContext,
-            QuoteContext,
-        )
-    except ImportError as exc:
-        raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+    # 全局锁不覆盖网络连接创建，不同凭据/Context 类型仍可并行；同一 key
+    # 则通过 singleflight 只创建一次。creation lock 保留复用，避免失败重试
+    # 与等待线程之间再次形成双重创建窗口。
+    with creation_lock:
+        with _context_cache_lock:
+            ctx = _context_cache.get(context_type, {}).get(sig)
+            if ctx is not None:
+                return ctx
 
-    cls_map = {
-        "QuoteContext": QuoteContext,
-        "MarketContext": MarketContext,
-        "FundamentalContext": FundamentalContext,
-        "ContentContext": ContentContext,
-    }
-    new_ctx = cls_map[context_type](config)
+        config = longbridge_config(settings)
+        try:
+            from longbridge.openapi import (
+                ContentContext,
+                FundamentalContext,
+                MarketContext,
+                QuoteContext,
+            )
+        except ImportError as exc:
+            raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
 
-    with _context_cache_lock:
-        # 另一个线程可能已经创建了一个；优先使用已有的
-        slot = _context_cache.setdefault(context_type, {})
-        existing = slot.get(sig)
-        if existing is not None:
-            ctx = existing
-        else:
-            slot[sig] = new_ctx
-            ctx = new_ctx
-    return ctx
+        cls_map = {
+            "QuoteContext": QuoteContext,
+            "MarketContext": MarketContext,
+            "FundamentalContext": FundamentalContext,
+            "ContentContext": ContentContext,
+        }
+        new_ctx = cls_map[context_type](config)
+        with _context_cache_lock:
+            _context_cache.setdefault(context_type, {})[sig] = new_ctx
+        return new_ctx
 
 
 def clear_context_cache() -> None:

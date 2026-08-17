@@ -14,12 +14,12 @@ router = APIRouter()
 
 
 @router.get("/rules", response_model=list[AlertRuleResponse])
-async def list_rules(symbol: Optional[str] = None, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
+def list_rules(symbol: Optional[str] = None, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
     return get_research_service().list_alert_rules(current_user.id, symbol)
 
 
 @router.post("/rules", response_model=AlertRuleResponse)
-async def create_rule(body: AlertRuleCreate, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def create_rule(body: AlertRuleCreate, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     try:
         return get_research_service().create_alert_rule(current_user.id, body)
     except (ValueError, KeyError) as exc:
@@ -27,15 +27,17 @@ async def create_rule(body: AlertRuleCreate, current_user: CurrentUser = Depends
 
 
 @router.patch("/rules/{rule_id}", response_model=AlertRuleResponse)
-async def update_rule(rule_id: str, body: AlertRuleUpdate, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def update_rule(rule_id: str, body: AlertRuleUpdate, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     try:
         return get_research_service().update_alert_rule(current_user.id, rule_id, body)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Alert rule not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/rules/{rule_id}")
-async def delete_rule(rule_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def delete_rule(rule_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     try:
         get_research_service().delete_alert_rule(current_user.id, rule_id)
     except KeyError as exc:
@@ -44,7 +46,7 @@ async def delete_rule(rule_id: str, current_user: CurrentUser = Depends(require_
 
 
 @router.post("/rules/{rule_id}/evaluate", response_model=Optional[AlertEventResponse])
-async def evaluate_rule(rule_id: str, body: AlertEvaluationRequest, current_user: CurrentUser = Depends(require_permissions("scheduler:run"))):
+def evaluate_rule(rule_id: str, body: AlertEvaluationRequest, current_user: CurrentUser = Depends(require_permissions("scheduler:run"))):
     try:
         return get_research_service().record_evaluation(
             current_user.id, rule_id, observed_value=body.observed_value, observed_at=body.observed_at,
@@ -63,7 +65,7 @@ async def evaluate_live(current_user: CurrentUser = Depends(require_permissions(
 
 
 @router.get("/events", response_model=list[AlertEventResponse])
-async def list_events(
+def list_events(
     symbol: Optional[str] = None, status: Optional[str] = None, limit: int = Query(100, ge=1, le=500),
     current_user: CurrentUser = Depends(require_permissions("scheduler:read")),
 ):
@@ -71,7 +73,7 @@ async def list_events(
 
 
 @router.patch("/events/{event_id}/status", response_model=AlertEventResponse)
-async def set_event_status(event_id: str, status: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def set_event_status(event_id: str, status: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     try:
         return get_research_service().set_alert_status(current_user.id, event_id, status)
     except KeyError as exc:
@@ -81,7 +83,7 @@ async def set_event_status(event_id: str, status: str, current_user: CurrentUser
 
 
 @router.post("/events/{event_id}/retry", response_model=AlertEventResponse)
-async def retry_event(event_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def retry_event(event_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
     try:
         return get_research_service().retry_alert_delivery(current_user.id, event_id)
     except KeyError as exc:

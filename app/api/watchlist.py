@@ -26,7 +26,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=WatchlistListResponse)
-async def list_watchlist(
+def list_watchlist(
     category: Optional[WatchlistCategory] = None,
     current_user: CurrentUser = Depends(require_permissions("watchlist:read")),
 ):
@@ -55,16 +55,19 @@ async def watchlist_overview(
 
 
 @router.post("", response_model=WatchlistItem)
-async def add_watchlist_item(
+def add_watchlist_item(
     item: WatchlistItemCreate,
     current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
 ):
     service = get_watchlist_service()
-    return WatchlistItem(**service.add_item(item, user_id=current_user.id))
+    try:
+        return WatchlistItem(**service.add_item(item, user_id=current_user.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/search", response_model=WatchlistSearchResponse)
-async def search_watchlist(
+def search_watchlist(
     q: str = Query(..., min_length=1),
     category: Optional[WatchlistCategory] = None,
     limit: int = Query(10, ge=1, le=20),
@@ -82,7 +85,7 @@ async def search_watchlist(
 
 
 @router.delete("/{item_id}")
-async def delete_watchlist_item(
+def delete_watchlist_item(
     item_id: int,
     current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
 ):
@@ -95,7 +98,7 @@ async def delete_watchlist_item(
 
 
 @router.patch("/reorder")
-async def reorder_watchlist(
+def reorder_watchlist(
     body: WatchlistReorderRequest,
     current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
 ):

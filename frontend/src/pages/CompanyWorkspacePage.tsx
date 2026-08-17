@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, Bell, BookOpen, Bot, BriefcaseBusiness, Building2, Calculator, ExternalLink, FileText, Loader2, Plus, RefreshCw, Save, ScrollText, Sparkles, Upload } from "lucide-react";
 
 import { FinancialReportsPage } from "@/components/FinancialReportsPage";
@@ -40,6 +40,19 @@ const emptyThesis: ThesisPayload = {
   confidence: 0.5, time_horizon: "", next_review_at: null,
 };
 
+function freshThesis(): ThesisPayload {
+  return {
+    ...emptyThesis,
+    key_drivers: [],
+    kpis: [],
+    valuation_assumptions: {},
+    expected_range: {},
+    catalysts: [],
+    risks: [],
+    invalidation_conditions: [],
+  };
+}
+
 export function CompanyWorkspacePage({
   confirmAction,
   language,
@@ -62,16 +75,30 @@ export function CompanyWorkspacePage({
   const [summary, setSummary] = useState<SecurityWorkspaceSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const summaryRequestRef = useRef(0);
 
-  async function loadSummary() {
+  async function loadSummary(init?: RequestInit) {
+    const requestId = summaryRequestRef.current + 1;
+    summaryRequestRef.current = requestId;
     setLoading(true);
     setError("");
-    try { setSummary(await getSecurityWorkspaceSummary(symbol)); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "Failed to load company workspace"); }
-    finally { setLoading(false); }
+    try {
+      const nextSummary = await getSecurityWorkspaceSummary(symbol, init);
+      if (summaryRequestRef.current === requestId) setSummary(nextSummary);
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      if (summaryRequestRef.current === requestId) setError(caught instanceof Error ? caught.message : "Failed to load company workspace");
+    } finally {
+      if (summaryRequestRef.current === requestId) setLoading(false);
+    }
   }
 
-  useEffect(() => { void loadSummary(); }, [symbol]);
+  useEffect(() => {
+    setSummary(null);
+    const controller = new AbortController();
+    void loadSummary({ signal: controller.signal });
+    return () => controller.abort();
+  }, [symbol]);
 
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
@@ -100,7 +127,18 @@ export function CompanyWorkspacePage({
 function EvidencePanel({ language, symbol }: { language: AppLanguage; symbol: string }) {
   const [evidence, setEvidence] = useState<ResearchEvidence[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => { listResearchEvidence(symbol).then(setEvidence).catch((caught) => setError(caught instanceof Error ? caught.message : "Unavailable")); }, [symbol]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setEvidence([]);
+    setError("");
+    void listResearchEvidence(symbol, { signal: controller.signal })
+      .then(setEvidence)
+      .catch((caught) => {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        setError(caught instanceof Error ? caught.message : "Unavailable");
+      });
+    return () => controller.abort();
+  }, [symbol]);
 
   async function setRelation(item: ResearchEvidence, relation: "supports" | "weakens" | "neutral") {
     const next = await saveResearchEvidence(symbol, { source_id: item.source_id, source: item.source, relation, note: item.note });
@@ -118,7 +156,18 @@ function EvidencePanel({ language, symbol }: { language: AppLanguage; symbol: st
 function Overview({ language, loading, summary, symbol }: { language: AppLanguage; loading: boolean; summary: SecurityWorkspaceSummary | null; symbol: string }) {
   const [insights, setInsights] = useState<DashboardSymbolInsightsResponse | null>(null);
   const [insightError, setInsightError] = useState("");
-  useEffect(() => { getDashboardSymbolInsights(symbol).then(setInsights).catch((caught) => setInsightError(caught instanceof Error ? caught.message : "Unavailable")); }, [symbol]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setInsights(null);
+    setInsightError("");
+    void getDashboardSymbolInsights(symbol, { signal: controller.signal })
+      .then(setInsights)
+      .catch((caught) => {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        setInsightError(caught instanceof Error ? caught.message : "Unavailable");
+      });
+    return () => controller.abort();
+  }, [symbol]);
   if (loading && !summary) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="animate-spin" />Loading...</div>;
   const cards = [
     [language === "en" ? "Thesis versions" : "Thesis 版本", summary?.thesis_versions ?? 0],
@@ -132,7 +181,18 @@ function Overview({ language, loading, summary, symbol }: { language: AppLanguag
 function ChartTab({ language, symbol }: { language: AppLanguage; symbol: string }) {
   const [bars, setBars] = useState<CandlestickItem[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => { getCandlesticks(symbol, "1D", 90).then((value) => setBars(value.bars)).catch((caught) => setError(caught instanceof Error ? caught.message : "Unavailable")); }, [symbol]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setBars([]);
+    setError("");
+    void getCandlesticks(symbol, "1D", 90, { signal: controller.signal })
+      .then((value) => setBars(value.bars))
+      .catch((caught) => {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        setError(caught instanceof Error ? caught.message : "Unavailable");
+      });
+    return () => controller.abort();
+  }, [symbol]);
   const latest = bars.slice(-30).reverse();
   return <div><div className="mb-3"><h2 className="text-base font-semibold">{language === "en" ? "Daily price context" : "日线价格上下文"}</h2><p className="text-xs text-muted-foreground">{language === "en" ? "Latest 30 of 90 fetched bars; use evidence timestamps before drawing a conclusion." : "展示最近 90 根中的 30 根；形成结论前请核对数据时间。"}</p></div>{error ? <p className="text-sm text-destructive">{error}</p> : <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b border-border/70 text-muted-foreground">{["Date", "Open", "High", "Low", "Close", "Volume"].map((item) => <th className="px-2 py-2" key={item}>{item}</th>)}</tr></thead><tbody>{latest.map((bar) => <tr className="border-b border-border/50" key={bar.timestamp}><td className="px-2 py-2">{new Date(bar.timestamp * 1000).toLocaleDateString()}</td><td className="px-2">{bar.open}</td><td className="px-2">{bar.high}</td><td className="px-2">{bar.low}</td><td className="px-2 font-semibold">{bar.close}</td><td className="px-2">{bar.volume}</td></tr>)}</tbody></table></div>}</div>;
 }
@@ -152,14 +212,38 @@ function AIResearch({ language, onAskAgent, symbol }: { language: AppLanguage; o
 
 function ThesisTab({ language, onChanged, symbol }: { language: AppLanguage; onChanged: () => Promise<void>; symbol: string }) {
   const [versions, setVersions] = useState<ThesisSnapshot[]>([]);
-  const [form, setForm] = useState<ThesisPayload>(emptyThesis);
+  const [form, setForm] = useState<ThesisPayload>(() => freshThesis());
   const [reason, setReason] = useState("");
   const [sourceIds, setSourceIds] = useState("");
   const [saving, setSaving] = useState(false);
   const [decisions, setDecisions] = useState<ResearchDecision[]>([]);
   const [decision, setDecision] = useState({ action: "", rationale: "" });
-  async function load() { const [nextVersions, nextDecisions] = await Promise.all([listThesisSnapshots(symbol), listResearchDecisions(symbol)]); setVersions(nextVersions); setDecisions(nextDecisions); if (nextVersions[0]) setForm(nextVersions[0].payload); }
-  useEffect(() => { void load(); }, [symbol]);
+  const activeSymbolRef = useRef(symbol);
+  async function load(init?: RequestInit) {
+    const requestSymbol = symbol;
+    const [nextVersions, nextDecisions] = await Promise.all([
+      listThesisSnapshots(requestSymbol, init),
+      listResearchDecisions(requestSymbol, init),
+    ]);
+    if (activeSymbolRef.current !== requestSymbol) return;
+    setVersions(nextVersions);
+    setDecisions(nextDecisions);
+    setForm(nextVersions[0]?.payload ?? freshThesis());
+  }
+  useEffect(() => {
+    activeSymbolRef.current = symbol;
+    setVersions([]);
+    setDecisions([]);
+    setForm(freshThesis());
+    setReason("");
+    setSourceIds("");
+    setDecision({ action: "", rationale: "" });
+    const controller = new AbortController();
+    void load({ signal: controller.signal }).catch((caught) => {
+      if (!(caught instanceof DOMException && caught.name === "AbortError")) console.error(caught);
+    });
+    return () => controller.abort();
+  }, [symbol]);
   const listValue = (values: string[]) => values.join("\n");
   const setList = (key: "key_drivers" | "catalysts" | "risks" | "invalidation_conditions", value: string) => setForm({ ...form, [key]: value.split("\n").map((item) => item.trim()).filter(Boolean) });
   async function save() { if (!reason.trim()) return; setSaving(true); try { await createThesisSnapshot(symbol, { payload: form, reason: reason.trim(), source_ids: sourceIds.split(/[\s,]+/).filter(Boolean) }); setReason(""); await load(); await onChanged(); } finally { setSaving(false); } }

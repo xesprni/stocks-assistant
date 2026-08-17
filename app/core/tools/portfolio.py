@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from pydantic import ValidationError
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.portfolio.symbols import canonical_portfolio_symbol
 from app.core.watchlist.service import LongbridgeUnavailableError
 from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate
 
@@ -420,15 +421,7 @@ class PortfolioTool(BaseTool):
 
     @staticmethod
     def _canonical_symbol(symbol: str, market: Optional[str] = None) -> str:
-        normalized = str(symbol or "").strip().upper()
-        if "." in normalized or not market:
-            return normalized
-        if market == "US":
-            return f"{normalized}.US"
-        if market == "H":
-            return f"{normalized.zfill(5)}.HK"
-        suffix = "SH" if normalized.startswith(("5", "6", "9")) else "SZ"
-        return f"{normalized}.{suffix}"
+        return canonical_portfolio_symbol(symbol, market)  # type: ignore[arg-type]
 
     @staticmethod
     def _optional_int(value: Any, name: str) -> Optional[int]:

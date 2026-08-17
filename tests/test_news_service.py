@@ -36,6 +36,7 @@ class NewsServiceTest(unittest.TestCase):
         self.assertEqual(normalize_news_symbol("aapl"), "AAPL.US")
         self.assertEqual(normalize_news_symbol("700"), "700.HK")
         self.assertEqual(normalize_news_symbol("00700"), "700.HK")
+        self.assertEqual(normalize_news_symbol("00700.HK"), "700.HK")
         self.assertEqual(normalize_news_symbol("600519"), "600519.SH")
         self.assertEqual(normalize_news_symbol("000001"), "000001.SZ")
         self.assertEqual(normalize_news_symbol("MSFT.US"), "MSFT.US")

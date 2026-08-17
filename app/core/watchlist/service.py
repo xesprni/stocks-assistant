@@ -9,6 +9,7 @@ from typing import Any, Iterable, Optional
 
 from app.config import get_settings
 from app.core.orm.repositories.watchlist import WatchlistRepository
+from app.core.portfolio.symbols import canonical_portfolio_symbol
 from app.schemas.watchlist import WatchlistCategory, WatchlistItemCreate
 
 
@@ -165,7 +166,7 @@ class WatchlistService:
         now = _now()
         payload = item.model_dump()
         payload["user_id"] = user_id or ""
-        payload["symbol"] = item.symbol.strip().upper()
+        payload["symbol"] = canonical_portfolio_symbol(item.symbol, item.category)
         payload["updated_at"] = now
         payload["created_at"] = now
         return self.repository.add_item(payload)

@@ -20,16 +20,19 @@ from app.schemas.market import (
 
 router = APIRouter()
 
+# Longbridge Python SDK 是同步接口。纯同步 handler 由 FastAPI 自动放入线程池，
+# 避免行情网络等待阻塞主事件循环。
+
 
 @router.get("/config", response_model=MarketDashboardConfig)
-async def get_market_config(current_user: CurrentUser = Depends(require_permissions("market:read"))):
+def get_market_config(current_user: CurrentUser = Depends(require_permissions("market:read"))):
     """获取行情监控仪表盘配置。"""
     service = get_market_service()
     return MarketDashboardConfig(**service.get_config(user_id=current_user.id))
 
 
 @router.put("/config", response_model=MarketDashboardConfig)
-async def update_market_config(
+def update_market_config(
     config: MarketDashboardConfig,
     current_user: CurrentUser = Depends(require_permissions("market:write")),
 ):
@@ -39,7 +42,7 @@ async def update_market_config(
 
 
 @router.get("/index-quotes", response_model=MarketQuotesResponse)
-async def get_index_quotes(current_user: CurrentUser = Depends(require_permissions("market:read"))):
+def get_index_quotes(current_user: CurrentUser = Depends(require_permissions("market:read"))):
     """拉取所有启用指数的实时报价。"""
     service = get_market_service()
     try:
@@ -50,7 +53,7 @@ async def get_index_quotes(current_user: CurrentUser = Depends(require_permissio
 
 
 @router.get("/stock-quotes", response_model=MarketQuotesResponse)
-async def get_stock_quotes(
+def get_stock_quotes(
     category: Optional[str] = None,
     current_user: CurrentUser = Depends(require_permissions("market:read")),
 ):
@@ -67,7 +70,7 @@ async def get_stock_quotes(
 
 
 @router.get("/candlesticks", response_model=CandlesticksResponse)
-async def get_candlesticks(
+def get_candlesticks(
     symbol: str,
     period: str = "1D",
     count: int = 200,
@@ -83,7 +86,7 @@ async def get_candlesticks(
 
 
 @router.get("/intraday", response_model=IntradayResponse)
-async def get_intraday(
+def get_intraday(
     symbol: str,
     since: Optional[int] = None,
     current_user: CurrentUser = Depends(require_permissions("market:read")),
@@ -98,7 +101,7 @@ async def get_intraday(
 
 
 @router.get("/capital-flow", response_model=CapitalFlowResponse)
-async def get_capital_flow(
+def get_capital_flow(
     symbol: str,
     current_user: CurrentUser = Depends(require_permissions("market:read")),
 ):
@@ -114,7 +117,7 @@ async def get_capital_flow(
 
 
 @router.get("/temperature", response_model=MarketTemperatureResponse)
-async def get_market_temperature(
+def get_market_temperature(
     market: str = "US",
     current_user: CurrentUser = Depends(require_permissions("market:read")),
 ):

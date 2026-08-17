@@ -23,9 +23,12 @@ from app.schemas.portfolio import (
 
 router = APIRouter()
 
+# 持仓读取会同步访问 SQLite 和 Longbridge；使用同步 handler 让 FastAPI
+# 在线程池执行整个请求，避免等待报价时占住事件循环。
+
 
 @router.get("", response_model=PortfolioListResponse)
-async def list_portfolio(
+def list_portfolio(
     market: PortfolioMarket = "US",
     current_user: CurrentUser = Depends(require_permissions("portfolio:read")),
 ):
@@ -35,17 +38,20 @@ async def list_portfolio(
 
 
 @router.post("", response_model=PortfolioItem)
-async def add_portfolio_item(
+def add_portfolio_item(
     item: PortfolioItemCreate,
     current_user: CurrentUser = Depends(require_permissions("portfolio:write")),
 ):
     """Add or update one holding by symbol."""
     service = get_portfolio_service()
-    return PortfolioItem(**service.add_item(item, user_id=current_user.id))
+    try:
+        return PortfolioItem(**service.add_item(item, user_id=current_user.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/search", response_model=PortfolioSearchResponse)
-async def search_portfolio_symbols(
+def search_portfolio_symbols(
     q: str,
     market: PortfolioMarket = "US",
     limit: int = 10,
@@ -64,18 +70,21 @@ async def search_portfolio_symbols(
 
 
 @router.put("/settings/{market}", response_model=PortfolioSettings)
-async def update_portfolio_settings(
+def update_portfolio_settings(
     market: PortfolioMarket,
     body: PortfolioSettingsUpdate,
     current_user: CurrentUser = Depends(require_permissions("portfolio:write")),
 ):
     """Update capital denominator for one market."""
     service = get_portfolio_service()
-    return PortfolioSettings(**service.save_settings(market, body.total_capital, user_id=current_user.id))
+    try:
+        return PortfolioSettings(**service.save_settings(market, body.total_capital, user_id=current_user.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/transactions", response_model=PortfolioTransactionListResponse)
-async def list_portfolio_transactions(
+def list_portfolio_transactions(
     market: PortfolioMarket = "US",
     limit: int = 100,
     current_user: CurrentUser = Depends(require_permissions("portfolio:read")),
@@ -86,7 +95,7 @@ async def list_portfolio_transactions(
 
 
 @router.post("/{item_id}/sell", response_model=PortfolioSellResponse)
-async def sell_portfolio_item(
+def sell_portfolio_item(
     item_id: int,
     body: PortfolioSellRequest,
     current_user: CurrentUser = Depends(require_permissions("portfolio:write")),
@@ -102,7 +111,7 @@ async def sell_portfolio_item(
 
 
 @router.patch("/{item_id}", response_model=PortfolioItem)
-async def update_portfolio_item(
+def update_portfolio_item(
     item_id: int,
     item: PortfolioItemUpdate,
     current_user: CurrentUser = Depends(require_permissions("portfolio:write")),
@@ -113,10 +122,12 @@ async def update_portfolio_item(
         return PortfolioItem(**service.update_item(item_id, item, user_id=current_user.id))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Portfolio item not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/{item_id}")
-async def delete_portfolio_item(
+def delete_portfolio_item(
     item_id: int,
     current_user: CurrentUser = Depends(require_permissions("portfolio:write")),
 ):

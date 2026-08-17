@@ -12,11 +12,31 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from app.core.market.utils import canonical_symbol
+
 from app.schemas.research import AlertRuleCreate, AlertRuleUpdate, DecisionCreate, ResearchDocumentCreate, ResearchEvidenceCreate, ThesisSnapshotCreate
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _iso_timestamp(value: Any = None) -> str:
+    """Normalize SDK epochs and API datetimes to sortable UTC ISO-8601 text."""
+    if value is None or value == "":
+        parsed = datetime.now(timezone.utc)
+    elif isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)) or (isinstance(value, str) and value.strip().replace(".", "", 1).isdigit()):
+        parsed = datetime.fromtimestamp(float(value), timezone.utc)
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("observed_at must be an ISO-8601 datetime or Unix timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _id(prefix: str) -> str:
@@ -52,7 +72,7 @@ class ResearchService:
         connection = sqlite3.connect(self.db_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA busy_timeout = 15000")
         return connection
 
     def _init_schema(self) -> None:
@@ -106,14 +126,18 @@ class ResearchService:
                 UNIQUE(user_id, fingerprint), FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
             )""",
             "CREATE INDEX IF NOT EXISTS idx_alert_events_inbox ON alert_events(user_id, status, occurred_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_alert_events_delivery ON alert_events(delivery_status, created_at)",
         ]
         with self._connect() as connection:
+            # WAL 是数据库级持久配置，只在 schema 初始化阶段设置。
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = NORMAL")
             for statement in statements:
                 connection.execute(statement)
 
     @staticmethod
     def normalize_symbol(symbol: str) -> str:
-        value = str(symbol or "").strip().upper()
+        value = canonical_symbol(symbol)
         if not value or len(value) > 40 or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_" for ch in value):
             raise ValueError("invalid symbol")
         return value
@@ -154,12 +178,37 @@ class ResearchService:
             ).fetchall()
         return [self._thesis_row(row) for row in rows]
 
+    def latest_theses(self, user_id: str, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        """批量读取多个标的的最新 Thesis，避免组合分析逐标的 N+1。"""
+        normalized = list(dict.fromkeys(self.normalize_symbol(symbol) for symbol in symbols))
+        if not normalized:
+            return {}
+        placeholders = ",".join("?" for _ in normalized)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""WITH ranked AS (
+                        SELECT thesis_snapshots.*,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY version DESC) AS row_rank
+                        FROM thesis_snapshots
+                        WHERE user_id = ? AND symbol IN ({placeholders})
+                    )
+                    SELECT * FROM ranked WHERE row_rank = 1 ORDER BY symbol ASC""",
+                [user_id, *normalized],
+            ).fetchall()
+        return {row["symbol"]: self._thesis_row(row) for row in rows}
+
     def get_thesis(self, user_id: str, thesis_id: str) -> dict[str, Any]:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM thesis_snapshots WHERE id = ? AND user_id = ?", (thesis_id, user_id)).fetchone()
         if not row:
             raise KeyError(thesis_id)
         return self._thesis_row(row)
+
+    def validate_thesis_symbol(self, user_id: str, thesis_id: str, symbol: str) -> dict[str, Any]:
+        thesis = self.get_thesis(user_id, thesis_id)
+        if thesis["symbol"] != self.normalize_symbol(symbol):
+            raise ValueError("linked Thesis belongs to a different symbol")
+        return thesis
 
     def _thesis_row(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
@@ -171,7 +220,7 @@ class ResearchService:
     def create_decision(self, user_id: str, symbol: str, request: DecisionCreate) -> dict[str, Any]:
         symbol = self.normalize_symbol(symbol)
         if request.thesis_snapshot_id:
-            self.get_thesis(user_id, request.thesis_snapshot_id)
+            self.validate_thesis_symbol(user_id, request.thesis_snapshot_id, symbol)
         row = {
             "id": _id("decision"), "symbol": symbol, "action": request.action.strip(),
             "rationale": request.rationale.strip(), "evidence_ids": request.evidence_ids,
@@ -430,7 +479,7 @@ class ResearchService:
     def create_alert_rule(self, user_id: str, request: AlertRuleCreate) -> dict[str, Any]:
         symbol = self.normalize_symbol(request.symbol)
         if request.thesis_snapshot_id:
-            self.get_thesis(user_id, request.thesis_snapshot_id)
+            self.validate_thesis_symbol(user_id, request.thesis_snapshot_id, symbol)
         now = _now()
         rule_id = _id("rule")
         next_at = (datetime.now(timezone.utc) + timedelta(seconds=request.evaluation_interval_seconds)).isoformat()
@@ -469,6 +518,8 @@ class ResearchService:
     def update_alert_rule(self, user_id: str, rule_id: str, request: AlertRuleUpdate) -> dict[str, Any]:
         current = self.get_alert_rule(user_id, rule_id)
         patch = request.model_dump(exclude_unset=True)
+        if patch.get("thesis_snapshot_id"):
+            self.validate_thesis_symbol(user_id, patch["thesis_snapshot_id"], current["symbol"])
         mapping = {
             "name": "name", "operator": "operator", "severity": "severity", "thesis_snapshot_id": "thesis_snapshot_id",
             "enabled": "enabled", "evaluation_interval_seconds": "evaluation_interval_seconds",
@@ -497,10 +548,10 @@ class ResearchService:
             if not cursor.rowcount:
                 raise KeyError(rule_id)
 
-    def record_evaluation(self, user_id: str, rule_id: str, *, observed_value: Any, observed_at: Optional[str] = None,
+    def record_evaluation(self, user_id: str, rule_id: str, *, observed_value: Any, observed_at: Any = None,
                           event_key: Optional[str] = None, title: Optional[str] = None, source: Optional[dict] = None) -> Optional[dict[str, Any]]:
         rule = self.get_alert_rule(user_id, rule_id)
-        occurred_at = observed_at or _now()
+        occurred_at = _iso_timestamp(observed_at)
         triggered = self._condition_matches(rule["operator"], observed_value, rule["threshold"])
         self._mark_rule_evaluated(rule, error=None)
         if not triggered:

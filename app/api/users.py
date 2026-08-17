@@ -18,13 +18,13 @@ router = APIRouter()
 
 
 @router.get("", response_model=UserListResponse)
-async def list_users(_: CurrentUser = Depends(require_permissions("users:manage"))):
+def list_users(_: CurrentUser = Depends(require_permissions("users:manage"))):
     users = [UserPublic(**public_user(user)) for user in get_app_store().list_users()]
     return UserListResponse(users=users, total=len(users))
 
 
 @router.post("", response_model=UserPublic)
-async def create_user(request: UserCreateRequest, current: CurrentUser = Depends(require_permissions("users:manage"))):
+def create_user(request: UserCreateRequest, current: CurrentUser = Depends(require_permissions("users:manage"))):
     try:
         user = get_app_store().create_user(
             username=request.username,
@@ -40,7 +40,7 @@ async def create_user(request: UserCreateRequest, current: CurrentUser = Depends
 
 
 @router.patch("/{user_id}", response_model=UserPublic)
-async def update_user(
+def update_user(
     user_id: str,
     request: UserUpdateRequest,
     current: CurrentUser = Depends(require_permissions("users:manage")),
@@ -62,14 +62,14 @@ async def update_user(
 
 
 @router.get("/roles", response_model=RoleListResponse)
-async def list_roles(_: CurrentUser = Depends(require_permissions("roles:manage"))):
+def list_roles(_: CurrentUser = Depends(require_permissions("roles:manage"))):
     store = get_app_store()
     roles = [RoleResponse(**role) for role in store.list_roles()]
     return RoleListResponse(roles=roles, permissions=PERMISSION_DESCRIPTIONS, page_permissions=store.list_page_permissions())
 
 
 @router.put("/roles/{name}", response_model=RoleResponse)
-async def upsert_role(
+def upsert_role(
     name: str,
     request: RoleUpdateRequest,
     current: CurrentUser = Depends(require_permissions("roles:manage")),

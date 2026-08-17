@@ -176,12 +176,12 @@ def _enforce_device_limit(user_id: str, session_id: str) -> None:
 
 
 @router.get("/setup/status", response_model=SetupStatusResponse)
-async def setup_status():
+def setup_status():
     return SetupStatusResponse(setup_required=not get_app_store().has_users())
 
 
 @router.post("/setup", response_model=AuthTokenResponse)
-async def setup(request: SetupRequest, http_request: Request):
+def setup(request: SetupRequest, http_request: Request):
     store = get_app_store()
     if store.has_users():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup has already been completed")
@@ -217,7 +217,7 @@ async def setup(request: SetupRequest, http_request: Request):
 
 
 @router.post("/dev-login", response_model=AuthTokenResponse)
-async def dev_login(http_request: Request):
+def dev_login(http_request: Request):
     if not _dev_auth_enabled():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Development auth is disabled")
 
@@ -262,7 +262,7 @@ async def dev_login(http_request: Request):
 
 
 @router.post("/login", response_model=AuthTokenResponse)
-async def login(request: LoginRequest, http_request: Request):
+def login(request: LoginRequest, http_request: Request):
     user = authenticate_user(request.username, request.password)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
@@ -284,7 +284,7 @@ async def login(request: LoginRequest, http_request: Request):
 
 
 @router.post("/refresh", response_model=AuthTokenResponse)
-async def refresh(request: RefreshRequest, http_request: Request):
+def refresh(request: RefreshRequest, http_request: Request):
     try:
         access_token, refresh_token, user = refresh_tokens(
             request.refresh_token,
@@ -303,7 +303,7 @@ async def refresh(request: RefreshRequest, http_request: Request):
 
 
 @router.post("/logout")
-async def logout(request: LogoutRequest):
+def logout(request: LogoutRequest):
     record = get_app_store().get_refresh_token(hash_refresh_token(request.refresh_token))
     if record and not record.get("revoked_at"):
         if record.get("session_id"):
@@ -314,7 +314,7 @@ async def logout(request: LogoutRequest):
 
 
 @router.get("/sessions", response_model=LoginSessionListResponse)
-async def list_login_sessions(http_request: Request, current_user=Depends(get_current_user)):
+def list_login_sessions(http_request: Request, current_user=Depends(get_current_user)):
     sessions = [
         _session_response(
             session,
@@ -333,7 +333,7 @@ async def list_login_sessions(http_request: Request, current_user=Depends(get_cu
 
 
 @router.post("/device/heartbeat", response_model=DeviceHeartbeatResponse)
-async def heartbeat_login_device(
+def heartbeat_login_device(
     http_request: Request,
     payload: DeviceHeartbeatRequest | None = None,
     current_user=Depends(get_current_user),
@@ -355,7 +355,7 @@ async def heartbeat_login_device(
 
 
 @router.delete("/sessions/{session_id}")
-async def revoke_login_session(
+def revoke_login_session(
     session_id: str,
     http_request: Request,
     user_id: str | None = Query(default=None),
@@ -377,7 +377,7 @@ async def revoke_login_session(
 
 
 @router.delete("/sessions/{device_id}/device")
-async def delete_login_device(
+def delete_login_device(
     device_id: str,
     http_request: Request,
     user_id: str | None = Query(default=None),
@@ -400,7 +400,7 @@ async def delete_login_device(
 
 
 @router.delete("/sessions/{device_id}/records/{record_id}")
-async def delete_login_record(
+def delete_login_record(
     device_id: str,
     record_id: str,
     http_request: Request,
@@ -426,7 +426,7 @@ async def delete_login_record(
 
 
 @router.get("/me", response_model=UserPublic)
-async def me(user=Depends(get_current_user)):
+def me(user=Depends(get_current_user)):
     record = get_app_store().get_user_by_id(user.id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -434,7 +434,7 @@ async def me(user=Depends(get_current_user)):
 
 
 @router.patch("/me/profile", response_model=UserPublic)
-async def update_profile(request: UserProfileUpdateRequest, current_user=Depends(get_current_user)):
+def update_profile(request: UserProfileUpdateRequest, current_user=Depends(get_current_user)):
     avatar_base64 = _normalize_avatar_base64(request.avatar_base64)
     try:
         user = get_app_store().update_user(
@@ -449,7 +449,7 @@ async def update_profile(request: UserProfileUpdateRequest, current_user=Depends
 
 
 @router.patch("/me/password")
-async def change_password(request: ChangePasswordRequest, current_user=Depends(get_current_user)):
+def change_password(request: ChangePasswordRequest, current_user=Depends(get_current_user)):
     store = get_app_store()
     user = store.get_user_by_id(current_user.id)
     if not user or not verify_password(request.current_password, user["password_hash"]):

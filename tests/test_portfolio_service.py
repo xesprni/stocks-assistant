@@ -2,8 +2,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
+from pydantic import ValidationError
+
 from app.core.portfolio.service import PortfolioService
-from app.schemas.portfolio import PortfolioItemCreate, PortfolioSellRequest
+from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate, PortfolioSellRequest
 
 
 class FakeLongbridge:
@@ -61,6 +63,45 @@ class PortfolioServiceTest(unittest.TestCase):
         self.assertEqual(item["change_rate"], "20.00%")
         self.assertEqual(result["total_assets"], "11200.00")
         self.assertEqual(result["cash_ratio"], "89.29%")
+
+    def test_partial_quote_response_uses_cost_basis_and_marks_valuation_incomplete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = PortfolioService(tmp)
+            service.longbridge = FakeLongbridge(FakeQuoteContext())
+            service.save_settings("US", "100")
+            service.add_item(
+                PortfolioItemCreate(market="US", symbol="MSFT.US", shares="10", cost_price="80")
+            )
+            service.add_item(
+                PortfolioItemCreate(market="US", symbol="AAPL.US", shares="5", cost_price="80")
+            )
+
+            result = service.list_items("US")
+
+        items = {item["symbol"]: item for item in result["items"]}
+        self.assertEqual("1700.00", result["total_assets"])
+        self.assertFalse(result["valuation_complete"])
+        self.assertEqual(["AAPL.US"], result["unpriced_symbols"])
+        self.assertIn("cost basis was used", result["quote_error"])
+        self.assertEqual("cost", items["AAPL.US"]["valuation_price_source"])
+        self.assertEqual("400.00", items["AAPL.US"]["stock_value"])
+        self.assertIsNone(items["AAPL.US"]["pnl_ratio"])
+
+    def test_invalid_numeric_and_market_symbol_updates_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = PortfolioService(tmp)
+            with self.assertRaisesRegex(ValueError, "total_capital"):
+                service.save_settings("US", "typo")
+            with self.assertRaises(ValidationError):
+                PortfolioItemCreate(market="US", symbol="AAPL.US", shares="oops", cost_price="100")
+            with self.assertRaisesRegex(ValueError, "does not match market"):
+                service.add_item(PortfolioItemCreate(market="H", symbol="AAPL.US", shares="1", cost_price="1"))
+
+            item = service.add_item(
+                PortfolioItemCreate(market="US", symbol="AAPL.US", shares="1", cost_price="100")
+            )
+            with self.assertRaisesRegex(ValueError, "explicit matching symbol"):
+                service.update_item(item["id"], PortfolioItemUpdate(market="H"))
 
     def test_sell_item_reduces_shares_increases_cash_and_records_transaction(self):
         with tempfile.TemporaryDirectory() as tmp:

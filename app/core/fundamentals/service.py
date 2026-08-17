@@ -12,12 +12,14 @@ import threading
 import time
 from typing import Any, Optional
 
+from app.core.market.utils import canonical_symbol
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 
 INSIGHTS_CACHE_TTL_SECONDS = 180
 INSIGHTS_CACHE_MAX_ENTRIES = 128
-INSIGHTS_SECTION_WORKERS = 6
+# Longbridge Quote API account-level concurrent request limit is five.
+INSIGHTS_SECTION_WORKERS = 5
 
 STATEMENT_NAMES = {
     "IS": "利润表",
@@ -160,7 +162,7 @@ class FundamentalService:
     def get_security_insights(self, symbol: str, settings: Any = None) -> dict[str, Any]:
         """Fetch Dashboard-ready Longbridge content and fundamental sections."""
 
-        normalized_symbol = symbol.strip().upper()
+        normalized_symbol = canonical_symbol(symbol)
         if not normalized_symbol:
             raise ValueError("symbol is required")
 
@@ -298,7 +300,7 @@ class FundamentalService:
         period: Optional[str] = None,
         settings: Any = None,
     ) -> dict[str, Any]:
-        normalized_symbol = symbol.strip().upper()
+        normalized_symbol = canonical_symbol(symbol)
         if not normalized_symbol:
             raise ValueError("symbol is required")
 

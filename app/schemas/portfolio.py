@@ -1,11 +1,24 @@
 """Portfolio API schemas."""
 
+from decimal import Decimal, InvalidOperation
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 PortfolioMarket = Literal["US", "A", "H"]
 PortfolioTransactionSide = Literal["buy", "sell", "adjust"]
+
+
+def _non_negative_decimal_text(value: Optional[str], field: str) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    try:
+        number = Decimal(str(value).replace(",", "").strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field} must be a number") from exc
+    if not number.is_finite() or number < 0:
+        raise ValueError(f"{field} must be a finite non-negative number")
+    return format(number.normalize(), "f")
 
 
 class PortfolioSettings(BaseModel):
@@ -20,6 +33,11 @@ class PortfolioSettingsUpdate(BaseModel):
 
     total_capital: str = "0"
 
+    @field_validator("total_capital")
+    @classmethod
+    def valid_total_capital(cls, value: str) -> str:
+        return _non_negative_decimal_text(value, "total_capital") or "0"
+
 
 class PortfolioItemBase(BaseModel):
     """Editable portfolio item fields."""
@@ -30,6 +48,11 @@ class PortfolioItemBase(BaseModel):
     shares: Optional[str] = None
     cost_price: Optional[str] = None
     note: str = ""
+
+    @field_validator("shares", "cost_price")
+    @classmethod
+    def valid_optional_amount(cls, value: Optional[str], info) -> Optional[str]:
+        return _non_negative_decimal_text(value, info.field_name)
 
 
 class PortfolioItemCreate(PortfolioItemBase):
@@ -46,6 +69,11 @@ class PortfolioItemUpdate(BaseModel):
     cost_price: Optional[str] = None
     note: Optional[str] = None
 
+    @field_validator("shares", "cost_price")
+    @classmethod
+    def valid_optional_amount(cls, value: Optional[str], info) -> Optional[str]:
+        return _non_negative_decimal_text(value, info.field_name)
+
 
 class PortfolioItem(PortfolioItemBase):
     """Portfolio item enriched with realtime market data."""
@@ -59,6 +87,7 @@ class PortfolioItem(PortfolioItemBase):
     stock_value: Optional[str] = None
     position_ratio: Optional[str] = None
     pnl_ratio: Optional[str] = None
+    valuation_price_source: Literal["live", "cost", "unavailable"] = "unavailable"
     created_at: str
     updated_at: str
 
@@ -73,6 +102,8 @@ class PortfolioListResponse(BaseModel):
     items: list[PortfolioItem]
     total: int
     quote_error: Optional[str] = None
+    valuation_complete: bool = True
+    unpriced_symbols: list[str] = Field(default_factory=list)
 
 
 class PortfolioSellRequest(BaseModel):
@@ -81,6 +112,14 @@ class PortfolioSellRequest(BaseModel):
     shares: str = Field(min_length=1)
     price: str = Field(min_length=1)
     note: str = ""
+
+    @field_validator("shares", "price")
+    @classmethod
+    def valid_positive_amount(cls, value: str, info) -> str:
+        normalized = _non_negative_decimal_text(value, info.field_name)
+        if normalized is None or Decimal(normalized) <= 0:
+            raise ValueError(f"{info.field_name} must be greater than 0")
+        return normalized
 
 
 class PortfolioTransaction(BaseModel):

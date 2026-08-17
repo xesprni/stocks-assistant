@@ -10,14 +10,14 @@ router = APIRouter()
 
 
 @router.get("", response_model=RoleListResponse)
-async def list_roles(_: CurrentUser = Depends(require_permissions("roles:manage"))):
+def list_roles(_: CurrentUser = Depends(require_permissions("roles:manage"))):
     store = get_app_store()
     roles = [RoleResponse(**role) for role in store.list_roles()]
     return RoleListResponse(roles=roles, permissions=PERMISSION_DESCRIPTIONS, page_permissions=store.list_page_permissions())
 
 
 @router.put("/pages/{page}", response_model=RoleListResponse)
-async def update_page_permission(
+def update_page_permission(
     page: str,
     request: PagePermissionUpdateRequest,
     current: CurrentUser = Depends(require_permissions("roles:manage")),
@@ -32,7 +32,7 @@ async def update_page_permission(
 
 
 @router.put("/{name}", response_model=RoleResponse)
-async def upsert_role(
+def upsert_role(
     name: str,
     request: RoleUpdateRequest,
     current: CurrentUser = Depends(require_permissions("roles:manage")),

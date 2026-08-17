@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/events", response_model=ProductEventResponse)
-async def record_product_event(
+def record_product_event(
     payload: ProductEventRequest,
     current: CurrentUser = Depends(require_permissions("config:read")),
 ):
@@ -26,4 +26,3 @@ async def record_product_event(
         {"event": payload.event, "properties": payload.properties},
     )
     return ProductEventResponse(accepted=True)
-

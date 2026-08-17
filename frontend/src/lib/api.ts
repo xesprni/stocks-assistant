@@ -117,6 +117,14 @@ const AUTH_RETRY_EXCLUDED_PATHS = new Set([
 
 // GET 请求在途去重：同一 path 同时只保留一个请求，完成自动清除。
 const inflightGetRequests = new Map<string, Promise<unknown>>();
+let authSessionEpoch = 0;
+
+function advanceAuthSession() {
+  authSessionEpoch += 1;
+  // 不同登录会话绝不能共享旧 Promise；正在飞行的请求可以自行结束，
+  // 但新会话会使用新的 epoch key 发起独立请求。
+  inflightGetRequests.clear();
+}
 
 class AuthRecoveryError extends Error {
   recovery: Promise<void>;
@@ -146,6 +154,7 @@ export function getDeviceId() {
 }
 
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
+  advanceAuthSession();
   accessToken = tokens.access_token;
   refreshToken = tokens.refresh_token;
   writeStoredValue(ACCESS_TOKEN_KEY, accessToken);
@@ -153,6 +162,7 @@ export function setAuthTokens(tokens: { access_token: string; refresh_token: str
 }
 
 export function clearAuthTokens() {
+  advanceAuthSession();
   accessToken = "";
   refreshToken = "";
   removeStoredValue(ACCESS_TOKEN_KEY);
@@ -221,7 +231,7 @@ async function refreshAuthToken() {
         if (!response.ok) {
           clearAuthTokens();
           const body = await response.json().catch(() => null);
-          const message = typeof body?.detail === "string" ? body.detail : "Authentication expired";
+          const message = apiErrorDetail(body, "Authentication expired");
           throw new AuthRecoveryError(message, startAuthRecovery(message));
         }
         const next = await response.json() as AuthTokenResponse;
@@ -235,6 +245,30 @@ async function refreshAuthToken() {
   return refreshPromise;
 }
 
+function apiErrorDetail(body: unknown, fallback: string) {
+  if (!body || typeof body !== "object") return fallback;
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const record = item as { loc?: unknown; msg?: unknown };
+      const message = typeof record.msg === "string" ? record.msg : "";
+      if (!message) return [];
+      const location = Array.isArray(record.loc)
+        ? record.loc.filter((part) => part !== "body").map(String).join(" › ")
+        : "";
+      return [location ? `${location}: ${message}` : message];
+    });
+    if (messages.length) return messages.join("；");
+  }
+  if (detail && typeof detail === "object") {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
+}
+
 async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
   const initWithoutHeaders = init ? { ...init } : {};
   delete initWithoutHeaders.headers;
@@ -245,8 +279,9 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   // 其他共享同一 Promise 的调用方收到 "signal is aborted without reason" 异常。
   const isGet = !init?.method || init.method === "GET";
   const hasAbortSignal = Boolean(init?.signal);
+  const inflightKey = `${authSessionEpoch}:${path}`;
   if (isGet && !hasAbortSignal) {
-    const inflight = inflightGetRequests.get(path);
+    const inflight = inflightGetRequests.get(inflightKey);
     if (inflight) return inflight as Promise<T>;
   }
 
@@ -271,7 +306,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
 
     if (!response.ok) {
       const body = await response.json().catch(() => null);
-      const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
+      const detail = apiErrorDetail(body, response.statusText);
       throw new Error(detail || "Request failed");
     }
 
@@ -279,8 +314,10 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   };
 
   if (isGet && !hasAbortSignal) {
-    const promise = run().finally(() => inflightGetRequests.delete(path));
-    inflightGetRequests.set(path, promise);
+    const promise = run().finally(() => {
+      if (inflightGetRequests.get(inflightKey) === promise) inflightGetRequests.delete(inflightKey);
+    });
+    inflightGetRequests.set(inflightKey, promise);
     return promise;
   }
 
@@ -446,28 +483,28 @@ export function trackProductEvent(event: string, properties: Record<string, stri
   });
 }
 
-export function getSecurityWorkspaceSummary(symbol: string) {
-  return request<SecurityWorkspaceSummary>(`/api/v1/research/security/${encodeURIComponent(symbol)}/summary`);
+export function getSecurityWorkspaceSummary(symbol: string, init?: RequestInit) {
+  return request<SecurityWorkspaceSummary>(`/api/v1/research/security/${encodeURIComponent(symbol)}/summary`, init);
 }
 
-export function listThesisSnapshots(symbol: string) {
-  return request<ThesisSnapshot[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`);
+export function listThesisSnapshots(symbol: string, init?: RequestInit) {
+  return request<ThesisSnapshot[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`, init);
 }
 
 export function createThesisSnapshot(symbol: string, payload: { payload: ThesisPayload; reason: string; source_ids?: string[] }) {
   return request<ThesisSnapshot>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function listResearchDecisions(symbol: string) {
-  return request<ResearchDecision[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`);
+export function listResearchDecisions(symbol: string, init?: RequestInit) {
+  return request<ResearchDecision[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`, init);
 }
 
 export function createResearchDecision(symbol: string, payload: { action: string; rationale: string; evidence_ids?: string[]; thesis_snapshot_id?: string | null }) {
   return request<ResearchDecision>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function listResearchEvidence(symbol: string) {
-  return request<ResearchEvidence[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`);
+export function listResearchEvidence(symbol: string, init?: RequestInit) {
+  return request<ResearchEvidence[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`, init);
 }
 
 export function saveResearchEvidence(symbol: string, payload: { source_id: string; source: SourceReference; relation?: "supports" | "weakens" | "neutral"; note?: string }) {
@@ -528,14 +565,16 @@ export function analyzePortfolioLab(payload: {
   lookback_days?: number;
   scenario_shocks?: Record<string, number>;
   target_weights?: Record<string, number>;
-  cash_flows?: Array<{ date: string; amount: number }>;
+  cash_flows?: Array<{ date: string; amount: number; currency?: string }>;
+  base_currency?: string;
+  fx_rates?: Record<string, number>;
 }) {
   return request<PortfolioLabResult>("/api/v1/labs/portfolio/analyze", { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function listValuationModels(symbol?: string) {
+export function listValuationModels(symbol?: string, init?: RequestInit) {
   const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
-  return request<ValuationModel[]>(`/api/v1/labs/valuation/models${query}`);
+  return request<ValuationModel[]>(`/api/v1/labs/valuation/models${query}`, init);
 }
 
 export function createValuationModel(symbol: string, payload: Record<string, unknown>) {
@@ -898,9 +937,9 @@ export function getDashboardSymbolInsights(symbol: string, init?: RequestInit) {
   return request<DashboardSymbolInsightsResponse>(`/api/v1/dashboard/symbol-insights?${params.toString()}`, init);
 }
 
-export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", count = 200) {
+export function getCandlesticks(symbol: string, period: "1D" | "1W" | "1M", count = 200, init?: RequestInit) {
   const params = new URLSearchParams({ symbol, period, count: String(count) });
-  return request<CandlesticksResponse>(`/api/v1/market/candlesticks?${params.toString()}`);
+  return request<CandlesticksResponse>(`/api/v1/market/candlesticks?${params.toString()}`, init);
 }
 
 export function getIntraday(symbol: string, since?: number | null) {
