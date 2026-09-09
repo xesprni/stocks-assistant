@@ -4,13 +4,56 @@
 避免重复初始化并统一组件间依赖关系。
 """
 
+import hashlib
+import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any
+from weakref import finalize
 
 from app.config import Settings, get_effective_settings, get_settings
+from app.core.configuration.resources import ManagedResource
+
+
+def _resource_signature(settings: Settings, fields: tuple[str, ...]) -> str:
+    # 签名只留摘要，不把凭据或 MCP headers 作为可观察的缓存键。
+    payload = {field: getattr(settings, field, None) for field in fields}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _memory_resource_signature(settings: Settings) -> str:
+    return _resource_signature(
+        settings,
+        (
+            "workspace_dir",
+            "embedding_auth_mode",
+            "embedding_provider",
+            "embedding_model",
+            "embedding_api_key",
+            "embedding_api_base",
+            "embedding_codex_auth_file",
+            "embedding_codex_api_base",
+            "embedding_codex_model",
+            "llm_api_key",
+            "llm_api_base",
+            "llm_model",
+            "llm_codex_auth_file",
+        ),
+    )
+
+
+def _mcp_resource_signature(settings: Settings) -> str:
+    return _resource_signature(
+        settings, ("workspace_dir", "mcp_servers", "mcp_tool_timeout_seconds")
+    )
+
+
+def _settings_for_resource(user_id: str | None) -> Settings:
+    return get_effective_settings(user_id) if user_id else get_settings()
 
 
 def _active_embedding_model(settings: Settings) -> str:
@@ -55,53 +98,108 @@ def get_memory_manager():
     2. 获取 LLM Provider（用于摘要生成和 Deep Dream）
     3. 创建 MemoryManager（含 SQLite 存储、向量搜索、分块器）
     """
-    from app.core.memory.config import MemoryConfig
-    from app.core.memory.manager import MemoryManager
-
-    settings = get_settings()
-    config = MemoryConfig(
-        workspace_root=settings.workspace_dir,
-        embedding_provider=settings.embedding_provider,
-        embedding_model=_active_embedding_model(settings),
-        embedding_signature=_embedding_signature(settings),
-    )
-    return MemoryManager(
-        config=config,
-        embedding_provider=get_embedding_provider(),
-        llm_provider=get_memory_llm_provider(),
-    )
+    return _create_user_memory_manager(None, settings=get_settings())
 
 
-@lru_cache
+_user_memory_managers: dict[str, Any] = {}
+_user_memory_lock = RLock()
+_memory_manager_signatures: dict[int, str] = {}
+
+
+def _own_memory_manager(manager, settings: Settings):
+    # 最后一个请求引用消失时再关闭 SQLite，缓存失效不打断正在进行的索引。
+    key, storage = id(manager), manager.storage
+    with _user_memory_lock:
+        _memory_manager_signatures[key] = _memory_resource_signature(settings)
+
+    def close() -> None:
+        try:
+            storage.close()
+        finally:
+            with _user_memory_lock:
+                _memory_manager_signatures.pop(key, None)
+
+    finalize(manager, close)
+    return manager
+
+
 def get_memory_manager_for_user(user_id: str | None):
-    """Get a MemoryManager using a user's effective embedding config."""
     if not user_id:
         return get_memory_manager()
+    with _user_memory_lock:
+        if user_id not in _user_memory_managers:
+            _user_memory_managers[user_id] = _create_user_memory_manager(user_id)
+        return _user_memory_managers[user_id]
 
+
+def clear_user_memory_managers(user_id: str | None = None) -> None:
+    with _user_memory_lock:
+        if user_id is None:
+            _user_memory_managers.clear()
+        else:
+            _user_memory_managers.pop(user_id, None)
+
+
+get_memory_manager_for_user.cache_clear = clear_user_memory_managers
+
+
+@contextmanager
+def lease_memory_manager_for_user(
+    user_id: str | None, settings: Settings | None = None
+) -> Iterator[Any]:
+    # 持有强引用跨越异步等待；退休实例由 finalizer 在最后一次使用后关闭。
+    if settings is None:
+        manager = get_memory_manager_for_user(user_id)
+    else:
+        requested = _memory_resource_signature(settings)
+        with _user_memory_lock:
+            current = _memory_resource_signature(_settings_for_resource(user_id))
+            cached = (
+                _user_memory_managers.get(user_id)
+                if user_id
+                else get_memory_manager()
+                if requested == current
+                else None
+            )
+            if cached is not None and _memory_manager_signatures.get(id(cached)) == requested:
+                manager = cached
+            else:
+                manager = _create_user_memory_manager(user_id, settings=settings)
+                # 旧快照仍可完成当前请求，但不能覆盖新配置的共享实例。
+                if user_id and requested == current:
+                    _user_memory_managers[user_id] = manager
+    yield manager
+
+
+def _create_user_memory_manager(user_id: str | None, settings: Settings | None = None):
+    """Get a MemoryManager using a user's effective embedding config."""
     from app.core.memory.config import MemoryConfig
     from app.core.memory.manager import MemoryManager
 
-    settings = get_effective_settings(user_id)
+    settings = settings if settings is not None else _settings_for_resource(user_id)
     user_index = (
         Path(settings.workspace_dir).expanduser()
         / "memory"
         / "users"
-        / user_id
+        / (user_id or "")
         / "long-term"
         / "index.db"
     )
     config = MemoryConfig(
         workspace_root=settings.workspace_dir,
-        index_db_path=str(user_index),
+        index_db_path=str(user_index) if user_id else None,
         owner_user_id=user_id,
         embedding_provider=settings.embedding_provider,
         embedding_model=_active_embedding_model(settings),
         embedding_signature=_embedding_signature(settings),
     )
-    return MemoryManager(
-        config=config,
-        embedding_provider=create_embedding_provider_from_settings(settings),
-        llm_provider=create_memory_llm_provider(settings),
+    return _own_memory_manager(
+        MemoryManager(
+            config=config,
+            embedding_provider=create_embedding_provider_from_settings(settings),
+            llm_provider=create_memory_llm_provider(settings),
+        ),
+        settings,
     )
 
 
@@ -203,16 +301,25 @@ def create_llm_provider(settings: Settings):
         entry = _llm_provider_cache.get(sig)
         if entry is not None and entry[0] > now:
             return entry[1]
+        generation = _llm_provider_cache_generation
 
     provider = _create_llm_provider_impl(settings)
     with _llm_provider_cache_lock:
-        _llm_provider_cache[sig] = (now + _LLM_PROVIDER_CACHE_TTL, provider)
+        # 构造可能跨越配置更新；旧请求可使用其快照，但不能回填已失效的缓存。
+        if generation != _llm_provider_cache_generation:
+            return provider
+        completed_at = datetime.now(UTC).timestamp()
+        entry = _llm_provider_cache.get(sig)
+        if entry is not None and entry[0] > completed_at:
+            return entry[1]
+        _llm_provider_cache[sig] = (completed_at + _LLM_PROVIDER_CACHE_TTL, provider)
     return provider
 
 
 # --- LLM Provider 签名缓存 ---
 _llm_provider_cache: dict[str, tuple[float, Any]] = {}
 _llm_provider_cache_lock = Lock()
+_llm_provider_cache_generation = 0
 _LLM_PROVIDER_CACHE_TTL = 300.0  # 5 分钟
 
 
@@ -233,8 +340,21 @@ def _llm_provider_signature(settings: Settings) -> str:
 
 def clear_llm_provider_cache() -> None:
     """清除 LLM Provider 缓存。配置变更后调用。"""
+    global _llm_provider_cache_generation
     with _llm_provider_cache_lock:
+        _llm_provider_cache_generation += 1
         _llm_provider_cache.clear()
+
+
+def invalidate_llm_providers(user_id: str | None) -> None:
+    global _llm_provider_cache_generation
+    if user_id is None:
+        clear_llm_provider_cache()
+    else:
+        signature = _llm_provider_signature(get_effective_settings(user_id))
+        with _llm_provider_cache_lock:
+            _llm_provider_cache_generation += 1
+            _llm_provider_cache.pop(signature, None)
 
 
 def _create_llm_provider_impl(settings: Settings):
@@ -321,122 +441,43 @@ def get_tool_manager():
 
 @lru_cache
 def get_scheduler_service():
-    """获取调度服务单例
-
-    使用 asyncio 后台循环检查并执行定时任务，
-    任务持久化到 scheduler/tasks.json。
-    """
+    """装配 SQLite 调度服务；执行与通知编排由独立应用服务负责。"""
+    from app.core.tools.scheduler.execution import ScheduledAlertEvaluator, ScheduledTaskExecutor
     from app.core.tools.scheduler.service import SchedulerService
     from app.core.tools.scheduler.store import SQLiteRunStore, SQLiteTaskStore
 
-    store = SQLiteTaskStore()
-    run_store = SQLiteRunStore()
-
-    def execute_callback(task: dict):
-        import logging
-
-        from app.core.notifications import TelegramSender
-        from app.core.security import user_workspace_dir
-
-        logger = logging.getLogger("stocks-assistant.scheduler")
-        logger.info("Executing scheduled task: %s", task.get("name", task.get("id")))
-
-        action = task.get("action") or {}
-        action_type = action.get("type")
-        metadata = task.get("metadata") or {}
-        prompt = task.get("prompt") or action.get("content") or ""
-
-        if action_type == "send_message":
-            result = str(action.get("content") or prompt)
-        elif prompt:
-            result = _run_scheduled_agent(
-                _build_scheduled_agent_prompt(prompt, task), user_id=task.get("user_id")
-            )
-        else:
-            result = f"Scheduled task executed: {task.get('name', task.get('id'))}"
-
-        notify_telegram = metadata.get("notify_telegram")
-        if notify_telegram is None:
-            notify_telegram = action_type in {"send_message", "agent_task"}
-
-        if notify_telegram:
-            user_id = task.get("user_id")
-            settings = get_effective_settings(user_id)
-            # 无归属的旧任务只允许远程图片；有用户归属时按该用户的目录读取附件。
-            workspace = user_workspace_dir(settings.workspace_dir, user_id) if user_id else None
-            telegram = TelegramSender.from_settings(settings, workspace_dir=workspace)
-            message = _format_scheduled_telegram_message(task, result)
-            telegram.send_message(message, photos=metadata.get("telegram_photos"))
-
-        return result
-
-    def evaluate_alerts_callback():
-        from app.core.research.evaluator import evaluate_due_alerts
-
-        return evaluate_due_alerts(
-            get_research_service(),
-            market_service=get_market_service(),
-            fundamental_service=get_fundamental_service(),
-            news_service=get_news_service(),
-        )
-
-    service = SchedulerService(
-        task_store=store,
-        run_store=run_store,
-        execute_callback=execute_callback,
-        alert_callback=evaluate_alerts_callback,
+    return SchedulerService(
+        task_store=SQLiteTaskStore(),
+        run_store=SQLiteRunStore(),
+        execute_callback=ScheduledTaskExecutor(
+            lambda prompt, user_id=None, **options: _run_scheduled_agent(
+                prompt, user_id=user_id, **options
+            ),
+            get_effective_settings,
+        ),
+        alert_callback=ScheduledAlertEvaluator(
+            {
+                "research": get_research_service,
+                "market": get_market_service,
+                "fundamentals": get_fundamental_service,
+                "news": get_news_service,
+            }
+        ),
     )
-    return service
 
 
 def _build_scheduled_agent_prompt(prompt: str, task: dict | None = None) -> str:
-    task = task or {}
-    context = task.get("_execution_context") or {}
-    started_at = _parse_execution_time(context.get("started_at")) or datetime.now().astimezone()
-    due_at = _parse_execution_time(context.get("due_at"))
-    local_now = started_at.astimezone()
-    utc_now = local_now.astimezone(UTC)
-    timezone_name = local_now.tzname() or "local"
-    trigger = str(context.get("trigger") or "schedule")
-    task_name = str(task.get("name") or task.get("id") or "scheduled task")
+    from app.core.tools.scheduler.execution import build_scheduled_agent_prompt
 
-    lines = [
-        "<scheduled_task_runtime_context>",
-        f"任务名称 / task name: {task_name}",
-        f"触发方式 / trigger: {trigger}",
-        f"当前本地时间 / current local time: {local_now.isoformat()} ({timezone_name})",
-        f"当前本地日期 / current local date: {local_now.date().isoformat()}",
-        f"当前 UTC 时间 / current UTC time: {utc_now.isoformat()}",
-    ]
-    if due_at:
-        lines.append(f"计划到期时间 / scheduled due time: {due_at.astimezone().isoformat()}")
-    lines.extend(
-        [
-            "如果任务提示词包含“今天”“当前”“现在”“今日”“开盘”或 today/now/current，必须以本次执行时间为准。",
-            "涉及交易日、市场开闭市或开盘简报时，优先使用可用行情/交易日工具验证，不要沿用历史输出中的日期。",
-            "</scheduled_task_runtime_context>",
-            "",
-            prompt,
-        ]
-    )
-    return "\n".join(lines)
+    return build_scheduled_agent_prompt(prompt, task)
 
 
-def _parse_execution_time(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed.astimezone()
-
-
-def _run_scheduled_agent(prompt: str, user_id: str | None = None) -> str:
+def _run_scheduled_agent(prompt: str, user_id: str | None = None, cancel_event=None) -> str:
     """通过共享工厂执行一次不携带聊天历史的调度任务。"""
     from app.core.agent.factory import create_agent
 
-    return create_agent(user_id).run_stream(user_message=prompt, clear_history=True)
+    options = {"cancel_event": cancel_event} if cancel_event is not None else {}
+    return create_agent(user_id).run_stream(user_message=prompt, clear_history=True, **options)
 
 
 def _get_agent_tools(settings: Settings, user_id: str | None = None):
@@ -447,8 +488,9 @@ def _get_agent_tools(settings: Settings, user_id: str | None = None):
 
 
 def _format_scheduled_telegram_message(task: dict, body: str) -> str:
-    name = str(task.get("name") or task.get("id") or "Scheduled task")
-    return f"# 定时任务：{name}\n\n{body}".strip()
+    from app.core.tools.scheduler.execution import format_scheduled_telegram_message
+
+    return format_scheduled_telegram_message(task, body)
 
 
 @lru_cache
@@ -555,7 +597,9 @@ def get_trace_store():
 
 # MCP manager 持有线程和连接，必须显式关闭，不能只丢弃 lru_cache 引用。
 _mcp_managers: dict[str | None, Any] = {}
-_mcp_managers_lock = Lock()
+_mcp_managers_lock = RLock()
+_mcp_resources: dict[int, ManagedResource[Any]] = {}
+_mcp_manager_signatures: dict[int, str] = {}
 
 
 def get_mcp_manager():
@@ -565,38 +609,97 @@ def get_mcp_manager():
 
 def get_mcp_manager_for_user(user_id: str | None):
     """获取当前用户的 MCP manager，冷启动也只创建一个实例。"""
+    with _mcp_managers_lock:
+        if user_id not in _mcp_managers:
+            settings = _settings_for_resource(user_id)
+            manager = _create_mcp_manager(user_id, settings)
+            _mcp_managers[user_id] = manager
+            _mcp_manager_signatures[id(manager)] = _mcp_resource_signature(settings)
+        return _mcp_managers[user_id]
+
+
+def _create_mcp_manager(user_id: str | None, settings: Settings):
     import logging
 
     from app.core.security import user_workspace_dir
     from app.core.tools.mcp.mcp_tool import MCPManager
 
-    with _mcp_managers_lock:
-        if user_id in _mcp_managers:
-            return _mcp_managers[user_id]
-        settings = get_effective_settings(user_id) if user_id else get_settings()
-        manager = MCPManager(
-            server_configs=settings.mcp_servers,
-            workspace_dir=user_workspace_dir(settings.workspace_dir, user_id)
-            if user_id
-            else settings.workspace_dir,
-            tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
-            user_id=user_id,
-        )
-        _mcp_managers[user_id] = manager
-        if user_id and settings.mcp_servers:
+    manager = MCPManager(
+        server_configs=settings.mcp_servers,
+        workspace_dir=user_workspace_dir(settings.workspace_dir, user_id)
+        if user_id
+        else settings.workspace_dir,
+        tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
+        user_id=user_id,
+    )
+    if user_id and settings.mcp_servers:
+        try:
+            manager.connect_all_background()
+        except Exception:
+            logging.getLogger("stocks-assistant.mcp").warning(
+                "MCP background initialization failed", exc_info=True
+            )
+    return manager
+
+
+def _managed_mcp(manager: Any) -> ManagedResource[Any]:
+    key = id(manager)
+    if key not in _mcp_resources:
+
+        def close() -> None:
+            import logging
+
             try:
-                manager.connect_all_background()
+                manager.close_sync()
             except Exception:
                 logging.getLogger("stocks-assistant.mcp").warning(
-                    "MCP background initialization failed", exc_info=True
+                    "MCP cleanup failed", exc_info=True
                 )
-        return manager
+            finally:
+                with _mcp_managers_lock:
+                    _mcp_resources.pop(key, None)
+                    _mcp_manager_signatures.pop(key, None)
+
+        _mcp_resources[key] = ManagedResource(manager, close)
+    return _mcp_resources[key]
+
+
+@contextmanager
+def lease_mcp_manager_for_user(
+    user_id: str | None, settings: Settings | None = None
+) -> Iterator[Any]:
+    # 获取与租借共用工厂锁，避免配置更新在两步之间关闭刚获取的实例。
+    with _mcp_managers_lock:
+        retire = []
+        if settings is None:
+            manager = get_mcp_manager_for_user(user_id)
+        else:
+            requested = _mcp_resource_signature(settings)
+            cached = _mcp_managers.get(user_id)
+            if cached is not None and _mcp_manager_signatures.get(id(cached)) == requested:
+                manager = cached
+            else:
+                publish = requested == _mcp_resource_signature(_settings_for_resource(user_id))
+                manager = _create_mcp_manager(user_id, settings)
+                _mcp_manager_signatures[id(manager)] = requested
+                if publish:
+                    _mcp_managers[user_id] = manager
+                    if cached is not None:
+                        retire.append(_managed_mcp(cached))
+                else:
+                    # 配置已经前进时，旧快照的连接只服务本次租约，不重新发布。
+                    retire.append(_managed_mcp(manager))
+        lease = _managed_mcp(manager).acquire()
+    try:
+        for resource in retire:
+            resource.retire()
+        yield manager
+    finally:
+        lease.close()
 
 
 def close_mcp_managers(user_id: str | None = None, *, all_users: bool = True) -> None:
     """移除并关闭指定范围，个人配置变更不打断其他用户的连接。"""
-    import logging
-
     with _mcp_managers_lock:
         if all_users:
             managers = list(_mcp_managers.values())
@@ -604,11 +707,9 @@ def close_mcp_managers(user_id: str | None = None, *, all_users: bool = True) ->
         else:
             manager = _mcp_managers.pop(user_id, None)
             managers = [manager] if manager is not None else []
-    for manager in managers:
-        try:
-            manager.close_sync()
-        except Exception:
-            logging.getLogger("stocks-assistant.mcp").warning("MCP cleanup failed", exc_info=True)
+        resources = [_managed_mcp(manager) for manager in managers]
+    for resource in resources:
+        resource.retire()
 
 
 # 兼容测试和旧集成中的缓存清理入口，同时确保连接与后台线程被释放。

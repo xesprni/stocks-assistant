@@ -90,6 +90,7 @@ class ScriptedModel:
 
 
 class RecordingTool(BaseTool):
+    read_only = True
     name = "lookup"
     description = "Return a local fixture result."
     params = {"type": "object", "properties": {"index": {"type": "integer"}}}

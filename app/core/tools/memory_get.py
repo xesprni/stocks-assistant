@@ -4,9 +4,11 @@
 """
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.call_context import ToolCallContext
 
 
 class MemoryGetTool(BaseTool):
+    read_only = True
     name: str = "memory_get"
     description: str = (
         "Read cited content from memory or knowledge files. "
@@ -34,16 +36,11 @@ class MemoryGetTool(BaseTool):
         self.memory_manager = memory_manager
         self.user_id = user_id
 
-    def _get_memory_manager(self):
-        if self.memory_manager:
-            return self.memory_manager
-        ctx = getattr(self, "context", None)
-        if ctx and hasattr(ctx, "memory_manager"):
-            return ctx.memory_manager
-        return None
-
     def execute(self, args: dict) -> ToolResult:
-        mgr = self._get_memory_manager()
+        return self.invoke(args, ToolCallContext.from_legacy_tool(self))
+
+    def invoke(self, args: dict, context: ToolCallContext) -> ToolResult:
+        mgr = self.memory_manager or context.memory_manager
         if not mgr:
             return ToolResult.fail("Memory not initialized")
         path = args.get("path")

@@ -1,7 +1,8 @@
 """配置变更后的依赖失效规则，供 API 和 OAuth 服务共同使用。"""
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from app.config import clear_effective_settings_cache
@@ -63,38 +64,89 @@ WORKSPACE_DEPENDENCIES = (
 )
 
 
-def invalidate_runtime(patch: Mapping[str, Any], *, user_id: str | None = None) -> None:
-    """只刷新受变更影响的依赖；个人 MCP 更新保持其他用户连接。"""
+@dataclass(frozen=True)
+class RuntimeBinding:
+    name: str
+    keys: frozenset[str]
+    invalidate: Callable[[str | None], None]
+
+
+def runtime_bindings() -> tuple[RuntimeBinding, ...]:
+    """显式组合根：扩展依赖时注册受影响配置及失效动作。"""
     from app import deps
 
-    changed = patch.keys()
-    clear_effective_settings_cache()
-    dependencies: set[str] = set()
-    if changed & LLM_KEYS:
-        dependencies.update({"get_llm_provider", "get_memory_llm_provider"})
-        deps.clear_llm_provider_cache()
-    if changed & MEMORY_KEYS:
-        dependencies.add("get_memory_manager_for_user")
-        if user_id is None:
-            dependencies.update(
-                {"get_memory_manager", "get_embedding_provider", "get_tool_manager"}
-            )
-    if "workspace_dir" in changed:
-        dependencies.update(WORKSPACE_DEPENDENCIES)
-    if changed & LONGBRIDGE_KEYS:
-        from app.core.dashboard.service import clear_dashboard_cache
-        from app.core.market.longbridge_context import clear_context_cache
+    def system_only(factory: Any) -> Callable[[str | None], None]:
+        return lambda user_id: factory.cache_clear() if user_id is None else None
 
-        # 已创建的服务可能仍由一次在途请求引用，清数据缓存但不创建新服务。
-        if deps.get_fundamental_service.cache_info().currsize:
-            deps.get_fundamental_service().clear_cache()
-        dependencies.update({"get_fundamental_service", "get_investment_lab_service"})
-        for clear in (clear_context_cache, clear_dashboard_cache):
-            try:
-                clear()
-            except Exception:
-                logger.warning("External service cache cleanup failed", exc_info=True)
-    for name in sorted(dependencies):
-        getattr(deps, name).cache_clear()
-    if changed & MCP_KEYS:
-        deps.close_mcp_managers(user_id, all_users=user_id is None)
+    workspace_factories = (
+        deps.get_tool_manager,
+        deps.get_skill_manager,
+        deps.get_knowledge_service,
+        deps.get_watchlist_service,
+        deps.get_market_service,
+        deps.get_portfolio_service,
+        deps.get_research_service,
+        deps.get_research_quick_prompts_service,
+        deps.get_investment_lab_service,
+        deps.get_session_store,
+        deps.get_trace_store,
+    )
+    bindings = [
+        RuntimeBinding("llm", LLM_KEYS, system_only(deps.get_llm_provider)),
+        RuntimeBinding("memory_llm", LLM_KEYS, system_only(deps.get_memory_llm_provider)),
+        RuntimeBinding("provider_cache", LLM_KEYS, deps.invalidate_llm_providers),
+        RuntimeBinding("memory", frozenset(MEMORY_KEYS), system_only(deps.get_memory_manager)),
+        RuntimeBinding(
+            "embedding", frozenset(MEMORY_KEYS), system_only(deps.get_embedding_provider)
+        ),
+        RuntimeBinding("memory_tools", frozenset(MEMORY_KEYS), system_only(deps.get_tool_manager)),
+        RuntimeBinding(
+            "user_memory",
+            frozenset(MEMORY_KEYS),
+            lambda user_id: (
+                deps.get_memory_manager_for_user.cache_clear(user_id)
+                if user_id is not None
+                else deps.get_memory_manager_for_user.cache_clear()
+            ),
+        ),
+        RuntimeBinding(
+            "mcp",
+            MCP_KEYS,
+            lambda user_id: deps.close_mcp_managers(user_id, all_users=user_id is None),
+        ),
+        RuntimeBinding("longbridge", LONGBRIDGE_KEYS, _invalidate_longbridge),
+    ]
+    # 已由 MEMORY_KEYS 覆盖的 tool_manager 只失效一次。
+    bindings.extend(
+        RuntimeBinding(name, frozenset({"workspace_dir"}), system_only(factory))
+        for name, factory in zip(WORKSPACE_DEPENDENCIES[1:], workspace_factories[1:], strict=True)
+    )
+    return tuple(bindings)
+
+
+def _invalidate_longbridge(user_id: str | None) -> None:
+    from app import deps
+    from app.core.dashboard.service import clear_dashboard_cache
+    from app.core.market.longbridge_context import clear_context_cache
+
+    # 用户凭据已经参与数据源签名，个人更新不关闭其他用户的连接。
+    if user_id is not None:
+        clear_dashboard_cache()
+        return
+    if deps.get_fundamental_service.cache_info().currsize:
+        deps.get_fundamental_service().clear_cache()
+    deps.get_fundamental_service.cache_clear()
+    deps.get_investment_lab_service.cache_clear()
+    for clear in (clear_context_cache, clear_dashboard_cache):
+        try:
+            clear()
+        except Exception:
+            logger.warning("External service cache cleanup failed", exc_info=True)
+
+
+def invalidate_runtime(patch: Mapping[str, Any], *, user_id: str | None = None) -> None:
+    """退休受影响实例；持有租约的旧资源在最后一次使用后释放。"""
+    clear_effective_settings_cache(user_id)
+    for binding in runtime_bindings():
+        if patch.keys() & binding.keys:
+            binding.invalidate(user_id)

@@ -14,6 +14,7 @@ from app.schemas.labs import (
 
 
 class GetInvestmentLabsTool(BaseTool):
+    read_only = True
     name = "get_investment_labs"
     description = "Run read-only portfolio risk/attribution, peer valuation, or Greater China market-context analysis."
     params = {

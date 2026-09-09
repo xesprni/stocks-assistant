@@ -7,9 +7,11 @@ Agent 是系统的核心组件，负责：
 - 估算 token 消耗并进行上下文裁剪
 """
 
+import copy
 import json
 import logging
 import threading
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from app.core.agent.executor import AgentStreamExecutor
 from app.core.agent.input_channel import AgentInputChannel
 from app.core.agent.models import LLMModel
 from app.core.agent.result import AgentAction, AgentActionType, ToolResultData
+from app.core.agent.run_resources import Closeable, ResourceLease, RunResources
 from app.core.tools.base_tool import BaseTool, ToolStage
 
 logger = logging.getLogger("stocks-assistant.agent")
@@ -44,6 +47,8 @@ class Agent:
         enable_skills: bool = True,
         multi_agent_depth: int = 0,
         settings: Any = None,
+        runtime_resources: Closeable | None = None,
+        user_id: str | None = None,
     ):
         self.system_prompt = system_prompt  # 系统提示词
         self.model: LLMModel = model  # LLM 模型实例
@@ -63,6 +68,16 @@ class Agent:
         self.delegation_runtime: DelegationRuntime | None = None
         self.multi_agent_depth = multi_agent_depth  # 多 Agent 委派深度
         self.settings = settings  # 当前请求/用户的有效配置
+        self.user_id = user_id
+        # 装配器借出的资源只归此 Agent 所有；未执行的实例也能释放租约。
+        self._runtime_resources = (
+            RunResources(runtime_resources) if runtime_resources is not None else None
+        )
+        self._runtime_finalizer = (
+            weakref.finalize(self, self._runtime_resources.close)
+            if self._runtime_resources is not None
+            else None
+        )
         self.last_evidence: list[dict[str, Any]] = []
         self.last_sources: list[dict[str, Any]] = []
         self.last_rendered_images: list[dict[str, Any]] = []
@@ -463,7 +478,30 @@ messages in the final answer. Work already performed cannot be undone by a steer
         self.captured_actions.append(action)
         return action
 
+    def borrow_runtime_resources(self) -> ResourceLease | None:
+        return self._runtime_resources.retain() if self._runtime_resources is not None else None
+
+    def close(self) -> None:
+        if self._runtime_finalizer is not None:
+            self._runtime_finalizer()
+
     def run_stream(
+        self,
+        user_message: str,
+        on_event=None,
+        clear_history: bool = False,
+        skill_filter=None,
+        cancel_event=None,
+        thinking_enabled: bool = False,
+    ) -> str:
+        try:
+            return self._run_stream(
+                user_message, on_event, clear_history, skill_filter, cancel_event, thinking_enabled
+            )
+        finally:
+            self.close()
+
+    def _run_stream(
         self,
         user_message: str,
         on_event=None,
@@ -502,7 +540,7 @@ messages in the final answer. Work already performed cannot be undone by a steer
 
         # 复制消息列表，避免并发修改
         with self.messages_lock:
-            messages_copy = self.messages.copy()
+            messages_copy = copy.deepcopy(self.messages)
             original_length = len(self.messages)
 
         previous_skill_filter = self.active_skill_filter
@@ -533,12 +571,6 @@ messages in the final answer. Work already performed cannot be undone by a steer
                 thinking_enabled=thinking_enabled,
             )
             response = executor.run_stream(user_message)
-        except Exception:
-            # 如果执行器清空了消息（上下文溢出恢复），同步回 Agent
-            if executor is not None and len(executor.messages) == 0:
-                with self.messages_lock:
-                    self.messages.clear()
-            raise
         finally:
             if executor is not None:
                 # 子任务失败或取消后，已取得的来源与图像仍应交给父任务复用。

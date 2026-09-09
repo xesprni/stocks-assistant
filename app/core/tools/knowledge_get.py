@@ -7,6 +7,7 @@ from app.core.tools.evidence import evidence_for_source, evidence_metadata, sour
 
 
 class KnowledgeGetTool(BaseTool):
+    read_only = True
     name = "knowledge_get"
     description = (
         "Read exact cited lines from a current user's knowledge file. "

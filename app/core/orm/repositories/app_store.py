@@ -88,6 +88,26 @@ class AppStoreRepository:
     def set_user_config_values(self, user_id: str, values: dict[str, Any]) -> None:
         return self.config.set_user_config_values(user_id, values)
 
+    def apply_config_update(
+        self,
+        user_id: str,
+        *,
+        user_patch: dict[str, Any],
+        system_patch: dict[str, Any],
+    ) -> None:
+        """在一个工作单元中提交配置与审计，失败不留下部分生效的配置。"""
+        with session_scope(self.session_factory) as session:
+            self.config.set_user_config_values(user_id, user_patch, session=session)
+            self.config.set_config_values(system_patch, session=session)
+            for patch, action, resource in (
+                (user_patch, "config.user_update", "user_config"),
+                (system_patch, "config.update", "app_config"),
+            ):
+                if patch:
+                    self.identity.audit(
+                        user_id, action, resource, {"keys": sorted(patch)}, session=session
+                    )
+
     def migrate_config_json_once(self, config_path: str | Path = "config.json") -> dict[str, Any]:
         return self.config.migrate_config_json_once(config_path)
 

@@ -16,10 +16,7 @@ import logging
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
-
-import httpx
 
 from app.core.agent.context import (
     aggressive_trim_for_overflow,
@@ -33,7 +30,16 @@ from app.core.agent.delegation_runtime import AgentCancelledError
 from app.core.agent.message_utils import compress_turn_to_text_only, sanitize_claude_messages
 from app.core.agent.models import LLMRequest
 from app.core.agent.stream_state import StreamState
+from app.core.llm.errors import (
+    ProviderErrorKind,
+    classify_provider_error,
+    error_from_chunk,
+    retry_delay,
+)
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.batch_executor import ToolBatchExecutor
+from app.core.tools.call_context import ToolCallContext
+from app.core.tools.result_metadata import ToolResultMetadata, normalize_tool_metadata
 
 logger = logging.getLogger("stocks-assistant.agent")
 
@@ -74,7 +80,7 @@ class AgentStreamExecutor:
     - 流式 LLM 调用与 SSE 事件发射
     - 工具执行与失败重试保护
     - 上下文裁剪（轮数限制 + token 限制）
-    - 上下文溢出恢复（激进裁剪 + 清空历史）
+    - 上下文溢出恢复（仅裁剪单次请求副本）
     """
 
     def __init__(
@@ -108,55 +114,35 @@ class AgentStreamExecutor:
 
     def _collect_evidence(self, result: dict[str, Any]) -> None:
         with self._evidence_lock:
-            seen_evidence = {str(item.get("id") or "") for item in self.evidence}
-            seen_sources = {str(item.get("id") or "") for item in self.sources}
-            for item in result.get("evidence") or []:
-                if not isinstance(item, dict):
-                    continue
-                item_id = str(item.get("id") or "")
-                if item_id and item_id not in seen_evidence:
-                    seen_evidence.add(item_id)
-                    self.evidence.append(item)
-            for item in result.get("sources") or []:
-                if not isinstance(item, dict):
-                    continue
-                item_id = str(item.get("id") or "")
-                if item_id and item_id not in seen_sources:
-                    seen_sources.add(item_id)
-                    self.sources.append(item)
+            metadata = ToolResultMetadata.merge(
+                {"evidence": self.evidence, "sources": self.sources}, result
+            )
+            self.evidence = metadata.evidence
+            self.sources = metadata.sources
 
-    def _collect_rendered_images(self, result: dict[str, Any], tool_name: str) -> None:
-        if result.get("status") != "success" and tool_name != "delegate_agent":
-            return
-        items = result.get("rendered_images")
-        artifacts = list(items) if isinstance(items, list) else []
-        if tool_name == "render_image":
-            artifacts.append(result.get("result"))
+    def _collect_rendered_images(self, result: dict[str, Any], tool_name: str = "") -> None:
+        metadata = normalize_tool_metadata(
+            status=result.get("status", "success"),
+            result=result.get("result"),
+            metadata=result,
+            tool_name=tool_name,
+        )
         with self._evidence_lock:
-            seen = {item["artifact_id"] for item in self.rendered_images}
-            for artifact in artifacts:
-                if not isinstance(artifact, dict):
-                    continue
-                artifact_id = artifact.get("artifact_id")
-                if not isinstance(artifact_id, str) or not artifact_id or artifact_id in seen:
-                    continue
-                # 直接制图与子 Agent 回传的产物统一去重，仅保留重建预览需要的引用。
-                self.rendered_images.append(
-                    _copy.deepcopy(
-                        {
-                            key: artifact[key]
-                            for key in ("artifact_id", "width", "height", "files")
-                            if key in artifact
-                        }
-                    )
-                )
-                seen.add(artifact_id)
+            self.rendered_images = ToolResultMetadata.merge(
+                {"rendered_images": self.rendered_images}, metadata
+            ).rendered_images
 
     def _raise_if_cancelled(self):
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise AgentCancelledError("Agent run cancelled")
 
-    def _consume_steering(self, *, finish: bool = False, close: bool = False) -> bool:
+    def _consume_steering(
+        self,
+        *,
+        finish: bool = False,
+        close: bool = False,
+        request_messages: list[dict[str, Any]] | None = None,
+    ) -> bool:
         """仅在完整工具结果之后注入用户输入，保持工具调用/结果配对。"""
         self._raise_if_cancelled()
         channel = getattr(self.agent, "input_channel", None)
@@ -164,9 +150,10 @@ class AgentStreamExecutor:
             return False
         inputs = channel.finish() if finish else channel.drain(close=close)
         for item in inputs:
-            self.messages.append(
-                {"role": "user", "content": [{"type": "text", "text": item["message"]}]}
-            )
+            message = {"role": "user", "content": [{"type": "text", "text": item["message"]}]}
+            self.messages.append(message)
+            if request_messages is not None:
+                request_messages.append(_copy.deepcopy(message))
         if inputs:
             self._trim_messages()
         return bool(inputs)
@@ -524,7 +511,12 @@ class AgentStreamExecutor:
         return final_response
 
     def _call_llm_stream(
-        self, retry_on_empty=True, retry_count=0, max_retries=3, _overflow_retry: bool = False
+        self,
+        retry_on_empty=True,
+        retry_count=0,
+        max_retries=3,
+        _overflow_retry: bool = False,
+        _request_messages: list[dict[str, Any]] | None = None,
     ) -> tuple[str, list[dict]]:
         """流式调用 LLM
 
@@ -544,10 +536,13 @@ class AgentStreamExecutor:
             (回复文本, 工具调用列表)
         """
         # 包括空响应和连接重试：下一次模型调用前统一收取，工具执行中不改动消息。
-        self._consume_steering()
-        self._validate_and_fix_messages()
-
-        messages = self._prepare_messages()
+        request_copy = _copy.deepcopy(_request_messages) if _request_messages is not None else None
+        self._consume_steering(request_messages=request_copy)
+        # 每次请求独立复制；重试期间 drain 的新输入先追加到副本，不能依赖裁剪后消息长度。
+        messages = (
+            _copy.deepcopy(self._prepare_messages()) if request_copy is None else request_copy
+        )
+        sanitize_claude_messages(messages)
         turns = self._identify_complete_turns()
         logger.info("Sending %s messages (%s turns) to LLM", len(messages), len(turns))
 
@@ -611,41 +606,22 @@ class AgentStreamExecutor:
             self._raise_if_cancelled()
             stream = self.model.call_stream(request)
 
-            for chunk in stream:
-                self._raise_if_cancelled()
-                if isinstance(chunk, dict) and chunk.get("error"):
-                    error_data = chunk.get("error", {})
-                    if isinstance(error_data, dict):
-                        error_msg = error_data.get("message", chunk.get("message", "Unknown error"))
-                    else:
-                        error_msg = chunk.get("message", str(error_data))
-                    status_code = chunk.get("status_code", "N/A")
+            try:
+                for chunk in stream:
+                    self._raise_if_cancelled()
+                    if isinstance(chunk, dict) and chunk.get("error"):
+                        raise error_from_chunk(chunk)
 
-                    error_msg_lower = error_msg.lower()
-                    is_overflow = any(
-                        kw in error_msg_lower
-                        for kw in [
-                            "context length exceeded",
-                            "maximum context length",
-                            "prompt is too long",
-                            "context overflow",
-                            "context window",
-                            "too large",
-                            "exceeds model context",
-                            "request_too_large",
-                            "request exceeds the maximum size",
-                            "tokens exceed",
-                        ]
-                    )
-
-                    if is_overflow:
-                        raise Exception(f"[CONTEXT_OVERFLOW] {error_msg} (Status: {status_code})")
-                    else:
-                        raise Exception(f"{error_msg} (Status: {status_code})")
-
-                if isinstance(chunk, dict):
-                    for event_type, event_data in state.consume(chunk):
-                        self._emit_event(event_type, event_data)
+                    if isinstance(chunk, dict):
+                        for event_type, event_data in state.consume(chunk):
+                            self._emit_event(event_type, event_data)
+            finally:
+                close_stream = getattr(stream, "close", None)
+                if close_stream is not None:
+                    try:
+                        close_stream()
+                    except Exception:
+                        logger.warning("Failed to release model stream", exc_info=True)
 
         except AgentCancelledError:
             raise
@@ -659,94 +635,21 @@ class AgentStreamExecutor:
                     "duration_ms": (time.time() - llm_started_at) * 1000,
                 },
             )
-            error_str = str(e)
-            error_str_lower = error_str.lower()
-
-            is_context_overflow = "[context_overflow]" in error_str_lower
-            if not is_context_overflow:
-                is_context_overflow = any(
-                    kw in error_str_lower
-                    for kw in [
-                        "context length exceeded",
-                        "maximum context length",
-                        "prompt is too long",
-                        "context overflow",
-                        "context window",
-                        "too large",
-                        "exceeds model context",
-                        "request_too_large",
-                        "request exceeds the maximum size",
-                    ]
-                )
-
-            is_message_format_error = any(
-                kw in error_str_lower
-                for kw in [
-                    "tool_use",
-                    "tool_result",
-                    "tool result",
-                    "without",
-                    "immediately after",
-                    "corresponding",
-                    "must have",
-                    "tool_call_id",
-                    "tool id",
-                    "not found",
-                ]
-            ) and ("400" in error_str_lower or "invalid_request" in error_str_lower)
-
-            if is_context_overflow or is_message_format_error:
-                logger.error("Context error: %s", e)
-
-                if is_context_overflow and self.agent.memory_manager:
-                    self.agent.memory_manager.flush_memory(
-                        messages=self.messages,
-                        reason="overflow",
-                        max_messages=0,
+            kind = classify_provider_error(e)
+            if kind == ProviderErrorKind.CONTEXT and not _overflow_retry:
+                recovered = _copy.deepcopy(messages)
+                if aggressive_trim_for_overflow(recovered):
+                    if state.content:
+                        self._emit_event("message_reset", {"discarded_content": state.content})
+                    return self._call_llm_stream(
+                        retry_on_empty=retry_on_empty,
+                        retry_count=retry_count,
+                        max_retries=max_retries,
+                        _overflow_retry=True,
+                        _request_messages=recovered,
                     )
-
-                if is_context_overflow and not _overflow_retry:
-                    trimmed = self._aggressive_trim_for_overflow()
-                    if trimmed:
-                        return self._call_llm_stream(
-                            retry_on_empty=retry_on_empty,
-                            retry_count=retry_count,
-                            max_retries=max_retries,
-                            _overflow_retry=True,
-                        )
-
-                self.messages.clear()
-                if is_context_overflow:
-                    raise Exception("Context overflow. History has been cleared.") from e
-                else:
-                    raise Exception("Message format error. History has been cleared.") from e
-
-            # httpx 的超时/断流异常可能没有文本，按异常类型识别，不能只匹配字符串。
-            is_retryable = isinstance(
-                e, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
-            ) or any(
-                kw in error_str_lower
-                for kw in [
-                    "timeout",
-                    "timed out",
-                    "connection",
-                    "network",
-                    "rate limit",
-                    "overloaded",
-                    "unavailable",
-                    "busy",
-                    "retry",
-                    "429",
-                    "500",
-                    "502",
-                    "503",
-                    "504",
-                ]
-            )
-
-            if is_retryable and retry_count < max_retries:
-                is_rate_limit = "429" in error_str_lower or "rate limit" in error_str_lower
-                wait_time = (30 + retry_count * 15) if is_rate_limit else (retry_count + 1) * 2
+            wait_time = retry_delay(kind, retry_count)
+            if wait_time is not None and retry_count < max_retries:
                 logger.warning("LLM API error (attempt %s/%s): %s", retry_count + 1, max_retries, e)
                 if state.content:
                     self._emit_event("message_reset", {"discarded_content": state.content})
@@ -764,6 +667,7 @@ class AgentStreamExecutor:
                     retry_count=retry_count + 1,
                     max_retries=max_retries,
                     _overflow_retry=_overflow_retry,
+                    _request_messages=messages,
                 )
             else:
                 raise
@@ -796,7 +700,11 @@ class AgentStreamExecutor:
                 },
             )
             return self._call_llm_stream(
-                retry_on_empty=False, retry_count=retry_count, max_retries=max_retries
+                retry_on_empty=False,
+                retry_count=retry_count,
+                max_retries=max_retries,
+                _overflow_retry=_overflow_retry,
+                _request_messages=messages,
             )
 
         # Build assistant message for history
@@ -849,31 +757,15 @@ class AgentStreamExecutor:
         return self._execute_tool_calls_batch([tool_call])[0]
 
     def _execute_tool_calls_batch(self, tool_calls: list[dict]) -> list[dict[str, Any]]:
-        """批量执行工具调用。
-
-        2 个以上工具时用线程池并行执行独立调用，缩短多工具场景延迟。
-        单工具走串行路径，避免线程池开销。
-        """
-        if not tool_calls:
-            return []
-        if len(tool_calls) == 1:
-            self._raise_if_cancelled()
-            return [self._execute_tool_impl(tool_calls[0])]
-
-        max_workers = min(len(tool_calls), 4)
-        results: list[dict | None] = [None] * len(tool_calls)
-
-        def _run(idx: int, tc: dict) -> tuple[int, dict[str, Any]]:
-            self._raise_if_cancelled()
-            return idx, self._execute_tool_impl(tc)
-
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="agent-tool") as pool:
-            futures = {pool.submit(_run, i, tc): i for i, tc in enumerate(tool_calls)}
-            for future in as_completed(futures):
-                idx, result = future.result()
-                results[idx] = result
-
-        return results  # type: ignore[return-value]
+        results = ToolBatchExecutor(
+            self.tools, self._execute_tool_impl, self._raise_if_cancelled
+        ).run(tool_calls)
+        # 模型一轮批次完成后按请求顺序记账，避免并行完成顺序影响下一轮失败保护。
+        for call, result in zip(tool_calls, results, strict=True):
+            self._record_tool_result(
+                call["name"], call["arguments"], result.get("status") == "success"
+            )
+        return results
 
     def _execute_tool_impl(self, tool_call: dict) -> dict[str, Any]:
         """单个工具的实际执行逻辑（含参数解析、失败保护、事件发射）。"""
@@ -889,14 +781,12 @@ class AgentStreamExecutor:
                 "result": f"Failed to parse tool arguments. {parse_error}",
                 "execution_time": 0,
             }
-            self._record_tool_result(tool_name, arguments, False)
             return result
 
         should_stop, stop_reason, is_critical = self._check_consecutive_failures(
             tool_name, arguments
         )
         if should_stop:
-            self._record_tool_result(tool_name, arguments, False)
             if is_critical:
                 return {"status": "critical_error", "result": stop_reason, "execution_time": 0}
             return {"status": "error", "result": stop_reason, "execution_time": 0}
@@ -916,42 +806,47 @@ class AgentStreamExecutor:
                 available = list(self.tools.keys())
                 raise ValueError(f"Tool '{tool_name}' not found. Available: {available}")
 
-            # 浅拷贝工具实例，使并行执行时每个调用的 per-call 属性互不干扰。
-            # 重型依赖（service 等）通过引用共享，开销仅一次 dict 分配。
-            tool = _copy.copy(tool)
-            tool.model = self.model
-            tool.context = self.agent
-            tool.event_emitter = self._emit_event
-            tool.cancel_event = self.cancel_event
-            tool.thinking_enabled = self.thinking_enabled
-            tool.delegation_runtime = getattr(self.agent, "delegation_runtime", None)
-            tool.current_tool_call = {"id": tool_id, "name": tool_name}
-
-            start_time = time.time()
-            try:
-                result: ToolResult = tool.execute_tool(arguments)
-            finally:
-                tool.current_tool_call = None
-            execution_time = time.time() - start_time
+            skill_filter = getattr(self.agent, "active_skill_filter", None)
+            context = ToolCallContext(
+                tool_call_id=tool_id,
+                tool_name=tool_name,
+                model=self.model,
+                parent_agent=self.agent,
+                user_id=getattr(self.agent, "user_id", None),
+                event_emitter=self._emit_event,
+                cancel_event=self.cancel_event,
+                thinking_enabled=self.thinking_enabled,
+                delegation_runtime=getattr(self.agent, "delegation_runtime", None),
+                memory_manager=getattr(self.agent, "memory_manager", None),
+                skill_manager=getattr(self.agent, "skill_manager", None),
+                skill_filter=frozenset(skill_filter) if skill_filter is not None else None,
+                settings=getattr(self.agent, "settings", None),
+                workspace_dir=getattr(self.agent, "workspace_dir", None),
+            )
+            start_time = time.monotonic()
+            result: ToolResult = tool.execute_tool(arguments, context)
+            execution_time = time.monotonic() - start_time
 
             result_dict = {
                 "status": result.status,
                 "result": result.result,
                 "execution_time": execution_time,
             }
-            if isinstance(result.ext_data, dict):
-                result_dict["evidence"] = result.ext_data.get("evidence", [])
-                result_dict["sources"] = result.ext_data.get("sources", [])
-                if result.status == "success" or tool_name == "delegate_agent":
-                    result_dict["rendered_images"] = _copy.deepcopy(
-                        result.ext_data.get("rendered_images", [])
-                    )
+            result_dict.update(
+                normalize_tool_metadata(
+                    status=result.status,
+                    result=result.result,
+                    metadata=result.ext_data,
+                    tool_name=tool_name,
+                )
+            )
+            if isinstance(result.ext_data, dict) and result.ext_data.get("preserve_partial"):
+                result_dict["preserve_partial"] = True
 
             # 提前归集已完成工具的元数据，避免同批另一个工具取消后丢失这些结果。
             self._collect_evidence(result_dict)
             self._collect_rendered_images(result_dict, tool_name)
             self._raise_if_cancelled()
-            self._record_tool_result(tool_name, arguments, result.status == "success")
             self._emit_event(
                 "tool_execution_end",
                 {
@@ -995,7 +890,6 @@ class AgentStreamExecutor:
             raise
         except Exception as e:
             logger.error("Tool execution error: %s", e)
-            self._record_tool_result(tool_name, arguments, False)
             error_result = {"status": "error", "result": str(e), "execution_time": 0}
             self._emit_event(
                 "tool_execution_end",

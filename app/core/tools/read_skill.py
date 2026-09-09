@@ -10,9 +10,11 @@ from typing import Any
 from app.core.skills.config import should_include_skill
 from app.core.skills.types import SkillEntry
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.call_context import ToolCallContext
 
 
 class ReadSkillTool(BaseTool):
+    read_only = True
     name: str = "read_skill"
     description: str = (
         "Load the full instructions for an enabled skill by exact skill name. "
@@ -36,15 +38,18 @@ class ReadSkillTool(BaseTool):
     }
 
     def execute(self, args: dict[str, Any]) -> ToolResult:
+        return self.invoke(args, ToolCallContext.from_legacy_tool(self))
+
+    def invoke(self, args: dict[str, Any], context: ToolCallContext) -> ToolResult:
         skill_name = str(args.get("skill_name") or "").strip()
         if not skill_name:
             return ToolResult.fail("Error: skill_name is required")
 
-        manager = self._get_skill_manager()
+        manager = context.skill_manager or self._get_skill_manager()
         if not manager:
             return ToolResult.fail("Skills are not initialized")
 
-        allowed_filter = self._get_active_skill_filter()
+        allowed_filter = list(context.skill_filter) if context.skill_filter is not None else None
         entries = manager.filter_skills(skill_filter=allowed_filter, include_disabled=False)
         entries = [
             entry
@@ -83,22 +88,12 @@ class ReadSkillTool(BaseTool):
         )
 
     def _get_skill_manager(self):
-        ctx = getattr(self, "context", None)
-        if ctx and hasattr(ctx, "skill_manager"):
-            return ctx.skill_manager
         try:
             from app.deps import get_skill_manager
 
             return get_skill_manager()
         except Exception:
             return None
-
-    def _get_active_skill_filter(self) -> list[str] | None:
-        ctx = getattr(self, "context", None)
-        active = getattr(ctx, "active_skill_filter", None) if ctx else None
-        if active is None:
-            return None
-        return list(active)
 
     @staticmethod
     def _find_entry(entries: list[SkillEntry], skill_name: str) -> SkillEntry | None:

@@ -12,6 +12,7 @@ from app.core.agent.subagent import (
     SubAgentValidationError,
 )
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.call_context import ToolCallContext
 from app.schemas.delegation import DelegateAgentRequest
 
 
@@ -31,19 +32,18 @@ class DelegateAgentTool(BaseTool):
     params: dict = DelegateAgentRequest.model_json_schema()
 
     def execute(self, params: dict[str, Any]) -> ToolResult:
-        parent_agent = getattr(self, "context", None)
-        if not parent_agent:
-            return ToolResult.fail("delegate_agent requires an active Agent context")
+        return self.invoke(params, ToolCallContext.from_legacy_tool(self))
 
-        current_tool_call = getattr(self, "current_tool_call", {}) or {}
+    def invoke(self, params: dict[str, Any], context: ToolCallContext) -> ToolResult:
+        if context.parent_agent is None:
+            return ToolResult.fail("delegate_agent requires an active Agent context")
         runner = SubAgentRunner(
-            parent_agent=parent_agent,
-            event_emitter=getattr(self, "event_emitter", None),
-            # 传入父工具调用 ID，追踪视图可以把整批子 Agent 挂到对应 delegate_agent 节点下。
-            parent_tool_call_id=current_tool_call.get("id"),
-            cancel_event=getattr(self, "cancel_event", None),
-            thinking_enabled=getattr(self, "thinking_enabled", None),
-            runtime=getattr(self, "delegation_runtime", None),
+            parent_agent=context.parent_agent,
+            event_emitter=context.event_emitter,
+            parent_tool_call_id=context.tool_call_id or None,
+            cancel_event=context.cancel_event,
+            thinking_enabled=context.thinking_enabled,
+            runtime=context.delegation_runtime,
         )
         try:
             request = DelegateAgentRequest.model_validate(params)
@@ -61,6 +61,7 @@ class DelegateAgentTool(BaseTool):
         except Exception as exc:
             return ToolResult.fail(f"delegate_agent failed: {exc}")
         result["results"], metadata = compact_batch_results(result["results"])
+        metadata["preserve_partial"] = True
         result["metadata_truncated"] = metadata["metadata_truncated"]
         result["metadata_counts"] = metadata["counts"]
         if result["status"] == "error":

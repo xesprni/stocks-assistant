@@ -51,13 +51,9 @@ async def persist_config_update(update: ConfigUpdate, current: CurrentUser) -> S
     }
     system_patch = {key: value for key, value in patch.items() if key not in user_patch}
     store = get_app_store()
-    if user_patch:
-        store.set_user_config_values(current.id, user_patch)
-        store.audit(current.id, "config.user_update", "user_config", {"keys": sorted(user_patch)})
-    if system_patch:
-        store.set_config_values(system_patch)
-        store.audit(current.id, "config.update", "app_config", {"keys": sorted(system_patch)})
-    reset_settings_cache()
+    store.apply_config_update(current.id, user_patch=user_patch, system_patch=system_patch)
+    # 事务失败会直接返回错误，只有已提交的配置才推进缓存代次。
+    reset_settings_cache(None if system_patch else current.id)
 
     for scope_patch, user_id in ((system_patch, None), (user_patch, current.id)):
         if not scope_patch:
@@ -80,11 +76,11 @@ async def _refresh_mcp(user_id: str | None) -> None:
 
     try:
         settings = get_effective_settings(user_id) if user_id else get_settings()
-        manager = deps.get_mcp_manager_for_user(user_id)
-        manager.set_tool_timeout_seconds(settings.mcp_tool_timeout_seconds)
-        if user_id is None:
-            # 用户 manager 创建时已经启动后台连接，应用级 manager 由生命周期显式启动。
-            await asyncio.to_thread(manager.reconnect_sync, settings.mcp_servers)
+        with deps.lease_mcp_manager_for_user(user_id) as manager:
+            manager.set_tool_timeout_seconds(settings.mcp_tool_timeout_seconds)
+            if user_id is None:
+                # 用户 manager 创建时已经启动后台连接，应用级 manager 由生命周期显式启动。
+                await asyncio.to_thread(manager.reconnect_sync, settings.mcp_servers)
     except Exception:
         # 配置已经保存，连接失败由 MCP 状态接口呈现，不回滚有效配置。
         logger.warning("Saved configuration, but MCP reconnect failed", exc_info=True)

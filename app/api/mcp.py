@@ -59,15 +59,15 @@ async def _start_mcp_oauth_authorization(
         raise HTTPException(status_code=409, detail=f"MCP server '{server_name}' is disabled")
 
     try:
-        from app.deps import get_mcp_manager_for_user
+        from app.deps import lease_mcp_manager_for_user
 
         redirect_uri = str(request.url_for("mcp_oauth_callback", server_name=server_name))
-        manager = get_mcp_manager_for_user(current_user.id)
-        authorization_url = await run_in_threadpool(
-            manager.start_oauth_authorization_sync,
-            server_name,
-            redirect_uri,
-        )
+        with lease_mcp_manager_for_user(current_user.id) as manager:
+            authorization_url = await run_in_threadpool(
+                manager.start_oauth_authorization_sync,
+                server_name,
+                redirect_uri,
+            )
         _remember_oauth_user(server_name, authorization_url, current_user.id)
         return authorization_url
     except HTTPException:
@@ -201,16 +201,16 @@ async def mcp_oauth_callback(
 ):
     """接收 MCP OAuth 授权码回调。"""
     try:
-        from app.deps import get_mcp_manager, get_mcp_manager_for_user
+        from app.deps import lease_mcp_manager_for_user
 
         pending_key = _oauth_pending_key(server_name, state)
         user_id = _PENDING_OAUTH_USERS.get(pending_key)
         if not user_id and not state:
             user_id = _PENDING_OAUTH_USERS.get(_oauth_pending_key(server_name))
-        manager = get_mcp_manager_for_user(user_id) if user_id else get_mcp_manager()
-        await run_in_threadpool(
-            manager.complete_oauth_callback_sync, server_name, code, state, error
-        )
+        with lease_mcp_manager_for_user(user_id) as manager:
+            await run_in_threadpool(
+                manager.complete_oauth_callback_sync, server_name, code, state, error
+            )
         _PENDING_OAUTH_USERS.pop(pending_key, None)
         if user_id:
             _PENDING_OAUTH_USERS.pop(_oauth_pending_key(server_name), None)
@@ -247,13 +247,15 @@ def reconnect_mcp_servers(current_user: CurrentUser = Depends(require_permission
     """重新连接所有已配置 MCP 服务器。"""
     settings = get_effective_settings(current_user.id)
     try:
-        from app.deps import get_mcp_manager_for_user
+        from app.deps import close_mcp_managers, lease_mcp_manager_for_user
 
-        manager = get_mcp_manager_for_user(current_user.id)
-        manager.reconnect_background(settings.mcp_servers)
+        # 重连发布新实例，已开始的工具继续持有旧连接直到完成。
+        close_mcp_managers(current_user.id, all_users=False)
+        with lease_mcp_manager_for_user(current_user.id, settings=settings):
+            # 个人 manager 工厂已经启动连接，重复 reconnect 会相互取消连接任务。
+            servers = _build_server_statuses(current_user)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"MCP reconnect failed: {exc}") from exc
-    servers = _build_server_statuses(current_user)
     return MCPStatusResponse(servers=servers, total=len(servers))
 
 
@@ -267,10 +269,10 @@ async def delete_mcp_oauth(
         raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
 
     try:
-        from app.deps import get_mcp_manager_for_user
+        from app.deps import lease_mcp_manager_for_user
 
-        manager = get_mcp_manager_for_user(current_user.id)
-        await run_in_threadpool(manager.clear_oauth_credentials_sync, server_name)
+        with lease_mcp_manager_for_user(current_user.id) as manager:
+            await run_in_threadpool(manager.clear_oauth_credentials_sync, server_name)
     except Exception:
         pass
 
@@ -299,7 +301,7 @@ def get_mcp_server_tools(
 
     if manager:
         prefix = f"mcp_{server_name}_"
-        for tool in manager.tools.values():
+        for tool in manager.get_tools():
             if tool.name.startswith(prefix):
                 tools.append(
                     MCPToolInfo(

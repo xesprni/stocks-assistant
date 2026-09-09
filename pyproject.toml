@@ -80,6 +80,18 @@ files = [
     "app/core/tools/portfolio_output.py",
     "app/core/tracing/payloads.py",
     "app/schemas/notifications.py",
+    "app/core/configuration/resources.py",
+    "app/core/tools/call_context.py",
+    "app/core/tools/batch_executor.py",
+    "app/core/tools/result_metadata.py",
+    "app/core/llm/errors.py",
+    "app/core/llm/client_pool.py",
+    "app/core/agent/run_resources.py",
+    "app/core/labs/calculators.py",
+    "app/core/labs/database.py",
+    "app/core/labs/completion.py",
+    "app/core/research/records.py",
+    "app/core/market/config_repository.py",
 ]
 
 [tool.pytest.ini_options]

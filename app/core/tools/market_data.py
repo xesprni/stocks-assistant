@@ -29,6 +29,8 @@ def _int_arg(value: Any, default: int | None, name: str) -> int | None:
 
 
 class _LongbridgeMarketTool(BaseTool):
+    read_only = True
+
     def __init__(
         self, market_service: Any = None, user_id: str | None = None, settings: Any = None
     ):

@@ -36,6 +36,7 @@ class RenderImageTool(BaseTool):
     def execute(self, params: dict[str, Any]) -> ToolResult:
         try:
             request = RenderImageRequest.model_validate(params)
-            return ToolResult.success(self.service.render(request))
+            result = self.service.render(request)
+            return ToolResult.success(result, ext_data={"rendered_images": [result]})
         except (ValidationError, ValueError, RuntimeError, OSError) as exc:
             return ToolResult.fail(str(exc))

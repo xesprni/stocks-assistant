@@ -8,34 +8,23 @@ agent executor already understands.
 
 import json
 import logging
-import threading
 from collections.abc import Generator
+from contextlib import nullcontext
 from typing import Any
 
 import httpx
 
 from app.core.agent.models import LLMModel, LLMRequest
+from app.core.llm.client_pool import LLMClientPool, default_llm_client_pool
+from app.core.llm.client_pool import close_llm_client_pool as close_llm_client_pool
+from app.core.llm.errors import ProviderHTTPError
 from app.core.llm.message_codec import image_data_urls, iter_sse_objects, split_message_blocks
 
 logger = logging.getLogger("stocks-assistant.llm")
 
-# --- 共享 httpx 连接池 ---
-# 每个请求创建新的 Provider + httpx.Client 会浪费 TCP/TLS 连接。
-# 按 (api_base, timeout) 共享 Client，连接池跨请求复用。
-# api_key 在每次请求的 header 中传递，不影响连接复用。
-_httpx_client_pool: dict[tuple, httpx.Client] = {}
-_httpx_client_pool_lock = threading.Lock()
-
 
 def _get_shared_httpx_client(api_base: str, timeout: int) -> httpx.Client:
-    """获取共享 httpx.Client，按 (api_base, timeout) 复用连接池。"""
-    key = (api_base.rstrip("/"), timeout)
-    with _httpx_client_pool_lock:
-        client = _httpx_client_pool.get(key)
-        if client is None:
-            client = httpx.Client(timeout=timeout)
-            _httpx_client_pool[key] = client
-        return client
+    return default_llm_client_pool.get(api_base, timeout)
 
 
 def _response_error_detail(resp: httpx.Response) -> str:
@@ -85,10 +74,17 @@ def _raise_for_llm_status(resp: httpx.Response, provider: str) -> None:
         resp.request.url,
         detail,
     )
-    raise httpx.HTTPStatusError(
+    code = ""
+    try:
+        error = resp.json().get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code") or error.get("type") or "")
+    except (ValueError, AttributeError):
+        pass
+    raise ProviderHTTPError(
         f"{provider} upstream error {resp.status_code}: {detail}",
-        request=resp.request,
         response=resp,
+        code=code,
     )
 
 
@@ -112,19 +108,23 @@ class OpenAICompatibleProvider(LLMModel):
         api_base: str = "https://api.openai.com/v1",
         model: str = "gpt-4o",
         timeout: int = 180,
+        client_pool: LLMClientPool | None = None,
     ):
         super().__init__(model=model)
         self.api_key = api_key  # API 密钥
         self.api_base = api_base.rstrip("/")  # API 基础地址
         self.timeout = timeout  # 请求超时（秒）
-        self.client = _get_shared_httpx_client(self.api_base, timeout)
+        self._client_pool = client_pool if client_pool is not None else default_llm_client_pool
+        self.client = self._client_pool.get(self.api_base, timeout)
+        self._pooled_client = self.client
 
     def call(self, request: LLMRequest) -> dict:
         """同步调用 LLM，返回完整响应"""
         payload = self._build_payload(request, stream=False)
         headers = self._headers()
         url = f"{self.api_base}/chat/completions"
-        resp = self.client.post(url, json=payload, headers=headers)
+        with self._borrow_client() as client:
+            resp = client.post(url, json=payload, headers=headers)
         _raise_for_llm_status(resp, "Chat Completions")
         return resp.json()
 
@@ -134,7 +134,10 @@ class OpenAICompatibleProvider(LLMModel):
         headers = self._headers()
         url = f"{self.api_base}/chat/completions"
 
-        with self.client.stream("POST", url, json=payload, headers=headers) as resp:
+        with (
+            self._borrow_client() as client,
+            client.stream("POST", url, json=payload, headers=headers) as resp,
+        ):
             _raise_for_llm_status(resp, "Chat Completions")
             yield from iter_sse_objects(resp.iter_lines(), require_complete=True)
 
@@ -255,6 +258,12 @@ class OpenAICompatibleProvider(LLMModel):
 
         return openai_messages
 
+    def _borrow_client(self):
+        # 测试/外部调用方替换 client 时只借用，不接管其生命周期。
+        if self.client is not self._pooled_client:
+            return nullcontext(self.client)
+        return self._client_pool.lease(self.api_base, self.timeout)
+
     def _headers(self) -> dict:
         """构建 API 请求头"""
         return {
@@ -280,6 +289,7 @@ class OpenAIResponsesProvider(LLMModel):
         timeout: int = 180,
         extra_headers: dict[str, str] | None = None,
         store_response: bool | None = None,
+        client_pool: LLMClientPool | None = None,
     ):
         super().__init__(model=model)
         self.api_key = api_key
@@ -287,14 +297,17 @@ class OpenAIResponsesProvider(LLMModel):
         self.timeout = timeout
         self.extra_headers = extra_headers or {}
         self.store_response = store_response
-        self.client = _get_shared_httpx_client(self.api_base, timeout)
+        self._client_pool = client_pool if client_pool is not None else default_llm_client_pool
+        self.client = self._client_pool.get(self.api_base, timeout)
+        self._pooled_client = self.client
 
     def call(self, request: LLMRequest) -> dict:
         """Call the Responses API and return a Chat Completions shaped response."""
         payload = self._build_payload(request, stream=False)
         headers = self._headers()
         url = f"{self.api_base}/responses"
-        resp = self.client.post(url, json=payload, headers=headers)
+        with self._borrow_client() as client:
+            resp = client.post(url, json=payload, headers=headers)
         _raise_for_llm_status(resp, "Responses")
         return self._adapt_response_to_chat(resp.json())
 
@@ -305,7 +318,10 @@ class OpenAIResponsesProvider(LLMModel):
         url = f"{self.api_base}/responses"
 
         state: dict[str, Any] = {"saw_function_call": False, "argument_buffers": {}}
-        with self.client.stream("POST", url, json=payload, headers=headers) as resp:
+        with (
+            self._borrow_client() as client,
+            client.stream("POST", url, json=payload, headers=headers) as resp,
+        ):
             _raise_for_llm_status(resp, "Responses")
             for event in iter_sse_objects(resp.iter_lines(), require_complete=True):
                 yield from self._stream_event_to_chat_chunks(event, state)
@@ -553,7 +569,10 @@ class OpenAIResponsesProvider(LLMModel):
         if event_type in {"response.failed", "error"}:
             error = event.get("error") or event.get("response", {}).get("error") or {}
             message = error.get("message") if isinstance(error, dict) else str(error)
-            chunks.append({"error": {"message": message or "Responses API call failed"}})
+            detail = {"message": message or "Responses API call failed"}
+            if isinstance(error, dict) and error.get("code"):
+                detail["code"] = error["code"]
+            chunks.append({"error": detail})
 
         return chunks
 
@@ -575,6 +594,12 @@ class OpenAIResponsesProvider(LLMModel):
     def _model_prefers_default_temperature(self, model: str) -> bool:
         normalized = (model or "").lower()
         return "codex" in normalized or normalized.startswith(("gpt-5", "o1", "o3", "o4"))
+
+    def _borrow_client(self):
+        # 测试/外部调用方替换 client 时只借用，不接管其生命周期。
+        if self.client is not self._pooled_client:
+            return nullcontext(self.client)
+        return self._client_pool.lease(self.api_base, self.timeout)
 
     def _headers(self) -> dict:
         headers = {

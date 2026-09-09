@@ -24,6 +24,8 @@ from app.core.agent.delegation_runtime import (
     LinkedCancellation,
 )
 from app.core.tools.base_tool import BaseTool
+from app.core.tools.call_context import ToolCallContext, bind_legacy_tool
+from app.core.tools.result_metadata import ToolResultMetadata, normalize_tool_metadata
 from app.schemas.delegation import DelegateAgentRequest, DelegatedTask
 
 
@@ -403,11 +405,14 @@ class SubAgentRunner:
         dependencies: list[dict[str, Any]],
     ) -> dict[str, Any]:
         child = None
+        resource_lease = None
         task = live.task
         result = self._empty_result(task, "success", "", live.started)
         try:
             if live.token.is_set():
                 raise AgentCancelledError("Sub-agent cancelled before starting")
+            borrow_resources = getattr(self.parent_agent, "borrow_runtime_resources", None)
+            resource_lease = borrow_resources() if borrow_resources is not None else None
             child = Agent(
                 system_prompt=f"{task.role.get('system_prompt') or ''}\n\n{_CHILD_POLICY}",
                 model=self.parent_agent.model,
@@ -421,6 +426,8 @@ class SubAgentRunner:
                 enable_skills=self.parent_agent.enable_skills,
                 multi_agent_depth=int(getattr(self.parent_agent, "multi_agent_depth", 0) or 0) + 1,
                 settings=self.settings,
+                runtime_resources=resource_lease,
+                user_id=getattr(self.parent_agent, "user_id", None),
             )
             message = task.task
             if shared_context:
@@ -446,6 +453,8 @@ class SubAgentRunner:
         except Exception as exc:
             result.update(status="error", error=str(exc))
         finally:
+            if resource_lease is not None:
+                resource_lease.close()
             if child is not None:
                 for name in ("evidence", "sources", "rendered_images"):
                     result[name] = list(getattr(child, f"last_{name}", []) or [])
@@ -482,46 +491,24 @@ class SubAgentRunner:
         tool_name = data.get("tool_name")
         if tool_name not in live.task.tool_names:
             return
-        for group in ("evidence", "sources", "rendered_images"):
-            raw_items = data.get(group)
-            items = list(raw_items) if isinstance(raw_items, list) else []
-            if group == "rendered_images" and tool_name == "render_image":
-                items.append(data.get("result"))
+        metadata = normalize_tool_metadata(
+            status=data["status"],
+            result=data.get("result"),
+            metadata=data,
+            tool_name=tool_name,
+        )
+        for group, items in metadata.items():
             captured = live.completed_metadata.setdefault(group, {})
             for item in items:
-                if not isinstance(item, dict):
-                    continue
-                item_id = str(item.get("artifact_id" if group == "rendered_images" else "id") or "")
-                if not item_id or item_id in captured:
-                    continue
-                if group == "rendered_images":
-                    if not isinstance(item.get("artifact_id"), str):
-                        continue
-                    # 原始制图结果含诊断和排版输入；超时快照仅保留图片引用，绝不复制字节。
-                    item = {
-                        key: item[key]
-                        for key in ("artifact_id", "width", "height", "files")
-                        if key in item
-                    }
-                captured[item_id] = copy.deepcopy(item)
+                item_id = str(item.get("artifact_id" if group == "rendered_images" else "id"))
+                captured.setdefault(item_id, item)
 
     @staticmethod
     def _merge_completed_metadata(live: RunningTask, result: dict[str, Any]) -> dict[str, Any]:
-        merged = dict(result)
-        for group in ("evidence", "sources", "rendered_images"):
-            items: dict[str, dict[str, Any]] = {}
-            for item in result.get(group) or []:
-                if isinstance(item, dict):
-                    item_id = str(
-                        item.get("artifact_id" if group == "rendered_images" else "id") or ""
-                    )
-                    if item_id:
-                        items.setdefault(item_id, item)
-            for item_id, item in live.completed_metadata.get(group, {}).items():
-                items.setdefault(item_id, item)
-            merged[group] = list(items.values())
-        # 保留原始完成数量，交给既有 compact_batch_results 一次性去重/限额并报告截断。
-        return merged
+        completed = {
+            group: list(items.values()) for group, items in live.completed_metadata.items()
+        }
+        return {**result, **ToolResultMetadata.merge(result, completed).as_dict()}
 
     @staticmethod
     def _empty_result(
@@ -546,19 +533,5 @@ class SubAgentRunner:
 
     @staticmethod
     def _clone_tool(tool: BaseTool) -> BaseTool:
-        # 不重新执行构造函数，避免无用服务实例/外部连接；只复制调用状态和可变配置。
-        cloned = copy.copy(tool)
-        if hasattr(tool, "config"):
-            cloned.config = copy.deepcopy(tool.config)
-        for name in (
-            "model",
-            "context",
-            "event_emitter",
-            "current_tool_call",
-            "cancel_event",
-            "thinking_enabled",
-            "delegation_runtime",
-        ):
-            if hasattr(cloned, name):
-                setattr(cloned, name, None)
-        return cloned
+        # 旧工具的可变 config 与调用属性只在兼容边界隔离，重型服务仍共享。
+        return bind_legacy_tool(tool, ToolCallContext())

@@ -2,15 +2,9 @@
 
 import threading
 import time
-from typing import Protocol
 
-
-class CancellationSignal(Protocol):
-    def is_set(self) -> bool: ...
-
-
-class AgentCancelledError(RuntimeError):
-    """Raised when an agent run is cancelled or its delegated deadline expires."""
+from app.core.tools.call_context import AgentCancelledError as AgentCancelledError
+from app.core.tools.call_context import CancellationSignal as CancellationSignal
 
 
 class DelegationRuntime:

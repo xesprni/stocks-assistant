@@ -4,11 +4,15 @@
 """
 
 import logging
+import math
 import os
+import signal
 import subprocess
+import time
 from typing import Any
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.call_context import AgentCancelledError, ToolCallContext
 
 logger = logging.getLogger("stocks-assistant.tools.bash")
 
@@ -44,27 +48,50 @@ class BashTool(BaseTool):
         self.default_timeout = self.config.get("timeout", 30)
 
     def execute(self, args: dict[str, Any]) -> ToolResult:
+        return self.invoke(args, ToolCallContext.from_legacy_tool(self))
+
+    def invoke(self, args: dict[str, Any], context: ToolCallContext) -> ToolResult:
         command = args.get("command", "").strip()
-        timeout = args.get("timeout", self.default_timeout)
+        try:
+            timeout = float(args.get("timeout", self.default_timeout))
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return ToolResult.fail("Error: timeout must be a finite positive number")
         if not command:
             return ToolResult.fail("Error: command is required")
         dangerous = ["rm -rf /", "rm -rf /*", "shutdown", "reboot", "mkfs", "dd if=/dev/zero"]
         if any(p in command.lower() for p in dangerous):
             return ToolResult.fail("Safety: command blocked")
+        process = None
         try:
-            result = subprocess.run(
+            context.raise_if_cancelled()
+            process = subprocess.Popen(
                 command,
                 shell=True,
                 cwd=self.cwd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
+                start_new_session=os.name == "posix",
             )
-            output = result.stdout
-            if result.stderr:
-                output += ("\n" + result.stderr) if result.stdout else result.stderr
+            deadline = time.monotonic() + timeout
+            while True:
+                context.raise_if_cancelled()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            context.raise_if_cancelled()
+            output = stdout
+            if stderr:
+                output += ("\n" + stderr) if stdout else stderr
             lines = output.split("\n")
             if len(lines) > MAX_LINES:
                 lines = lines[-MAX_LINES:]
@@ -72,10 +99,45 @@ class BashTool(BaseTool):
             total_bytes = len(output.encode("utf-8"))
             if total_bytes > MAX_BYTES:
                 output = output[-MAX_BYTES:] + f"\n\n[Truncated to {MAX_BYTES} bytes]"
-            if result.returncode != 0:
-                return ToolResult.fail({"output": output, "exit_code": result.returncode})
-            return ToolResult.success({"output": output, "exit_code": result.returncode})
+            if process.returncode != 0:
+                return ToolResult.fail({"output": output, "exit_code": process.returncode})
+            return ToolResult.success({"output": output, "exit_code": process.returncode})
+        except AgentCancelledError:
+            if process is not None:
+                _stop_process_group(process)
+            raise
         except subprocess.TimeoutExpired:
+            if process is not None:
+                _stop_process_group(process)
             return ToolResult.fail(f"Command timed out after {timeout}s")
         except Exception as e:
             return ToolResult.fail(f"Error: {e}")
+
+        finally:
+            if process is not None and process.poll() is None:
+                _stop_process_group(process)
+
+
+def _stop_process_group(process: subprocess.Popen[str]) -> None:
+    """停止整个 shell 进程组，避免只杀 shell 后遗留继续写文件的子进程。"""
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        process.communicate(timeout=0.3)
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        # shell 可能先退出但其子进程忽略 TERM；即便主进程已完成也回收整个组。
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            elif process.poll() is None:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        process.communicate()

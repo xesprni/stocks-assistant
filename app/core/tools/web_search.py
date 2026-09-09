@@ -21,6 +21,7 @@ logger = logging.getLogger("stocks-assistant.tools.web_search")
 
 
 class WebSearchTool(BaseTool):
+    read_only = True
     name: str = "web_search"
     description: str = (
         "Search the web for real-time information. Returns titles, URLs, and snippets."

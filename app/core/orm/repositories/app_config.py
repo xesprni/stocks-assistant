@@ -206,31 +206,34 @@ class AppConfigRepository:
                 config["multi_agent_roles"] = subagent_roles
             return config
 
-    def set_config_values(self, values: dict[str, Any]) -> None:
+    def set_config_values(self, values: dict[str, Any], *, session: Session | None = None) -> None:
         if not values:
             return
+        if session is None:
+            with session_scope(self.session_factory) as own_session:
+                self.set_config_values(values, session=own_session)
+            return
         now = utc_now()
-        with session_scope(self.session_factory) as session:
-            for key, value in values.items():
-                if key == "multi_agent_roles":
-                    self.save_subagent_roles(value, session=session)
-                    existing = session.get(AppConfig, key)
-                    if existing:
-                        session.delete(existing)
-                    continue
-                encoded = self._encode_config_value(session, key, value)
-                stmt = sqlite_insert(AppConfig).values(
-                    key=key, value_json=json_dumps(encoded), updated_at=now
+        for key, value in values.items():
+            if key == "multi_agent_roles":
+                self.save_subagent_roles(value, session=session)
+                existing = session.get(AppConfig, key)
+                if existing:
+                    session.delete(existing)
+                continue
+            encoded = self._encode_config_value(session, key, value)
+            stmt = sqlite_insert(AppConfig).values(
+                key=key, value_json=json_dumps(encoded), updated_at=now
+            )
+            session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=[AppConfig.key],
+                    set_={
+                        "value_json": stmt.excluded.value_json,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
                 )
-                session.execute(
-                    stmt.on_conflict_do_update(
-                        index_elements=[AppConfig.key],
-                        set_={
-                            "value_json": stmt.excluded.value_json,
-                            "updated_at": stmt.excluded.updated_at,
-                        },
-                    )
-                )
+            )
 
     def has_config(self) -> bool:
         with session_scope(self.session_factory) as session:
@@ -246,28 +249,33 @@ class AppConfigRepository:
                 for row in rows
             }
 
-    def set_user_config_values(self, user_id: str, values: dict[str, Any]) -> None:
+    def set_user_config_values(
+        self, user_id: str, values: dict[str, Any], *, session: Session | None = None
+    ) -> None:
         if not user_id or not values:
             return
+        if session is None:
+            with session_scope(self.session_factory) as own_session:
+                self.set_user_config_values(user_id, values, session=own_session)
+            return
         now = utc_now()
-        with session_scope(self.session_factory) as session:
-            for key, value in values.items():
-                encoded = self._encode_config_value(session, key, value)
-                stmt = sqlite_insert(UserConfig).values(
-                    user_id=user_id,
-                    key=key,
-                    value_json=json_dumps(encoded),
-                    updated_at=now,
+        for key, value in values.items():
+            encoded = self._encode_config_value(session, key, value)
+            stmt = sqlite_insert(UserConfig).values(
+                user_id=user_id,
+                key=key,
+                value_json=json_dumps(encoded),
+                updated_at=now,
+            )
+            session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=[UserConfig.user_id, UserConfig.key],
+                    set_={
+                        "value_json": stmt.excluded.value_json,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
                 )
-                session.execute(
-                    stmt.on_conflict_do_update(
-                        index_elements=[UserConfig.user_id, UserConfig.key],
-                        set_={
-                            "value_json": stmt.excluded.value_json,
-                            "updated_at": stmt.excluded.updated_at,
-                        },
-                    )
-                )
+            )
 
     def migrate_config_json_once(self, config_path: str | Path = "config.json") -> dict[str, Any]:
         if self.get_system_value("migration.config_json"):

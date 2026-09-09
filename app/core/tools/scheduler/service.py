@@ -9,6 +9,8 @@
 
 import asyncio
 import logging
+import threading
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -34,6 +36,9 @@ class SchedulerService:
         self.alert_callback = alert_callback
         self.running = False
         self._task: asyncio.Task | None = None
+        self._executions: dict[asyncio.Task, tuple[threading.Event, threading.Event]] = {}
+        self._execution_lock = threading.RLock()
+        self._stopping = False
 
     async def start(self):
         if self.running:
@@ -43,11 +48,39 @@ class SchedulerService:
         logger.info("Scheduler service started")
 
     async def stop(self):
-        self.running = False
-        if self._task:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+        with self._execution_lock:
+            self.running = False
+            self._stopping = True
+            executions = list(self._executions.values())
+        try:
+            for cancel_event, _finished in executions:
+                cancel_event.set()
+            task = self._task
+            if task is not None and not task.done():
+
+                async def stop_runner():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+
+                if task.get_loop() is asyncio.get_running_loop():
+                    await stop_runner()
+                else:
+                    await asyncio.wrap_future(
+                        asyncio.run_coroutine_threadsafe(stop_runner(), task.get_loop())
+                    )
+            if executions:
+                # scheduler 工具可从独立事件循环运行。只等线程安全的完成信号，
+                # 不能把其他 loop 的 Task 交给当前 loop 的 asyncio.wait。
+                def wait_finished():
+                    deadline = time.monotonic() + 5
+                    for _cancel, finished in executions:
+                        finished.wait(max(0, deadline - time.monotonic()))
+
+                await asyncio.to_thread(wait_finished)
+        finally:
+            with self._execution_lock:
+                self._stopping = False
         logger.info("Scheduler service stopped")
 
     async def _run_loop(self):
@@ -88,6 +121,35 @@ class SchedulerService:
     async def _execute_task(
         self, task: dict, now: datetime, trigger: str, update_schedule: bool
     ) -> dict:
+        with self._execution_lock:
+            if self._stopping:
+                raise RuntimeError("Scheduler is stopping; retry after shutdown completes")
+            cancel_event, finished = threading.Event(), threading.Event()
+            execution = asyncio.create_task(
+                self._run_task(task, now, trigger, update_schedule, cancel_event)
+            )
+            self._executions[execution] = (cancel_event, finished)
+            execution.add_done_callback(self._execution_finished)
+        return await asyncio.shield(execution)
+
+    def _execution_finished(self, execution: asyncio.Task) -> None:
+        with self._execution_lock:
+            state = self._executions.pop(execution, None)
+        if state is not None:
+            state[1].set()
+        if not execution.cancelled() and execution.exception() is not None:
+            logger.error(
+                "Scheduled execution failed during finalization", exc_info=execution.exception()
+            )
+
+    async def _run_task(
+        self,
+        task: dict,
+        now: datetime,
+        trigger: str,
+        update_schedule: bool,
+        cancel_event: threading.Event,
+    ) -> dict:
         task_id = task["id"]
         # 使用调用方注入的运行时间作为业务时间；另用墙钟差计算耗时，保证补跑和测试可复现。
         started = now
@@ -97,6 +159,7 @@ class SchedulerService:
         task_for_execution = self._with_execution_context(
             task, trigger=trigger, due_at=now, started_at=started
         )
+        task_for_execution["_cancel_event"] = cancel_event
         try:
             output = await asyncio.to_thread(self.execute_callback, task_for_execution)
             result = str(output or "")

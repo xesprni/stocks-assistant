@@ -307,15 +307,20 @@ class IdentityRepository:
         action: str,
         resource: str = "",
         detail: dict[str, Any] | None = None,
+        *,
+        session: Session | None = None,
     ) -> None:
-        with session_scope(self.session_factory) as session:
-            session.add(
-                AuditEvent(
-                    id=str(uuid.uuid4()),
-                    user_id=user_id,
-                    action=action,
-                    resource=resource,
-                    detail_json=json_dumps(detail or {}),
-                    created_at=utc_now(),
-                )
+        if session is None:
+            with session_scope(self.session_factory) as own_session:
+                self.audit(user_id, action, resource, detail, session=own_session)
+            return
+        session.add(
+            AuditEvent(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                action=action,
+                resource=resource,
+                detail_json=json_dumps(detail or {}),
+                created_at=utc_now(),
             )
+        )

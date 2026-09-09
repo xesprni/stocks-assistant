@@ -4,7 +4,6 @@
 所有 API 路由通过 app.api.router 统一注册。
 """
 
-import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -36,6 +35,9 @@ async def lifespan(app: FastAPI):
     """
     settings = get_settings()
     setup_logging(debug=settings.debug)
+    from app.core.agent.run_service import chat_runs
+
+    chat_runs.open()
 
     # 确保工作空间子目录存在
     workspace = Path(settings.workspace_dir).expanduser()
@@ -78,17 +80,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        from app.core.agent.run_service import chat_runs
-        from app.deps import close_mcp_managers
+        from app.core.configuration.lifecycle import shutdown_runtime
 
-        chat_runs.close()
-
-        try:
-            if scheduler_service is not None:
-                await scheduler_service.stop()
-        finally:
-            # 用户请求和运行时配置可创建更多 manager，调度关闭失败也必须释放它们。
-            await asyncio.to_thread(close_mcp_managers)
+        await shutdown_runtime()
 
 
 app = FastAPI(

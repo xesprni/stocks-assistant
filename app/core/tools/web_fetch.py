@@ -22,6 +22,7 @@ logger = logging.getLogger("stocks-assistant.tools.web_fetch")
 
 
 class WebFetchTool(BaseTool):
+    read_only = True
     name: str = "web_fetch"
     description: str = "Fetch content from a URL. Extracts readable text from HTML pages."
     params: dict = {

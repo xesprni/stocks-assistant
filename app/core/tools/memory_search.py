@@ -9,6 +9,7 @@ import concurrent.futures
 import logging
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.call_context import ToolCallContext
 
 logger = logging.getLogger("stocks-assistant.tools.memory_search")
 
@@ -16,6 +17,7 @@ _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 class MemorySearchTool(BaseTool):
+    read_only = True
     name: str = "memory_search"
     description: str = (
         "Search the user's long-term memory using semantic and keyword search. "
@@ -48,17 +50,11 @@ class MemorySearchTool(BaseTool):
         self.memory_manager = memory_manager
         self.user_id = user_id
 
-    def _get_memory_manager(self):
-        if self.memory_manager:
-            return self.memory_manager
-        # Try to get from agent context
-        ctx = getattr(self, "context", None)
-        if ctx and hasattr(ctx, "memory_manager"):
-            return ctx.memory_manager
-        return None
-
     def execute(self, args: dict) -> ToolResult:
-        mgr = self._get_memory_manager()
+        return self.invoke(args, ToolCallContext.from_legacy_tool(self))
+
+    def invoke(self, args: dict, context: ToolCallContext) -> ToolResult:
+        mgr = self.memory_manager or context.memory_manager
         if not mgr:
             return ToolResult.fail("Memory not initialized")
         query = args.get("query")

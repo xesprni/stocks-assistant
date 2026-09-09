@@ -107,6 +107,9 @@ class PortfolioTool(BaseTool):
         "required": ["action"],
     }
 
+    def is_read_only(self, params: dict[str, Any]) -> bool:
+        return str(params.get("action") or "").strip().lower() in {"search", "list", "get"}
+
     def __init__(
         self, portfolio_service: Any = None, user_id: str | None = None, settings: Any = None
     ):

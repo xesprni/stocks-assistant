@@ -3,13 +3,17 @@
 提供工具列表和直接执行工具的接口。
 """
 
+from contextlib import ExitStack
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from app.config import get_effective_settings
 from app.core.security import CurrentUser, require_permissions, user_workspace_dir
+from app.core.tools.call_context import ToolCallContext
 from app.core.tools.permissions import is_tool_allowed_for_agent, mcp_server_name_from_tool
 from app.core.tools.render_artifacts import rendered_image_path
+from app.core.tools.result_metadata import normalize_tool_metadata
 from app.core.tools.tool_manager import ToolManager
 from app.deps import get_mcp_manager_for_user, get_memory_manager_for_user
 from app.schemas.tools import ToolExecuteRequest, ToolExecuteResponse, ToolListResponse
@@ -38,13 +42,14 @@ def get_rendered_image(
     )
 
 
-def _tool_manager_for_user(current_user: CurrentUser, settings) -> ToolManager:
+def _tool_manager_for_user(current_user: CurrentUser, settings, memory_manager=None) -> ToolManager:
     workspace_dir = user_workspace_dir(settings.workspace_dir, current_user.id)
     manager = ToolManager(workspace_dir=workspace_dir, user_id=current_user.id)
-    memory_manager = (
-        get_memory_manager_for_user(current_user.id) if settings.memory_enabled else None
+    if memory_manager is None and settings.memory_enabled:
+        memory_manager = get_memory_manager_for_user(current_user.id)
+    manager.load_builtin_tools(
+        memory_manager=memory_manager, user_id=current_user.id, settings=settings
     )
-    manager.load_builtin_tools(memory_manager=memory_manager, user_id=current_user.id)
     return manager
 
 
@@ -77,31 +82,50 @@ def execute_tool(
     request: ToolExecuteRequest,
     current_user: CurrentUser = Depends(require_permissions("tools:execute")),
 ):
-    settings = get_effective_settings(current_user.id)
-    mgr = _tool_manager_for_user(current_user, settings)
-    tool = mgr.get_tool(name)
-    if not tool and name.startswith("mcp_") and settings.mcp_servers:
-        tool = next(
-            (
-                item
-                for item in get_mcp_manager_for_user(current_user.id).get_tools()
-                if item.name == name
-            ),
-            None,
-        )
-    if not tool:
-        raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
-
     import time
 
-    start = time.time()
-    result = tool.execute_tool(request.arguments)
-    execution_time = time.time() - start
+    from app import deps
 
-    return ToolExecuteResponse(
-        status=result.status,
-        result=result.result,
-        evidence=result.ext_data.get("evidence", []) if isinstance(result.ext_data, dict) else [],
-        sources=result.ext_data.get("sources", []) if isinstance(result.ext_data, dict) else [],
-        execution_time=execution_time,
-    )
+    settings = get_effective_settings(current_user.id)
+    with ExitStack() as resources:
+        memory = (
+            resources.enter_context(
+                deps.lease_memory_manager_for_user(current_user.id, settings=settings)
+            )
+            if settings.memory_enabled
+            else None
+        )
+        mgr = _tool_manager_for_user(current_user, settings, memory_manager=memory)
+        tool = mgr.get_tool(name)
+        if not tool and name.startswith("mcp_") and settings.mcp_servers:
+            manager = resources.enter_context(
+                deps.lease_mcp_manager_for_user(current_user.id, settings=settings)
+            )
+            tool = next((item for item in manager.get_tools() if item.name == name), None)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+
+        context = ToolCallContext(
+            tool_name=name,
+            user_id=current_user.id,
+            settings=settings,
+            memory_manager=memory,
+            skill_manager=deps.get_skill_manager(),
+            workspace_dir=user_workspace_dir(settings.workspace_dir, current_user.id),
+        )
+        start = time.monotonic()
+        result = tool.execute_tool(request.arguments, context)
+        execution_time = time.monotonic() - start
+        metadata = normalize_tool_metadata(
+            status=result.status,
+            result=result.result,
+            metadata=result.ext_data,
+            tool_name=name,
+        )
+        return ToolExecuteResponse(
+            status=result.status,
+            result=result.result,
+            evidence=metadata["evidence"],
+            sources=metadata["sources"],
+            execution_time=execution_time,
+        )

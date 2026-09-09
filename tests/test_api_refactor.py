@@ -284,7 +284,7 @@ def test_system_mcp_timeout_refresh_uses_system_settings(monkeypatch):
         service, "get_effective_settings", lambda user_id: Settings(mcp_tool_timeout_seconds=7)
     )
     monkeypatch.setattr(service, "get_settings", lambda: Settings(mcp_tool_timeout_seconds=90))
-    monkeypatch.setattr(service, "reset_settings_cache", lambda: None)
+    monkeypatch.setattr(service, "reset_settings_cache", lambda user_id=None: None)
     monkeypatch.setattr(service, "invalidate_runtime", MagicMock())
     manager = MagicMock()
     get_manager = MagicMock(return_value=manager)
@@ -294,7 +294,9 @@ def test_system_mcp_timeout_refresh_uses_system_settings(monkeypatch):
     )
     get_manager.assert_called_once_with(None)
     manager.set_tool_timeout_seconds.assert_called_once_with(90)
-    store.set_config_values.assert_called_once_with({"mcp_tool_timeout_seconds": 90.0})
+    store.apply_config_update.assert_called_once_with(
+        "alice", user_patch={}, system_patch={"mcp_tool_timeout_seconds": 90.0}
+    )
 
 
 def test_curator_capacity_covers_executor_backlog_and_recovers(monkeypatch):
@@ -314,7 +316,10 @@ def test_curator_capacity_covers_executor_backlog_and_recovers(monkeypatch):
 
 @pytest.mark.parametrize("scheduler_stop_fails", [False, True])
 def test_lifespan_closes_runtime_user_mcp_managers(monkeypatch, tmp_path, scheduler_stop_fails):
+    import app.core.agent.run_service as runs
     import app.main as main_module
+
+    monkeypatch.setattr(runs, "chat_runs", runs.ChatRunManager())
 
     settings = Settings(
         workspace_dir=str(tmp_path), scheduler_enabled=scheduler_stop_fails, mcp_servers={}
@@ -325,7 +330,9 @@ def test_lifespan_closes_runtime_user_mcp_managers(monkeypatch, tmp_path, schedu
     scheduler = SimpleNamespace(
         start=AsyncMock(), stop=AsyncMock(side_effect=RuntimeError("scheduler stop failed"))
     )
-    monkeypatch.setattr(deps, "get_scheduler_service", lambda: scheduler)
+    scheduler_factory = MagicMock(return_value=scheduler)
+    scheduler_factory.cache_info.return_value = SimpleNamespace(currsize=int(scheduler_stop_fails))
+    monkeypatch.setattr(deps, "get_scheduler_service", scheduler_factory)
     manager = MagicMock()
 
     async def run_lifecycle():

@@ -14,6 +14,7 @@ logger = logging.getLogger("stocks-assistant.tools.read_file")
 
 
 class ReadFileTool(BaseTool):
+    read_only = True
     name: str = "read_file"
     description: str = "Read file content from workspace. Returns content with line numbers."
     params: dict = {

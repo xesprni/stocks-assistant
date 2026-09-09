@@ -489,9 +489,16 @@ _config_instance: Settings | None = None
 def get_settings() -> Settings:
     """获取全局配置单例（懒加载）"""
     global _config_instance
-    if _config_instance is None:
-        _config_instance = _load_settings()
-    return _config_instance
+    while True:
+        with _effective_config_cache_lock:
+            if _config_instance is not None:
+                return _config_instance
+            generation = _effective_config_generation
+        loaded = _load_settings()
+        with _effective_config_cache_lock:
+            if generation == _effective_config_generation:
+                _config_instance = loaded
+                return loaded
 
 
 def get_effective_config(user_id: str | None = None) -> dict[str, Any]:
@@ -500,15 +507,25 @@ def get_effective_config(user_id: str | None = None) -> dict[str, Any]:
     结果带短 TTL 缓存，避免同一请求内多次调用（chat 流程会调用 3+ 次）
     每次都查 SQLite。配置写入时通过 ``clear_effective_settings_cache`` 失效。
     """
-    cache_key: tuple = (user_id,)
-    now = _time.monotonic()
-    with _effective_config_cache_lock:
-        cached = _effective_config_cache.get(cache_key)
-        if cached is not None:
-            expires_at, payload = cached
-            if expires_at > now:
-                return deepcopy(payload)
+    cache_key = (user_id,)
+    while True:
+        now = _time.monotonic()
+        with _effective_config_cache_lock:
+            generation = (_effective_config_generation, _user_config_generations.get(user_id, 0))
+            cached = _effective_config_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                return deepcopy(cached[1])
+        result = _load_effective_config(user_id)
+        with _effective_config_cache_lock:
+            current = (_effective_config_generation, _user_config_generations.get(user_id, 0))
+            # 数据库读取不占缓存锁；失效前开始的读取不得重新发布到新代次。
+            if generation != current:
+                continue
+            _effective_config_cache[cache_key] = (now + _EFFECTIVE_CONFIG_TTL, deepcopy(result))
+            return deepcopy(result)
 
+
+def _load_effective_config(user_id: str | None) -> dict[str, Any]:
     from app.core.app_store import get_app_store
 
     store = get_app_store()
@@ -537,9 +554,7 @@ def get_effective_config(user_id: str | None = None) -> dict[str, Any]:
             result["longbridge_auth_mode"] = "apikey"
             result["longbridge_oauth_client_id"] = ""
 
-    with _effective_config_cache_lock:
-        _effective_config_cache[cache_key] = (now + _EFFECTIVE_CONFIG_TTL, deepcopy(result))
-    return deepcopy(result)
+    return result
 
 
 def get_effective_settings(user_id: str | None = None) -> Settings:
@@ -550,22 +565,38 @@ def get_effective_settings(user_id: str | None = None) -> Settings:
 # --- 有效配置 TTL 缓存 ---
 # 每次 chat 请求会调用 3+ 次 get_effective_settings，每次都查 SQLite 很浪费。
 # 缓存按 user_id 隔离，TTL 30s，配置写入时通过 clear_effective_settings_cache 失效。
-_effective_config_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}
+_effective_config_cache: dict[tuple[str | None], tuple[float, dict[str, Any]]] = {}
+_effective_config_generation = 0
+_user_config_generations: dict[str | None, int] = {}
 _effective_config_cache_lock = threading.Lock()
 _EFFECTIVE_CONFIG_TTL = 30.0
 
 
-def clear_effective_settings_cache() -> None:
-    """清除有效配置缓存。配置写入后调用，确保新配置立即生效。"""
+def clear_effective_settings_cache(user_id: str | None = None) -> None:
+    """按作用域推进缓存代次；系统配置变更影响所有用户。"""
+    global _effective_config_generation
     with _effective_config_cache_lock:
-        _effective_config_cache.clear()
+        if user_id is None:
+            _effective_config_generation += 1
+            _effective_config_cache.clear()
+            _user_config_generations.clear()
+        else:
+            _user_config_generations[user_id] = _user_config_generations.get(user_id, 0) + 1
+            _effective_config_cache.pop((user_id,), None)
 
 
-def reset_settings_cache() -> None:
-    """配置持久化后重置公共读取入口，调用方无需操作私有单例。"""
-    global _config_instance
-    _config_instance = None
-    clear_effective_settings_cache()
+def reset_settings_cache(user_id: str | None = None) -> None:
+    """配置提交后刷新公共入口，个人配置不会淘汰其他用户或系统实例。"""
+    global _config_instance, _effective_config_generation
+    with _effective_config_cache_lock:
+        if user_id is None:
+            _config_instance = None
+            _effective_config_generation += 1
+            _effective_config_cache.clear()
+            _user_config_generations.clear()
+        else:
+            _user_config_generations[user_id] = _user_config_generations.get(user_id, 0) + 1
+            _effective_config_cache.pop((user_id,), None)
 
 
 def _load_settings() -> Settings:

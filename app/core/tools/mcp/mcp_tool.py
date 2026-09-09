@@ -10,9 +10,11 @@ import asyncio
 import logging
 import shutil
 import threading
+import time
 from typing import Any
 
 from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.call_context import AgentCancelledError, CancellationSignal, ToolCallContext
 from app.core.tools.mcp.config import (
     LEGACY_SSE_TRANSPORT,
     STANDARD_HTTP_TRANSPORT,
@@ -56,10 +58,20 @@ class MCPToolAdapter(BaseTool):
         self._manager = manager
 
     def execute(self, params: dict) -> ToolResult:
-        """\u540c\u6b65执行 MCP 工具调用，内部将异步调用托管给 MCPManager。"""
+        return self.invoke(params, ToolCallContext.from_legacy_tool(self))
+
+    def invoke(self, params: dict, context: ToolCallContext) -> ToolResult:
         try:
-            result = self._manager.call_tool_sync(self.server_name, self.tool_name, params)
+            context.raise_if_cancelled()
+            if context.cancel_event is None:
+                result = self._manager.call_tool_sync(self.server_name, self.tool_name, params)
+            else:
+                result = self._manager.call_tool_sync(
+                    self.server_name, self.tool_name, params, cancel_event=context.cancel_event
+                )
             return ToolResult.success(result)
+        except AgentCancelledError:
+            raise
         except Exception as e:
             error = self._manager._format_tool_error(e)
             logger.warning(
@@ -252,10 +264,42 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 self._oauth_authorization_urls.get(server_name),
             )
 
-    def call_tool_sync(self, server_name: str, tool_name: str, params: dict):
-        """同步调用指定 MCP 服务器的工具并返回结果。"""
+    def call_tool_sync(
+        self,
+        server_name: str,
+        tool_name: str,
+        params: dict,
+        *,
+        cancel_event: CancellationSignal | None = None,
+    ):
+        """同步等待异步调用；本地取消不能保证远端副作用已回滚。"""
         timeout = self._get_tool_timeout(server_name)
-        return self._run_sync(self._call_tool(server_name, tool_name, params), timeout=timeout + 5)
+        if cancel_event is None:
+            return self._run_sync(
+                self._call_tool(server_name, tool_name, params), timeout=timeout + 5
+            )
+        loop = self._ensure_loop()
+        future = asyncio.run_coroutine_threadsafe(
+            self._call_tool(server_name, tool_name, params), loop
+        )
+        deadline = time.monotonic() + timeout + 5
+        try:
+            while True:
+                if cancel_event.is_set():
+                    raise AgentCancelledError(
+                        "MCP call cancelled; external effects may have completed"
+                    )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("MCP call timed out; external effects may have completed")
+                try:
+                    return future.result(timeout=min(0.1, remaining))
+                except TimeoutError:
+                    if future.done():
+                        raise
+        finally:
+            if not future.done():
+                future.cancel()
 
     def set_tool_timeout_seconds(self, timeout: float) -> None:
         """更新默认 MCP 工具调用超时，用于运行时配置热更新。"""

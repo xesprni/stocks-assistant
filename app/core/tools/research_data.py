@@ -54,6 +54,7 @@ def _linked_record_evidence(payload: Any, *, symbol: str, source_type: str) -> l
 
 
 class GetSecurityNewsTool(BaseTool):
+    read_only = True
     name = "get_security_news"
     description = (
         "Get recent Longbridge news for a stock symbol with source and timestamp metadata."
@@ -102,6 +103,7 @@ class GetSecurityNewsTool(BaseTool):
 
 
 class GetSecurityInsightsTool(BaseTool):
+    read_only = True
     name = "get_security_insights"
     description = (
         "Get Longbridge filings, company profile, valuation, dividends, analyst ratings, "

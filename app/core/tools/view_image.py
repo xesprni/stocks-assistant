@@ -15,6 +15,7 @@ MAX_IMAGE_PIXELS = 50_000_000
 
 
 class ViewImageTool(BaseTool):
+    read_only = True
     name = "view_image"
     description = (
         "View a PNG or JPEG in your workspace using the current model's vision capability. "

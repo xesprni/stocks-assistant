@@ -126,8 +126,19 @@ class ChatRun:
     def close(self) -> None:
         with self._condition:
             self._closed = True
-            self._journal.close()
-            self._condition.notify_all()
+            try:
+                self._journal.close()
+            finally:
+                self._condition.notify_all()
+
+    def abort(self, error: str) -> None:
+        """日志无法写入时仍终止内存状态，避免订阅和同步请求永久等待。"""
+        with self._condition:
+            if self.completed_at is None:
+                self.status = "error"
+                self.result_data = {"error": error, "session_id": self.session_id}
+                self.completed_at = time.monotonic()
+            self.close()
 
 
 class ChatRunManager:
@@ -143,6 +154,7 @@ class ChatRunManager:
         self._max_runs = max_runs
         self._shutdown = threading.Event()
         self._reaper: threading.Thread | None = None
+        self._workers: set[threading.Thread] = set()
         self.recovered_input_stores: set[str] = set()
 
     def _prune(self) -> None:
@@ -221,44 +233,86 @@ class ChatRunManager:
             try:
                 if initialize:
                     initialize(run)
+                run.publish(
+                    {"type": "run_started", "timestamp": time.time(), "data": run.summary()}
+                )
             except Exception:
                 run.close()
                 raise
             self._runs[run.id] = run
             self._requests[(user_id, request_id)] = run.id
-            run.publish({"type": "run_started", "timestamp": time.time(), "data": run.summary()})
 
             def execute() -> None:
                 try:
-                    worker(run)
-                except Exception as exc:
-                    logger.exception("Chat run %s failed", run.id)
-                    run.publish(
-                        {
-                            "type": "error",
-                            "timestamp": time.time(),
-                            "data": {"error": str(exc), "session_id": run.session_id},
-                        }
-                    )
-                finally:
-                    if run.completed_at is None:
+                    try:
+                        worker(run)
+                    except Exception as exc:
+                        logger.exception("Chat run %s failed", run.id)
                         run.publish(
                             {
                                 "type": "error",
                                 "timestamp": time.time(),
-                                "data": {"error": "Chat run ended without a result"},
+                                "data": {"error": str(exc), "session_id": run.session_id},
                             }
                         )
-                    if self._shutdown.is_set():
-                        run.close()
+                    finally:
+                        if run.completed_at is None:
+                            run.publish(
+                                {
+                                    "type": "error",
+                                    "timestamp": time.time(),
+                                    "data": {"error": "Chat run ended without a result"},
+                                }
+                            )
+                        if self._shutdown.is_set():
+                            run.close()
+                except Exception as exc:
+                    logger.exception("Chat run %s could not finalize its event journal", run.id)
+                    try:
+                        run.abort(str(exc))
+                    except Exception:
+                        logger.exception("Chat run %s could not close its event journal", run.id)
+                finally:
+                    # 即使事件日志写入/关闭失败，也必须释放工作线程登记。
+                    with self.lock:
+                        self._workers.discard(threading.current_thread())
 
-            threading.Thread(target=execute, daemon=True, name=f"chat-{run.id[:8]}").start()
+            thread = threading.Thread(target=execute, daemon=True, name=f"chat-{run.id[:8]}")
+            self._workers.add(thread)
+            try:
+                thread.start()
+            except Exception:
+                self._workers.discard(thread)
+                self._runs.pop(run.id, None)
+                self._requests.pop((user_id, request_id), None)
+                run.close()
+                raise
             if self._reaper is None:
                 self._reaper = threading.Thread(target=self._reap, daemon=True, name="chat-cleanup")
-                self._reaper.start()
+                try:
+                    self._reaper.start()
+                except Exception:
+                    # 任务已经启动，清理线程失败不能让客户端重试并重复提交业务操作。
+                    self._reaper = None
+                    logger.exception("Could not start chat cleanup thread")
             return run
 
-    def close(self) -> None:
+    def open(self) -> None:
+        """允许同一进程重新进入应用生命周期，不复用上一轮关闭的日志。"""
+        with self.lock:
+            if not self._shutdown.is_set():
+                return
+            if self._workers:
+                raise RuntimeError("Previous chat workers are still stopping")
+            for run in self._runs.values():
+                run.close()
+            self._runs.clear()
+            self._requests.clear()
+            self.recovered_input_stores.clear()
+            self._reaper = None
+            self._shutdown.clear()
+
+    def close(self, timeout: float = 5.0) -> None:
         with self.lock:
             self._shutdown.set()
             for run in self._runs.values():
@@ -266,6 +320,13 @@ class ChatRunManager:
                     run.cancel()
                 else:
                     run.close()
+            workers = list(self._workers)
+            reaper = self._reaper
+        # worker 收尾也需要 manager 锁，等待必须放在锁外，且总等待时间有上限。
+        deadline = time.monotonic() + timeout
+        for thread in [*([reaper] if reaper is not None else []), *workers]:
+            if thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 chat_runs = ChatRunManager()

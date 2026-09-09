@@ -9,6 +9,7 @@ from app.core.tools.evidence import longbridge_evidence
 
 
 class GetFinancialReportsTool(BaseTool):
+    read_only = True
     name: str = "get_financial_reports"
     description: str = (
         "查询股票财报/基本面财务报表时使用此工具。Use this tool whenever the user asks for "

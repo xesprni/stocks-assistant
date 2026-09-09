@@ -14,6 +14,7 @@ from app.core.tools.portfolio_output import (
 
 
 class GetPortfolioPositionsTool(BaseTool):
+    read_only = True
     name: str = "get_portfolio_positions"
     description: str = (
         "查询当前用户本地持仓列表时使用此工具。Use this read-only internal tool when the user "

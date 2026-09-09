@@ -80,6 +80,14 @@ class SchedulerTool(BaseTool):
         "required": ["action"],
     }
 
+    def is_read_only(self, params: dict[str, Any]) -> bool:
+        return str(params.get("action") or "").strip().lower() in {
+            "list_task_runs",
+            "list_runs",
+            "list",
+            "get",
+        }
+
     def __init__(
         self, scheduler_service=None, task_store=None, run_store=None, user_id: str | None = None
     ):

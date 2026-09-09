@@ -7,6 +7,7 @@ from app.core.tools.evidence import evidence_for_source, evidence_metadata, sour
 
 
 class GetResearchContextTool(BaseTool):
+    read_only = True
     name = "get_research_context"
     description = "Read a symbol's current Thesis, saved evidence, decisions, documents, position context, and alert counts."
     params = {

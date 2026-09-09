@@ -100,9 +100,11 @@ def test_shared_capacity_is_bounded_and_reusable():
 def test_agent_run_shares_runtime_with_parallel_tools_and_restores_context(cancelled):
     observations = []
     token = threading.Event()
+    started = threading.Barrier(2)
 
     class InspectContextTool(BaseTool):
         name = "inspect"
+        read_only = True
 
         def execute(self, params):
             observations.append(self.delegation_runtime)
@@ -110,6 +112,7 @@ def test_agent_run_shares_runtime_with_parallel_tools_and_restores_context(cance
             assert self.cancel_event is self.context.active_cancel_event is token
             assert self.thinking_enabled is self.context.active_thinking_enabled is True
             assert self.context.active_skill_filter == set()
+            started.wait(timeout=2)
             if cancelled:
                 raise AgentCancelledError("stopped inside tool")
             return ToolResult.success("ok")

@@ -7,6 +7,7 @@ from app.core.tools.evidence import evidence_for_source, evidence_metadata, sour
 
 
 class KnowledgeSearchTool(BaseTool):
+    read_only = True
     name = "knowledge_search"
     description = (
         "Search the current user's imported knowledge files using keyword and semantic search. "

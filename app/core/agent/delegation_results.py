@@ -6,6 +6,8 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from app.core.tools.result_metadata import unique_metadata_items
+
 MAX_RESPONSE_CHARS = 18_000
 MAX_TASK_RESPONSE_CHARS = 6_000
 MAX_METADATA_JSON_CHARS = 16_000
@@ -28,25 +30,7 @@ def _identifier(item: dict[str, Any], group: str) -> str:
 
 
 def _unique_items(results: list[dict[str, Any]], group: str) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for result in results:
-        for item in result.get(group) or []:
-            if not isinstance(item, dict):
-                continue
-            item_id = _identifier(item, group)
-            if not item_id or item_id in seen:
-                continue
-            seen.add(item_id)
-            if group == "rendered_images":
-                # 产物只传可重建预览的引用；不把 HTML、快照或图片字节复制给父 Agent。
-                item = {
-                    key: item[key]
-                    for key in ("artifact_id", "width", "height", "files")
-                    if key in item
-                }
-            items.append(item)
-    return items
+    return unique_metadata_items(results, group)
 
 
 def _compact_metadata(
