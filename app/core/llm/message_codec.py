@@ -6,21 +6,39 @@ import json
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+import httpx
 
-def iter_sse_objects(lines: Iterable[str]) -> Iterator[dict[str, Any]]:
+
+def iter_sse_objects(
+    lines: Iterable[str], *, require_complete: bool = False
+) -> Iterator[dict[str, Any]]:
     """Decode data events, ignoring keepalives and malformed upstream lines."""
+    complete = False
     for line in lines:
         if not line.startswith("data: "):
             continue
         data = line[6:]
         if data.strip() == "[DONE]":
-            break
+            return
         try:
             event = json.loads(data)
         except json.JSONDecodeError:
             continue
         if isinstance(event, dict):
+            choices = event.get("choices") or []
+            if (
+                event.get("type")
+                in {"response.completed", "response.failed", "response.incomplete", "error"}
+                or event.get("error")
+                or any(
+                    isinstance(choice, dict) and choice.get("finish_reason") for choice in choices
+                )
+            ):
+                complete = True
             yield event
+    # HTTP 200 后仍可能正常 EOF；缺少协议结束标记时不能提交残缺文本或执行工具。
+    if require_complete and not complete:
+        raise httpx.RemoteProtocolError("LLM stream connection ended before completion")
 
 
 def split_message_blocks(

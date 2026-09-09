@@ -19,6 +19,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+import httpx
+
 from app.core.agent.context import (
     aggressive_trim_for_overflow,
     build_summary_messages,
@@ -448,6 +450,9 @@ class AgentStreamExecutor:
                         final_response = (
                             f"Reached maximum steps ({turn}). The task may not be fully complete."
                         )
+                except AgentCancelledError:
+                    # 汇总也属于同一次运行，显式停止不能被普通失败兜底转换成成功。
+                    raise
                 except Exception:
                     final_response = (
                         f"Reached maximum steps ({turn}). The task may not be fully complete."
@@ -597,6 +602,8 @@ class AgentStreamExecutor:
                     for event_type, event_data in state.consume(chunk):
                         self._emit_event(event_type, event_data)
 
+        except AgentCancelledError:
+            raise
         except Exception as e:
             self._emit_event(
                 "llm_call_error",
@@ -669,7 +676,10 @@ class AgentStreamExecutor:
                 else:
                     raise Exception("Message format error. History has been cleared.") from e
 
-            is_retryable = any(
+            # httpx 的超时/断流异常可能没有文本，按异常类型识别，不能只匹配字符串。
+            is_retryable = isinstance(
+                e, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+            ) or any(
                 kw in error_str_lower
                 for kw in [
                     "timeout",
@@ -693,11 +703,22 @@ class AgentStreamExecutor:
                 is_rate_limit = "429" in error_str_lower or "rate limit" in error_str_lower
                 wait_time = (30 + retry_count * 15) if is_rate_limit else (retry_count + 1) * 2
                 logger.warning("LLM API error (attempt %s/%s): %s", retry_count + 1, max_retries, e)
-                time.sleep(wait_time)
+                if state.content:
+                    self._emit_event("message_reset", {"discarded_content": state.content})
+                self._emit_event(
+                    "status_update", {"message": "Model connection interrupted. Retrying..."}
+                )
+                if self.cancel_event is not None:
+                    self.cancel_event.wait(wait_time)
+                    self._raise_if_cancelled()
+                else:
+                    time.sleep(wait_time)
+                # 只重试尚未提交的模型调用，保留此前工具结果，避免重做有副作用的工具。
                 return self._call_llm_stream(
                     retry_on_empty=retry_on_empty,
                     retry_count=retry_count + 1,
                     max_retries=max_retries,
+                    _overflow_retry=_overflow_retry,
                 )
             else:
                 raise

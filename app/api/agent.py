@@ -4,17 +4,17 @@
 Agent 实例仍按请求创建，对话历史由后端 session store 持久化。
 """
 
-import json
 import logging
-import queue
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.agent.executor import AgentCancelledError
+from app.core.agent.run_service import ChatRun, ChatRunCapacityError, ChatRunConflict, chat_runs
 from app.core.security import CurrentUser, require_permissions
 from app.core.session import ChatSessionNotFound
 from app.deps import get_memory_manager_for_user, get_session_store
@@ -131,6 +131,13 @@ def _assert_session_owner(session: dict, user: CurrentUser) -> None:
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+def _assert_session_idle(session_id: str) -> None:
+    if chat_runs.active_for_session(session_id):
+        raise HTTPException(
+            status_code=409, detail="Stop the active run before changing this session"
+        )
+
+
 def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list[dict]]:
     store = get_session_store()
     history_messages: list[dict] = []
@@ -139,6 +146,7 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
         try:
             session = store.get_session(request.session_id)
             _assert_session_owner(session, user)
+            _assert_session_idle(request.session_id)
             if request.clear_history:
                 store.clear_messages(request.session_id)
             else:
@@ -297,121 +305,88 @@ def chat(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/stream")
-def stream_chat(
-    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
-):
-    session_id, history_messages = _prepare_session(request, current_user)
-    request.user_id = current_user.id
-    recorder = _start_trace(session_id, request.message, current_user.id)
-    agent = _init_agent(request, history_messages)
-    cancel_event = threading.Event()
+def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[dict]) -> None:
+    recorder = None
+    reasoning_notice_sent = False
 
-    def event_generator():
-        event_queue: queue.Queue = queue.Queue()
-        done = object()
-        reasoning_notice_sent = False
-
-        def on_event(event: dict):
-            nonlocal reasoning_notice_sent
-            _record_trace_event(recorder, event)
-            event_type = event.get("type")
-
-            # Do not expose model-private chain-of-thought. The UI still gets
-            # useful public progress signals via status/tool/message events.
-            if event_type == "reasoning_update":
-                if not reasoning_notice_sent:
-                    reasoning_notice_sent = True
-                    event_queue.put(
-                        {
-                            "type": "status_update",
-                            "timestamp": event.get("timestamp", time.time()),
-                            "data": {"message": "Model is analyzing the request."},
-                        }
-                    )
-                return
-
-            if event_type == "subagent_event":
-                child_type = str((event.get("data") or {}).get("child_event_type") or "")
-                if child_type in {
-                    "reasoning_update",
-                    "llm_call_start",
-                    "llm_call_end",
-                    "llm_call_error",
-                }:
-                    return
-
-            # The executor emits agent_end before the message is persisted.
-            # Send the public terminal event after persistence so the client
-            # receives session_id and message_id together with the final text.
-            if event_type == "agent_end":
-                return
-
-            if event_type in ("llm_call_start", "llm_call_end", "llm_call_error"):
-                return
-
-            event_queue.put(event)
-
-        def run_agent():
-            try:
-                response = agent.run_stream(
-                    user_message=request.message,
-                    on_event=on_event,
-                    clear_history=False,
-                    skill_filter=request.skill_filter,
-                    cancel_event=cancel_event,
-                    thinking_enabled=request.thinking_enabled,
-                )
-                message_id = _complete_exchange(
-                    request, session_id, response, agent.last_sources, history_messages, recorder
-                )
-                event_queue.put(
+    def on_event(event: dict):
+        nonlocal reasoning_notice_sent
+        _record_trace_event(recorder, event)
+        event_type = event.get("type")
+        # 私有推理和原始模型调用只进入追踪，重放日志与实时流共用同一过滤边界。
+        if event_type == "reasoning_update":
+            if not reasoning_notice_sent:
+                reasoning_notice_sent = True
+                run.publish(
                     {
-                        "type": "agent_end",
+                        "type": "status_update",
                         "timestamp": time.time(),
-                        "data": {
-                            "final_response": response,
-                            "session_id": session_id,
-                            "message_id": message_id,
-                            "sources": agent.last_sources,
-                        },
+                        "data": {"message": "Model is analyzing the request."},
                     }
                 )
-            except Exception as e:
-                if _is_agent_cancelled(e):
-                    _finish_trace(recorder, status="cancelled", error=str(e))
-                    event_queue.put(
-                        {
-                            "type": "agent_stopped",
-                            "timestamp": time.time(),
-                            "data": {"session_id": session_id},
-                        }
-                    )
-                    return
-                _finish_trace(recorder, status="error", error=str(e))
-                event_queue.put(
-                    {
-                        "type": "error",
-                        "timestamp": time.time(),
-                        "data": {"error": str(e)},
-                    }
-                )
-            finally:
-                event_queue.put(done)
+            return
+        private_events = {"reasoning_update", "llm_call_start", "llm_call_end", "llm_call_error"}
+        if event_type == "subagent_event" and (
+            (event.get("data") or {}).get("child_event_type") in private_events
+        ):
+            return
+        # 终止事件必须在落库之后发送；断线后的重放不能重复触发持久化或记忆整理。
+        if event_type in {"agent_end", "error"} or event_type in private_events:
+            return
+        run.publish(event)
 
-        threading.Thread(target=run_agent, daemon=True).start()
+    try:
+        recorder = _start_trace(run.session_id, request.message, request.user_id)
+        agent = _init_agent(request, history_messages)
+        if run.cancel_event.is_set():
+            raise AgentCancelledError("Agent run cancelled")
+        response = agent.run_stream(
+            user_message=request.message,
+            on_event=on_event,
+            clear_history=False,
+            skill_filter=request.skill_filter,
+            cancel_event=run.cancel_event,
+            thinking_enabled=request.thinking_enabled,
+        )
+        # 会话快照与完成状态原子切换，刷新不会漏掉刚落库的最终回复。
+        with chat_runs.lock:
+            message_id = _complete_exchange(
+                request, run.session_id, response, agent.last_sources, history_messages, recorder
+            )
+            run.publish(
+                {
+                    "type": "agent_end",
+                    "timestamp": time.time(),
+                    "data": {
+                        "final_response": response,
+                        "session_id": run.session_id,
+                        "message_id": message_id,
+                        "sources": agent.last_sources,
+                    },
+                }
+            )
+    except Exception as exc:
+        cancelled = _is_agent_cancelled(exc)
+        _finish_trace(recorder, status="cancelled" if cancelled else "error", error=str(exc))
+        run.publish(
+            {
+                "type": "agent_stopped" if cancelled else "error",
+                "timestamp": time.time(),
+                "data": {
+                    "session_id": run.session_id,
+                    **({} if cancelled else {"error": str(exc)}),
+                },
+            }
+        )
 
-        try:
-            while True:
-                event = event_queue.get()
-                if event is done:
-                    break
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        finally:
-            cancel_event.set()
 
+def _stream_response(run: ChatRun, after_event_id: int) -> StreamingResponse:
+    try:
+        run.validate_cursor(after_event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StreamingResponse(
-        event_generator(),
+        run.events(after_event_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -419,6 +394,69 @@ def stream_chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/stream")
+def stream_chat(
+    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
+):
+    request.user_id = current_user.id
+    if request.session_id:
+        # 在运行冲突检查前校验归属，不能通过 409 响应探测其他用户的会话状态。
+        try:
+            _assert_session_owner(get_session_store().get_session(request.session_id), current_user)
+        except ChatSessionNotFound:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+    # 首包丢失也按请求 ID 接回原任务，不能因重连再次运行有副作用的工具。
+    fingerprint = request.model_dump_json(exclude={"request_id", "after_event_id", "user_id"})
+
+    def prepare():
+        session_id, history_messages = _prepare_session(request, current_user)
+        return session_id, lambda run: _run_stream_chat(request, run, history_messages)
+
+    try:
+        run = chat_runs.start(
+            user_id=current_user.id,
+            request_id=request.request_id or str(uuid.uuid4()),
+            fingerprint=fingerprint,
+            session_id=request.session_id,
+            user_message=request.message,
+            prepare=prepare,
+            after_event_id=request.after_event_id,
+        )
+    except ChatRunConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ChatRunCapacityError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run no longer available") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _stream_response(run, request.after_event_id)
+
+
+def _run_or_404(run_id: str, user: CurrentUser) -> ChatRun:
+    try:
+        return chat_runs.get(run_id, user.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found") from None
+
+
+@router.get("/runs/{run_id}/stream")
+def resume_stream(
+    run_id: str,
+    after_event_id: int = Query(default=0, ge=0),
+    current_user: CurrentUser = Depends(require_permissions("chat:read")),
+):
+    return _stream_response(_run_or_404(run_id, current_user), after_event_id)
+
+
+@router.post("/runs/{run_id}/cancel")
+def cancel_run(
+    run_id: str,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
+    return _run_or_404(run_id, current_user).cancel()
 
 
 @router.get("/sessions", response_model=ChatSessionListResponse)
@@ -450,7 +488,10 @@ def create_session(
 
 @router.delete("/sessions")
 def delete_sessions(current_user: CurrentUser = Depends(require_permissions("chat:write"))):
-    deleted = get_session_store().delete_sessions(user_id=current_user.id)
+    with chat_runs.lock:
+        if chat_runs.has_active(current_user.id):
+            raise HTTPException(status_code=409, detail="Stop active runs before deleting sessions")
+        deleted = get_session_store().delete_sessions(user_id=current_user.id)
     return {"status": "ok", "deleted": deleted, "tracing": "cleared_by_session_cascade"}
 
 
@@ -458,9 +499,12 @@ def delete_sessions(current_user: CurrentUser = Depends(require_permissions("cha
 def get_session(
     session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))
 ):
-    session = _session_or_404(session_id)
-    _assert_session_owner(session, current_user)
-    return session
+    with chat_runs.lock:
+        session = _session_or_404(session_id)
+        _assert_session_owner(session, current_user)
+        run = chat_runs.active_for_session(session_id)
+        session["active_run"] = run.summary() if run and run.user_id == current_user.id else None
+        return session
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionSummary)
@@ -481,8 +525,10 @@ def delete_session(
     session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))
 ):
     try:
-        _assert_session_owner(get_session_store().get_session(session_id), current_user)
-        get_session_store().delete_session(session_id)
+        with chat_runs.lock:
+            _assert_session_owner(get_session_store().get_session(session_id), current_user)
+            _assert_session_idle(session_id)
+            get_session_store().delete_session(session_id)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found") from None
     return {"status": "ok"}
@@ -493,8 +539,10 @@ def clear_session_messages(
     session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))
 ):
     try:
-        _assert_session_owner(get_session_store().get_session(session_id), current_user)
-        deleted = get_session_store().clear_messages(session_id)
+        with chat_runs.lock:
+            _assert_session_owner(get_session_store().get_session(session_id), current_user)
+            _assert_session_idle(session_id)
+            deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found") from None
     return {"status": "ok", "deleted": deleted}
@@ -511,8 +559,10 @@ def clear_history(
             "message": "No session_id supplied; stateless requests have no server history to clear",
         }
     try:
-        _assert_session_owner(get_session_store().get_session(session_id), current_user)
-        deleted = get_session_store().clear_messages(session_id)
+        with chat_runs.lock:
+            _assert_session_owner(get_session_store().get_session(session_id), current_user)
+            _assert_session_idle(session_id)
+            deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
         raise HTTPException(status_code=404, detail="Session not found") from None
     return {"status": "ok", "deleted": deleted}

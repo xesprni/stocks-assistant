@@ -136,7 +136,7 @@ class OpenAICompatibleProvider(LLMModel):
 
         with self.client.stream("POST", url, json=payload, headers=headers) as resp:
             _raise_for_llm_status(resp, "Chat Completions")
-            yield from iter_sse_objects(resp.iter_lines())
+            yield from iter_sse_objects(resp.iter_lines(), require_complete=True)
 
     def _build_payload(self, request: LLMRequest, stream: bool = False) -> dict:
         """构建 API 请求体
@@ -289,7 +289,7 @@ class OpenAIResponsesProvider(LLMModel):
         state: dict[str, Any] = {"saw_function_call": False, "argument_buffers": {}}
         with self.client.stream("POST", url, json=payload, headers=headers) as resp:
             _raise_for_llm_status(resp, "Responses")
-            for event in iter_sse_objects(resp.iter_lines()):
+            for event in iter_sse_objects(resp.iter_lines(), require_complete=True):
                 yield from self._stream_event_to_chat_chunks(event, state)
 
     def _build_payload(self, request: LLMRequest, stream: bool = False) -> dict:
@@ -511,6 +511,13 @@ class OpenAIResponsesProvider(LLMModel):
         if event_type == "response.completed":
             finish_reason = "tool_calls" if state.get("saw_function_call") else "stop"
             chunks.append({"choices": [{"delta": {}, "finish_reason": finish_reason}]})
+            return chunks
+
+        if event_type == "response.incomplete":
+            reason = (event.get("response", {}).get("incomplete_details") or {}).get("reason")
+            chunks.append(
+                {"error": {"message": f"Responses API response incomplete: {reason or 'unknown'}"}}
+            )
             return chunks
 
         if event_type in {"response.failed", "error"}:

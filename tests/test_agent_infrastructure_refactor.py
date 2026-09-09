@@ -1,6 +1,8 @@
 """Agent infrastructure contracts, using only local fakes and temporary storage."""
 
 import asyncio
+import json
+import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,10 +10,11 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from app.core.agent.executor import AgentStreamExecutor
+from app.core.agent.executor import AgentCancelledError, AgentStreamExecutor
 from app.core.agent.models import LLMRequest
 from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
 from app.core.session.store import ChatSessionStore
+from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.mcp.mcp_tool import MCPManager
 from app.core.tools.parameters import bounded_positive_int, optional_positive_int
 from app.core.tools.read_file import ReadFileTool
@@ -218,6 +221,170 @@ def test_malformed_tool_chunk_keeps_preceding_text_event():
         "llm_call_error",
     ]
     assert events[2]["data"] == {"delta": "partial"}
+
+
+@pytest.mark.parametrize("provider_class", [OpenAICompatibleProvider, OpenAIResponsesProvider])
+def test_provider_rejects_silent_eof_before_completion(provider_class):
+    event = {"choices": [{"delta": {"content": "partial"}}]}
+    if provider_class is OpenAIResponsesProvider:
+        event = {"type": "response.output_text.delta", "delta": "partial"}
+    provider = provider_class(api_key="test")
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=f"data: {json.dumps(event)}\n\n")
+        )
+    ) as client:
+        provider.client = client
+        stream = provider.call_stream(LLMRequest(messages=[]))
+        assert next(stream)["choices"][0]["delta"]["content"] == "partial"
+        with pytest.raises(httpx.RemoteProtocolError, match="before completion"):
+            next(stream)
+
+
+@pytest.mark.parametrize("provider_class", [OpenAICompatibleProvider, OpenAIResponsesProvider])
+def test_provider_accepts_completed_event_without_done_sentinel(provider_class):
+    event = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+    if provider_class is OpenAIResponsesProvider:
+        event = {"type": "response.completed"}
+    provider = provider_class(api_key="test")
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=f"data: {json.dumps(event)}\n\n")
+        )
+    ) as client:
+        provider.client = client
+        chunks = list(provider.call_stream(LLMRequest(messages=[])))
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+
+
+def test_responses_incomplete_is_an_error_even_with_valid_tool_arguments():
+    provider = OpenAIResponsesProvider(api_key="test")
+    chunks = provider._stream_event_to_chat_chunks(
+        {
+            "type": "response.incomplete",
+            "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+        },
+        {"saw_function_call": True, "argument_buffers": {0: "{}"}},
+    )
+    assert chunks == [
+        {"error": {"message": "Responses API response incomplete: max_output_tokens"}}
+    ]
+
+
+def test_stream_retries_empty_timeout_and_discards_partial_attempt(monkeypatch):
+    attempts = []
+
+    class Model:
+        def call_stream(self, request):
+            attempts.append(request.messages)
+            if len(attempts) == 1:
+                yield {"choices": [{"delta": {"content": "discard me"}}]}
+                raise httpx.ReadTimeout("")
+            yield {"choices": [{"delta": {"content": "recovered"}, "finish_reason": "stop"}]}
+
+    monkeypatch.setattr("app.core.agent.executor.time.sleep", lambda seconds: None)
+    events = []
+    executor = make_executor(Model(), on_event=events.append)
+    text, calls = executor._call_llm_stream()
+    assert text == "recovered"
+    assert calls == []
+    assert len(attempts) == 2
+    assert len(executor.messages) == 1
+    assert executor.messages[0]["content"] == [{"type": "text", "text": "recovered"}]
+    assert [event["data"] for event in events if event["type"] == "message_reset"] == [
+        {"discarded_content": "discard me"}
+    ]
+
+
+def test_stream_retry_can_be_explicitly_cancelled_during_backoff():
+    cancel_event = threading.Event()
+    calls = []
+
+    class Model:
+        def call_stream(self, request):
+            calls.append(request)
+            cancel_event.set()
+            raise httpx.ReadTimeout("")
+
+    executor = make_executor(Model(), cancel_event=cancel_event)
+    with pytest.raises(AgentCancelledError):
+        executor._call_llm_stream()
+    assert len(calls) == 1
+    assert executor.messages == []
+
+
+def test_cancelling_final_summary_propagates_without_agent_end(monkeypatch):
+    events = []
+    executor = make_executor(max_turns=1, on_event=events.append)
+    call = Mock(side_effect=[("progress", []), AgentCancelledError("Agent run cancelled")])
+    monkeypatch.setattr(executor, "_call_llm_stream", call)
+
+    with pytest.raises(AgentCancelledError, match="Agent run cancelled"):
+        executor.run_stream("question")
+
+    assert call.call_count == 2
+    assert call.call_args.kwargs == {"retry_on_empty": False}
+    assert not any(event["type"] in {"agent_end", "error"} for event in events)
+    assert executor.messages == [
+        {"role": "user", "content": [{"type": "text", "text": "question"}]}
+    ]
+
+
+def test_stream_recovery_keeps_prior_tool_results_without_repeating_side_effects(monkeypatch):
+    side_effects = []
+    requests = []
+
+    class RecordingTool(BaseTool):
+        name = "record"
+
+        def execute(self, params):
+            side_effects.append(params["value"])
+            return ToolResult.success("saved")
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        if len(requests) < 3:
+            value = "committed" if len(requests) == 1 else "uncommitted"
+            event = {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": f"call_{len(requests)}",
+                                    "function": {
+                                        "name": "record",
+                                        "arguments": json.dumps({"value": value}),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+            payload = f"data: {json.dumps(event)}\n\n"
+            if len(requests) == 1:
+                payload += 'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+        else:
+            payload = 'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n'
+        return httpx.Response(200, text=payload)
+
+    monkeypatch.setattr("app.core.agent.executor.time.sleep", lambda seconds: None)
+    provider = OpenAICompatibleProvider(api_key="test")
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider.client = client
+        executor = make_executor(provider)
+        executor.tools = {"record": RecordingTool()}
+        assert executor.run_stream("save once") == "done"
+    assert side_effects == ["committed"]
+    assert len(requests) == 3
+    assert requests[1]["messages"] == requests[2]["messages"]
+    assert requests[2]["messages"][-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "saved",
+    }
 
 
 def test_builtin_schemas_are_lazy_and_factories_keep_user_dependencies(tmp_path):

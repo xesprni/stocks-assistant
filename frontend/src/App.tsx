@@ -45,16 +45,18 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useFluidSheet } from "@/hooks/useFluidSheet";
 import {
+  cancelChatRun,
   getChatSession,
+  resumeChatStream,
   getMarketConfig,
   loadConfig,
-  sendChat,
   saveConfig,
   streamChat,
   trackProductEvent,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
+import { ChatStreamHttpError } from "@/lib/chat-stream";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { parseJsonObject } from "@/lib/json";
@@ -70,6 +72,7 @@ import type {
   LongbridgeOAuthStatus,
   AuthUser,
   ChatMessage,
+  ChatRunSummary,
   ChatStreamEvent,
   ChatTraceEvent,
   ConfigDraft,
@@ -454,38 +457,6 @@ function isNetworkLoadError(error: unknown): boolean {
   return /Load failed|Failed to fetch|NetworkError|network connection was lost|offline|cancelled/i.test(message);
 }
 
-function waitForPageResume(timeoutMs = 15000): Promise<void> {
-  if (document.visibilityState !== "hidden" && navigator.onLine !== false) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    let settled = false;
-    const cleanup = () => {
-      window.removeEventListener("focus", check);
-      window.removeEventListener("online", check);
-      window.removeEventListener("pageshow", check);
-      document.removeEventListener("visibilitychange", check);
-      window.clearTimeout(timer);
-    };
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve();
-    };
-    const check = () => {
-      if (document.visibilityState !== "hidden" && navigator.onLine !== false) {
-        finish();
-      }
-    };
-    const timer = window.setTimeout(finish, timeoutMs);
-    window.addEventListener("focus", check);
-    window.addEventListener("online", check);
-    window.addEventListener("pageshow", check);
-    document.addEventListener("visibilitychange", check);
-  });
-}
-
 function chatFailureMessage(error: unknown, language: AppLanguage): string {
   if (isNetworkLoadError(error)) return i18n[language].chat.networkLoadFailed;
   return error instanceof Error ? error.message : (language === "en" ? "Chat request failed" : "对话请求失败");
@@ -550,6 +521,9 @@ function ConsoleApp() {
   const previousPageRef = useRef<Page | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const streamRunRef = useRef<string | null>(null);
+  const streamSessionRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
   const isSendingRef = useRef(false);
   const configDirtyPatchRef = useRef<Partial<ConfigDraft>>({});
   const configToastTimerRef = useRef<number | null>(null);
@@ -574,6 +548,21 @@ function ConsoleApp() {
   // 权限在前端渲染前即生效，避免未授权页面先挂载并发起数据请求。
   const activePage = canPage(page) ? page : firstAllowedPage;
   const activeNavItem = navigationGroups.flatMap((group) => group.items).find((item) => item.id === activePage);
+
+  useEffect(() => () => {
+    streamAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (streamSessionRef.current && streamSessionRef.current !== activeConvId) {
+      streamAbortRef.current?.abort();
+    }
+    if (chatHistory.isLoading || chatHistory.isActiveConversationLoading || isSendingRef.current) return;
+    const run = chatHistory.activeConversation?.activeRun;
+    if (run && (run.status === "running" || run.status === "stopping")) {
+      void handleSend(undefined, run.user_message, { resumeRun: run });
+    }
+  }, [activeConvId, chatHistory.isLoading, chatHistory.isActiveConversationLoading, chatHistory.activeConversation?.activeRun?.run_id, isSending]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -741,10 +730,10 @@ function ConsoleApp() {
   async function handleSend(
     event?: { preventDefault: () => void },
     value = prompt,
-    options: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean } = {},
+    options: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean; resumeRun?: ChatRunSummary } = {},
   ) {
     event?.preventDefault();
-    const text = value.trim();
+    const text = (options.resumeRun?.user_message ?? value).trim();
     if (!text || isSendingRef.current) return;
 
     shouldAutoScrollChatRef.current = true;
@@ -765,26 +754,32 @@ function ConsoleApp() {
       trace: [makeTrace(ui.chat.connecting, "running")],
     };
 
-    setPrompt("");
+    if (!options.resumeRun) setPrompt("");
     isSendingRef.current = true;
     setIsSending(true);
-    if (config?.product_analytics_enabled) {
+    if (!options.resumeRun && config?.product_analytics_enabled) {
       void trackProductEvent("research_started").catch(() => undefined);
     }
-    handleNavigate("overview");
+    if (!options.resumeRun) handleNavigate("overview");
 
     const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
     if (shouldCreateNewSession && options.thinkingEnabled !== true) {
       resetChatThinkingEnabled();
     }
-    let convId = shouldCreateNewSession ? null : activeConvId;
+    let convId = options.resumeRun?.session_id ?? (shouldCreateNewSession ? null : activeConvId);
     let assistantMessageId = pendingMessage.id;
     let streamedContent = "";
+    const requestId = options.resumeRun?.request_id ?? crypto.randomUUID();
+    const previousMessageIds = new Set(messages.map((message) => message.id));
+    let streamEventHandler: ((event: ChatStreamEvent) => void) | undefined;
     let currentStatus = ui.chat.connecting;
     let trace = pendingMessage.trace ?? [];
     let sawAgentEnd = false;
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
+    streamRunRef.current = options.resumeRun?.run_id ?? null;
+    streamSessionRef.current = convId;
+    stopRequestedRef.current = options.resumeRun?.status === "stopping";
 
     const updateAssistant = (patch: Partial<ChatMessage>) => {
       if (!convId) return;
@@ -795,22 +790,34 @@ function ConsoleApp() {
     };
 
     const commitStreamState = (patch: Partial<ChatMessage> = {}) => {
+      const displayStatus = stopRequestedRef.current && patch.pending !== false ? ui.chat.stopping : currentStatus;
       updateAssistant({
-        content: streamedContent || currentStatus,
-        status: currentStatus,
+        content: streamedContent || displayStatus,
+        status: displayStatus,
         trace,
         ...patch,
       });
     };
 
     try {
-      if (!convId) {
+      if (options.resumeRun && convId) {
+        const existing = messages.find((message) => message.role === "assistant" && message.pending);
+        if (existing) {
+          assistantMessageId = existing.id;
+          commitStreamState({ pending: true });
+        } else {
+          chatHistory.addMessage(convId, pendingMessage);
+        }
+      } else if (!convId) {
         convId = await chatHistory.createConversation(userMessage);
         chatHistory.addMessage(convId, pendingMessage);
       } else {
         chatHistory.addMessage(convId, userMessage);
         chatHistory.addMessage(convId, pendingMessage);
       }
+
+      streamSessionRef.current = convId;
+      abortController.signal.throwIfAborted();
 
       const addTrace = (item: ChatTraceEvent) => {
         trace = [...trace, item].slice(-30);
@@ -823,8 +830,57 @@ function ConsoleApp() {
         commitStreamState();
       };
 
-      await streamChat(text, convId, (streamEvent: ChatStreamEvent) => {
+      const onStreamEvent = (streamEvent: ChatStreamEvent) => {
         const data = streamEvent.data;
+        if (streamEvent.run_id) streamRunRef.current = streamEvent.run_id;
+
+        if (streamEvent.type === "run_started") {
+          if (convId && streamEvent.run_id) {
+            if (!options.resumeRun) {
+              chatHistory.updateMessage(convId, userMessage.id, { id: `run-user:${streamEvent.run_id}` });
+            }
+            chatHistory.updateRun(convId, {
+              run_id: streamEvent.run_id,
+              request_id: getStreamText(data, "request_id"),
+              session_id: convId,
+              user_message: text,
+              status: stopRequestedRef.current ? "stopping" : "running",
+            });
+          }
+          if (stopRequestedRef.current) void handleStopStreaming();
+          return;
+        }
+
+        if (streamEvent.type === "connection_interrupted") {
+          currentStatus = ui.chat.streamRecovering;
+          commitStreamState();
+          return;
+        }
+
+        if (streamEvent.type === "connection_restored") {
+          currentStatus = stopRequestedRef.current ? ui.chat.stopping : ui.chat.streamRecovered;
+          commitStreamState();
+          return;
+        }
+
+        if (streamEvent.type === "agent_stopped") {
+          sawAgentEnd = true;
+          streamedContent = streamedContent ? `${streamedContent.trimEnd()}\n\n_${ui.chat.stopped}_` : ui.chat.stopped;
+          currentStatus = ui.chat.stopped;
+          trace = trace.map((item) => item.status === "running" ? { ...item, status: "done" } : item);
+          commitStreamState({ pending: false });
+          if (convId) chatHistory.updateRun(convId, null);
+          return;
+        }
+
+        if (streamEvent.type === "message_reset") {
+          const discarded = getStreamText(data, "discarded_content");
+          if (discarded && streamedContent.endsWith(discarded)) {
+            streamedContent = streamedContent.slice(0, -discarded.length);
+            commitStreamState();
+          }
+          return;
+        }
 
         if (streamEvent.type === "error") {
           throw new Error(getStreamText(data, "error") || (language === "en" ? "Chat request failed" : "对话请求失败"));
@@ -991,6 +1047,7 @@ function ConsoleApp() {
 
         if (streamEvent.type === "agent_end") {
           sawAgentEnd = true;
+          if (convId) chatHistory.updateRun(convId, null);
           const finalResponse = getStreamText(data, "final_response");
           const messageId = getStreamText(data, "message_id");
           const sources = Array.isArray(data?.sources)
@@ -1012,7 +1069,13 @@ function ConsoleApp() {
             createdAt: chatTime(language),
           });
         }
-      }, false, abortController.signal, options.thinkingEnabled === true);
+      };
+      streamEventHandler = onStreamEvent;
+      if (options.resumeRun) {
+        await resumeChatStream(options.resumeRun.run_id, onStreamEvent, abortController.signal);
+      } else {
+        await streamChat(text, convId, onStreamEvent, false, abortController.signal, options.thinkingEnabled === true, requestId);
+      }
 
       if (!sawAgentEnd) {
         trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
@@ -1025,103 +1088,75 @@ function ConsoleApp() {
         });
       }
     } catch (caught) {
-      if (isAbortError(caught)) {
-        const stoppedContent = streamedContent
-          ? `${streamedContent.trimEnd()}\n\n_${ui.chat.stopped}_`
-          : ui.chat.stopped;
-        trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done", detail: item.detail || ui.chat.stopped } : item));
-        if (convId) {
-          chatHistory.updateMessage(convId, assistantMessageId, {
-            content: stoppedContent,
-            pending: false,
-            status: ui.chat.stopped,
-            trace,
-            createdAt: chatTime(language),
-          });
-        }
-        return;
-      }
-      if (isNetworkLoadError(caught) && convId && !sawAgentEnd) {
+      // 卸载和切换会话只关闭订阅，后台任务继续运行。
+      if (abortController.signal.aborted || isAbortError(caught)) return;
+      if (convId && caught instanceof ChatStreamHttpError && (caught.status === 404 || caught.status === 410)) {
         try {
-          currentStatus = ui.chat.streamRecovering;
-          trace = trace.map((item) => (item.status === "running" ? { ...item, detail: item.detail || ui.chat.streamInterrupted } : item));
-          commitStreamState();
-
-          await waitForPageResume();
-
           const synced = await getChatSession(convId);
+          abortController.signal.throwIfAborted();
+          if (synced.activeRun?.request_id === requestId && streamEventHandler) {
+            await resumeChatStream(synced.activeRun.run_id, streamEventHandler, abortController.signal);
+            return;
+          }
           let userIndex = -1;
           for (let index = synced.messages.length - 1; index >= 0; index -= 1) {
-            const message = synced.messages[index];
-            if (message.role === "user" && message.content === text) {
+            if (synced.messages[index].role === "user" && synced.messages[index].content === text) {
               userIndex = index;
               break;
             }
           }
-          const persistedAssistant = userIndex >= 0
-            ? synced.messages.slice(userIndex + 1).find((message) => message.role === "assistant" && message.content.trim())
-            : undefined;
-
-          if (persistedAssistant) {
-            streamedContent = persistedAssistant.content;
-            trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
-            updateAssistant({
-              id: persistedAssistant.id,
-              content: streamedContent,
-              pending: false,
-              status: ui.chat.complete,
-              trace: [...trace, makeTrace(ui.chat.streamRecovered, "done")],
-              sources: persistedAssistant.sources,
-              createdAt: persistedAssistant.createdAt,
-            });
+          const completed = userIndex < 0 ? undefined : synced.messages.slice(userIndex + 1).find(
+            (message) => message.role === "assistant" && !previousMessageIds.has(message.id),
+          );
+          if (completed) {
+            trace = trace.map((item) => item.status === "running" ? { ...item, status: "done" } : item);
+            updateAssistant({ ...completed, pending: false, status: ui.chat.complete, trace });
+            chatHistory.updateRun(convId, null);
             return;
           }
-
-          currentStatus = ui.chat.streamRetrying;
-          commitStreamState();
-          const recovered = await sendChat(text, convId, false, options.thinkingEnabled === true);
-          streamedContent = recovered.response || ui.chat.empty;
-          trace = trace.map((item) => (item.status === "running" ? { ...item, status: "done" } : item));
-          updateAssistant({
-            id: recovered.message_id || assistantMessageId,
-            content: streamedContent,
-            pending: false,
-            status: ui.chat.complete,
-            trace: [...trace, makeTrace(ui.chat.streamRecovered, "done")],
-            sources: recovered.sources,
-            createdAt: chatTime(language),
-          });
-          return;
         } catch (recoveryError) {
-          const msg = chatFailureMessage(recoveryError, language);
-          showToast({ kind: "error", message: msg, title: language === "en" ? "Chat" : "对话" });
-          chatHistory.updateMessage(convId, assistantMessageId, {
-            content: formatTemplate(ui.chat.requestFailed, { message: msg }),
-            pending: false,
-            status: ui.chat.streamRecoveryFailed,
-          });
-          return;
+          if (abortController.signal.aborted || isAbortError(recoveryError)) return;
         }
       }
+      if (convId) chatHistory.updateRun(convId, null);
       const msg = chatFailureMessage(caught, language);
       showToast({ kind: "error", message: msg, title: language === "en" ? "Chat" : "对话" });
       if (convId) {
         chatHistory.updateMessage(convId, assistantMessageId, {
-          content: formatTemplate(ui.chat.requestFailed, { message: msg }),
+          content: [streamedContent.trimEnd(), formatTemplate(ui.chat.requestFailed, { message: msg })].filter(Boolean).join("\n\n"),
           pending: false,
         });
       }
     } finally {
       if (streamAbortRef.current === abortController) {
         streamAbortRef.current = null;
+        streamRunRef.current = null;
+        streamSessionRef.current = null;
+        stopRequestedRef.current = false;
+        isSendingRef.current = false;
+        setIsSending(false);
       }
-      isSendingRef.current = false;
-      setIsSending(false);
     }
   }
 
-  function handleStopStreaming() {
-    streamAbortRef.current?.abort();
+  async function handleStopStreaming() {
+    stopRequestedRef.current = true;
+    const runId = streamRunRef.current;
+    const controller = streamAbortRef.current;
+    const sessionId = streamSessionRef.current;
+    if (!runId) return;
+    try {
+      await cancelChatRun(runId);
+      if (streamAbortRef.current !== controller || streamRunRef.current !== runId) return;
+      const conversation = chatHistory.conversations.find((item) => item.id === sessionId);
+      const pending = conversation?.messages.find((message) => message.pending);
+      if (sessionId && pending) chatHistory.updateMessage(sessionId, pending.id, { status: ui.chat.stopping });
+      // 保留订阅直到 agent_stopped，确保服务端释放会话后才允许发送下一条。
+    } catch (error) {
+      if (streamAbortRef.current !== controller || streamRunRef.current !== runId) return;
+      stopRequestedRef.current = false;
+      showToast({ kind: "error", message: chatFailureMessage(error, language), title: language === "en" ? "Stop generation" : "停止生成" });
+    }
   }
 
   function buildConfigPayload(source: ConfigDraft, changedKeys?: Array<keyof ConfigDraft>) {

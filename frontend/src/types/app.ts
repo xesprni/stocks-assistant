@@ -335,8 +335,18 @@ export interface ChatResponse {
 
 export interface ChatStreamEvent {
   type: string;
+  event_id?: number;
+  run_id?: string;
   timestamp?: number;
   data?: Record<string, unknown>;
+}
+
+export interface ChatRunSummary {
+  run_id: string;
+  request_id: string;
+  session_id: string;
+  user_message: string;
+  status: "running" | "stopping" | "done" | "cancelled" | "error";
 }
 
 export interface ThesisPayload {
@@ -1293,6 +1303,7 @@ export interface ChatSessionSummary {
 }
 
 export interface ChatSessionDetail extends ChatSessionSummary {
+  active_run?: ChatRunSummary | null;
   messages: ChatSessionMessage[];
 }
 
@@ -1302,6 +1313,7 @@ export interface ChatSessionListResponse {
 }
 
 export interface Conversation {
+  activeRun?: ChatRunSummary | null;
   id: string;
   title: string;
   messages: ChatMessage[];

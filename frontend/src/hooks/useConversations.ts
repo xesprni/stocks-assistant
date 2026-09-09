@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { clearChatSessionMessages, createChatSession, deleteAllChatSessions, deleteChatSession, getChatSession, listChatSessions, updateChatSessionTitle } from "@/lib/api";
-import type { ChatMessage, Conversation } from "@/types/app";
+import type { ChatMessage, ChatRunSummary, Conversation } from "@/types/app";
 
 const ACTIVE_SESSION_KEY = "stocks-assistant-active-session";
 const MAX_CONVERSATIONS = 50;
@@ -25,6 +25,7 @@ export function useConversations() {
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
   const userMutationVersionRef = useRef(0);
+  const switchLoadVersionRef = useRef(0);
   const conversationsRef = useRef<Conversation[]>([]);
   const activeIdRef = useRef<string | null>(activeId);
 
@@ -82,9 +83,9 @@ export function useConversations() {
     });
   }
 
-  async function loadConversation(id: string) {
+  async function loadConversation(id: string, isCurrent = () => true) {
     const detail = await getChatSession(id);
-    mergeConversation(detail);
+    if (isCurrent()) mergeConversation(detail);
     return detail;
   }
 
@@ -148,20 +149,21 @@ export function useConversations() {
   }
 
   function switchConversation(id: string) {
+    if (id === activeIdRef.current) return;
     userMutationVersionRef.current += 1;
+    const mutationVersion = userMutationVersionRef.current;
+    const loadVersion = ++switchLoadVersionRef.current;
     rememberActive(id);
-    const conv = conversations.find((c) => c.id === id);
-    const needsDetail = !conv || (conv.messages.length === 0 && (conv.messageCount ?? 0) > 0);
-    if (needsDetail) {
-      setLoadingConversationId(id);
-      loadConversation(id).catch(() => {
-        // 留在当前本地列表，下一次刷新会重新同步。
-      }).finally(() => {
+    // 切回会话时同步后台进度，不能因本地已有消息而跳过运行状态。
+    setLoadingConversationId(id);
+    loadConversation(id, () => switchLoadVersionRef.current === loadVersion
+      && userMutationVersionRef.current === mutationVersion && activeIdRef.current === id).catch(() => {
+      // 留在当前本地列表，下一次刷新会重新同步。
+    }).finally(() => {
+      if (switchLoadVersionRef.current === loadVersion) {
         setLoadingConversationId((current) => (current === id ? null : current));
-      });
-    } else {
-      setLoadingConversationId(null);
-    }
+      }
+    });
   }
 
   function addMessage(convId: string, message: ChatMessage) {
@@ -186,6 +188,12 @@ export function useConversations() {
       });
       return next;
     });
+  }
+
+  function updateRun(convId: string, activeRun: ChatRunSummary | null) {
+    setConversations((prev) => prev.map((conversation) => (
+      conversation.id === convId ? { ...conversation, activeRun } : conversation
+    )));
   }
 
   function deleteConversation(id: string) {
@@ -253,6 +261,7 @@ export function useConversations() {
     switchConversation,
     addMessage,
     updateMessage,
+    updateRun,
     updateTitle,
     deleteConversation,
     clearMessages,

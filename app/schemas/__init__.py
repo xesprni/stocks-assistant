@@ -14,6 +14,8 @@ class ChatRequest(BaseModel):
     """聊天请求"""
 
     message: str  # 用户消息
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+    after_event_id: int = Field(default=0, ge=0)
     session_id: str | None = None  # 会话 ID；为空时创建新会话
     user_id: str | None = None  # 用户 ID
     clear_history: bool = False  # 是否清空历史记录
@@ -72,10 +74,19 @@ class ChatSessionSummary(BaseModel):
     last_message: str | None = None
 
 
+class ChatActiveRun(BaseModel):
+    run_id: str
+    request_id: str
+    session_id: str
+    user_message: str
+    status: str
+
+
 class ChatSessionDetail(ChatSessionSummary):
     """聊天会话详情"""
 
     messages: list[ChatSessionMessage] = Field(default_factory=list)
+    active_run: ChatActiveRun | None = None
 
 
 class ChatSessionListResponse(BaseModel):
@@ -90,4 +101,6 @@ class StreamEvent(BaseModel):
 
     type: str  # 事件类型
     timestamp: float  # 时间戳
+    run_id: str | None = None
+    event_id: int | None = None
     data: dict[str, Any] | None = None  # 事件数据

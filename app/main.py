@@ -78,7 +78,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.core.agent.run_service import chat_runs
         from app.deps import close_mcp_managers
+
+        chat_runs.close()
 
         try:
             if scheduler_service is not None:

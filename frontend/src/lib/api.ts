@@ -14,6 +14,7 @@ import type {
   ChangePasswordRequest,
   ChatMessage,
   ChatResponse,
+  ChatRunSummary,
   ChatSessionDetail,
   ChatSessionListResponse,
   ChatSessionMessage,
@@ -97,6 +98,7 @@ import type {
   WatchlistOverviewResponse,
   WatchlistSearchResponse,
 } from "@/types/app";
+import { ChatStreamHttpError, consumeChatStream, parseChatSseBlock as parseSseBlock } from "@/lib/chat-stream";
 import { readStoredText, removeStoredValue, writeStoredValue } from "@/lib/local-storage";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -713,6 +715,14 @@ function mapChatMessage(message: ChatSessionMessage): ChatMessage {
 
 function mapConversation(session: ChatSessionSummary | ChatSessionDetail): Conversation {
   const messages = "messages" in session ? session.messages.map(mapChatMessage) : [];
+  const activeRun = "active_run" in session ? session.active_run : undefined;
+  // 正在运行的用户问题尚未落入消息表，刷新时用稳定标识补回。
+  if (activeRun) messages.push({
+    id: `run-user:${activeRun.run_id}`,
+    role: "user",
+    content: activeRun.user_message,
+    createdAt: formatChatTime(session.updated_at),
+  });
   return {
     id: session.id,
     title: session.title,
@@ -721,6 +731,7 @@ function mapConversation(session: ChatSessionSummary | ChatSessionDetail): Conve
     updatedAt: session.updated_at,
     messageCount: session.message_count,
     lastMessage: session.last_message,
+    activeRun,
   };
 }
 
@@ -736,77 +747,24 @@ export function sendChat(message: string, sessionId?: string | null, clearHistor
   });
 }
 
-function parseSseBlock(block: string): ChatStreamEvent | null {
-  const data = block
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-
-  if (!data) return null;
-  return JSON.parse(data) as ChatStreamEvent;
-}
-
-async function streamChatOnce(
-  message: string,
-  sessionId: string | null | undefined,
-  onEvent: (event: ChatStreamEvent) => void,
-  clearHistory = false,
-  signal?: AbortSignal,
-  thinkingEnabled = false,
-) {
-  const response = await fetch(`${API_BASE}/api/v1/agent/stream`, {
-    method: "POST",
-    headers: authHeaders(),
-    signal,
-    body: JSON.stringify({
-      message,
-      session_id: sessionId ?? undefined,
-      clear_history: clearHistory,
-      thinking_enabled: thinkingEnabled,
-    }),
-  });
-
+async function fetchChatStream(path: string, init: RequestInit, refreshed = false): Promise<Response> {
+  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: authHeaders(init) });
+  if (response.status === 401 && !refreshed) {
+    await response.body?.cancel();
+    try {
+      await refreshAuthToken();
+    } catch (error) {
+      if (error instanceof AuthRecoveryError) await error.recovery;
+      else throw error;
+    }
+    init.signal?.throwIfAborted();
+    return fetchChatStream(path, init, true);
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
-    throw new Error(detail || "Request failed");
+    throw new ChatStreamHttpError(response.status, apiErrorDetail(body, response.statusText || "Request failed"));
   }
-
-  if (!response.body) {
-    throw new Error("This browser does not support streaming responses");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  function flushBlock(block: string) {
-    const event = parseSseBlock(block);
-    if (event) onEvent(event);
-  }
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() ?? "";
-      for (const block of blocks) {
-        flushBlock(block);
-      }
-    }
-
-    buffer += decoder.decode();
-    if (buffer.trim()) {
-      flushBlock(buffer);
-    }
-  } finally {
-    // 确保异常或取消时释放 reader 锁，避免底层 stream 资源泄漏。
-    reader.releaseLock();
-  }
+  return response;
 }
 
 export async function streamChat(
@@ -816,25 +774,54 @@ export async function streamChat(
   clearHistory = false,
   signal?: AbortSignal,
   thinkingEnabled = false,
+  requestId: string = crypto.randomUUID(),
 ) {
-  try {
-    await streamChatOnce(message, sessionId, onEvent, clearHistory, signal, thinkingEnabled);
-  } catch (error) {
-    if (error instanceof Error && /Authentication|required|expired|invalid/i.test(error.message)) {
-      try {
-        await refreshAuthToken();
-      } catch (refreshError) {
-        if (refreshError instanceof AuthRecoveryError) {
-          await refreshError.recovery;
-        } else {
-          throw refreshError;
-        }
+  // 首帧前掉线也复用同一 request_id，不重复添加消息或执行工具。
+  const startedAt = Date.now();
+  let runId: string | undefined;
+  return consumeChatStream({
+    connect: (afterEventId, connectionSignal) => {
+      // 首次确认前长时间休眠应先同步会话，避免幂等缓存过期后重新执行。
+      if (!runId && Date.now() - startedAt > 5 * 60 * 1000) {
+        throw new ChatStreamHttpError(410, "Streaming connection could not be confirmed");
       }
-      await streamChatOnce(message, sessionId, onEvent, clearHistory, signal, thinkingEnabled);
-      return;
-    }
-    throw error;
-  }
+      return runId ? fetchChatStream(
+        `/api/v1/agent/runs/${encodeURIComponent(runId)}/stream?after_event_id=${afterEventId}`,
+        { signal: connectionSignal },
+      ) : fetchChatStream("/api/v1/agent/stream", {
+        method: "POST",
+        signal: connectionSignal,
+        body: JSON.stringify({
+          message,
+          session_id: sessionId ?? undefined,
+          clear_history: clearHistory,
+          thinking_enabled: thinkingEnabled,
+          request_id: requestId,
+          after_event_id: afterEventId,
+        }),
+      });
+    },
+    onEvent: (event) => {
+      if (event.run_id) runId = event.run_id;
+      onEvent(event);
+    },
+    signal,
+  });
+}
+
+export function resumeChatStream(runId: string, onEvent: (event: ChatStreamEvent) => void, signal?: AbortSignal) {
+  return consumeChatStream({
+    connect: (afterEventId, connectionSignal) => fetchChatStream(
+      `/api/v1/agent/runs/${encodeURIComponent(runId)}/stream?after_event_id=${afterEventId}`,
+      { signal: connectionSignal },
+    ),
+    onEvent,
+    signal,
+  });
+}
+
+export function cancelChatRun(runId: string) {
+  return request<ChatRunSummary>(`/api/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
 }
 
 export async function listChatSessions() {
