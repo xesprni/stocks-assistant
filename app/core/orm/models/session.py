@@ -17,6 +17,39 @@ class ChatSession(SessionBase):
     title: Mapped[str] = mapped_column(Text, nullable=False, default="新对话")
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    input_queue_paused: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ChatInputRecord(SessionBase):
+    """待处理输入独立于可见消息；未执行工具的输入可安全跨进程保留。"""
+
+    __tablename__ = "chat_inputs"
+    __table_args__ = (
+        UniqueConstraint("session_id", "request_id"),
+        UniqueConstraint("session_id", "seq"),
+        CheckConstraint("mode IN ('queue', 'steer')"),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'applied', 'completed', 'cancelled', 'failed')"
+        ),
+        Index("idx_chat_inputs_session_status_seq", "session_id", "status", "seq"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    target_run_id: Mapped[str | None] = mapped_column(Text)
+    run_id: Mapped[str | None] = mapped_column(Text)
+    thinking_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class ChatMessage(SessionBase):

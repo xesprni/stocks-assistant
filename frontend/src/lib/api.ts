@@ -15,6 +15,8 @@ import type {
   ChatMessage,
   ChatResponse,
   ChatRunSummary,
+  ChatInput,
+  ChatInputRequest,
   ChatSessionDetail,
   ChatSessionListResponse,
   ChatSessionMessage,
@@ -134,6 +136,16 @@ function advanceAuthSession() {
   // 不同登录会话绝不能共享旧 Promise；正在飞行的请求可以自行结束，
   // 但新会话会使用新的 epoch key 发起独立请求。
   inflightGetRequests.clear();
+}
+
+export class ApiHttpError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
 }
 
 class AuthRecoveryError extends Error {
@@ -318,7 +330,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true, respon
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       const detail = apiErrorDetail(body, response.statusText);
-      throw new Error(detail || "Request failed");
+      throw new ApiHttpError(response.status, detail || "Request failed");
     }
 
     return (responseType === "blob" ? response.blob() : response.json()) as Promise<T>;
@@ -740,6 +752,8 @@ function mapConversation(session: ChatSessionSummary | ChatSessionDetail): Conve
     messageCount: session.message_count,
     lastMessage: session.last_message,
     activeRun,
+    inputs: "inputs" in session ? session.inputs : undefined,
+    inputQueuePaused: "input_queue_paused" in session ? session.input_queue_paused : undefined,
   };
 }
 
@@ -830,6 +844,21 @@ export function resumeChatStream(runId: string, onEvent: (event: ChatStreamEvent
 
 export function cancelChatRun(runId: string) {
   return request<ChatRunSummary>(`/api/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+}
+
+export function submitChatInput(sessionId: string, payload: ChatInputRequest) {
+  return request<ChatInput>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/inputs`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function cancelChatInput(sessionId: string, inputId: string) {
+  return request<ChatInput>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/inputs/${encodeURIComponent(inputId)}`, { method: "DELETE" });
+}
+
+export function resumeChatInputQueue(sessionId: string) {
+  return request<{ active_run: ChatRunSummary | null }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/inputs/resume`, { method: "POST" });
 }
 
 export async function listChatSessions() {

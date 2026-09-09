@@ -83,6 +83,8 @@ export function SubAgentsPage({
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [enabled, setEnabled] = useState(true);
   const [maxParallel, setMaxParallel] = useState(3);
+  const [maxTasksPerBatch, setMaxTasksPerBatch] = useState(12);
+  const [taskTimeoutSeconds, setTaskTimeoutSeconds] = useState(180);
   const [defaultMaxSteps, setDefaultMaxSteps] = useState(8);
   const [maxDepth, setMaxDepth] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
@@ -109,6 +111,8 @@ export function SubAgentsPage({
     setForm(firstName ? roleToForm(firstName, normalized[firstName]) : emptySubAgentRoleForm);
     setEnabled(config.multi_agent_enabled);
     setMaxParallel(config.multi_agent_max_parallel_agents);
+    setMaxTasksPerBatch(config.multi_agent_max_tasks_per_batch ?? 12);
+    setTaskTimeoutSeconds(config.multi_agent_task_timeout_seconds ?? 180);
     setDefaultMaxSteps(config.multi_agent_default_max_steps);
     setMaxDepth(config.multi_agent_max_depth);
   }, [config]);
@@ -218,9 +222,11 @@ export function SubAgentsPage({
     try {
       const next = await saveConfig({
         multi_agent_enabled: enabled,
-        multi_agent_max_parallel_agents: Math.max(1, Number(maxParallel) || 1),
-        multi_agent_default_max_steps: Math.max(1, Number(defaultMaxSteps) || 1),
-        multi_agent_max_depth: Math.max(1, Number(maxDepth) || 1),
+        multi_agent_max_parallel_agents: Number(maxParallel),
+        multi_agent_max_tasks_per_batch: Number(maxTasksPerBatch),
+        multi_agent_task_timeout_seconds: Number(taskTimeoutSeconds),
+        multi_agent_default_max_steps: Number(defaultMaxSteps),
+        multi_agent_max_depth: Number(maxDepth),
         multi_agent_roles: nextRoles,
       });
       setRoles(next.multi_agent_roles);
@@ -302,14 +308,20 @@ export function SubAgentsPage({
               <div className="grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3">
                 <ToggleRow checked={enabled} icon={<ShieldCheck className="size-4 text-primary" />} label={copy.enabled} onCheckedChange={setEnabled} />
                 <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                  <Field label={copy.parallelLimit}>
-                    <Input min={1} type="number" value={maxParallel} onChange={(e) => setMaxParallel(Number(e.target.value))} />
+                  <Field label={copy.parallelLimit} description={copy.parallelLimitHint}>
+                    <Input min={1} max={8} type="number" value={maxParallel} onChange={(e) => setMaxParallel(Number(e.target.value))} />
+                  </Field>
+                  <Field label={copy.batchTaskLimit} description={copy.batchTaskLimitHint}>
+                    <Input min={1} max={32} type="number" value={maxTasksPerBatch} onChange={(e) => setMaxTasksPerBatch(Number(e.target.value))} />
+                  </Field>
+                  <Field label={copy.taskTimeout} description={copy.taskTimeoutHint}>
+                    <Input min={10} max={1800} type="number" value={taskTimeoutSeconds} onChange={(e) => setTaskTimeoutSeconds(Number(e.target.value))} />
                   </Field>
                   <Field label={copy.defaultSteps}>
-                    <Input min={1} type="number" value={defaultMaxSteps} onChange={(e) => setDefaultMaxSteps(Number(e.target.value))} />
+                    <Input min={1} max={100} type="number" value={defaultMaxSteps} onChange={(e) => setDefaultMaxSteps(Number(e.target.value))} />
                   </Field>
-                  <Field label={copy.maxDepth}>
-                    <Input min={1} type="number" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} />
+                  <Field label={copy.maxDepth} description={copy.maxDepthHint}>
+                    <Input min={0} max={1} type="number" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} />
                   </Field>
                 </div>
               </div>

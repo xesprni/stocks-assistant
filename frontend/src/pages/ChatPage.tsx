@@ -30,13 +30,14 @@ import { RenderImagePreview } from "@/components/RenderImagePreview";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
+import { hasPendingChatQueue, visibleChatInputs } from "@/lib/chat-inputs";
 import { saveResearchEvidence } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { ChatHistoryState } from "@/hooks/useConversations";
 import { useResearchQuickPrompts } from "@/hooks/useResearchQuickPrompts";
-import type { ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
+import type { ChatInput, ChatInputMode, ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
 
 function ChatSources({ message, language }: { message: ChatMessage; language: AppLanguage }) {
   const [saved, setSaved] = useState<Set<string>>(() => new Set());
@@ -492,6 +493,12 @@ export function ChatPage({
   embedded = false,
   expanded = false,
   isSending,
+  canSteer,
+  isInputBusy,
+  inputError,
+  inputRetryMode,
+  handleCancelInput,
+  handleResumeInputQueue,
   language,
   displayName,
   onToggleExpanded,
@@ -506,12 +513,18 @@ export function ChatPage({
   chatScrollRef: RefObject<HTMLDivElement | null>;
   confirmAction: ConfirmFn;
   endRef: RefObject<HTMLDivElement | null>;
-  handleSend: (event?: { preventDefault: () => void }, value?: string, options?: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean }) => void;
+  handleSend: (event?: { preventDefault: () => void }, value?: string, options?: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean; inputMode?: ChatInputMode }) => void;
   handleChatScroll: () => void;
   handleStopStreaming: () => void;
   embedded?: boolean;
   expanded?: boolean;
   isSending: boolean;
+  canSteer: boolean;
+  isInputBusy: boolean;
+  inputError?: string;
+  inputRetryMode?: ChatInputMode;
+  handleCancelInput: (input: ChatInput) => void;
+  handleResumeInputQueue: () => void;
   language: AppLanguage;
   displayName?: string;
   onToggleExpanded?: () => void;
@@ -540,6 +553,7 @@ export function ChatPage({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(readChatThinkingEnabled);
+  const [inputMode, setInputMode] = useState<ChatInputMode>("queue");
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
   const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
@@ -550,6 +564,17 @@ export function ChatPage({
     ? `Thinking mode ${thinkingEnabled ? "on" : "off"}`
     : `思考模式${thinkingEnabled ? "开启" : "关闭"}`;
   const isHistoryLoading = chatHistory.isLoading;
+  const inputs = visibleChatInputs(chatHistory.activeConversation?.inputs ?? []);
+  const hasPendingQueue = hasPendingChatQueue(inputs);
+  const inputQueuePaused = chatHistory.activeConversation?.inputQueuePaused === true;
+  const effectiveInputMode = inputRetryMode ?? inputMode;
+  const queueSubmission = isSending || hasPendingQueue || inputQueuePaused;
+  const sendLabel = isInputBusy ? chatCopy.inputSubmitting
+    : effectiveInputMode === "steer" ? chatCopy.inputSteer
+      : queueSubmission ? chatCopy.inputQueue : common.send;
+  const canSubmit = Boolean(prompt.trim()) && !isInputBusy && !isActiveConversationLoading
+    && (!isSending || Boolean(activeId))
+    && (effectiveInputMode !== "steer" || canSteer || inputRetryMode === "steer");
   const isNewConversation = !isHistoryLoading && !isActiveConversationLoading && messages.length === 0 && !isSending;
   const greeting = displayName
     ? formatTemplate(uiCopy.greeting, { name: displayName })
@@ -637,6 +662,10 @@ export function ChatPage({
     persistChatThinkingEnabled(thinkingEnabled);
   }, [thinkingEnabled]);
 
+  useEffect(() => {
+    setInputMode("queue");
+  }, [activeId, isSending]);
+
   function resetThinkingMode() {
     resetChatThinkingEnabled();
     setThinkingEnabled(false);
@@ -691,9 +720,10 @@ export function ChatPage({
   }
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
-    const shouldClose = Boolean(prompt.trim()) && !isSending;
-    handleSend(event, undefined, { thinkingEnabled });
-    if (shouldClose) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    handleSend(event, undefined, { thinkingEnabled, inputMode: effectiveInputMode });
+    if (!queueSubmission && !inputRetryMode) {
       closeMobileComposer();
     }
   }
@@ -749,13 +779,13 @@ export function ChatPage({
                   largeComposer ? "min-h-[78px]" : "min-h-8 text-[15px] leading-6 sm:min-h-10",
                   embedded && "text-[14px] leading-6",
                 )}
-              disabled={isSending}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  const shouldClose = Boolean(prompt.trim()) && !isSending;
-                  handleSend(event, undefined, { thinkingEnabled });
-                  if (shouldClose) {
+                  event.preventDefault();
+                  if (!canSubmit) return;
+                  handleSend(event, undefined, { thinkingEnabled, inputMode: effectiveInputMode });
+                  if (!queueSubmission && !inputRetryMode) {
                     closeMobileComposer();
                   }
                 }
@@ -797,18 +827,38 @@ export function ChatPage({
                 <BrainCircuit className="size-4 sm:size-5" />
               </Button>
             </div>
-            {isSending ? (
-              <Button className="h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10 sm:w-auto sm:px-4" onClick={handleStopStreaming} type="button" variant="destructive">
-                <Square className="fill-current size-4 sm:size-5" />
-                <span className="hidden sm:inline">{chatCopy.stop}</span>
+            <div className="flex min-w-0 items-center gap-1.5">
+              {isSending ? (
+                <Button aria-label={chatCopy.stop} className="h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10" onClick={handleStopStreaming} title={chatCopy.stop} type="button" variant="destructive">
+                  <Square className="size-4 fill-current" />
+                </Button>
+              ) : null}
+              <Button aria-label={sendLabel} className="h-9 shrink-0 rounded-full px-3 text-xs sm:h-10 sm:px-4 sm:text-sm" disabled={!canSubmit} title={sendLabel} type="submit">
+                {isInputBusy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                <span>{sendLabel}</span>
               </Button>
-            ) : (
-              <Button className="h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10 sm:w-auto sm:px-4" disabled={!prompt.trim()} type="submit">
-                <Send className="size-4 sm:size-5" />
-                <span className="hidden sm:inline">{common.send}</span>
-              </Button>
-            )}
+            </div>
           </div>
+          {isSending || inputRetryMode ? (
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/50 pt-2">
+              <select
+                aria-label={chatCopy.inputMode}
+                className="h-8 max-w-full rounded-lg border border-border bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                disabled={isInputBusy || Boolean(inputRetryMode)}
+                onChange={(event) => setInputMode(event.target.value as ChatInputMode)}
+                value={effectiveInputMode}
+              >
+                <option value="queue">{chatCopy.inputQueue}</option>
+                <option disabled={!canSteer && inputRetryMode !== "steer"} value="steer">{chatCopy.inputSteer}</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                {effectiveInputMode === "steer" ? chatCopy.inputSteerHint : !canSteer && isSending ? chatCopy.inputAwaitingRun : chatCopy.inputQueueHint}
+              </p>
+            </div>
+          ) : null}
+          {inputError ? (
+            <p className="mt-2 text-xs text-destructive" role="alert">{inputError} {inputRetryMode ? chatCopy.inputRetryHint : ""}</p>
+          ) : null}
         </div>
       </form>
     );
@@ -1099,6 +1149,39 @@ export function ChatPage({
           </div>
         </div>
 
+        {inputs.length > 0 ? (
+          <div className="shrink-0 border-t border-border/50 px-3 py-2 sm:px-4">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">{chatCopy.inputList} · {inputs.length}</p>
+              {!isSending && hasPendingQueue ? (
+                <Button className="h-7 px-2 text-xs" disabled={isInputBusy || isActiveConversationLoading} onClick={handleResumeInputQueue} type="button" variant="outline">
+                  {isInputBusy ? <Loader2 className="size-3 animate-spin" /> : null}{chatCopy.inputResume}
+                </Button>
+              ) : null}
+            </div>
+            {inputQueuePaused && hasPendingQueue ? <p className="mb-1.5 text-[11px] text-muted-foreground">{chatCopy.inputPaused}</p> : null}
+            <ul aria-label={chatCopy.inputList} aria-live="polite" className="max-h-36 space-y-1.5 overflow-y-auto">
+              {inputs.map((input) => (
+                <li className="flex items-start gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs" key={input.id}>
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                      <span>{input.mode === "steer" ? chatCopy.inputSteer : chatCopy.inputQueue}</span>
+                      <span className={cn(input.status === "failed" && "text-destructive")}>
+                        {input.status === "pending" ? input.mode === "steer" ? chatCopy.inputPendingSteer : chatCopy.inputPendingQueue
+                          : input.status === "running" ? chatCopy.inputRunning : input.status === "applied" ? chatCopy.inputApplied : chatCopy.inputFailed}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words" title={input.message}>{input.message}</p>
+                    {input.error ? <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-destructive" title={input.error}>{input.error}</p> : null}
+                  </div>
+                  {input.status === "pending" || input.status === "failed" ? (
+                    <Button aria-label={chatCopy.inputRemove} className="size-7 shrink-0" disabled={isInputBusy} onClick={() => handleCancelInput(input)} size="icon" title={chatCopy.inputRemove} type="button" variant="ghost"><X className="size-3.5" /></Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {renderComposer("desktop")}
       </section>
       {!embedded && mobileComposerOpen ? (

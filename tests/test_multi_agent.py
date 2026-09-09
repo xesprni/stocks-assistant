@@ -46,7 +46,15 @@ class FakeAgent:
         self.tools = kwargs.get("tools") or []
         self.multi_agent_depth = kwargs.get("multi_agent_depth", 0)
 
-    def run_stream(self, user_message: str, on_event=None, clear_history=False, skill_filter=None):
+    def run_stream(
+        self,
+        user_message: str,
+        on_event=None,
+        clear_history=False,
+        skill_filter=None,
+        cancel_event=None,
+        thinking_enabled=False,
+    ):
         if "slow" in user_message:
             time.sleep(0.02)
         if on_event:
@@ -95,6 +103,8 @@ def fake_settings(**overrides):
     base = {
         "multi_agent_enabled": True,
         "multi_agent_max_parallel_agents": 3,
+        "multi_agent_max_tasks_per_batch": 12,
+        "multi_agent_task_timeout_seconds": 180,
         "multi_agent_default_max_steps": 8,
         "multi_agent_max_depth": 1,
         "multi_agent_dangerous_tools": ["bash", "write_file", "scheduler"],
@@ -141,7 +151,11 @@ class DelegateAgentToolTest(unittest.TestCase):
 
     def test_agent_prompt_uses_user_multi_agent_setting(self):
         disabled_agent = Agent(system_prompt="", settings=fake_settings(multi_agent_enabled=False))
-        enabled_agent = Agent(system_prompt="", settings=fake_settings(multi_agent_enabled=True))
+        enabled_agent = Agent(
+            system_prompt="",
+            tools=[NamedTool("delegate_agent")],
+            settings=fake_settings(multi_agent_enabled=True),
+        )
 
         self.assertEqual(disabled_agent.get_multi_agent_prompt(), "")
         self.assertIn("multi_agent_delegation_policy", enabled_agent.get_multi_agent_prompt())
@@ -174,7 +188,9 @@ class DelegateAgentToolTest(unittest.TestCase):
             {"role": "researcher", "task": f"task {idx}", "tools": ["web_fetch"]}
             for idx in range(4)
         ]
-        result, _ = self.run_tool({"tasks": tasks})
+        result, _ = self.run_tool(
+            {"tasks": tasks}, settings=fake_settings(multi_agent_max_tasks_per_batch=3)
+        )
         self.assertEqual(result.status, "error")
         self.assertIn("maximum is 3", result.result)
 

@@ -222,10 +222,13 @@ def test_render_artifact_references_are_persisted_and_reloaded(tmp_path, monkeyp
 
 def test_sync_chat_response_keeps_artifact_references(tmp_path, monkeypatch):
     from app.api import agent as api
+    from app.core.agent.run_service import ChatRunManager
     from app.core.session.store import ChatSessionStore
     from app.schemas import ChatRequest
 
     store = ChatSessionStore(str(tmp_path))
+    manager = ChatRunManager()
+    monkeypatch.setattr(api, "chat_runs", manager)
     session = store.create_session(user_id="alice")
     artifacts = [
         {
@@ -243,9 +246,12 @@ def test_sync_chat_response_keeps_artifact_references(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "_start_trace", lambda *args: None)
     monkeypatch.setattr(api, "_init_agent", lambda *args: agent)
     monkeypatch.setattr(api, "_schedule_memory_curate", lambda **kwargs: None)
-    response = api.chat(ChatRequest(message="draw"), SimpleNamespace(id="alice"))
-    assert response.rendered_images == artifacts
-    assert store.get_messages(session["id"])[-1]["metadata"]["rendered_images"] == artifacts
+    try:
+        response = api.chat(ChatRequest(message="draw"), SimpleNamespace(id="alice"))
+        assert response.rendered_images == artifacts
+        assert store.get_messages(session["id"])[-1]["metadata"]["rendered_images"] == artifacts
+    finally:
+        manager.close()
 
 
 def test_stream_completion_keeps_artifact_references(tmp_path, monkeypatch):

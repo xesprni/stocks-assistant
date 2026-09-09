@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { clearChatSessionMessages, createChatSession, deleteAllChatSessions, deleteChatSession, getChatSession, listChatSessions, updateChatSessionTitle } from "@/lib/api";
-import type { ChatMessage, ChatRunSummary, Conversation } from "@/types/app";
+import { mergeChatInputs, upsertChatInput } from "@/lib/chat-inputs";
+import type { ChatInput, ChatMessage, ChatRunSummary, Conversation } from "@/types/app";
 
 const ACTIVE_SESSION_KEY = "stocks-assistant-active-session";
 const MAX_CONVERSATIONS = 50;
@@ -196,6 +197,32 @@ export function useConversations() {
     )));
   }
 
+  function updateInput(convId: string, input: ChatInput) {
+    if (input.session_id !== convId) return;
+    setConversations((prev) => prev.map((conversation) => conversation.id === convId
+      ? { ...conversation, inputs: upsertChatInput(conversation.inputs ?? [], input) }
+      : conversation));
+  }
+
+  async function refreshConversation(convId: string) {
+    const detail = await getChatSession(convId);
+    setConversations((prev) => prev.map((conversation) => {
+      if (conversation.id !== convId) return conversation;
+      // 结束后同步持久化历史与下一轮运行，同时保留本地已完成回复的工具轨迹。
+      const messages = detail.messages.map((message) => {
+        const existing = conversation.messages.find((item) => item.id === message.id && !item.pending);
+        return existing ? { ...existing, ...message } : message;
+      });
+      if (detail.activeRun && detail.activeRun.run_id === conversation.activeRun?.run_id) {
+        messages.push(...conversation.messages.filter((message) => message.pending
+          && !messages.some((loaded) => loaded.id === message.id)));
+      }
+      return { ...conversation, ...detail, messages,
+        inputs: mergeChatInputs(conversation.inputs ?? [], detail.inputs ?? []) };
+    }));
+    return detail;
+  }
+
   function deleteConversation(id: string) {
     userMutationVersionRef.current += 1;
     const remaining = conversations.filter((c) => c.id !== id);
@@ -213,7 +240,8 @@ export function useConversations() {
     setConversations((prev) => {
       const next = prev.map((c) => {
         if (c.id !== convId) return c;
-        return { ...c, messages: [], title: "新对话", updatedAt: new Date().toISOString() };
+        return { ...c, messages: [], inputs: [], activeRun: null, inputQueuePaused: false,
+          title: "新对话", updatedAt: new Date().toISOString() };
       });
       return next;
     });
@@ -262,6 +290,8 @@ export function useConversations() {
     addMessage,
     updateMessage,
     updateRun,
+    updateInput,
+    refreshConversation,
     updateTitle,
     deleteConversation,
     clearMessages,

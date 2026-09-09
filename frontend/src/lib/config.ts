@@ -33,6 +33,8 @@ export function toDraft(config: AppConfig): ConfigDraft {
     search_api_key: "",
     agent_tool_allowlist: config.agent_tool_allowlist ?? [],
     agent_allow_all_mcp_tools: config.agent_allow_all_mcp_tools ?? true,
+    multi_agent_max_tasks_per_batch: config.multi_agent_max_tasks_per_batch ?? 12,
+    multi_agent_task_timeout_seconds: config.multi_agent_task_timeout_seconds ?? 180,
     research_quick_prompts_refresh_seconds: config.research_quick_prompts_refresh_seconds ?? 3600,
     mcp_servers_text: JSON.stringify(config.mcp_servers ?? {}, null, 2),
     mcp_tool_timeout_seconds: config.mcp_tool_timeout_seconds ?? 60,

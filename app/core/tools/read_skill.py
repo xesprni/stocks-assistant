@@ -96,7 +96,7 @@ class ReadSkillTool(BaseTool):
     def _get_active_skill_filter(self) -> list[str] | None:
         ctx = getattr(self, "context", None)
         active = getattr(ctx, "active_skill_filter", None) if ctx else None
-        if not active:
+        if active is None:
             return None
         return list(active)
 

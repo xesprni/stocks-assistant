@@ -230,6 +230,8 @@ export interface AppConfig {
   agent_allow_all_mcp_tools: boolean;
   multi_agent_enabled: boolean;
   multi_agent_max_parallel_agents: number;
+  multi_agent_max_tasks_per_batch: number;
+  multi_agent_task_timeout_seconds: number;
   multi_agent_default_max_steps: number;
   multi_agent_max_depth: number;
   multi_agent_dangerous_tools: string[];
@@ -358,6 +360,30 @@ export interface ChatRunSummary {
   session_id: string;
   user_message: string;
   status: "running" | "stopping" | "done" | "cancelled" | "error";
+}
+
+export type ChatInputMode = "queue" | "steer";
+
+export interface ChatInput {
+  id: string;
+  session_id: string;
+  request_id: string;
+  message: string;
+  mode: ChatInputMode;
+  status: "pending" | "running" | "applied" | "completed" | "cancelled" | "failed";
+  target_run_id: string | null;
+  run_id: string | null;
+  created_at: string;
+  updated_at: string;
+  error: string | null;
+}
+
+export interface ChatInputRequest {
+  request_id: string;
+  message: string;
+  mode: ChatInputMode;
+  target_run_id?: string;
+  thinking_enabled?: boolean;
 }
 
 export interface ThesisPayload {
@@ -1315,6 +1341,8 @@ export interface ChatSessionSummary {
 
 export interface ChatSessionDetail extends ChatSessionSummary {
   active_run?: ChatRunSummary | null;
+  inputs?: ChatInput[];
+  input_queue_paused?: boolean;
   messages: ChatSessionMessage[];
 }
 
@@ -1325,6 +1353,8 @@ export interface ChatSessionListResponse {
 
 export interface Conversation {
   activeRun?: ChatRunSummary | null;
+  inputs?: ChatInput[];
+  inputQueuePaused?: boolean;
   id: string;
   title: string;
   messages: ChatMessage[];

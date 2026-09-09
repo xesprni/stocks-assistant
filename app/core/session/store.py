@@ -75,6 +75,7 @@ class ChatSessionStore:
     def get_detail(self, session_id: str) -> dict[str, Any]:
         session = self.get_session(session_id)
         session["messages"] = self.get_messages(session_id)
+        session["inputs"] = self.repository.list_inputs(session_id)
         return session
 
     def get_messages(self, session_id: str) -> list[dict[str, Any]]:
@@ -133,6 +134,7 @@ class ChatSessionStore:
             "updated_at": row["updated_at"],
             "message_count": row["message_count"],
             "last_message": row["last_message"],
+            "input_queue_paused": row.get("input_queue_paused", False),
         }
 
     @staticmethod

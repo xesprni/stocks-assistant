@@ -19,7 +19,14 @@ MAX_BYTES = 30 * 1024
 class BashTool(BaseTool):
     name: str = "bash"
     description: str = (
-        "Execute a bash command. Returns stdout/stderr. Output truncated to last 500 lines or 30KB."
+        "Execute a bash command. Returns stdout/stderr. Output truncated to last 500 lines or 30KB. "
+        "Each call starts a new shell in the configured workspace: cd and environment changes "
+        "do not persist between calls, but files saved in the workspace do. Save reusable "
+        "artifacts there instead of temporary directories. "
+        "For static chart/report images, follow image_rendering_policy and use render_image when "
+        "available; do not default to Python/Matplotlib/Pillow or screenshot scripts, including "
+        "scripts just to prepare the HTML. Data processing and calculations are still appropriate. "
+        "A user-requested plotting script or different rendering workflow remains supported."
     )
     params: dict = {
         "type": "object",

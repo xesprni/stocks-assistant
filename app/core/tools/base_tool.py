@@ -10,6 +10,8 @@ import logging
 from enum import Enum
 from typing import Any
 
+from app.core.agent.delegation_runtime import AgentCancelledError
+
 logger = logging.getLogger("stocks-assistant.tools")
 
 
@@ -47,6 +49,9 @@ class BaseTool:
     def execute_tool(self, params: dict) -> ToolResult:
         try:
             return self.execute(params)
+        except AgentCancelledError:
+            # 取消是运行生命周期信号，不能转换成可继续执行的普通工具错误。
+            raise
         except Exception as e:
             logger.error("Tool %s error: %s", self.name, e)
             return ToolResult.fail(str(e))

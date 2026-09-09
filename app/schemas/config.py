@@ -53,9 +53,11 @@ class AppConfig(BaseModel):
     agent_tool_allowlist: list[str] = Field(default_factory=list)
     agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True
-    multi_agent_max_parallel_agents: int = 3
-    multi_agent_default_max_steps: int = 8
-    multi_agent_max_depth: int = 1
+    multi_agent_max_parallel_agents: int = Field(default=3, ge=1, le=8)
+    multi_agent_max_tasks_per_batch: int = Field(default=12, ge=1, le=32)
+    multi_agent_task_timeout_seconds: int = Field(default=180, ge=10, le=1800)
+    multi_agent_default_max_steps: int = Field(default=8, ge=1, le=100)
+    multi_agent_max_depth: int = Field(default=1, ge=0, le=1)
     multi_agent_dangerous_tools: list[str] = Field(default_factory=list)
     multi_agent_roles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
@@ -137,9 +139,11 @@ class ConfigUpdate(BaseModel):
     agent_tool_allowlist: list[str] | None = None
     agent_allow_all_mcp_tools: bool | None = None
     multi_agent_enabled: bool | None = None
-    multi_agent_max_parallel_agents: int | None = None
-    multi_agent_default_max_steps: int | None = None
-    multi_agent_max_depth: int | None = None
+    multi_agent_max_parallel_agents: int | None = Field(default=None, ge=1, le=8)
+    multi_agent_max_tasks_per_batch: int | None = Field(default=None, ge=1, le=32)
+    multi_agent_task_timeout_seconds: int | None = Field(default=None, ge=10, le=1800)
+    multi_agent_default_max_steps: int | None = Field(default=None, ge=1, le=100)
+    multi_agent_max_depth: int | None = Field(default=None, ge=0, le=1)
     multi_agent_dangerous_tools: list[str] | None = None
     multi_agent_roles: dict[str, dict[str, Any]] | None = None
 

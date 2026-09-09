@@ -824,25 +824,46 @@ export function ConfigPage({
                   />
                 </div>
                 <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-3">
-                  <Field label={copy.parallelLimit}>
+                  <Field label={copy.parallelLimit} description={copy.parallelLimitHint}>
                     <Input
                       min={1}
+                      max={8}
                       type="number"
                       value={draft.multi_agent_max_parallel_agents}
                       onChange={(event) => patchDraft({ multi_agent_max_parallel_agents: Number(event.target.value) })}
                     />
                   </Field>
+                  <Field label={copy.batchTaskLimit} description={copy.batchTaskLimitHint}>
+                    <Input
+                      min={1}
+                      max={32}
+                      type="number"
+                      value={draft.multi_agent_max_tasks_per_batch ?? 12}
+                      onChange={(event) => patchDraft({ multi_agent_max_tasks_per_batch: Number(event.target.value) })}
+                    />
+                  </Field>
+                  <Field label={copy.taskTimeout} description={copy.taskTimeoutHint}>
+                    <Input
+                      min={10}
+                      max={1800}
+                      type="number"
+                      value={draft.multi_agent_task_timeout_seconds ?? 180}
+                      onChange={(event) => patchDraft({ multi_agent_task_timeout_seconds: Number(event.target.value) })}
+                    />
+                  </Field>
                   <Field label={copy.subAgentSteps}>
                     <Input
                       min={1}
+                      max={100}
                       type="number"
                       value={draft.multi_agent_default_max_steps}
                       onChange={(event) => patchDraft({ multi_agent_default_max_steps: Number(event.target.value) })}
                     />
                   </Field>
-                  <Field label={copy.maxDepth}>
+                  <Field label={copy.maxDepth} description={copy.maxDepthHint}>
                     <Input
-                      min={1}
+                      min={0}
+                      max={1}
                       type="number"
                       value={draft.multi_agent_max_depth}
                       onChange={(event) => patchDraft({ multi_agent_max_depth: Number(event.target.value) })}

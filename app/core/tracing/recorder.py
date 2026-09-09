@@ -66,9 +66,11 @@ class TraceRecorder:
             "tool_execution_end": self._on_tool_execution_end,
             "subagent_batch_start": self._on_subagent_batch_start,
             "subagent_batch_end": self._on_subagent_batch_end,
+            "subagent_queued": self._on_subagent_queued,
             "subagent_start": self._on_subagent_start,
             "subagent_end": self._on_subagent_end,
             "subagent_event": self._handle_subagent_event,
+            "input_updated": self._on_input_updated,
             "error": self._on_error,
         }
         self._child_handlers: dict[str, Callable[[_SubagentEvent], None]] = {
@@ -173,6 +175,26 @@ class TraceRecorder:
         if isinstance(turn, int):
             self.turn_events[turn] = event_id
         self.current_turn_id = event_id
+
+    def _on_input_updated(self, data: dict[str, Any], timestamp: float | None) -> None:
+        item = data.get("input")
+        if not isinstance(item, dict) or not item.get("id"):
+            return
+        mode = "Steering input" if item.get("mode") == "steer" else "Queued input"
+        status = str(item.get("status") or "pending")
+        # 每次状态变化作为独立快照，保留接收、应用和完成时刻以便审计。
+        self.store.add_event(
+            self.run_id,
+            node_type="input",
+            title=f"{mode}: {status}",
+            status="error" if status == "failed" else "done",
+            payload=data,
+            parent_id=self.root_event_id,
+            started_at=timestamp,
+            ended_at=timestamp,
+            duration_ms=0,
+            summary=_preview(item.get("message", "")),
+        )
 
     def _on_turn_end(self, data: dict[str, Any], timestamp: float | None) -> None:
         turn = data.get("turn")
@@ -369,9 +391,10 @@ class TraceRecorder:
 
     def _on_subagent_batch_end(self, data: dict[str, Any], timestamp: float | None) -> None:
         batch_id = str(data.get("batch_id") or "")
-        info = self.subagent_batches.pop(batch_id, None)
+        # 保留批次定位信息，迟到的子任务终止事件仍应挂在原批次下。
+        info = self.subagent_batches.get(batch_id)
         if info:
-            status = "done" if data.get("status") == "success" else "error"
+            status = self._subagent_terminal_status(data.get("status"))
             duration = data.get("duration_ms")
             self.store.update_event(
                 info["event_id"],
@@ -384,18 +407,21 @@ class TraceRecorder:
                 summary=f"Sub-agent batch: {data.get('status') or status}",
             )
 
-    def _on_subagent_start(self, data: dict[str, Any], timestamp: float | None) -> None:
+    def _on_subagent_queued(self, data: dict[str, Any], timestamp: float | None) -> None:
         batch_id = str(data.get("batch_id") or "")
         task_id = str(data.get("task_id") or _new_id())
+        if (batch_id, task_id) in self.subagent_tasks:
+            return
         role = str(data.get("role") or "subagent")
         batch_info = self.subagent_batches.get(batch_id)
         parent_id = (batch_info or {}).get("event_id") or self.current_turn_id or self.root_event_id
+        payload = {**data, "status": "queued", "queued_at": timestamp}
         event_id = self.store.add_event(
             self.run_id,
             node_type="subagent",
             title=f"Sub-agent: {role}",
-            status="running",
-            payload=data,
+            status="queued",
+            payload=payload,
             parent_id=parent_id,
             started_at=timestamp,
             summary=_preview(str(data.get("task") or "")),
@@ -404,20 +430,59 @@ class TraceRecorder:
             "event_id": event_id,
             "started_at": timestamp,
             "role": role,
+            "payload": payload,
+            "finished": False,
         }
+
+    def _on_subagent_start(self, data: dict[str, Any], timestamp: float | None) -> None:
+        batch_id = str(data.get("batch_id") or "")
+        task_id = str(data.get("task_id") or _new_id())
+        data = {**data, "task_id": task_id}
+        self._on_subagent_queued(data, timestamp)
+        info = self.subagent_tasks[(batch_id, task_id)]
+        if info.get("finished") or info.get("running"):
+            return
+        # 排队与执行复用同一节点；保留排队信息，不把依赖等待误认为另一名子 Agent。
+        payload = {
+            **info["payload"],
+            **data,
+            "status": "running",
+            "started_at": timestamp,
+            "queue_duration_ms": _duration_ms(info.get("started_at"), timestamp),
+        }
+        info.update(started_at=timestamp, payload=payload, running=True)
+        self.store.update_event(
+            info["event_id"],
+            status="running",
+            payload=payload,
+            summary=_preview(str(data.get("task") or payload.get("task") or "")),
+        )
+
+    @staticmethod
+    def _subagent_terminal_status(status: Any) -> str:
+        if status in {"success", "done"}:
+            return "done"
+        if status in {"skipped", "cancelled"}:
+            return str(status)
+        return "error"
 
     def _on_subagent_end(self, data: dict[str, Any], timestamp: float | None) -> None:
         batch_id = str(data.get("batch_id") or "")
         task_id = str(data.get("task_id") or "")
+        if (batch_id, task_id) not in self.subagent_tasks:
+            # 依赖失败或取消可能直接终止未启动的任务，仍要留下可追踪节点。
+            self._on_subagent_queued(data, timestamp)
         self._flush_subagent_message_delta(batch_id, task_id)
-        info = self.subagent_tasks.pop((batch_id, task_id), None)
-        if info:
-            status = "done" if data.get("status") == "success" else "error"
+        info = self.subagent_tasks.get((batch_id, task_id))
+        if info and not info.get("finished"):
+            status = self._subagent_terminal_status(data.get("status"))
             duration = data.get("duration_ms")
+            payload = {**info["payload"], **data}
+            info.update(finished=True, payload=payload)
             self.store.update_event(
                 info["event_id"],
                 status=status,
-                payload=data,
+                payload=payload,
                 ended_at=timestamp,
                 duration_ms=duration
                 if isinstance(duration, (int, float))

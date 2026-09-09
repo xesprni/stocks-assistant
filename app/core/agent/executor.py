@@ -29,6 +29,7 @@ from app.core.agent.context import (
     omit_image_data,
     truncate_historical_tool_results,
 )
+from app.core.agent.delegation_runtime import AgentCancelledError
 from app.core.agent.message_utils import compress_turn_to_text_only, sanitize_claude_messages
 from app.core.agent.models import LLMRequest
 from app.core.agent.stream_state import StreamState
@@ -51,10 +52,6 @@ _CONTEXT_SUMMARY_SYSTEM_PROMPT = """你是一个对话压缩助手。请将对�
 _CONTEXT_SUMMARY_USER_PROMPT = """请压缩以下对话历史：
 
 {conversation}"""
-
-
-class AgentCancelledError(RuntimeError):
-    """Raised when a streaming agent run is cancelled by the client."""
 
 
 def _truncate_reasoning_for_storage(text: str) -> str:
@@ -128,9 +125,51 @@ class AgentStreamExecutor:
                     seen_sources.add(item_id)
                     self.sources.append(item)
 
+    def _collect_rendered_images(self, result: dict[str, Any], tool_name: str) -> None:
+        if result.get("status") != "success" and tool_name != "delegate_agent":
+            return
+        items = result.get("rendered_images")
+        artifacts = list(items) if isinstance(items, list) else []
+        if tool_name == "render_image":
+            artifacts.append(result.get("result"))
+        with self._evidence_lock:
+            seen = {item["artifact_id"] for item in self.rendered_images}
+            for artifact in artifacts:
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_id = artifact.get("artifact_id")
+                if not isinstance(artifact_id, str) or not artifact_id or artifact_id in seen:
+                    continue
+                # 直接制图与子 Agent 回传的产物统一去重，仅保留重建预览需要的引用。
+                self.rendered_images.append(
+                    _copy.deepcopy(
+                        {
+                            key: artifact[key]
+                            for key in ("artifact_id", "width", "height", "files")
+                            if key in artifact
+                        }
+                    )
+                )
+                seen.add(artifact_id)
+
     def _raise_if_cancelled(self):
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise AgentCancelledError("Agent run cancelled")
+
+    def _consume_steering(self, *, finish: bool = False, close: bool = False) -> bool:
+        """仅在完整工具结果之后注入用户输入，保持工具调用/结果配对。"""
+        self._raise_if_cancelled()
+        channel = getattr(self.agent, "input_channel", None)
+        if channel is None:
+            return False
+        inputs = channel.finish() if finish else channel.drain(close=close)
+        for item in inputs:
+            self.messages.append(
+                {"role": "user", "content": [{"type": "text", "text": item["message"]}]}
+            )
+        if inputs:
+            self._trim_messages()
+        return bool(inputs)
 
     def _runtime_llm_params(self) -> dict[str, Any]:
         """读取当前用户的主 Agent LLM 运行参数。"""
@@ -295,26 +334,21 @@ class AgentStreamExecutor:
                 if not tool_calls:
                     if not assistant_msg:
                         if turn > 1:
-                            prompt_insert_idx = len(self.messages)
-                            self.messages.append(
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {
-                                            "type": "text",
-                                            "text": "Please respond to the user based on the tool results.",
-                                        }
-                                    ],
-                                }
-                            )
+                            reminder = {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Please respond to the user based on the tool results.",
+                                    }
+                                ],
+                            }
+                            self.messages.append(reminder)
                             assistant_msg, tool_calls = self._call_llm_stream(retry_on_empty=False)
                             final_response = assistant_msg
 
-                            if (
-                                prompt_insert_idx < len(self.messages)
-                                and self.messages[prompt_insert_idx].get("role") == "user"
-                            ):
-                                self.messages.pop(prompt_insert_idx)
+                            # 补充输入可能触发裁剪；按对象移除临时提示，不能用旧索引删用户消息。
+                            self.messages = [msg for msg in self.messages if msg is not reminder]
 
                             if tool_calls:
                                 pass  # continue to tool execution
@@ -334,6 +368,9 @@ class AgentStreamExecutor:
 
                     if not tool_calls:
                         self._emit_event("turn_end", {"turn": turn, "has_tool_calls": False})
+                        # 完成判断与接收端共用原子封口；末个 token 期间提交的输入不能漏掉。
+                        if self._consume_steering(finish=True):
+                            continue
                         break
 
                 # Log tool calls
@@ -361,20 +398,7 @@ class AgentStreamExecutor:
                     results = self._execute_tool_calls_batch(tool_calls)
                     for tool_call, result in zip(tool_calls, results, strict=False):
                         image_blocks = result.pop("_image_blocks", [])
-                        if (
-                            tool_call["name"] == "render_image"
-                            and result.get("status") == "success"
-                        ):
-                            artifact = result.get("result")
-                            if isinstance(artifact, dict) and artifact.get("artifact_id"):
-                                # 会话只保存可重建预览的产物引用，不保存 HTML、快照或图片字节。
-                                self.rendered_images.append(
-                                    {
-                                        key: artifact[key]
-                                        for key in ("artifact_id", "width", "height", "files")
-                                        if key in artifact
-                                    }
-                                )
+                        self._collect_rendered_images(result, tool_call["name"])
                         self._collect_evidence(result)
                         if result.get("status") == "critical_error":
                             final_response = result.get("result", "Task execution failed")
@@ -385,17 +409,19 @@ class AgentStreamExecutor:
 
                         evidence_items = result.get("evidence") or []
                         source_items = result.get("sources") or []
-                        if is_error:
-                            result_content = f"Error: {result_data}"
-                        elif evidence_items or source_items:
+                        rendered_images = result.get("rendered_images") or []
+                        if evidence_items or source_items or rendered_images:
                             result_content = json.dumps(
                                 {
-                                    "data": result_data,
+                                    "error" if is_error else "data": result_data,
                                     "evidence": evidence_items,
                                     "sources": source_items,
+                                    "rendered_images": rendered_images,
                                 },
                                 ensure_ascii=False,
                             )
+                        elif is_error:
+                            result_content = f"Error: {result_data}"
                         elif isinstance(result_data, dict):
                             result_content = json.dumps(result_data, ensure_ascii=False)
                         elif isinstance(result_data, str):
@@ -448,19 +474,19 @@ class AgentStreamExecutor:
 
             if turn >= self.max_turns:
                 self._raise_if_cancelled()
+                # 到达步数上限只再总结一次；封口后新补充由 API 明确拒绝，可改为排队。
+                self._consume_steering(close=True)
                 logger.warning("Max steps reached: %d", self.max_turns)
-                prompt_insert_idx = len(self.messages)
-                self.messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"You have reached the maximum step limit ({turn} steps). Please summarize the current progress.",
-                            }
-                        ],
-                    }
-                )
+                reminder = {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"You have reached the maximum step limit ({turn} steps). Please summarize the current progress.",
+                        }
+                    ],
+                }
+                self.messages.append(reminder)
                 try:
                     summary_response, _ = self._call_llm_stream(retry_on_empty=False)
                     if summary_response:
@@ -477,11 +503,7 @@ class AgentStreamExecutor:
                         f"Reached maximum steps ({turn}). The task may not be fully complete."
                     )
                 finally:
-                    if (
-                        prompt_insert_idx < len(self.messages)
-                        and self.messages[prompt_insert_idx].get("role") == "user"
-                    ):
-                        self.messages.pop(prompt_insert_idx)
+                    self.messages = [msg for msg in self.messages if msg is not reminder]
 
         except AgentCancelledError:
             cancelled = True
@@ -521,6 +543,8 @@ class AgentStreamExecutor:
         Returns:
             (回复文本, 工具调用列表)
         """
+        # 包括空响应和连接重试：下一次模型调用前统一收取，工具执行中不改动消息。
+        self._consume_steering()
         self._validate_and_fix_messages()
 
         messages = self._prepare_messages()
@@ -898,6 +922,9 @@ class AgentStreamExecutor:
             tool.model = self.model
             tool.context = self.agent
             tool.event_emitter = self._emit_event
+            tool.cancel_event = self.cancel_event
+            tool.thinking_enabled = self.thinking_enabled
+            tool.delegation_runtime = getattr(self.agent, "delegation_runtime", None)
             tool.current_tool_call = {"id": tool_id, "name": tool_name}
 
             start_time = time.time()
@@ -915,7 +942,15 @@ class AgentStreamExecutor:
             if isinstance(result.ext_data, dict):
                 result_dict["evidence"] = result.ext_data.get("evidence", [])
                 result_dict["sources"] = result.ext_data.get("sources", [])
+                if result.status == "success" or tool_name == "delegate_agent":
+                    result_dict["rendered_images"] = _copy.deepcopy(
+                        result.ext_data.get("rendered_images", [])
+                    )
 
+            # 提前归集已完成工具的元数据，避免同批另一个工具取消后丢失这些结果。
+            self._collect_evidence(result_dict)
+            self._collect_rendered_images(result_dict, tool_name)
+            self._raise_if_cancelled()
             self._record_tool_result(tool_name, arguments, result.status == "success")
             self._emit_event(
                 "tool_execution_end",
@@ -935,6 +970,29 @@ class AgentStreamExecutor:
                 result_dict["_image_blocks"] = result.ext_data.get("image_blocks", [])
             return result_dict
 
+        except AgentCancelledError as exc:
+            metadata = getattr(exc, "metadata", None)
+            if isinstance(metadata, dict):
+                # 委派停止可携带已完成子任务的引用；仅归集，不发布成功事件。
+                completed = {
+                    "status": "success",
+                    "evidence": metadata.get("evidence", []),
+                    "sources": metadata.get("sources", []),
+                    "rendered_images": metadata.get("rendered_images", []),
+                }
+                self._collect_evidence(completed)
+                self._collect_rendered_images(completed, tool_name)
+            self._emit_event(
+                "tool_execution_end",
+                {
+                    "tool_call_id": tool_id,
+                    "tool_name": tool_name,
+                    "status": "cancelled",
+                    "result": "Tool execution cancelled",
+                    "execution_time": 0,
+                },
+            )
+            raise
         except Exception as e:
             logger.error("Tool execution error: %s", e)
             self._record_tool_result(tool_name, arguments, False)

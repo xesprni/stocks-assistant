@@ -10,9 +10,12 @@ Agent 是系统的核心组件，负责：
 import json
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
+from app.core.agent.delegation_runtime import DelegationRuntime
 from app.core.agent.executor import AgentStreamExecutor
+from app.core.agent.input_channel import AgentInputChannel
 from app.core.agent.models import LLMModel
 from app.core.agent.result import AgentAction, AgentActionType, ToolResultData
 from app.core.tools.base_tool import BaseTool, ToolStage
@@ -54,6 +57,10 @@ class Agent:
         self.workspace_dir = workspace_dir  # 工作空间目录
         self.enable_skills = enable_skills  # 是否启用技能
         self.active_skill_filter = None  # 当前请求允许读取的技能集合
+        self.active_cancel_event = None
+        self.input_channel: AgentInputChannel | None = None
+        self.active_thinking_enabled = False
+        self.delegation_runtime: DelegationRuntime | None = None
         self.multi_agent_depth = multi_agent_depth  # 多 Agent 委派深度
         self.settings = settings  # 当前请求/用户的有效配置
         self.last_evidence: list[dict[str, Any]] = []
@@ -101,9 +108,72 @@ Use memory_search proactively before answering when the request may depend on pr
     Use targeted queries based on the current request. If search results are relevant but snippets are insufficient, use memory_get to read the cited file and line range. Do not claim to remember private facts unless they are present in the current conversation or retrieved from memory in this turn. If no relevant memory is found, continue normally without over-explaining the miss.
     </long_term_memory_policy>"""
 
+    def get_workspace_prompt(self) -> str:
+        """每次请求重申真实工作目录，避免把上下文/子进程重建误判为文件丢失。"""
+        if not self.workspace_dir:
+            return ""
+        workspace = str(Path(self.workspace_dir).expanduser().resolve())
+        available = {tool.name for tool in self.tools if tool.stage == ToolStage.PRE_PROCESS}
+        parts = [
+            "<workspace_context>",
+            f"Current on-disk workspace (absolute path, JSON string): "
+            f"{json.dumps(workspace, ensure_ascii=False)}",
+            "This is the configured workspace for this Agent. Relative file paths for "
+            "read_file, write_file, view_image, and render_image, when available, refer to this "
+            "directory, as does the initial working directory of each bash call. Other tools "
+            "use the path rules in their own descriptions. "
+            "Keep paths inside this workspace; do not assume paths from another environment "
+            "such as /mnt/data are available here.",
+            "Continuing a conversation creates a new Agent instance and restores saved chat "
+            "messages. Earlier tool calls, outputs, and in-memory variables may be absent from "
+            "that history. A new Agent instance, context compaction, or a backend process restart "
+            "does not itself delete files saved in this on-disk workspace. Files can be reused "
+            "across turns while the same workspace and underlying storage remain available.",
+            "Do not infer that files were lost or that a process reset occurred from missing "
+            "conversation context. Before reporting a file missing or recreating prior work, "
+            "verify the exact path with available tools. A failed lookup establishes only what "
+            "that tool actually checked; it does not prove that the whole workspace was cleared "
+            "or explain why a file is missing. Distinguish a missing path, access denial, and "
+            "an unavailable tool. If the cause is unknown, say so.",
+            "Save scripts, data snapshots, intermediate results, and final artifacts needed "
+            "for later turns inside this workspace. Temporary directories such as /tmp may be "
+            "cleaned up and are not reliable storage for continued work. Include reusable "
+            "artifact paths in the final response so subsequent turns can locate them.",
+        ]
+        if "bash" in available:
+            parts.append(
+                "bash is available. Each call starts a separate shell process in the workspace; "
+                "cd changes, exported variables, and Python variables do not carry over to the "
+                "next call, but files written to disk do. Use workspace-relative paths or an "
+                "explicit cd in each command. On continuation, use targeted, read-only directory "
+                "or file checks to locate earlier artifacts before recreating them."
+            )
+        if "read_file" in available:
+            parts.append(
+                "read_file is available: read the known workspace-relative or absolute path "
+                "to verify and reuse an existing text artifact."
+            )
+        if "view_image" in available:
+            parts.append(
+                "view_image is available: reopen an existing image by its workspace path "
+                "when visual inspection is needed."
+            )
+        if not available.intersection({"bash", "read_file", "view_image"}):
+            parts.append(
+                "Built-in workspace inspection tools (bash, read_file, view_image) are "
+                "unavailable to this Agent. Use another available tool only if its declared "
+                "scope supports checking this workspace. Otherwise state that file existence "
+                "cannot currently be verified; do not claim that files are lost or bypass "
+                "the tool permissions."
+            )
+        parts.append("</workspace_context>")
+        return "\n\n".join(parts)
+
     def get_multi_agent_prompt(self) -> str:
         """获取多 Agent 委派策略提示词。"""
-        if self.multi_agent_depth > 0:
+        if self.multi_agent_depth > 0 or not any(
+            tool.name == "delegate_agent" for tool in self.tools
+        ):
             return ""
         settings = self.settings
         if settings is None:
@@ -116,14 +186,29 @@ Use memory_search proactively before answering when the request may depend on pr
         if not getattr(settings, "multi_agent_enabled", False):
             return ""
 
+        if int(getattr(settings, "multi_agent_max_depth", 1) or 0) == 0:
+            return ""
         roles = getattr(settings, "multi_agent_roles", {}) or {}
+        available = {tool.name for tool in self.tools} - {"delegate_agent"}
+        dangerous = set(getattr(settings, "multi_agent_dangerous_tools", []) or [])
         role_lines = []
         for name, role in roles.items():
-            description = role.get("description", "") if isinstance(role, dict) else ""
-            tools = role.get("tool_allowlist", []) if isinstance(role, dict) else []
-            tool_names = [str(tool) for tool in tools] if isinstance(tools, list) else []
-            if isinstance(role, dict) and role.get("allow_all_mcp_tools"):
-                tool_names.append("all MCP tools")
+            if not isinstance(role, dict):
+                continue
+            description = role.get("description", "")
+            tools = role.get("tool_allowlist", [])
+            tool_names = (
+                [tool for tool in tools if tool in available] if isinstance(tools, list) else []
+            )
+            if role.get("allow_all_mcp_tools"):
+                tool_names.extend(sorted(tool for tool in available if tool.startswith("mcp_")))
+            tool_names = list(
+                dict.fromkeys(
+                    tool
+                    for tool in tool_names
+                    if role.get("allow_dangerous_tools") or tool not in dangerous
+                )
+            )
             tools_text = ", ".join(tool_names) if tool_names else "(none)"
             role_lines.append(f"- {name}: {description} Tools: {tools_text}")
 
@@ -133,9 +218,85 @@ You can use the delegate_agent tool for complex tasks that benefit from independ
 
 Use delegation when the request has separable workstreams, such as fundamentals vs. technicals vs. risks. Do not delegate simple factual or single-step questions.
 Sub-agents are isolated workers: they return findings to you, and you remain responsible for the final answer. Ask sub-agents for concise, evidence-grounded briefs.
+Submit up to {getattr(settings, "multi_agent_max_tasks_per_batch", 12)} tasks per batch; up to {getattr(settings, "multi_agent_max_parallel_agents", 3)} children may run at once across all of your batches. Extra tasks queue. Each child has {getattr(settings, "multi_agent_task_timeout_seconds", 180)} seconds of execution time.
+Give tasks unique ids. Use depends_on for review/synthesis tasks that need earlier results; prerequisites may be listed in any order, and failed prerequisites skip their dependents.
+Use shared_context to provide the objective, constraints, as-of time, source references and a common data snapshot. Children do not inherit this conversation. Do not ask multiple children to refetch the same snapshot unnecessarily.
+Child tools are limited to the available names below; skill visibility can only narrow your own scope. Check every task status, source reference and truncation notice. Reconcile conflicting findings before writing the final answer. A timeout does not prove an external side effect was rolled back; never blindly repeat side-effecting work.
 Available sub-agent roles:
 {roles_text}
 </multi_agent_delegation_policy>"""
+
+    def get_rendering_prompt(self) -> str:
+        """按实际可用工具注入制图策略，兼容旧配置和子 Agent 的权限裁剪。"""
+        available = {tool.name for tool in self.tools if tool.stage == ToolStage.PRE_PROCESS}
+        if not available.intersection({"render_image", "view_image", "bash", "write_file"}):
+            return ""
+
+        parts = [
+            "<image_rendering_policy>",
+            "For static reports, data charts, dashboards exported as images, and infographics, "
+            "prefer render_image with HTML/CSS/inline SVG when available. Do not default to bash, "
+            "Python, Matplotlib, Pillow, browser screenshot scripts, or other shell commands "
+            "to draw, rasterize, crop, or upscale the image, even if an older skill suggests them. "
+            "Bash may still be used for data processing and calculations. If the user explicitly "
+            "requests plotting code or a different rendering workflow, follow that request with "
+            "available tools. For a requirement that static HTML/SVG truly cannot support, "
+            "explain the limitation before choosing an appropriate available alternative. "
+            "A missing tool or a rendering error alone is not a reason to silently switch to bash.",
+        ]
+        if "render_image" in available:
+            parts.append(
+                "render_image is available: call it with a self-contained static HTML fragment "
+                "in html, using CSS and inline SVG. Prefer passing html directly; do not create "
+                "a helper script or install plotting packages to prepare it. Use html_path only "
+                "for an existing workspace HTML fragment, or prepare that fragment with "
+                "write_file if available. Use the same data snapshot, sources, timestamp and "
+                "units for prose and chart. Inspect layout.issues and fix the HTML/SVG before "
+                "rendering again. For missing rendering dependencies or Chromium, report the "
+                "tool's setup instructions; do not silently install packages or replace the "
+                "renderer with a shell script. Never claim an image was generated after a "
+                "failed render. This tool renders static content; it is not a generative image "
+                "model for photographs or artwork. Use an appropriate available image tool "
+                "for those requests, or explain the capability limitation."
+            )
+            if "view_image" in available:
+                parts.append(
+                    "After a successful render_image, use view_image on the final PNG, the "
+                    "top/middle/bottom review crops and the mobile preview. Check Chinese text, "
+                    "labels, units, clipping, readability and numerical consistency; fix and "
+                    "render again when needed. If visual inspection fails, state that it is "
+                    "incomplete; metadata and layout diagnostics alone cannot prove visual quality."
+                )
+            else:
+                parts.append(
+                    "view_image is not available to this Agent. You may render the image, but "
+                    "must state that visual inspection is incomplete; do not claim the result "
+                    "has been visually verified or use a shell workaround to inspect it."
+                )
+        else:
+            parts.append(
+                "render_image is not available to this Agent; do not call it. If another "
+                "dedicated image/chart tool is available, including an MCP tool, use it only "
+                "when its declared capabilities fit the request. Otherwise follow the "
+                "missing-tool guidance below."
+            )
+            if self.multi_agent_depth > 0:
+                parts.append(
+                    "When no suitable rendering tool is available, return the data snapshot, "
+                    "sources and layout requirements to the parent "
+                    "Agent so it can handle rendering with its own available tools. Do not "
+                    "bypass your tool permissions or ask the user to expand a child role."
+                )
+            else:
+                parts.append(
+                    "For a static image request without another suitable tool, explain that "
+                    "local rendering is not enabled "
+                    "and point to the Agent tool configuration to enable render_image and "
+                    "view_image. Existing saved allowlists do not automatically gain new tools. "
+                    "Do not change tool permissions yourself."
+                )
+        parts.append("</image_rendering_policy>")
+        return "\n\n".join(parts)
 
     def get_full_system_prompt(self, skill_filter=None) -> str:
         """构建完整的系统提示词（基础提示词 + 技能提示词）"""
@@ -158,6 +319,23 @@ When tool results include evidence or sources metadata:
         skills_prompt = self.get_skills_prompt(skill_filter=skill_filter)
         if skills_prompt:
             parts.append(skills_prompt)
+        # 运行时目录和生命周期不依赖持久化提示词，主/子 Agent 都使用当前有效工作区。
+        workspace_prompt = self.get_workspace_prompt()
+        if workspace_prompt:
+            parts.append(workspace_prompt)
+        if self.input_channel is not None:
+            parts.append("""<conversation_steering_policy>
+The user may send additional instructions while this task is running. They arrive as user
+messages between model calls in the same task. Treat them as updates to the current objective;
+retain earlier requirements unless the user explicitly replaces or cancels them. Reuse the
+tool results and work already completed. Do not repeat side effects just because a new message
+arrived. Acknowledge relevant changes in your next response and account for all applied user
+messages in the final answer. Work already performed cannot be undone by a steering message.
+</conversation_steering_policy>""")
+        # 运行时追加，避免旧的持久化系统提示词或技能仍把制图导向通用 shell。
+        rendering_prompt = self.get_rendering_prompt()
+        if rendering_prompt:
+            parts.append(rendering_prompt)
         return "\n\n".join(parts)
 
     def _get_model_context_window(self) -> int:
@@ -328,32 +506,50 @@ When tool results include evidence or sources metadata:
             original_length = len(self.messages)
 
         previous_skill_filter = self.active_skill_filter
-        self.active_skill_filter = set(skill_filter) if skill_filter else None
-
-        # 创建流式执行器
-        executor = AgentStreamExecutor(
-            agent=self,
-            model=self.model,
-            system_prompt=full_system_prompt,
-            tools=self.tools,
-            max_turns=self.max_steps,
-            on_event=on_event,
-            messages=messages_copy,
-            max_context_turns=self.max_context_turns,
-            cancel_event=cancel_event,
-            thinking_enabled=thinking_enabled,
+        previous_cancel_event = self.active_cancel_event
+        previous_thinking_enabled = self.active_thinking_enabled
+        previous_delegation_runtime = self.delegation_runtime
+        runtime = DelegationRuntime(
+            max(1, int(getattr(self.settings, "multi_agent_max_parallel_agents", 3) or 1))
         )
+        self.active_skill_filter = set(skill_filter) if skill_filter is not None else None
+        self.active_cancel_event = cancel_event
+        self.active_thinking_enabled = thinking_enabled
+        self.delegation_runtime = runtime
 
+        executor = None
         try:
+            # 每轮运行重新创建共享容量，取消与思考设置随工具调用传给子 Agent。
+            executor = AgentStreamExecutor(
+                agent=self,
+                model=self.model,
+                system_prompt=full_system_prompt,
+                tools=self.tools,
+                max_turns=self.max_steps,
+                on_event=on_event,
+                messages=messages_copy,
+                max_context_turns=self.max_context_turns,
+                cancel_event=cancel_event,
+                thinking_enabled=thinking_enabled,
+            )
             response = executor.run_stream(user_message)
         except Exception:
             # 如果执行器清空了消息（上下文溢出恢复），同步回 Agent
-            if len(executor.messages) == 0:
+            if executor is not None and len(executor.messages) == 0:
                 with self.messages_lock:
                     self.messages.clear()
             raise
         finally:
+            if executor is not None:
+                # 子任务失败或取消后，已取得的来源与图像仍应交给父任务复用。
+                self.stream_executor = executor
+                self.last_evidence = list(executor.evidence)
+                self.last_sources = list(executor.sources)
+                self.last_rendered_images = list(executor.rendered_images)
             self.active_skill_filter = previous_skill_filter
+            self.active_cancel_event = previous_cancel_event
+            self.active_thinking_enabled = previous_thinking_enabled
+            self.delegation_runtime = previous_delegation_runtime
 
         # 将执行器的消息列表同步回 Agent（可能已被裁剪）
         with self.messages_lock:
@@ -361,10 +557,6 @@ When tool results include evidence or sources metadata:
             trim_adjusted_start = min(original_length, len(executor.messages))
             self._last_run_new_messages = list(executor.messages[trim_adjusted_start:])
 
-        self.stream_executor = executor
-        self.last_evidence = list(executor.evidence)
-        self.last_sources = list(executor.sources)
-        self.last_rendered_images = list(executor.rendered_images)
         return response
 
     def clear_history(self):

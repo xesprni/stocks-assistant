@@ -145,6 +145,8 @@ USER_CONFIG_KEYS = {
     "agent_max_context_turns",
     "multi_agent_enabled",
     "multi_agent_max_parallel_agents",
+    "multi_agent_max_tasks_per_batch",
+    "multi_agent_task_timeout_seconds",
     "multi_agent_default_max_steps",
     "multi_agent_max_depth",
     "knowledge_enabled",
@@ -281,9 +283,12 @@ class Settings(BaseSettings):
     )
     agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True  # 是否启用多 Agent 委派工具
-    multi_agent_max_parallel_agents: int = 3  # 单次委派最多并行智能体数
-    multi_agent_default_max_steps: int = 8  # 智能体默认最大执行步数
-    multi_agent_max_depth: int = 1  # V1 固定为 1，避免递归委派
+    # 批次容量与并发分开限制，依赖任务排队时不占用执行名额。
+    multi_agent_max_parallel_agents: int = Field(default=3, ge=1, le=8)
+    multi_agent_max_tasks_per_batch: int = Field(default=12, ge=1, le=32)
+    multi_agent_task_timeout_seconds: int = Field(default=180, ge=10, le=1800)
+    multi_agent_default_max_steps: int = Field(default=8, ge=1, le=100)
+    multi_agent_max_depth: int = Field(default=1, ge=0, le=1)  # 0 禁用，1 避免递归委派
     multi_agent_dangerous_tools: list[str] = Field(
         default_factory=lambda: [
             "bash",

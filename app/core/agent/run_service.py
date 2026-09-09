@@ -11,7 +11,10 @@ import time
 import uuid
 from array import array
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.core.agent.input_service import ChatInputChannel
 
 logger = logging.getLogger("stocks-assistant.agent.runs")
 _TERMINAL = {"agent_end": "done", "agent_stopped": "cancelled", "error": "error"}
@@ -44,6 +47,8 @@ class ChatRun:
         self._journal = tempfile.TemporaryFile(mode="w+b")  # noqa: SIM115
         self._offsets = array("Q", [0])
         self._closed = False
+        self.input_channel: ChatInputChannel | None = None
+        self.result_data: dict[str, Any] = {}
 
     def summary(self) -> dict[str, Any]:
         with self._condition:
@@ -66,9 +71,15 @@ class ChatRun:
             self._offsets.append(self._journal.tell())
             terminal = _TERMINAL.get(event.get("type", ""))
             if terminal:
+                self.result_data = event.get("data") or {}
                 self.status = terminal
                 self.completed_at = time.monotonic()
             self._condition.notify_all()
+
+    def wait_result(self) -> dict[str, Any]:
+        with self._condition:
+            self._condition.wait_for(lambda: self.completed_at is not None or self._closed)
+            return self.result_data
 
     def cancel(self) -> dict[str, Any]:
         with self._condition:
@@ -132,6 +143,7 @@ class ChatRunManager:
         self._max_runs = max_runs
         self._shutdown = threading.Event()
         self._reaper: threading.Thread | None = None
+        self.recovered_input_stores: set[str] = set()
 
     def _prune(self) -> None:
         now = time.monotonic()
@@ -182,6 +194,7 @@ class ChatRunManager:
         user_message: str,
         prepare: Callable[[], tuple[str, Callable[[ChatRun], None]]],
         after_event_id: int = 0,
+        initialize: Callable[[ChatRun], None] | None = None,
     ) -> ChatRun:
         with self.lock:
             self._prune()
@@ -205,6 +218,12 @@ class ChatRunManager:
                 raise ChatRunCapacityError("Chat capacity reached; try again later")
             actual_session_id, worker = prepare()
             run = ChatRun(user_id, request_id, fingerprint, actual_session_id, user_message)
+            try:
+                if initialize:
+                    initialize(run)
+            except Exception:
+                run.close()
+                raise
             self._runs[run.id] = run
             self._requests[(user_id, request_id)] = run.id
             run.publish({"type": "run_started", "timestamp": time.time(), "data": run.summary()})

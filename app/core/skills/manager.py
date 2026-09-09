@@ -171,7 +171,7 @@ class SkillManager:
     ) -> list[SkillEntry]:
         entries = list(self.skills.values())
         entries = [e for e in entries if should_include_skill(e, self.config)]
-        if skill_filter:
+        if skill_filter is not None:
             entries = [e for e in entries if e.skill.name in skill_filter]
         if not include_disabled:
             entries = [e for e in entries if self.is_skill_enabled(e.skill.name)]

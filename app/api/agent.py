@@ -9,12 +9,14 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.agent.executor import AgentCancelledError
+from app.core.agent.input_service import ChatInputService
 from app.core.agent.run_service import ChatRun, ChatRunCapacityError, ChatRunConflict, chat_runs
 from app.core.security import CurrentUser, require_permissions
 from app.core.session import ChatSessionNotFound
@@ -28,6 +30,7 @@ from app.schemas import (
     ChatSessionSummary,
     ChatSessionUpdateRequest,
 )
+from app.schemas.chat_inputs import ChatInput, ChatInputList, ChatInputRequest
 
 router = APIRouter()
 logger = logging.getLogger("stocks-assistant.agent.api")
@@ -140,6 +143,18 @@ def _assert_session_owner(session: dict, user: CurrentUser) -> None:
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+def _assert_input_owner(session: dict, user: CurrentUser) -> None:
+    # 输入会在用户自己的凭据/工具环境执行，管理员也不能向其他用户会话注入指令。
+    if session.get("user_id") != user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+def _input_service() -> ChatInputService:
+    service = ChatInputService(get_session_store(), chat_runs)
+    service.recover()
+    return service
+
+
 def _assert_session_idle(session_id: str) -> None:
     if chat_runs.active_for_session(session_id):
         raise HTTPException(
@@ -154,7 +169,7 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
     if request.session_id:
         try:
             session = store.get_session(request.session_id)
-            _assert_session_owner(session, user)
+            _assert_input_owner(session, user)
             _assert_session_idle(request.session_id)
             if request.clear_history:
                 store.clear_messages(request.session_id)
@@ -187,9 +202,21 @@ def _persist_exchange(
     *,
     sources: list[dict] | None = None,
     rendered_images: list[dict] | None = None,
+    applied_inputs: list[dict] | None = None,
 ) -> tuple[str, str]:
     store = get_session_store()
     user_msg = store.append_message(session_id, "user", user_message)
+    for item in applied_inputs or []:
+        store.append_message(
+            session_id,
+            "user",
+            item["message"],
+            {
+                "input_id": item["id"],
+                "input_mode": "steer",
+                "run_id": item.get("run_id"),
+            },
+        )
     assistant_msg = store.append_message(
         session_id,
         "assistant",
@@ -258,6 +285,8 @@ def _complete_exchange(
     history_messages: list[dict],
     recorder,
     rendered_images: list[dict] | None = None,
+    applied_inputs: list[dict] | None = None,
+    on_persisted: Callable[[], None] | None = None,
 ) -> str:
     """落库成功后完成追踪和记忆整理，终止事件由传输层随后发送。"""
     user_message_id, message_id = _persist_exchange(
@@ -267,7 +296,10 @@ def _complete_exchange(
         was_empty=not history_messages,
         sources=sources,
         rendered_images=rendered_images,
+        **({"applied_inputs": applied_inputs} if applied_inputs else {}),
     )
+    if on_persisted:
+        on_persisted()
     _finish_trace(
         recorder,
         status="done",
@@ -277,7 +309,9 @@ def _complete_exchange(
     )
     _schedule_memory_curate(
         session_id=session_id,
-        user_message=request.message,
+        user_message="\n\n".join(
+            [request.message, *[item["message"] for item in applied_inputs or []]]
+        ),
         assistant_response=response,
         user_message_id=user_message_id,
         assistant_message_id=message_id,
@@ -290,47 +324,24 @@ def _complete_exchange(
 def chat(
     request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
 ):
-    # Agent provider/tool 链是同步执行模型；普通 def 由 FastAPI 放入线程池，
-    # 避免非流式长对话占住整个 ASGI 事件循环。
-    recorder = None
-    try:
-        session_id, history_messages = _prepare_session(request, current_user)
-        request.user_id = current_user.id
-        recorder = _start_trace(session_id, request.message, current_user.id)
-        agent = _init_agent(request, history_messages)
-        response = agent.run_stream(
-            user_message=request.message,
-            on_event=recorder.handle_event if recorder else None,
-            clear_history=False,
-            skill_filter=request.skill_filter,
-            thinking_enabled=request.thinking_enabled,
-        )
-        message_id = _complete_exchange(
-            request,
-            session_id,
-            response,
-            agent.last_sources,
-            history_messages,
-            recorder,
-            getattr(agent, "last_rendered_images", []),
-        )
-        return ChatResponse(
-            response=response,
-            session_id=session_id,
-            message_id=message_id,
-            sources=agent.last_sources,
-            rendered_images=getattr(agent, "last_rendered_images", []),
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        _finish_trace(recorder, status="error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    # 同步与 SSE 共用运行槽位；请求线程等待结果，其他请求仍可排队、补充或停止。
+    run = _start_chat_run(request, current_user)
+    result = run.wait_result()
+    if run.status != "done":
+        raise HTTPException(status_code=500, detail=result.get("error", "Agent run cancelled"))
+    return ChatResponse(
+        response=result.get("final_response", ""),
+        session_id=run.session_id,
+        message_id=result.get("message_id"),
+        sources=result.get("sources", []),
+        rendered_images=result.get("rendered_images", []),
+    )
 
 
 def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[dict]) -> None:
     recorder = None
     reasoning_notice_sent = False
+    service = run.input_channel.service if run.input_channel else _input_service()
 
     def on_event(event: dict):
         nonlocal reasoning_notice_sent
@@ -360,7 +371,13 @@ def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[
 
     try:
         recorder = _start_trace(run.session_id, request.message, request.user_id)
+        with chat_runs.lock:
+            if run.input_channel:
+                run.input_channel.on_event = on_event
+                for item in service.repository.unfinished_run_inputs(run.session_id, run.id):
+                    run.input_channel.emit(item)
         agent = _init_agent(request, history_messages)
+        agent.input_channel = run.input_channel
         if run.cancel_event.is_set():
             raise AgentCancelledError("Agent run cancelled")
         response = agent.run_stream(
@@ -373,6 +390,8 @@ def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[
         )
         # 会话快照与完成状态原子切换，刷新不会漏掉刚落库的最终回复。
         with chat_runs.lock:
+            if run.cancel_event.is_set():
+                raise AgentCancelledError("Agent run cancelled")
             message_id = _complete_exchange(
                 request,
                 run.session_id,
@@ -381,6 +400,8 @@ def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[
                 history_messages,
                 recorder,
                 getattr(agent, "last_rendered_images", []),
+                run.input_channel.applied if run.input_channel else [],
+                lambda: service.finish_run(run, success=True),
             )
             run.publish(
                 {
@@ -395,19 +416,55 @@ def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[
                     },
                 }
             )
+            try:
+                service.start_next(
+                    run.session_id, lambda item: _start_queued_input(item, run.user_id, service)
+                )
+            except Exception:
+                logger.exception("Failed to start queued input for session %s", run.session_id)
     except Exception as exc:
         cancelled = _is_agent_cancelled(exc)
-        _finish_trace(recorder, status="cancelled" if cancelled else "error", error=str(exc))
-        run.publish(
-            {
-                "type": "agent_stopped" if cancelled else "error",
-                "timestamp": time.time(),
-                "data": {
-                    "session_id": run.session_id,
-                    **({} if cancelled else {"error": str(exc)}),
-                },
-            }
-        )
+        with chat_runs.lock:
+            service.finish_run(run, success=False, error=str(exc))
+            _finish_trace(recorder, status="cancelled" if cancelled else "error", error=str(exc))
+            run.publish(
+                {
+                    "type": "agent_stopped" if cancelled else "error",
+                    "timestamp": time.time(),
+                    "data": {
+                        "session_id": run.session_id,
+                        **({} if cancelled else {"error": str(exc)}),
+                    },
+                }
+            )
+
+
+def _start_queued_input(item: dict, user_id: str, service: ChatInputService) -> ChatRun:
+    request = ChatRequest(
+        message=item["message"],
+        session_id=item["session_id"],
+        user_id=user_id,
+        thinking_enabled=bool(item["thinking_enabled"]),
+        request_id=f"input:{item['id']}",
+    )
+
+    def prepare():
+        # 队列直到轮到自己才读取历史，因此下一轮一定包含上一轮最终回复和补充输入。
+        session = service.store.get_session(item["session_id"])
+        if session["user_id"] != user_id:
+            raise ChatRunConflict("Session ownership changed")
+        history = service.store.get_messages(item["session_id"])
+        return item["session_id"], lambda run: _run_stream_chat(request, run, history)
+
+    return chat_runs.start(
+        user_id=user_id,
+        request_id=request.request_id,
+        fingerprint=request.model_dump_json(),
+        session_id=item["session_id"],
+        user_message=request.message,
+        prepare=prepare,
+        initialize=lambda run: service.install(run, item["id"]),
+    )
 
 
 def _stream_response(run: ChatRun, after_event_id: int) -> StreamingResponse:
@@ -426,15 +483,13 @@ def _stream_response(run: ChatRun, after_event_id: int) -> StreamingResponse:
     )
 
 
-@router.post("/stream")
-def stream_chat(
-    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
-):
+def _start_chat_run(request: ChatRequest, current_user: CurrentUser) -> ChatRun:
     request.user_id = current_user.id
+    service = _input_service()
     if request.session_id:
         # 在运行冲突检查前校验归属，不能通过 409 响应探测其他用户的会话状态。
         try:
-            _assert_session_owner(get_session_store().get_session(request.session_id), current_user)
+            _assert_input_owner(get_session_store().get_session(request.session_id), current_user)
         except ChatSessionNotFound:
             raise HTTPException(status_code=404, detail="Session not found") from None
     # 首包丢失也按请求 ID 接回原任务，不能因重连再次运行有副作用的工具。
@@ -453,6 +508,7 @@ def stream_chat(
             user_message=request.message,
             prepare=prepare,
             after_event_id=request.after_event_id,
+            initialize=service.install,
         )
     except ChatRunConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -462,7 +518,14 @@ def stream_chat(
         raise HTTPException(status_code=404, detail="Run no longer available") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _stream_response(run, request.after_event_id)
+    return run
+
+
+@router.post("/stream")
+def stream_chat(
+    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
+):
+    return _stream_response(_start_chat_run(request, current_user), request.after_event_id)
 
 
 def _run_or_404(run_id: str, user: CurrentUser) -> ChatRun:
@@ -486,7 +549,13 @@ def cancel_run(
     run_id: str,
     current_user: CurrentUser = Depends(require_permissions("chat:write")),
 ):
-    return _run_or_404(run_id, current_user).cancel()
+    with chat_runs.lock:
+        run = _run_or_404(run_id, current_user)
+        if run.completed_at is None:
+            if run.input_channel:
+                run.input_channel.accepting = False
+            _input_service().repository.pause_inputs(run.session_id, True)
+        return run.cancel()
 
 
 @router.get("/sessions", response_model=ChatSessionListResponse)
@@ -530,11 +599,88 @@ def get_session(
     session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))
 ):
     with chat_runs.lock:
+        _input_service()
         session = _session_or_404(session_id)
         _assert_session_owner(session, current_user)
         run = chat_runs.active_for_session(session_id)
         session["active_run"] = run.summary() if run and run.user_id == current_user.id else None
         return session
+
+
+def _owned_input_service(session_id: str, user: CurrentUser) -> ChatInputService:
+    service = _input_service()
+    try:
+        _assert_input_owner(service.store.get_session(session_id), user)
+    except ChatSessionNotFound:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+    return service
+
+
+@router.post("/sessions/{session_id}/inputs", response_model=ChatInput)
+def submit_input(
+    session_id: str,
+    request: ChatInputRequest,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
+    with chat_runs.lock:
+        service = _owned_input_service(session_id, current_user)
+        try:
+            return service.submit(
+                session_id,
+                request,
+                lambda item: _start_queued_input(item, current_user.id, service),
+            )
+        except ChatRunConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ChatRunCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/inputs", response_model=ChatInputList)
+def list_inputs(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_permissions("chat:read")),
+):
+    with chat_runs.lock:
+        service = _owned_input_service(session_id, current_user)
+        return {
+            "inputs": service.repository.list_inputs(session_id),
+            "input_queue_paused": service.store.get_session(session_id)["input_queue_paused"],
+        }
+
+
+@router.delete("/sessions/{session_id}/inputs/{input_id}", response_model=ChatInput)
+def cancel_input(
+    session_id: str,
+    input_id: str,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
+    with chat_runs.lock:
+        service = _owned_input_service(session_id, current_user)
+        try:
+            return service.cancel(session_id, input_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Input not found") from None
+        except ChatRunConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/inputs/resume")
+def resume_inputs(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
+    with chat_runs.lock:
+        service = _owned_input_service(session_id, current_user)
+        try:
+            run = service.start_next(
+                session_id,
+                lambda item: _start_queued_input(item, current_user.id, service),
+                resume=True,
+            )
+        except ChatRunCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        return {"active_run": run.summary() if run else None}
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionSummary)

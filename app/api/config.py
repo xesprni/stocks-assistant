@@ -126,6 +126,8 @@ _PUBLIC_CONFIG_FIELDS = (
     "agent_allow_all_mcp_tools",
     "multi_agent_enabled",
     "multi_agent_max_parallel_agents",
+    "multi_agent_max_tasks_per_batch",
+    "multi_agent_task_timeout_seconds",
     "multi_agent_default_max_steps",
     "multi_agent_max_depth",
     "multi_agent_dangerous_tools",

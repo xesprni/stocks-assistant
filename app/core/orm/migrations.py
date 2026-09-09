@@ -28,6 +28,10 @@ def init_session_schema(engine: Engine) -> None:
         cols = _table_columns(conn, "sessions")
         if "user_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+        if "input_queue_paused" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE sessions ADD COLUMN input_queue_paused INTEGER NOT NULL DEFAULT 0"
+            )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, updated_at)"
         )

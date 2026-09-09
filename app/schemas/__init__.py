@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.chat_inputs import ChatInput
 from app.schemas.evidence import SourceReference
 
 
@@ -88,6 +89,8 @@ class ChatSessionDetail(ChatSessionSummary):
 
     messages: list[ChatSessionMessage] = Field(default_factory=list)
     active_run: ChatActiveRun | None = None
+    inputs: list[ChatInput] = Field(default_factory=list)
+    input_queue_paused: bool = False
 
 
 class ChatSessionListResponse(BaseModel):

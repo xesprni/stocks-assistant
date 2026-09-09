@@ -45,7 +45,11 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useFluidSheet } from "@/hooks/useFluidSheet";
 import {
+  ApiHttpError,
   cancelChatRun,
+  cancelChatInput,
+  submitChatInput,
+  resumeChatInputQueue,
   getChatSession,
   resumeChatStream,
   getMarketConfig,
@@ -57,6 +61,8 @@ import {
 import { useAuth } from "@/lib/auth";
 import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
 import { ChatStreamHttpError } from "@/lib/chat-stream";
+import { chatInputDraftKey, hasPendingChatQueue, prepareChatInputRequest } from "@/lib/chat-inputs";
+import { subagentCountDetails, subagentTraceStatus, upsertSubagentTrace } from "@/lib/subagent-trace";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { createConfigAutosave, type ConfigSaveState } from "@/lib/config-autosave";
@@ -74,6 +80,9 @@ import type {
   LongbridgeOAuthStatus,
   AuthUser,
   ChatMessage,
+  ChatInput,
+  ChatInputMode,
+  ChatInputRequest,
   ChatRunSummary,
   ChatStreamEvent,
   ChatTraceEvent,
@@ -190,6 +199,8 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   agent_allow_all_mcp_tools: ["agent_allow_all_mcp_tools"],
   multi_agent_enabled: ["multi_agent_enabled"],
   multi_agent_max_parallel_agents: ["multi_agent_max_parallel_agents"],
+  multi_agent_max_tasks_per_batch: ["multi_agent_max_tasks_per_batch"],
+  multi_agent_task_timeout_seconds: ["multi_agent_task_timeout_seconds"],
   multi_agent_default_max_steps: ["multi_agent_default_max_steps"],
   multi_agent_max_depth: ["multi_agent_max_depth"],
   multi_agent_dangerous_tools: ["multi_agent_dangerous_tools"],
@@ -266,6 +277,8 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "research_quick_prompts_refresh_seconds",
   "multi_agent_enabled",
   "multi_agent_max_parallel_agents",
+  "multi_agent_max_tasks_per_batch",
+  "multi_agent_task_timeout_seconds",
   "multi_agent_default_max_steps",
   "multi_agent_max_depth",
   "knowledge_enabled",
@@ -500,7 +513,9 @@ function ConsoleApp() {
     return isTheme(stored) ? stored : "system";
   });
   const [systemPreference, setSystemPreference] = useState<EffectiveTheme>(() => systemTheme());
-  const [prompt, setPrompt] = useState("");
+  const [chatDrafts, setChatDrafts] = useState<Record<string, string>>({});
+  const [inputErrors, setInputErrors] = useState<Record<string, string>>({});
+  const [inputBusySessions, setInputBusySessions] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
@@ -527,6 +542,8 @@ function ConsoleApp() {
   const streamSessionRef = useRef<string | null>(null);
   const stopRequestedRef = useRef(false);
   const isSendingRef = useRef(false);
+  const inputRequestsRef = useRef(new Map<string, ChatInputRequest>());
+  const inputBusyRef = useRef(new Set<string>());
   const configAutosaveRef = useRef<ReturnType<typeof createConfigAutosave> | null>(null);
   const persistConfigRef = useRef(persistConfigChanges);
   persistConfigRef.current = persistConfigChanges;
@@ -546,6 +563,16 @@ function ConsoleApp() {
 
   const messages = chatHistory.activeConversation?.messages ?? [];
   const activeConvId = chatHistory.activeId;
+  const draftKey = chatInputDraftKey(activeConvId);
+  const prompt = chatDrafts[draftKey] ?? "";
+  const activeRun = chatHistory.activeConversation?.activeRun;
+  const activeIsSending = Boolean(activeRun && (activeRun.status === "running" || activeRun.status === "stopping"))
+    || (isSending && streamSessionRef.current === activeConvId);
+  const canSteer = Boolean(activeRun?.status === "running" && activeRun.session_id === activeConvId
+    && !(streamSessionRef.current === activeConvId && stopRequestedRef.current));
+  function setPrompt(value: string) {
+    setChatDrafts((current) => ({ ...current, [draftKey]: value }));
+  }
   const pagePermissions = auth.user?.page_permissions ?? DEFAULT_PAGE_PERMISSION;
   const canPage = (target: Page) => {
     const permission = pagePermissions[target] ?? DEFAULT_PAGE_PERMISSION[target];
@@ -763,10 +790,17 @@ function ConsoleApp() {
   async function handleSend(
     event?: { preventDefault: () => void },
     value = prompt,
-    options: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean; resumeRun?: ChatRunSummary } = {},
+    options: { forceNewSession?: boolean; newSession?: boolean; thinkingEnabled?: boolean; resumeRun?: ChatRunSummary; inputMode?: ChatInputMode } = {},
   ) {
     event?.preventDefault();
     const text = (options.resumeRun?.user_message ?? value).trim();
+    const retry = activeConvId ? inputRequestsRef.current.get(activeConvId) : undefined;
+    if (!options.resumeRun && !options.forceNewSession && !options.newSession && activeConvId
+      && (activeIsSending || hasPendingChatQueue(chatHistory.activeConversation?.inputs ?? [])
+        || chatHistory.activeConversation?.inputQueuePaused || retry?.message === text || options.inputMode === "steer")) {
+      await handleSubmitInput(activeConvId, text, options.inputMode ?? "queue", options.thinkingEnabled === true);
+      return;
+    }
     if (!text || isSendingRef.current) return;
 
     shouldAutoScrollChatRef.current = true;
@@ -809,6 +843,7 @@ function ConsoleApp() {
     let trace = pendingMessage.trace ?? [];
     let renderedImages = pendingMessage.renderedImages ?? [];
     let sawAgentEnd = false;
+    let terminalEventReceived = false;
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
     streamRunRef.current = options.resumeRun?.run_id ?? null;
@@ -869,6 +904,12 @@ function ConsoleApp() {
         const data = streamEvent.data;
         if (streamEvent.run_id) streamRunRef.current = streamEvent.run_id;
 
+        if (streamEvent.type === "input_updated") {
+          const input = data?.input as ChatInput | undefined;
+          if (convId && input?.id && input.session_id === convId) chatHistory.updateInput(convId, input);
+          return;
+        }
+
         if (streamEvent.type === "run_started") {
           if (convId && streamEvent.run_id) {
             if (!options.resumeRun) {
@@ -882,7 +923,7 @@ function ConsoleApp() {
               status: stopRequestedRef.current ? "stopping" : "running",
             });
           }
-          if (stopRequestedRef.current) void handleStopStreaming();
+          if (stopRequestedRef.current) void handleStopStreaming(convId);
           return;
         }
 
@@ -918,6 +959,7 @@ function ConsoleApp() {
         }
 
         if (streamEvent.type === "error") {
+          terminalEventReceived = true;
           throw new Error(getStreamText(data, "error") || (language === "en" ? "Chat request failed" : "对话请求失败"));
         }
 
@@ -943,25 +985,38 @@ function ConsoleApp() {
         }
 
         if (streamEvent.type === "subagent_batch_end") {
-          const batchId = getStreamText(data, "batch_id");
-          const status = getStreamText(data, "status") === "success" ? "done" : "error";
-          const detail = formatDurationDetail(getStreamNumber(data, "duration_ms"));
-          if (batchId) {
-            updateTrace(batchId, { label: ui.chat.subBatchDone, status, detail });
-          } else {
-            addTrace(makeTrace(ui.chat.subBatchDone, status, detail));
-          }
-          currentStatus = status === "done" ? ui.chat.subBatchResult : ui.chat.subBatchPartial;
+          const batchId = getStreamText(data, "batch_id") || crypto.randomUUID();
+          const outcome = getStreamText(data, "status");
+          const status = subagentTraceStatus(outcome);
+          const counts = subagentCountDetails(data?.counts, {
+            success: ui.chat.subStatusSuccess,
+            error: ui.chat.subStatusError,
+            timeout: ui.chat.subStatusTimeout,
+            cancelled: ui.chat.subStatusCancelled,
+            skipped: ui.chat.subStatusSkipped,
+          });
+          const detail = [counts, formatDurationDetail(getStreamNumber(data, "duration_ms"))].filter(Boolean).join(" · ");
+          const label = outcome === "cancelled" ? ui.chat.subBatchCancelled : ui.chat.subBatchDone;
+          trace = upsertSubagentTrace(trace, makeTrace(label, status, detail, batchId));
+          currentStatus = outcome === "cancelled" ? ui.chat.subBatchCancelled
+            : status === "done" ? ui.chat.subBatchResult : ui.chat.subBatchPartial;
           commitStreamState();
           return;
         }
 
-        if (streamEvent.type === "subagent_start") {
+        if (streamEvent.type === "subagent_queued" || streamEvent.type === "subagent_start") {
           const batchId = getStreamText(data, "batch_id") || "batch";
           const taskId = getStreamText(data, "task_id") || crypto.randomUUID();
           const role = getStreamText(data, "role") || "subagent";
           const task = getStreamText(data, "task");
-          addTrace(makeTrace(`${role} ${ui.chat.subStart}`, "running", compactStreamText(task), `sub:${batchId}:${taskId}`));
+          const queued = streamEvent.type === "subagent_queued";
+          const waitingFor = queued && Array.isArray(data?.waiting_for)
+            ? data.waiting_for.map(String).join(", ") : "";
+          const detail = [compactStreamText(task), waitingFor ? formatTemplate(ui.chat.subWaitingFor, { tasks: waitingFor }) : ""].filter(Boolean).join(" · ");
+          const label = `${role} ${queued ? ui.chat.subQueued : ui.chat.subStart}`;
+          trace = upsertSubagentTrace(trace, makeTrace(label, queued ? "info" : "running", detail, `sub:${batchId}:${taskId}`));
+          currentStatus = label;
+          commitStreamState();
           return;
         }
 
@@ -969,11 +1024,20 @@ function ConsoleApp() {
           const batchId = getStreamText(data, "batch_id") || "batch";
           const taskId = getStreamText(data, "task_id") || "";
           const role = getStreamText(data, "role") || "subagent";
-          const status = getStreamText(data, "status") === "success" ? "done" : "error";
+          const outcome = getStreamText(data, "status");
+          const status = subagentTraceStatus(outcome);
+          const labels: Record<string, string> = {
+            success: ui.chat.subStatusSuccess,
+            error: ui.chat.subStatusError,
+            timeout: ui.chat.subStatusTimeout,
+            cancelled: ui.chat.subStatusCancelled,
+            skipped: ui.chat.subStatusSkipped,
+          };
+          const label = `${role} ${labels[outcome] || ui.chat.subStatusError}`;
           const errorText = getStreamText(data, "error");
           const detail = errorText || formatDurationDetail(getStreamNumber(data, "duration_ms"));
-          updateTrace(`sub:${batchId}:${taskId}`, { label: `${role} ${ui.chat.subDone}`, status, detail });
-          currentStatus = status === "done" ? `${role} ${ui.chat.subBatchResult}` : `${role} ${language === "en" ? "failed" : "执行失败"}`;
+          trace = upsertSubagentTrace(trace, makeTrace(label, status, detail, `sub:${batchId}:${taskId}`), true);
+          currentStatus = status === "done" ? `${role} ${ui.chat.subBatchResult}` : label;
           commitStreamState();
           return;
         }
@@ -1173,6 +1237,14 @@ function ConsoleApp() {
         });
       }
     } finally {
+      if (convId && !abortController.signal.aborted && (sawAgentEnd || terminalEventReceived)) {
+        try {
+          // 服务端原子切换 FIFO 队列后读取下一轮，随后由订阅 effect 接流。
+          await chatHistory.refreshConversation(convId);
+        } catch (error) {
+          showToast({ kind: "error", message: chatFailureMessage(error, language), title: ui.chat.inputSyncFailed });
+        }
+      }
       if (streamAbortRef.current === abortController) {
         streamAbortRef.current = null;
         streamRunRef.current = null;
@@ -1184,7 +1256,94 @@ function ConsoleApp() {
     }
   }
 
-  async function handleStopStreaming() {
+  function markInputBusy(sessionId: string, busy: boolean) {
+    if (busy) inputBusyRef.current.add(sessionId);
+    else inputBusyRef.current.delete(sessionId);
+    setInputBusySessions([...inputBusyRef.current]);
+  }
+
+  async function handleSubmitInput(sessionId: string, text: string, mode: ChatInputMode, thinkingEnabled: boolean) {
+    if (!text || inputBusyRef.current.has(sessionId)) return;
+    const previous = inputRequestsRef.current.get(sessionId);
+    // 响应丢失后的重试保留原目标，即使当前运行已经结束也查询同一幂等请求。
+    const retry = previous?.message === text ? previous : undefined;
+    const targetRunId = mode === "steer" && activeRun?.session_id === sessionId && canSteer ? activeRun.run_id : undefined;
+    if (!retry && mode === "steer" && !targetRunId) return;
+    const request = retry ?? prepareChatInputRequest({
+      message: text, mode, target_run_id: targetRunId, thinking_enabled: thinkingEnabled,
+    }, previous, () => crypto.randomUUID());
+    inputRequestsRef.current.set(sessionId, request);
+    markInputBusy(sessionId, true);
+    setInputErrors((current) => ({ ...current, [sessionId]: "" }));
+    try {
+      const input = await submitChatInput(sessionId, request);
+      chatHistory.updateInput(sessionId, input);
+      inputRequestsRef.current.delete(sessionId);
+      const key = chatInputDraftKey(sessionId);
+      setChatDrafts((current) => current[key]?.trim() === text ? { ...current, [key]: "" } : current);
+      if (streamSessionRef.current !== sessionId || !isSendingRef.current) {
+        try {
+          await chatHistory.refreshConversation(sessionId);
+        } catch (error) {
+          showToast({ kind: "error", message: chatFailureMessage(error, language), title: ui.chat.inputSyncFailed });
+        }
+      }
+    } catch (error) {
+      setInputErrors((current) => ({ ...current, [sessionId]: chatFailureMessage(error, language) }));
+      if (error instanceof ApiHttpError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        // 明确拒绝说明未接收输入，解除旧目标以便用户改为排队；网络/服务端异常仍保留幂等重试。
+        inputRequestsRef.current.delete(sessionId);
+        try {
+          await chatHistory.refreshConversation(sessionId);
+        } catch {
+          // 原始拒绝原因已展示，草稿保留供用户重试。
+        }
+      }
+    } finally {
+      markInputBusy(sessionId, false);
+    }
+  }
+
+  async function handleCancelInput(input: ChatInput) {
+    const sessionId = input.session_id;
+    if (inputBusyRef.current.has(sessionId)) return;
+    markInputBusy(sessionId, true);
+    try {
+      chatHistory.updateInput(sessionId, await cancelChatInput(sessionId, input.id));
+    } catch (error) {
+      showToast({ kind: "error", message: chatFailureMessage(error, language), title: ui.chat.inputRemove });
+    } finally {
+      markInputBusy(sessionId, false);
+    }
+  }
+
+  async function handleResumeInputQueue() {
+    const sessionId = activeConvId;
+    if (!sessionId || inputBusyRef.current.has(sessionId)) return;
+    markInputBusy(sessionId, true);
+    try {
+      await resumeChatInputQueue(sessionId);
+      await chatHistory.refreshConversation(sessionId);
+    } catch (error) {
+      showToast({ kind: "error", message: chatFailureMessage(error, language), title: ui.chat.inputResume });
+    } finally {
+      markInputBusy(sessionId, false);
+    }
+  }
+
+  async function handleStopStreaming(targetSessionId = activeConvId) {
+    if (!targetSessionId) return;
+    const ownsStream = streamSessionRef.current === targetSessionId;
+    if (!ownsStream) {
+      // 切换订阅的短暂窗口中，停止按钮仍只针对当前展示的会话。
+      if (activeRun?.session_id !== targetSessionId) return;
+      try {
+        chatHistory.updateRun(targetSessionId, await cancelChatRun(activeRun.run_id));
+      } catch (error) {
+        showToast({ kind: "error", message: chatFailureMessage(error, language), title: ui.chat.stop });
+      }
+      return;
+    }
     stopRequestedRef.current = true;
     const runId = streamRunRef.current;
     const controller = streamAbortRef.current;
@@ -1259,6 +1418,8 @@ function ConsoleApp() {
       agent_allow_all_mcp_tools: source.agent_allow_all_mcp_tools,
       multi_agent_enabled: source.multi_agent_enabled,
       multi_agent_max_parallel_agents: Number(source.multi_agent_max_parallel_agents),
+      multi_agent_max_tasks_per_batch: Number(source.multi_agent_max_tasks_per_batch ?? 12),
+      multi_agent_task_timeout_seconds: Number(source.multi_agent_task_timeout_seconds ?? 180),
       multi_agent_default_max_steps: Number(source.multi_agent_default_max_steps),
       multi_agent_max_depth: Number(source.multi_agent_max_depth),
       multi_agent_dangerous_tools: source.multi_agent_dangerous_tools,
@@ -1419,8 +1580,15 @@ function ConsoleApp() {
       expanded={isMobileViewport ? dashboardChatFullscreen : dashboardChatExpanded}
       handleChatScroll={handleChatScroll}
       handleSend={handleSend}
-      handleStopStreaming={handleStopStreaming}
-      isSending={isSending}
+      handleStopStreaming={() => { void handleStopStreaming(); }}
+      isSending={activeIsSending}
+      canSteer={canSteer}
+      isInputBusy={activeConvId != null && inputBusySessions.includes(activeConvId)}
+      inputError={activeConvId ? inputErrors[activeConvId] : undefined}
+      inputRetryMode={activeConvId && inputRequestsRef.current.get(activeConvId)?.message === prompt.trim()
+        ? inputRequestsRef.current.get(activeConvId)?.mode : undefined}
+      handleCancelInput={handleCancelInput}
+      handleResumeInputQueue={handleResumeInputQueue}
       language={language}
       messages={messages}
       mobileNavVisible={false}
