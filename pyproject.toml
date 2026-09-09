@@ -63,6 +63,7 @@ files = [
     "app/core/tools/parameters.py",
     "app/core/tools/portfolio_output.py",
     "app/core/tracing/payloads.py",
+    "app/schemas/notifications.py",
 ]
 
 [tool.pytest.ini_options]

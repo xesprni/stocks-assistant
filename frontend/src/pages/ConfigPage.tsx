@@ -3,6 +3,7 @@ import { ArrowRight, Bot, BrainCircuit, Check, ChevronDown, CircleCheck, Cpu, Da
 
 import { ConfigChoiceCard, ConfigField as Field, ConfigSegmentedControl } from "@/components/config/ConfigForm";
 import { ToggleRow } from "@/components/common/ToggleRow";
+import { TelegramPhotoField } from "@/components/common/TelegramPhotoField";
 import { LongbridgeAuthPanel } from "@/components/LongbridgeAuthPanel";
 import { MarketConfigPage } from "@/components/MarketConfigPage";
 import { ChangePasswordDialog } from "@/components/security/ChangePasswordDialog";
@@ -16,6 +17,7 @@ import { useColorScheme } from "@/lib/color-scheme";
 import { toDraft } from "@/lib/config";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
+import { MAX_TELEGRAM_PHOTOS, parseTelegramPhotos } from "@/lib/telegram";
 import { cn } from "@/lib/utils";
 import type { AppConfig, ConfigDraft, ConfigReadinessResponse, LongbridgeOAuthStatus, MarketDashboardConfig, ToolInfo } from "@/types/app";
 
@@ -75,6 +77,7 @@ export function ConfigPage({
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab);
   const [wideNavigation, setWideNavigation] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
   const [telegramTestMessage, setTelegramTestMessage] = useState(copy.telegramTestDefault);
+  const [telegramTestPhotos, setTelegramTestPhotos] = useState("");
   const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [telegramTestResult, setTelegramTestResult] = useState("");
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
@@ -212,13 +215,16 @@ export function ConfigPage({
   }, [draft?.llm_api_base, draft?.llm_model, draft, isCodexOAuth]);
 
   async function handleTelegramTest() {
-    if (!telegramTestMessage.trim()) return;
+    const photos = parseTelegramPhotos(telegramTestPhotos);
+    if ((!telegramTestMessage.trim() && !photos.length) || photos.length > MAX_TELEGRAM_PHOTOS) return;
     setTelegramTestState("sending");
     setTelegramTestResult("");
     try {
-      const res = await sendTelegramTestMessage({ message: telegramTestMessage.trim() });
+      const res = await sendTelegramTestMessage({ message: telegramTestMessage.trim(), photos });
       setTelegramTestState("sent");
-      setTelegramTestResult(res.detail || (res.chunks > 1 ? formatTemplate(copy.telegramTestSentChunks, { chunks: res.chunks }) : copy.telegramTestSent));
+      setTelegramTestResult(res.photos
+        ? formatTemplate(copy.telegramTestSentPhotos, { chunks: res.chunks, photos: res.photos })
+        : res.chunks > 1 ? formatTemplate(copy.telegramTestSentChunks, { chunks: res.chunks }) : copy.telegramTestSent);
     } catch (caught) {
       setTelegramTestState("error");
       setTelegramTestResult(caught instanceof Error ? caught.message : copy.telegramTestFailed);
@@ -981,21 +987,36 @@ export function ConfigPage({
                 title={copy.channelTestMessage}
               >
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-                  <Field label={copy.telegramTestMessage} className="flex-1">
-                    <Textarea
-                      className="min-h-[72px]"
-                      value={telegramTestMessage}
-                      onChange={(event) => {
-                        setTelegramTestMessage(event.target.value);
+                  <div className="grid flex-1 gap-3">
+                    <Field label={copy.telegramTestMessage}>
+                      <Textarea
+                        className="min-h-[72px]"
+                        placeholder={copy.telegramTestMessagePlaceholder}
+                        value={telegramTestMessage}
+                        onChange={(event) => {
+                          setTelegramTestMessage(event.target.value);
+                          setTelegramTestState("idle");
+                          setTelegramTestResult("");
+                        }}
+                      />
+                    </Field>
+                    <TelegramPhotoField
+                      className="config-field space-y-0"
+                      language={language}
+                      value={telegramTestPhotos}
+                      onChange={(value) => {
+                        setTelegramTestPhotos(value);
                         setTelegramTestState("idle");
                         setTelegramTestResult("");
                       }}
                     />
-                  </Field>
+                  </div>
                   <Button
                     size="sm"
                     className="lg:mb-0.5"
-                    disabled={telegramTestState === "sending" || !telegramTestMessage.trim()}
+                    disabled={telegramTestState === "sending"
+                      || (!telegramTestMessage.trim() && !telegramTestPhotos.trim())
+                      || parseTelegramPhotos(telegramTestPhotos).length > MAX_TELEGRAM_PHOTOS}
                     onClick={handleTelegramTest}
                   >
                     {telegramTestState === "sending" ? <Loader2 className="animate-spin" /> : <Send />}

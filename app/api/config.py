@@ -13,7 +13,7 @@ from app.core.configuration.runtime import invalidate_runtime
 from app.core.configuration.service import ConfigPermissionError, persist_config_update
 from app.core.market.longbridge_oauth import longbridge_oauth_service, oauth_connected
 from app.core.notifications.telegram import TelegramConfigError, TelegramSender
-from app.core.security import CurrentUser, require_permissions
+from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 from app.schemas.config import (
     AppConfig,
     ConfigReadinessResponse,
@@ -433,20 +433,29 @@ async def test_telegram(
     current: CurrentUser = Depends(require_permissions("config:read")),
 ):
     """使用已保存的 Telegram 配置发送测试消息。"""
-    sender = TelegramSender.from_settings(get_effective_settings(current.id))
+    settings = get_effective_settings(current.id)
+    # 图片只允许从当前用户工作空间读取，不能使用系统根目录作为文件边界。
+    sender = TelegramSender.from_settings(
+        settings, workspace_dir=user_workspace_dir(settings.workspace_dir, current.id)
+    )
     if not sender.enabled:
         raise HTTPException(status_code=400, detail="Telegram 通知未启用")
     if not sender.bot_token or not sender.chat_id:
         raise HTTPException(status_code=400, detail="Telegram Bot Token 或 Chat ID 未配置")
 
-    message = request.message.strip() or "Stocks Assistant Telegram test message."
+    message = request.message.strip()
+    if not message and not request.photos:
+        message = "Stocks Assistant Telegram test message."
     try:
-        result = await asyncio.to_thread(sender.send_message, message)
-    except TelegramConfigError as exc:
+        result = await asyncio.to_thread(sender.send_message, message, photos=request.photos)
+    except (TelegramConfigError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return TelegramTestResponse(
-        ok=True, chunks=int(result.get("chunks", 0) or 0), detail="测试消息已发送"
+        ok=True,
+        chunks=int(result.get("chunks", 0) or 0),
+        photos=int(result.get("photos", 0) or 0),
+        detail="测试消息已发送",
     )

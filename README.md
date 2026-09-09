@@ -71,6 +71,30 @@ Stocks Assistant 的核心不是普通聊天框，而是一个能调用工具的
 
 调度系统可以把投研动作变成后台任务：每天早上生成市场观察，每周复盘持仓，每隔一段时间检查自选股新闻，或在指定时间运行一次研究 prompt。任务支持 Cron、间隔和一次性执行，并保存运行记录、状态、耗时、错误和输出预览。配置 Telegram 后，任务结果可以自动推送到 Telegram 对话。
 
+Telegram 通知支持文字和图片。在配置页的 Telegram 测试区、定时任务的 Telegram 图片字段中，每行填写一个图片 HTTP(S) URL 或当前用户工作空间内的图片路径。支持仅图片测试；短文字作为第一张图片说明，长文字会完整分段发送，再依次发送图片。每次最多 10 张，本地附件支持 PNG/JPEG、每张最大 10 MB。图片链接由 Telegram 服务器读取，应使用其可访问的地址；本地路径指后端服务器文件，不是浏览器所在电脑的文件上传。
+
+图片路径相对于 `workspace_dir/users/{user_id}/`，也可使用该目录内的绝对路径；越界路径、指向目录外的符号链接和非图片文件会被拒绝。任务可以先生成图表，例如写入 `charts/daily.png`，执行完成后再读取并发送。没有用户归属的旧任务只允许远程图片。
+
+配置测试 API `POST /api/v1/config/telegram/test` 示例：
+
+```json
+{"message": "今日市场图表", "photos": ["charts/daily.png", "https://example.com/chart.jpg"]}
+```
+
+定时任务创建/更新 API 与 Agent 的 `scheduler` 工具均支持 `telegram_photos`，执行时需要启用 `notify_telegram`：
+
+```json
+{
+  "name": "每日图表",
+  "prompt": "生成市场摘要并将图表保存到 charts/daily.png",
+  "schedule": "0 9 * * *",
+  "notify_telegram": true,
+  "telegram_photos": ["charts/daily.png"]
+}
+```
+
+任务响应中的图片列表位于 `metadata.telegram_photos`。更新时省略 `telegram_photos` 会保留原附件，传 `[]` 会清空。正文中的 Markdown 图片语法仍按文字处理，需要发送的图片应明确加入图片列表。图片尺寸、远程抓取及格式限制以 [Telegram sendPhoto 文档](https://core.telegram.org/bots/api#sendphoto) 为准。
+
 ## 典型使用场景
 
 - **盘前准备**：自动汇总主要指数、市场温度、自选股新闻和隔夜重要事件，生成开盘前简报

@@ -681,7 +681,7 @@ export function retryAlertDelivery(eventId: string) {
   return request<AlertEvent>(`/api/v1/alerts/events/${encodeURIComponent(eventId)}/retry`, { method: "POST" });
 }
 
-export function sendTelegramTestMessage(payload: { message: string }) {
+export function sendTelegramTestMessage(payload: { message: string; photos?: string[] }) {
   return request<TelegramTestResponse>("/api/v1/config/telegram/test", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -1251,6 +1251,7 @@ export function createSchedulerTask(payload: {
   schedule: string;
   enabled?: boolean;
   notify_telegram?: boolean;
+  telegram_photos?: string[];
 }) {
   return request<SchedulerTask>("/api/v1/scheduler/tasks", {
     method: "POST",
@@ -1266,6 +1267,7 @@ export function updateSchedulerTask(
     schedule?: string;
     enabled?: boolean;
     notify_telegram?: boolean;
+    telegram_photos?: string[];
   },
 ) {
   return request<SchedulerTask>(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}`, {

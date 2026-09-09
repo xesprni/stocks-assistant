@@ -1267,6 +1267,7 @@ export interface TelegramTestResponse {
   ok: boolean;
   chunks: number;
   detail: string;
+  photos?: number;
 }
 
 // ── Chat History ──────────────────────────────────────────────────────────────

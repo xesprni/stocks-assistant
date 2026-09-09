@@ -8,6 +8,25 @@ from typing import Any
 
 from croniter import croniter
 
+from app.schemas.notifications import validate_telegram_photos
+
+
+def notification_metadata(
+    metadata: dict[str, Any] | None,
+    *,
+    notify_telegram: bool | None = None,
+    telegram_photos: list[str] | None = None,
+) -> dict[str, Any]:
+    result = dict(metadata or {})
+    if notify_telegram is not None:
+        result["notify_telegram"] = notify_telegram
+    if telegram_photos is not None:
+        result["telegram_photos"] = telegram_photos
+    # metadata 也是公开入口，不能绕过显式附件字段的数量和类型约束。
+    if "telegram_photos" in result:
+        result["telegram_photos"] = validate_telegram_photos(result["telegram_photos"])
+    return result
+
 
 def task_to_response(task: dict[str, Any]) -> dict[str, Any]:
     return {

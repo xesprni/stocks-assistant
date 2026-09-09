@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.schemas.notifications import TelegramPhotos
+
 
 class TaskCreateRequest(BaseModel):
     """创建定时任务请求"""
@@ -13,6 +15,7 @@ class TaskCreateRequest(BaseModel):
     schedule: str  # 调度表达式（cron/间隔/"once"）
     enabled: bool = True  # 是否启用
     notify_telegram: bool = False  # 执行完成后是否发送 Telegram 消息
+    telegram_photos: TelegramPhotos | None = None  # 图片 URL 或用户工作空间内路径
     metadata: dict[str, Any] | None = None  # 额外元数据
 
 
@@ -24,6 +27,7 @@ class TaskUpdateRequest(BaseModel):
     schedule: str | None = None  # 调度表达式（cron/间隔/"once"）
     enabled: bool | None = None  # 是否启用
     notify_telegram: bool | None = None  # 执行完成后是否发送 Telegram 消息
+    telegram_photos: TelegramPhotos | None = None  # 空列表清除图片，省略则保留
     metadata: dict[str, Any] | None = None  # 额外元数据
 
 

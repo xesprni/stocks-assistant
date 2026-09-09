@@ -11,6 +11,7 @@ from croniter import croniter
 
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.scheduler.helpers import (
+    notification_metadata,
     parse_schedule_components,
     parse_schedule_expression,
     run_to_response,
@@ -25,7 +26,9 @@ class SchedulerTool(BaseTool):
     description: str = (
         "Create, query, update, delete, toggle, run and inspect scheduled tasks. "
         "Actions: create, list, get, update, delete, toggle, run, list_runs, enable, disable. "
-        "Use schedule for API-style expressions: cron, 'every 5 minutes', '+10m', ISO timestamps, or 'now'."
+        "Use schedule for API-style expressions: cron, 'every 5 minutes', '+10m', ISO timestamps, or 'now'. "
+        "Use notify_telegram and telegram_photos to deliver images with task results. "
+        "For generated charts, set telegram_photos to workspace paths and ask the task to save there."
     )
     params: dict = {
         "type": "object",
@@ -53,6 +56,16 @@ class SchedulerTool(BaseTool):
             "schedule": {"type": "string"},
             "enabled": {"type": "boolean"},
             "notify_telegram": {"type": "boolean"},
+            "telegram_photos": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "description": (
+                    "Image HTTP(S) URLs or user-workspace paths (PNG/JPEG, max 10 MB each). "
+                    "Sent when notify_telegram is true. Use [] to clear attachments. "
+                    "Files must exist when the task finishes; Markdown images are not auto-sent."
+                ),
+            },
             "metadata": {"type": "object"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 200},
             "enabled_only": {"type": "boolean"},
@@ -181,7 +194,7 @@ class SchedulerTool(BaseTool):
         if schedule:
             updates["schedule"] = schedule
 
-        if "metadata" in p or "notify_telegram" in p:
+        if "metadata" in p or "notify_telegram" in p or "telegram_photos" in p:
             metadata = dict(task.get("metadata") or {})
             metadata.update(self._metadata_from_params(p, base=metadata))
             updates["metadata"] = metadata
@@ -314,7 +327,7 @@ class SchedulerTool(BaseTool):
             metadata.update(p["metadata"])
         if "notify_telegram" in p and p.get("notify_telegram") is not None:
             metadata["notify_telegram"] = bool(p["notify_telegram"])
-        return metadata
+        return notification_metadata(metadata, telegram_photos=p.get("telegram_photos"))
 
     def _task_id(self, p: dict) -> str:
         task_id = self._optional_str(p.get("task_id"))

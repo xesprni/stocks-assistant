@@ -336,6 +336,7 @@ def get_scheduler_service():
         import logging
 
         from app.core.notifications import TelegramSender
+        from app.core.security import user_workspace_dir
 
         logger = logging.getLogger("stocks-assistant.scheduler")
         logger.info("Executing scheduled task: %s", task.get("name", task.get("id")))
@@ -359,9 +360,13 @@ def get_scheduler_service():
             notify_telegram = action_type in {"send_message", "agent_task"}
 
         if notify_telegram:
-            telegram = TelegramSender.from_settings(get_effective_settings(task.get("user_id")))
+            user_id = task.get("user_id")
+            settings = get_effective_settings(user_id)
+            # 无归属的旧任务只允许远程图片；有用户归属时按该用户的目录读取附件。
+            workspace = user_workspace_dir(settings.workspace_dir, user_id) if user_id else None
+            telegram = TelegramSender.from_settings(settings, workspace_dir=workspace)
             message = _format_scheduled_telegram_message(task, result)
-            telegram.send_message(message)
+            telegram.send_message(message, photos=metadata.get("telegram_photos"))
 
         return result
 

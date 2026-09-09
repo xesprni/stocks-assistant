@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.notifications import TelegramPhotos
+
 
 class AppConfig(BaseModel):
     """前端可读取的应用配置。
@@ -205,6 +207,7 @@ class TelegramTestRequest(BaseModel):
     """Telegram 测试消息请求。"""
 
     message: str = Field(default="Stocks Assistant Telegram test message.", max_length=4096)
+    photos: TelegramPhotos = Field(default_factory=list)
 
 
 class TelegramTestResponse(BaseModel):
@@ -212,6 +215,7 @@ class TelegramTestResponse(BaseModel):
 
     ok: bool
     chunks: int = 0
+    photos: int = 0
     detail: str = ""
 
 

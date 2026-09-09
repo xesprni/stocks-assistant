@@ -5,6 +5,7 @@ import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { ToggleRow } from "@/components/common/ToggleRow";
+import { TelegramPhotoField } from "@/components/common/TelegramPhotoField";
 import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createSchedulerTask, deleteSchedulerTask, listSchedulerTaskRuns, listSchedulerTasks, runSchedulerTaskNow, toggleSchedulerTask, updateSchedulerTask } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
+import { MAX_TELEGRAM_PHOTOS, parseTelegramPhotos } from "@/lib/telegram";
 import { cn } from "@/lib/utils";
 import type { SchedulerTask, SchedulerTaskRun } from "@/types/app";
 
@@ -130,10 +132,11 @@ type SchedulerFormState = {
   schedule: string;
   enabled: boolean;
   notifyTelegram: boolean;
+  telegramPhotos: string;
 };
 
 function defaultSchedulerForm(telegramEnabled: boolean): SchedulerFormState {
-  return { name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled };
+  return { name: "", prompt: "", schedule: "0 9 * * *", enabled: true, notifyTelegram: telegramEnabled, telegramPhotos: "" };
 }
 
 function schedulerTaskToForm(task: SchedulerTask): SchedulerFormState {
@@ -143,6 +146,9 @@ function schedulerTaskToForm(task: SchedulerTask): SchedulerFormState {
     schedule: task.schedule,
     enabled: task.enabled,
     notifyTelegram: Boolean(task.metadata?.notify_telegram),
+    telegramPhotos: Array.isArray(task.metadata?.telegram_photos)
+      ? task.metadata.telegram_photos.filter((photo): photo is string => typeof photo === "string").join("\n")
+      : "",
   };
 }
 
@@ -183,6 +189,8 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
 
   async function handleSaveTask() {
     if (!form.name.trim() || !form.prompt.trim() || !form.schedule.trim()) return;
+    const telegramPhotos = parseTelegramPhotos(form.telegramPhotos);
+    if (telegramPhotos.length > MAX_TELEGRAM_PHOTOS) return;
     setIsSavingTask(true);
     setError("");
     try {
@@ -192,6 +200,7 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
         schedule: form.schedule.trim(),
         enabled: form.enabled,
         notify_telegram: form.notifyTelegram,
+        telegram_photos: telegramPhotos,
       };
       if (editingId) {
         await updateSchedulerTask(editingId, payload);
@@ -327,7 +336,7 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
           cancelText={copy.cancel}
           formId="scheduler-task-form"
           isSaving={isSavingTask}
-          saveDisabled={!form.name.trim() || !form.prompt.trim()}
+          saveDisabled={!form.name.trim() || !form.prompt.trim() || parseTelegramPhotos(form.telegramPhotos).length > MAX_TELEGRAM_PHOTOS}
           saveText={copy.save}
         >
           <form
@@ -376,6 +385,13 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
                 <p className="text-xs text-amber-600 dark:text-amber-300">{copy.telegramHint}</p>
               ) : null}
             </div>
+            {form.notifyTelegram || form.telegramPhotos.trim() ? (
+              <TelegramPhotoField
+                language={language}
+                value={form.telegramPhotos}
+                onChange={(value) => setForm((current) => ({ ...current, telegramPhotos: value }))}
+              />
+            ) : null}
           </form>
         </SideDrawer>
 

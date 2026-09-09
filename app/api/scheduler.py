@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import CurrentUser, require_permissions
 from app.core.tools.scheduler.helpers import (
+    notification_metadata,
     parse_schedule_expression,
     run_to_response,
     task_to_response,
@@ -57,8 +58,14 @@ def create_task(
 
     schedule = parse_schedule_expression(request.schedule)
     now = datetime.now().isoformat()
-    metadata = request.metadata or {}
-    metadata["notify_telegram"] = request.notify_telegram
+    try:
+        metadata = notification_metadata(
+            request.metadata,
+            notify_telegram=request.notify_telegram,
+            telegram_photos=request.telegram_photos,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     task = {
         "id": task_id,
@@ -116,13 +123,22 @@ def update_task(
     if request.enabled is not None:
         updates["enabled"] = request.enabled
 
-    if request.metadata is not None or request.notify_telegram is not None:
+    if (
+        request.metadata is not None
+        or request.notify_telegram is not None
+        or request.telegram_photos is not None
+    ):
         metadata = dict(task.get("metadata") or {})
         if request.metadata is not None:
             metadata.update(request.metadata)
-        if request.notify_telegram is not None:
-            metadata["notify_telegram"] = request.notify_telegram
-        updates["metadata"] = metadata
+        try:
+            updates["metadata"] = notification_metadata(
+                metadata,
+                notify_telegram=request.notify_telegram,
+                telegram_photos=request.telegram_photos,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if "schedule" in updates or "enabled" in updates:
         next_task = {**task, **updates}
