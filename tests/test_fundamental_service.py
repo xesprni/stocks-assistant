@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from app.core.fundamentals.service import FundamentalService, _plain
 from app.schemas.dashboard import DashboardSymbolInsightsResponse
 
@@ -150,3 +152,32 @@ def test_security_insights_uses_process_cache_for_repeated_symbol():
     service.get_security_insights("AAPL.US")
     assert service.fundamental_context_calls == 2
     assert service.quote_context_calls == 2
+
+
+def test_security_insights_cache_keeps_each_users_content_language():
+    class LocalizedContext(FakeFundamentalContext):
+        def __init__(self, language):
+            self.language = language
+
+        def company(self, symbol):
+            return {"name": symbol, "profile": "公司简介" if self.language == "zh" else "Company profile"}
+
+    class LocalizedService(FakeFundamentalService):
+        def _fundamental_context(self, settings=None):
+            self.fundamental_context_calls += 1
+            return LocalizedContext(settings.app_language)
+
+    service = LocalizedService()
+    credentials = {"longbridge_app_key": "key", "longbridge_app_secret": "secret", "longbridge_access_token": "token"}
+    chinese = SimpleNamespace(**credentials, app_language="zh")
+    english = SimpleNamespace(**credentials, app_language="en")
+
+    zh_payload = service.get_security_insights("AAPL.US", settings=chinese)
+    en_payload = service.get_security_insights("AAPL.US", settings=english)
+    assert zh_payload["company"]["data"]["profile"] == "公司简介"
+    assert en_payload["company"]["data"]["profile"] == "Company profile"
+
+    # 切回原语言应命中对应缓存，不能串用英文结果，也不必再次调用长桥。
+    assert service.get_security_insights("AAPL.US", settings=chinese) == zh_payload
+    assert service.get_security_insights("AAPL.US", settings=english) == en_payload
+    assert service.fundamental_context_calls == 2

@@ -162,6 +162,8 @@ def _merge_static_info(row: dict[str, Any], static_info: dict[str, Any] | None) 
 
 def _settings_signature(settings: Any) -> str:
     keys = (
+        "longbridge_auth_mode",
+        "longbridge_oauth_client_id",
         "longbridge_app_key",
         "longbridge_app_secret",
         "longbridge_access_token",

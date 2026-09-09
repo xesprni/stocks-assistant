@@ -232,6 +232,9 @@ export interface AppConfig {
   system_prompt: string;
   mcp_servers: Record<string, Record<string, unknown>>;
   mcp_tool_timeout_seconds: number;
+  longbridge_auth_mode?: "apikey" | "oauth";
+  longbridge_oauth_connected?: boolean;
+  longbridge_oauth_client_id?: string;
   longbridge_app_key_masked?: string;
   has_longbridge_app_key?: boolean;
   longbridge_app_secret_masked?: string;
@@ -258,6 +261,17 @@ export interface ConfigDraft extends AppConfig {
   guardian_api_key: string;
   search_api_key: string;
   mcp_servers_text: string;
+}
+
+export interface LongbridgeOAuthStatus {
+  status: "disconnected" | "pending" | "connected" | "error";
+  auth_mode: "apikey" | "oauth";
+  client_id: string;
+  authorization_url: string | null;
+  expires_at: string | null;
+  error: string | null;
+  scope: "system" | "personal";
+  callback_url: string | null;
 }
 
 export interface ConnectionCheck {

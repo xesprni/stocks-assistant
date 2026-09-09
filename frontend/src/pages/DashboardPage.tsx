@@ -1545,9 +1545,11 @@ function WatchlistSymbolDetail({
     setInsightsLoading(true);
     getDashboardSymbolInsights(row.symbol, { signal: controller.signal })
       .then((payload) => {
+        if (controller.signal.aborted) return;
         setInsights(payload);
       })
       .catch((caught) => {
+        if (controller.signal.aborted) return;
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setInsightsError(caught instanceof Error ? caught.message : insightFallbackError);
       })
@@ -1556,7 +1558,7 @@ function WatchlistSymbolDetail({
       });
 
     return () => controller.abort();
-  }, [canFundamentals, insightFallbackError, row.symbol]);
+  }, [canFundamentals, insightFallbackError, language, row.symbol]);
 
   return (
     <FinanceSection

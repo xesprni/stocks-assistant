@@ -9,7 +9,7 @@ import threading
 import time as _time
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Type
+from typing import Any, Dict, Literal, Optional, Tuple, Type
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
@@ -127,6 +127,8 @@ USER_CONFIG_KEYS = {
     "mcp_servers",
     "mcp_tool_timeout_seconds",
     "longbridge_app_key",
+    "longbridge_auth_mode",
+    "longbridge_oauth_client_id",
     "longbridge_app_secret",
     "longbridge_access_token",
     "longbridge_http_url",
@@ -301,7 +303,9 @@ class Settings(BaseSettings):
     mcp_tool_timeout_seconds: float = Field(default=60.0, gt=0)  # 单次 MCP 工具调用超时时间
 
     # ---- Longbridge OpenAPI 配置 ----
-    # 为空时 Longbridge SDK 会读取 LONGBRIDGE_* 环境变量。
+    # API Key 模式为空时 SDK 会读取 LONGBRIDGE_*；OAuth ID 仅由授权服务写入。
+    longbridge_auth_mode: Literal["apikey", "oauth"] = "apikey"
+    longbridge_oauth_client_id: str = ""
     longbridge_app_key: str = ""
     longbridge_app_secret: str = ""
     longbridge_access_token: str = ""
@@ -487,6 +491,15 @@ def get_effective_config(user_id: Optional[str] = None) -> dict[str, Any]:
             if key in USER_CONFIG_KEYS
         }
         result = {**system_config, **user_config}
+        # 个人认证方式显式覆盖时，不把系统 OAuth 账号混入个人连接；旧版个人
+        # API Key 配置也继续使用原认证方式，避免管理员启用 OAuth 后悄然换账户。
+        if "longbridge_auth_mode" in user_config and "longbridge_oauth_client_id" not in user_config:
+            result["longbridge_oauth_client_id"] = ""
+        elif "longbridge_auth_mode" not in user_config and any(
+            key in user_config for key in ("longbridge_app_key", "longbridge_app_secret", "longbridge_access_token")
+        ):
+            result["longbridge_auth_mode"] = "apikey"
+            result["longbridge_oauth_client_id"] = ""
 
     with _effective_config_cache_lock:
         _effective_config_cache[cache_key] = (now + _EFFECTIVE_CONFIG_TTL, deepcopy(result))

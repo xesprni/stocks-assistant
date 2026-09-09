@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Bot, BrainCircuit, Check, ChevronDown, Cpu, Database, Globe2, KeyRound, Loader2, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench, X } from "lucide-react";
+import { ArrowRight, Bot, BrainCircuit, Check, ChevronDown, CircleCheck, CircleDashed, Cpu, Database, Globe2, KeyRound, Loader2, LayoutDashboard, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench, X } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import { ToggleRow } from "@/components/common/ToggleRow";
+import { LongbridgeAuthPanel } from "@/components/LongbridgeAuthPanel";
 import { MarketConfigPage } from "@/components/MarketConfigPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { toDraft } from "@/lib/config";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { AppConfig, ConfigDraft, ConfigReadinessResponse, MarketDashboardConfig, ToolInfo } from "@/types/app";
+import type { AppConfig, ConfigDraft, ConfigReadinessResponse, LongbridgeOAuthStatus, MarketDashboardConfig, ToolInfo } from "@/types/app";
 
 function isMcpToolName(name: string): boolean {
   return name.startsWith("mcp_");
@@ -28,6 +29,8 @@ const EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
 const REASONING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"] as const;
 const TOOL_CHOICE_OPTIONS = ["auto", "none", "required"] as const;
 export type ConfigTab = "model" | "agent" | "longbridge" | "market" | "channels" | "features";
+
+type SettingsTab = ConfigTab | "overview" | "security";
 
 type PasswordForm = { current: string; next: string; confirm: string };
 type PasswordState = "idle" | "saving" | "saved" | "error";
@@ -48,6 +51,7 @@ export function ConfigPage({
   handleSaveConfig,
   initialTab,
   language,
+  onLongbridgeAuthChanged,
   onMarketConfigSaved,
   patchDraft,
   setDraft,
@@ -62,13 +66,17 @@ export function ConfigPage({
   handleSaveConfig: () => void;
   initialTab?: ConfigTab;
   language: AppLanguage;
+  onLongbridgeAuthChanged: (status: LongbridgeOAuthStatus, replaceDraftMode?: boolean) => void;
   onMarketConfigSaved: (config: MarketDashboardConfig) => void;
   patchDraft: (patch: Partial<ConfigDraft>) => void;
   setDraft: (draft: ConfigDraft) => void;
 }) {
   const copy = i18n[language].config;
   const common = i18n[language].common;
+  const layoutCopy = copy.settingsLayout;
   const defaultTab = initialTab === "market" && !canReadMarket ? "model" : initialTab ?? "model";
+  const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab);
+  const [wideNavigation, setWideNavigation] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
   const [telegramTestMessage, setTelegramTestMessage] = useState(copy.telegramTestDefault);
   const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [telegramTestResult, setTelegramTestResult] = useState("");
@@ -85,6 +93,45 @@ export function ConfigPage({
   const [testingComponent, setTestingComponent] = useState<string | null>(null);
   const [connectionMessage, setConnectionMessage] = useState("");
   const [demoDataLoading, setDemoDataLoading] = useState(false);
+
+  const hasChanges = useMemo(() => Boolean(config && draft && JSON.stringify(draft) !== JSON.stringify(toDraft(config))), [config, draft]);
+  const navigationGroups: { label: string; items: { value: SettingsTab; label: string; description: string; icon: ReactNode }[] }[] = [
+    {
+      label: layoutCopy.workspace,
+      items: [
+        { value: "overview", label: layoutCopy.overview, description: layoutCopy.overviewHint, icon: <LayoutDashboard /> },
+        { value: "model", label: copy.modelTab, description: copy.modelSectionHint, icon: <Cpu /> },
+        { value: "agent", label: copy.agentTab, description: copy.agentRuntimeHint, icon: <Bot /> },
+      ],
+    },
+    {
+      label: layoutCopy.integrations,
+      items: [
+        { value: "longbridge", label: copy.longbridgeTab, description: layoutCopy.dataSourcesHint, icon: <Plug /> },
+        ...(canReadMarket ? [{ value: "market" as const, label: copy.marketTab, description: layoutCopy.marketHint, icon: <TrendingUp /> }] : []),
+        { value: "channels", label: copy.channelsTab, description: copy.telegramChannelHint, icon: <MessageCircle /> },
+      ],
+    },
+    {
+      label: layoutCopy.accountPreferences,
+      items: [
+        { value: "features", label: layoutCopy.preferences, description: copy.personalPreferencesHint, icon: <SlidersHorizontal /> },
+        { value: "security", label: copy.accountSecurity, description: copy.accountSecurityHint, icon: <LockKeyhole /> },
+      ],
+    },
+  ];
+  const activeSection = navigationGroups.flatMap((group) => group.items).find((item) => item.value === activeTab);
+
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const updateNavigation = () => setWideNavigation(query.matches);
+    query.addEventListener("change", updateNavigation);
+    return () => query.removeEventListener("change", updateNavigation);
+  }, []);
 
   const dangerousTools = ["bash", "write_file", "scheduler", "watchlist", "portfolio"];
   const builtinTools = useMemo(() => tools.filter((tool) => !isMcpToolName(tool.name)), [tools]);
@@ -326,12 +373,32 @@ export function ConfigPage({
   }
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-          <Badge variant="outline">{enabledCount}/4 ON</Badge>
+    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl lg:h-full">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border/65 px-4 py-5 sm:px-6">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-semibold tracking-tight">{copy.title}</h1>
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              {canManageSystem ? (layoutCopy.systemScope) : (layoutCopy.personalScope)}
+            </Badge>
+          </div>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {layoutCopy.description}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span aria-live="polite" className={cn("mr-2 flex items-center gap-1.5 text-xs", configState === "error" ? "text-destructive" : "text-muted-foreground")}>
+            {configState === "error" ? (
+              layoutCopy.saveFailed
+            ) : hasChanges ? (
+              <><span className="size-1.5 rounded-full bg-amber-500" />{layoutCopy.unsaved}</>
+            ) : config ? (
+              <><CircleCheck className="size-3.5" />{layoutCopy.synced}</>
+            ) : null}
+          </span>
           <Button
             aria-label={copy.reload}
-            disabled={!config}
+            disabled={!config || configState === "saving"}
             variant="outline"
             size="sm"
             onClick={() => config && setDraft(toDraft(config))}
@@ -340,125 +407,149 @@ export function ConfigPage({
             {copy.reload}
           </Button>
           <Button size="sm" disabled={configState === "saving" || !draft} onClick={handleSaveConfig}>
-            {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" ? <Check /> : <Save />}
-            {configState === "saving" ? copy.saving : configState === "saved" ? copy.saved : copy.save}
+            {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" && !hasChanges ? <Check /> : <Save />}
+            {configState === "saving" ? copy.saving : configState === "saved" && !hasChanges ? copy.saved : copy.save}
           </Button>
-      </div>
+        </div>
+      </header>
 
       {draft ? (
-        <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
-          <div className="space-y-4">
-          <ConfigSection
-            description={language === "en" ? "Complete required connections before starting evidence-backed research." : "开始可验证投研前，请先完成必要连接。"}
-            icon={<ShieldCheck className="size-4 text-primary" />}
-            title={language === "en" ? "Setup readiness" : "首次使用就绪检查"}
+        <>
+          <Tabs
+            className="flex min-h-0 min-w-0 flex-1 flex-col lg:grid lg:grid-cols-[208px_minmax(0,1fr)] xl:grid-cols-[224px_minmax(0,1fr)]"
+            onValueChange={(value) => setActiveTab(value as SettingsTab)}
+            orientation={wideNavigation ? "vertical" : "horizontal"}
+            value={activeTab}
           >
-            {readinessLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{copy.loading}</div>
-            ) : readiness ? (
-              <div className="grid gap-2 lg:grid-cols-2">
-                {readiness.checks.map((check) => {
-                  const testable = check.component === "llm" || check.component === "embedding" || check.component === "longbridge";
-                  return (
-                    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/75 bg-background/55 p-3" key={check.component}>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold uppercase">{check.component}</p>
-                          <Badge variant={check.configured ? "secondary" : "outline"}>{check.status}</Badge>
-                        </div>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{check.detail}</p>
-                      </div>
-                      {testable ? (
-                        <Button disabled={!check.configured || testingComponent !== null} onClick={() => handleConnectionTest(check.component as "llm" | "embedding" | "longbridge")} size="sm" type="button" variant="outline">
-                          {testingComponent === check.component ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                          {language === "en" ? "Test" : "测试"}
-                        </Button>
-                      ) : null}
+            <aside className="min-w-0 shrink-0 border-b border-border/65 bg-muted/10 p-3 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-4">
+              <TabsList
+                aria-label={layoutCopy.categories}
+                className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent p-0 shadow-none lg:flex-col lg:items-stretch lg:gap-6"
+              >
+                {navigationGroups.map((group) => (
+                  <div className="contents lg:block" key={group.label}>
+                    <p className="mb-2 hidden px-3 text-[11px] font-medium text-muted-foreground/80 lg:block">{group.label}</p>
+                    <div className="contents lg:flex lg:flex-col lg:gap-1">
+                      {group.items.map((item) => (
+                        <TabsTrigger
+                          className="min-h-10 shrink-0 justify-start gap-2.5 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg]:size-4 [&_svg]:shrink-0"
+                          key={item.value}
+                          value={item.value}
+                        >
+                          {item.icon}
+                          {item.label}
+                        </TabsTrigger>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">{language === "en" ? "Readiness check unavailable." : "暂时无法获取就绪状态。"}</p>
-            )}
-            {connectionMessage ? <p className="mt-2 text-xs text-muted-foreground">{connectionMessage}</p> : null}
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-              <Button disabled={demoDataLoading} onClick={handleSeedDemoData} size="sm" type="button" variant="outline">
-                {demoDataLoading ? <Loader2 className="animate-spin" /> : <WandSparkles />}
-                {language === "en" ? "Load sample watchlist & portfolio" : "载入示例自选与组合"}
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                {language === "en" ? "Only writes to each empty area; sample rows are clearly labeled." : "仅在对应区域为空时写入，且所有示例均有明确标记。"}
-              </span>
-            </div>
-          </ConfigSection>
-          <ConfigSection
-            description={copy.accountSecurityHint}
-            icon={<LockKeyhole className="size-4 text-secondary" />}
-            title={copy.accountSecurity}
-          >
-            <div className="flex justify-end">
-              <Button size="sm" variant="outline" onClick={openPasswordDialog}>
-                <KeyRound />
-                {copy.changePassword}
-              </Button>
-            </div>
-            {canManageSystem ? (
-              <div className="mt-3 grid gap-3 rounded-md border border-border/80 bg-muted/15 p-3 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-center">
-                <div className="flex items-start gap-2">
-                  <ShieldCheck className="mt-0.5 size-4 text-primary" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold">{copy.maxLoginDevices}</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.maxLoginDevicesHint}</p>
                   </div>
-                </div>
-                <Field label={copy.maxLoginDevicesValue}>
-                  <Input
-                    min={1}
-                    max={50}
-                    type="number"
-                    value={draft.auth_max_devices_per_user}
-                    onChange={(event) => patchDraft({ auth_max_devices_per_user: Number(event.target.value) })}
-                  />
-                </Field>
+                ))}
+              </TabsList>
+              <div className="mt-8 hidden rounded-lg border border-border/60 bg-background/60 p-3 lg:block">
+                <div className="flex items-center gap-2 text-xs font-medium"><WandSparkles className="size-3.5 text-primary" />{copy.featureSection}</div>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {formatTemplate(layoutCopy.featuresEnabled, { count: enabledCount })}
+                </p>
+                <button className="mt-2 flex items-center gap-1 text-xs font-medium text-primary hover:underline" onClick={() => setActiveTab("features")} type="button">
+                  {layoutCopy.manageFeatures}<ArrowRight className="size-3" />
+                </button>
               </div>
-            ) : null}
-          </ConfigSection>
+            </aside>
+            <div className="min-h-0 min-w-0 px-4 py-6 sm:px-6 lg:overflow-y-auto lg:px-8">
+              <div className="mx-auto w-full max-w-[1080px]">
+                <div className="mb-6">
+                  <h2 className="text-lg font-semibold tracking-tight">{activeSection?.label}</h2>
+                  <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{activeSection?.description}</p>
+                </div>
+                <TabsContent value="overview" className="mt-0 space-y-5">
+                  <ConfigSection
+                    description={language === "en" ? "Complete required connections before starting evidence-backed research." : "开始可验证投研前，请先完成必要连接。"}
+                    icon={<ShieldCheck className="size-4 text-primary" />}
+                    title={language === "en" ? "Setup readiness" : "首次使用就绪检查"}
+                  >
+                    {readinessLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{copy.loading}</div>
+                    ) : readiness ? (
+                      <div className="divide-y divide-border/60">
+                        {readiness.checks.map((check) => {
+                          const testable = check.component === "llm" || check.component === "embedding" || check.component === "longbridge";
+                          return (
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 py-4 first:pt-0 last:pb-0" key={check.component}>
+                              <div className="min-w-0 flex-1 basis-48">
+                                <div className="flex items-center gap-2">
+                                  <span className={cn("size-2 rounded-full", check.configured ? "bg-emerald-500" : check.status === "optional" ? "bg-muted-foreground/50" : "bg-amber-500")} />
+                                  <p className="text-sm font-medium">{{ llm: copy.modelSection, embedding: copy.embeddingSection, longbridge: "Longbridge", telegram: "Telegram", web_search: copy.webSearchSection }[check.component] ?? check.component}</p>
+                                  <Badge variant="outline" className="font-normal">{check.configured ? (layoutCopy.configured) : check.status === "optional" ? (layoutCopy.optional) : (layoutCopy.needsSetup)}</Badge>
+                                </div>
+                                <p className="mt-1 text-xs leading-5 text-muted-foreground">{check.detail}</p>
+                              </div>
+                              {testable ? (
+                                <Button disabled={!check.configured || testingComponent !== null} onClick={() => handleConnectionTest(check.component as "llm" | "embedding" | "longbridge")} size="sm" type="button" variant="outline">
+                                  {testingComponent === check.component ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                                  {language === "en" ? "Test" : "测试"}
+                                </Button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">{language === "en" ? "Readiness check unavailable." : "暂时无法获取就绪状态。"}</p>
+                    )}
+                    {connectionMessage ? <p role="status" className="mt-4 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{connectionMessage}</p> : null}
+                    <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border/60 pt-5">
+                      <Button disabled={demoDataLoading} onClick={handleSeedDemoData} size="sm" type="button" variant="outline">
+                        {demoDataLoading ? <Loader2 className="animate-spin" /> : <WandSparkles />}
+                        {language === "en" ? "Load sample watchlist & portfolio" : "载入示例自选与组合"}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {language === "en" ? "Only writes to each empty area; sample rows are clearly labeled." : "仅在对应区域为空时写入，且所有示例均有明确标记。"}
+                      </span>
+                    </div>
+                  </ConfigSection>
+                </TabsContent>
+                <TabsContent value="security" className="mt-0 space-y-5">
+                  <ConfigSection
+                    description={copy.accountSecurityHint}
+                    icon={<LockKeyhole className="size-4 text-secondary" />}
+                    title={copy.accountSecurity}
+                  >
+                    <div className="flex justify-start">
+                      <Button size="sm" variant="outline" onClick={openPasswordDialog}>
+                        <KeyRound />
+                        {copy.changePassword}
+                      </Button>
+                    </div>
+                    {canManageSystem ? (
+                      <div className="mt-5 grid gap-4 border-t border-border/60 pt-5 sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center">
+                        <div className="flex items-start gap-2">
+                          <ShieldCheck className="mt-0.5 size-4 text-primary" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold">{copy.maxLoginDevices}</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.maxLoginDevicesHint}</p>
+                          </div>
+                        </div>
+                        <Field label={copy.maxLoginDevicesValue}>
+                          <Input
+                            min={1}
+                            max={50}
+                            type="number"
+                            value={draft.auth_max_devices_per_user}
+                            onChange={(event) => patchDraft({ auth_max_devices_per_user: Number(event.target.value) })}
+                          />
+                        </Field>
+                      </div>
+                    ) : null}
+                  </ConfigSection>
 
-          <PasswordChangeDialog
-            common={common}
-            copy={copy}
-            form={passwordForm}
-            isOpen={isPasswordDialogOpen}
-            message={passwordMessage}
-            onChange={(patch) => {
-              setPasswordState("idle");
-              setPasswordMessage("");
-              setPasswordForm((current) => ({ ...current, ...patch }));
-            }}
-            onClose={closePasswordDialog}
-            onSubmit={handleChangePassword}
-            state={passwordState}
-          />
-
-          <Tabs defaultValue={defaultTab}>
-            <TabsList className={cn("grid h-auto w-full grid-cols-2", canReadMarket ? "sm:grid-cols-3 lg:grid-cols-6" : "sm:grid-cols-5")}>
-              <TabsTrigger value="model">{copy.modelTab}</TabsTrigger>
-              <TabsTrigger value="agent">{copy.agentTab}</TabsTrigger>
-              <TabsTrigger value="longbridge">{copy.longbridgeTab}</TabsTrigger>
-              {canReadMarket ? <TabsTrigger value="market">{copy.marketTab}</TabsTrigger> : null}
-              <TabsTrigger value="channels">{copy.channelsTab}</TabsTrigger>
-              <TabsTrigger value="features">{copy.featuresTab}</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="model" className="space-y-4">
+                </TabsContent>
+            <TabsContent value="model" className="mt-0 space-y-5">
               <ConfigSection
                 description={copy.modelSectionHint}
                 icon={<KeyRound className="size-4 text-primary" />}
                 title={copy.modelSection}
               >
                 <p className="mb-2 text-xs font-semibold text-muted-foreground">{copy.invocationMode}</p>
-                <div className="mb-3 grid gap-3 lg:grid-cols-2">
+                <div className="mb-5 grid gap-4 lg:grid-cols-2">
                   <ModelProviderCard
                     description={copy.openaiCompatibleHint}
                     icon={<Cpu className="size-4 text-primary" />}
@@ -477,7 +568,7 @@ export function ConfigPage({
                 <div className="mb-3 rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
                   {isCodexOAuth ? copy.codexProviderHint : copy.compatibleProviderHint}
                 </div>
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
                   {isCodexOAuth ? (
                     <>
                       <Field label={copy.codexApiBase}>
@@ -557,7 +648,7 @@ export function ConfigPage({
                 title={copy.embeddingSection}
               >
                 <p className="mb-2 text-xs font-semibold text-muted-foreground">{copy.invocationMode}</p>
-                <div className="mb-3 grid gap-3 lg:grid-cols-2">
+                <div className="mb-5 grid gap-4 lg:grid-cols-2">
                   <ModelProviderCard
                     description={copy.embeddingCompatibleHint}
                     icon={<Database className="size-4 text-secondary" />}
@@ -573,7 +664,7 @@ export function ConfigPage({
                     onSelect={() => selectEmbeddingProvider("codex")}
                   />
                 </div>
-                <div className="grid gap-3 lg:grid-cols-3">
+                <div className="grid gap-4 xl:grid-cols-3">
                   {isEmbeddingCodexOAuth ? (
                     <>
                       <Field label={copy.codexApiBase}>
@@ -595,7 +686,7 @@ export function ConfigPage({
                           onChange={(event) => patchDraft({ embedding_codex_auth_file: event.target.value })}
                         />
                       </Field>
-                      <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground lg:col-span-3">
+                      <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground xl:col-span-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={draft.has_embedding_codex_oauth ? "secondary" : "outline"}>
                             {draft.has_embedding_codex_oauth ? copy.codexOauthReady : copy.codexOauthMissing}
@@ -633,14 +724,14 @@ export function ConfigPage({
               </ConfigSection>
             </TabsContent>
 
-            <TabsContent value="agent" className="space-y-4">
+            <TabsContent value="agent" className="mt-0 space-y-5">
               <ConfigSection
                 description={copy.agentRuntimeHint}
                 icon={<Bot className="size-4 text-primary" />}
                 title={copy.agentRuntimeSection}
               >
                 {canManageSystem ? (
-                  <div className="grid gap-3">
+                  <div className="grid gap-4">
                     <Field label={copy.workspace}>
                       <Input value={draft.workspace_dir} onChange={(event) => patchDraft({ workspace_dir: event.target.value })} />
                     </Field>
@@ -673,7 +764,7 @@ export function ConfigPage({
                     />
                   </Field>
                 </div>
-                <div className="mt-3 grid gap-3 lg:grid-cols-4">
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
                   <Field label={copy.temperature}>
                     <Input
                       max={2}
@@ -757,7 +848,7 @@ export function ConfigPage({
                 icon={<Plug className="size-4 text-primary" />}
                 title={copy.multiAgentSection}
               >
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(120px,160px))]">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <ToggleRow
                     checked={draft.multi_agent_enabled}
                     icon={<Bot className="size-4 text-primary" />}
@@ -808,55 +899,35 @@ export function ConfigPage({
               ) : null}
             </TabsContent>
 
-            <TabsContent value="longbridge" className="space-y-4">
+            <TabsContent value="longbridge" className="mt-0 space-y-5">
               <ConfigSection
                 description={copy.credentialSectionHint}
                 icon={<ShieldCheck className="size-4 text-primary" />}
                 title={copy.credentialSection}
               >
-                <div className="grid gap-3 lg:grid-cols-3">
-                  <Field label="App Key">
-                    <Input
-                      placeholder={draft.has_longbridge_app_key ? draft.longbridge_app_key_masked : "Longbridge app key"}
-                      type="password"
-                      value={draft.longbridge_app_key}
-                      onChange={(event) => patchDraft({ longbridge_app_key: event.target.value })}
-                    />
-                  </Field>
-                  <Field label="App Secret">
-                    <Input
-                      placeholder={draft.has_longbridge_app_secret ? draft.longbridge_app_secret_masked : "Longbridge app secret"}
-                      type="password"
-                      value={draft.longbridge_app_secret}
-                      onChange={(event) => patchDraft({ longbridge_app_secret: event.target.value })}
-                    />
-                  </Field>
-                  <Field label="Access Token">
-                    <Input
-                      placeholder={draft.has_longbridge_access_token ? draft.longbridge_access_token_masked : "Longbridge access token"}
-                      type="password"
-                      value={draft.longbridge_access_token}
-                      onChange={(event) => patchDraft({ longbridge_access_token: event.target.value })}
-                    />
-                  </Field>
-                </div>
+                <LongbridgeAuthPanel
+                  draft={draft}
+                  language={language}
+                  onAuthChanged={onLongbridgeAuthChanged}
+                  patchDraft={patchDraft}
+                />
               </ConfigSection>
               <ConfigSection
                 description={copy.endpointSectionHint}
                 icon={<Database className="size-4 text-secondary" />}
                 title={copy.endpointSection}
               >
-                <div className="grid gap-3 lg:grid-cols-2">
+                <div className="grid gap-4 lg:grid-cols-2">
                   <Field label="HTTP URL">
                     <Input
-                      placeholder="默认使用 SDK 配置"
+                      placeholder={layoutCopy.sdkDefault}
                       value={draft.longbridge_http_url ?? ""}
                       onChange={(event) => patchDraft({ longbridge_http_url: event.target.value })}
                     />
                   </Field>
                   <Field label="Quote WS URL">
                     <Input
-                      placeholder="默认使用 SDK 配置"
+                      placeholder={layoutCopy.sdkDefault}
                       value={draft.longbridge_quote_ws_url ?? ""}
                       onChange={(event) => patchDraft({ longbridge_quote_ws_url: event.target.value })}
                     />
@@ -868,7 +939,7 @@ export function ConfigPage({
                 icon={<Globe2 className="size-4 text-primary" />}
                 title={copy.guardianSection}
               >
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
                   <Field label={copy.guardianApiKey}>
                     <Input
                       placeholder={draft.has_guardian_api_key ? draft.guardian_api_key_masked : "Guardian Open Platform API key"}
@@ -887,7 +958,7 @@ export function ConfigPage({
                 icon={<Globe2 className="size-4 text-secondary" />}
                 title={copy.webSearchSection}
               >
-                <div className="grid gap-3 lg:grid-cols-2">
+                <div className="grid gap-4 lg:grid-cols-2">
                   <Field label={copy.webSearchApiUrl}>
                     <Input
                       value={draft.search_api_url ?? ""}
@@ -907,7 +978,7 @@ export function ConfigPage({
             </TabsContent>
 
             {canReadMarket ? (
-              <TabsContent value="market" className="space-y-4">
+              <TabsContent value="market" className="mt-0 space-y-5">
                 <MarketConfigPage
                   embedded
                   language={language}
@@ -917,7 +988,7 @@ export function ConfigPage({
               </TabsContent>
             ) : null}
 
-            <TabsContent value="channels" className="space-y-4">
+            <TabsContent value="channels" className="mt-0 space-y-5">
               <ConfigSection
                 description={copy.telegramChannelHint}
                 icon={<MessageCircle className="size-4 text-primary" />}
@@ -930,7 +1001,7 @@ export function ConfigPage({
                     label={copy.telegramEnabled}
                     onCheckedChange={(checked) => patchDraft({ telegram_enabled: checked })}
                   />
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-4 lg:grid-cols-2">
                     <Field label={copy.telegramBotToken}>
                       <Input
                         placeholder={draft.has_telegram_bot_token ? draft.telegram_bot_token_masked : "123456:ABC..."}
@@ -1000,13 +1071,13 @@ export function ConfigPage({
               </ConfigSection>
             </TabsContent>
 
-            <TabsContent value="features" className="space-y-4">
+            <TabsContent value="features" className="mt-0 space-y-5">
               <ConfigSection
                 description={copy.personalPreferencesHint}
                 icon={<SlidersHorizontal className="size-4 text-primary" />}
                 title={copy.personalPreferences}
               >
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:items-end">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:items-end">
                   <Field label={copy.language}>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <Button
@@ -1033,7 +1104,7 @@ export function ConfigPage({
                 icon={<WandSparkles className="size-4 text-primary" />}
                 title={copy.featureSection}
               >
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-3 xl:grid-cols-2 [&_label_span.truncate]:whitespace-normal">
                   <ToggleRow
                     checked={draft.memory_enabled}
                     icon={<BrainCircuit className="size-4 text-primary" />}
@@ -1101,14 +1172,30 @@ export function ConfigPage({
                 </div>
               </ConfigSection>
             </TabsContent>
+              </div>
+            </div>
           </Tabs>
-          </div>
-        </div>
+          <PasswordChangeDialog
+            common={common}
+            copy={copy}
+            form={passwordForm}
+            isOpen={isPasswordDialogOpen}
+            message={passwordMessage}
+            onChange={(patch) => {
+              setPasswordState("idle");
+              setPasswordMessage("");
+              setPasswordForm((current) => ({ ...current, ...patch }));
+            }}
+            onClose={closePasswordDialog}
+            onSubmit={handleChangePassword}
+            state={passwordState}
+          />
+
+        </>
       ) : (
-        <div className="panel-body">
-          <div className="ticker-line rounded-md border border-border/80 bg-background/50 px-3 py-8 text-center text-sm text-muted-foreground">
-            {copy.loading}
-          </div>
+        <div className="flex flex-1 items-center justify-center gap-2 px-6 py-16 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          {copy.loading}
         </div>
       )}
     </section>
@@ -1232,9 +1319,10 @@ function ModelProviderCard({
     <button
       type="button"
       className={cn(
-        "flex min-h-[96px] w-full items-start gap-3 rounded-md border p-3 text-left transition-colors",
-        selected ? "border-primary/60 bg-primary/10" : "border-border/75 bg-background/60 hover:border-primary/40",
+        "flex min-h-[112px] w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        selected ? "border-primary/60 bg-primary/5" : "border-border/75 bg-background/60 hover:border-primary/40 hover:bg-muted/20",
       )}
+      aria-pressed={selected}
       onClick={onSelect}
     >
       <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/70">{icon}</span>
@@ -1242,6 +1330,7 @@ function ModelProviderCard({
         <span className="block text-sm font-semibold">{label}</span>
         <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
       </span>
+      {selected ? <CircleCheck className="ml-auto mt-0.5 size-4 shrink-0 text-primary" /> : <CircleDashed className="ml-auto mt-0.5 size-4 shrink-0 text-muted-foreground/50" />}
     </button>
   );
 }
@@ -1421,15 +1510,15 @@ function ConfigSection({
   title: string;
 }) {
   return (
-    <section className={cn("rounded-md border border-border/80 bg-background/50 p-4", className)}>
-      <div className="mb-3 flex items-start gap-3">
-        <div className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/70">{icon}</div>
+    <section className={cn("overflow-hidden rounded-xl border border-border/70 bg-card/70", className)}>
+      <div className="flex items-start gap-3 border-b border-border/50 px-4 py-4 sm:px-5">
+        <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/60">{icon}</div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold">{title}</p>
-          {description ? <p className="text-xs leading-5 text-muted-foreground">{description}</p> : null}
+          <h3 className="text-sm font-semibold leading-6">{title}</h3>
+          {description ? <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{description}</p> : null}
         </div>
       </div>
-      {children}
+      <div className="p-4 sm:p-5">{children}</div>
     </section>
   );
 }

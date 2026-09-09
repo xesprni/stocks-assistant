@@ -1,6 +1,6 @@
 """配置管理 API Schema。"""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -77,6 +77,9 @@ class AppConfig(BaseModel):
     mcp_servers: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     mcp_tool_timeout_seconds: float = 60.0
 
+    longbridge_auth_mode: Literal["apikey", "oauth"] = "apikey"
+    longbridge_oauth_client_id: str = ""
+    longbridge_oauth_connected: bool = False
     longbridge_app_key_masked: str = ""
     has_longbridge_app_key: bool = False
     longbridge_app_secret_masked: str = ""
@@ -156,6 +159,7 @@ class ConfigUpdate(BaseModel):
     mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None
     mcp_tool_timeout_seconds: Optional[float] = None
 
+    longbridge_auth_mode: Optional[Literal["apikey", "oauth"]] = None
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
     longbridge_access_token: Optional[str] = None

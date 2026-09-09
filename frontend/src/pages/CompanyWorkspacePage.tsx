@@ -161,13 +161,17 @@ function Overview({ language, loading, summary, symbol }: { language: AppLanguag
     setInsights(null);
     setInsightError("");
     void getDashboardSymbolInsights(symbol, { signal: controller.signal })
-      .then(setInsights)
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        setInsights(payload);
+      })
       .catch((caught) => {
+        if (controller.signal.aborted) return;
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setInsightError(caught instanceof Error ? caught.message : "Unavailable");
       });
     return () => controller.abort();
-  }, [symbol]);
+  }, [language, symbol]);
   if (loading && !summary) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="animate-spin" />Loading...</div>;
   const cards = [
     [language === "en" ? "Thesis versions" : "Thesis 版本", summary?.thesis_versions ?? 0],

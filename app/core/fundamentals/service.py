@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from decimal import Decimal
-import hashlib
 import threading
 import time
 from typing import Any, Optional
@@ -279,19 +278,10 @@ class FundamentalService:
 
     @staticmethod
     def _settings_cache_key(settings: Any = None) -> str:
-        if settings is None:
-            return "env"
-        material = "\0".join(
-            str(getattr(settings, key, "") or "")
-            for key in (
-                "longbridge_app_key",
-                "longbridge_app_secret",
-                "longbridge_access_token",
-                "longbridge_http_url",
-                "longbridge_quote_ws_url",
-            )
-        )
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+        from app.core.market.longbridge_context import content_language, credential_signature
+
+        # 同一凭据可能供不同语言的用户使用，不能复用另一种语言的公司简介等内容。
+        return f"{credential_signature(settings)}:{content_language(settings)}"
 
     def get_financial_reports(
         self,

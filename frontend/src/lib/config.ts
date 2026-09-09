@@ -23,6 +23,7 @@ export function toDraft(config: AppConfig): ConfigDraft {
     telegram_api_base: config.telegram_api_base ?? "https://api.telegram.org",
     telegram_parse_mode: config.telegram_parse_mode ?? "",
     longbridge_app_key: "",
+    longbridge_auth_mode: config.longbridge_auth_mode ?? "apikey",
     longbridge_app_secret: "",
     longbridge_access_token: "",
     longbridge_http_url: config.longbridge_http_url ?? "",

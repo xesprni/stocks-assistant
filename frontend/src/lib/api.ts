@@ -1,5 +1,6 @@
 import type {
   AppConfig,
+  LongbridgeOAuthStatus,
   AlertEvent,
   AlertRule,
   AuthTokenResponse,
@@ -464,6 +465,18 @@ export function saveConfig(payload: Record<string, unknown>) {
 
 export function getConfigReadiness() {
   return request<ConfigReadinessResponse>("/api/v1/config/readiness");
+}
+
+export function getLongbridgeOAuthStatus(init?: RequestInit) {
+  return request<LongbridgeOAuthStatus>("/api/v1/config/longbridge/oauth/status", init);
+}
+
+export function startLongbridgeOAuth() {
+  return request<LongbridgeOAuthStatus>("/api/v1/config/longbridge/oauth/start", { method: "POST" });
+}
+
+export function disconnectLongbridgeOAuth() {
+  return request<LongbridgeOAuthStatus>("/api/v1/config/longbridge/oauth/disconnect", { method: "DELETE" });
 }
 
 export function testConfigConnection(component: "llm" | "embedding" | "longbridge") {

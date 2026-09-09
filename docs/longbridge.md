@@ -89,6 +89,12 @@ openapi-trade.longbridge.com
 
 ## SDK 
 
+### 项目内容语言
+
+本项目的基本面、资讯和市场内容接口使用当前用户的有效 `app_language`：`zh` 对应 SDK `Language.ZH_CN`，`en` 对应 `Language.EN`，优先于 `LONGBRIDGE_LANGUAGE`。在配置页保存语言后，公司资料、估值说明等由长桥提供本地化的内容会按该语言请求；原始公告、新闻等不保证有翻译版本。
+
+内容 Context 和 Insights 结果缓存按凭据与语言隔离，切换语言后不会复用另一语言的结果。行情 `QuoteContext` 继续按凭据共享，避免语言切换建立额外的行情长连接；其公告原文和行情字段保留原有 SDK 语言行为。SDK 的环境变量及旧版 `.env` 凭据回退仍兼容，应用业务配置仍以 SQLite 为准。
+
 - [Overview](https://open.longbridge.com/docs.md)
 
 ## Docs
@@ -314,3 +320,42 @@ openapi-trade.longbridge.com
 ## Install
 
 - [Skill Installation Guide](https://open.longbridge.com/skill/install/index.md)
+
+## Stocks Assistant OAuth 2.0 接入
+
+配置页的长桥连接支持 `API Key` 和 `OAuth 2.0` 两种方式。默认保持原有 API Key
+行为；选择 OAuth 后点击授权，应用按系统/个人配置作用域动态注册独立客户端，
+通过 SDK `OAuthBuilder(...).build_async()` 完成授权，再用 `Config.from_oauth()`
+接入已有行情、财报、新闻、自选股等 service。无需手工填写 client_id，也不会复用
+其他用户或其他应用的 SDK 授权。管理员连接保存在系统配置，普通用户连接仅覆盖
+其个人配置；已有个人 API Key 配置仍使用原认证方式。
+
+- 授权接口：`POST /api/v1/config/longbridge/oauth/start`；查询状态：
+  `GET /api/v1/config/longbridge/oauth/status`；取消/断开：
+  `DELETE /api/v1/config/longbridge/oauth/disconnect`。均要求登录及 `config:read`，
+  系统配置写入额外遵循管理员权限。Token、授权码和原始 SDK 错误不会返回前端。
+- SDK 4.1 回调固定使用 `http://localhost:<随机端口>/callback`，仅监听后端本机。
+  浏览器与后端需运行在同一台电脑；远程部署需自行转发显示的回调端口，不能直接
+  使用远程浏览器本地地址完成授权。授权等待最多 5 分钟，最终以配置页状态为准。
+  SSH 部署可在授权页显示端口后使用
+  `ssh -N -L <回调端口>:127.0.0.1:<回调端口> user@server`，保持转发后再打开授权
+  链接；两端端口需相同，且应在授权超时前完成。
+- SDK 自动刷新并将 Token 缓存在
+  `~/.longbridge/openapi/tokens/<应用独立注册的 client_id>`。Python 4.1 未开放
+  自定义 TokenStorage，这是应用 SQLite 加密配置以外的 **SDK 文件缓存例外**。
+  应用创建目录为 `0700`、Token 文件为 `0600`，验证客户端绑定并拒绝符号链接；
+  SDK 覆写刷新时保留权限。SQLite 仅保存认证方式和客户端 ID，不保存 Token。
+  重启后按配置中的 ID 恢复该缓存；失效且无法刷新时，普通行情请求不会隐式
+  发起浏览器授权，而会提示回配置页重新连接。
+- 断开会清理本地凭据和运行缓存，并保持 OAuth 模式未连接状态；原 API Key 值
+  保留，可手工切回。此操作不等同于长桥服务端撤销授权，如需撤销，应在长桥账户
+  中管理应用授权。
+  取消仍在等待的授权仅清理本次尝试，保留之前有效的 API Key / OAuth 连接。
+- 已核对 SDK v4.1.0 的 state 校验与 300 秒超时实现；该版本原生浏览器流程未
+  实现 PKCE。原生 Future 直接取消会遗留监听器，因此应用通过独占的本机回调
+  发送拒绝信号，让 SDK 正常结束并清理监听器。
+
+依据：[官方认证文档](https://open.longbridge.com/zh-CN/docs/getting-started#认证方式)、
+[v4.1.0 OAuthBuilder](https://github.com/longbridge/openapi/blob/v4.1.0/rust/crates/oauth/src/builder.rs)、
+[v4.1.0 Token 缓存](https://github.com/longbridge/openapi/blob/v4.1.0/rust/crates/oauth/src/token.rs)、
+[v4.1.0 本机回调](https://github.com/longbridge/openapi/blob/v4.1.0/rust/crates/oauth/src/callback.rs)。

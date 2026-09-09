@@ -67,6 +67,7 @@ import type { CompanyTab } from "@/pages/CompanyWorkspacePage";
 import type { EffectiveTheme, Page, Theme } from "@/types/ui";
 import type {
   AppConfig,
+  LongbridgeOAuthStatus,
   AuthUser,
   ChatMessage,
   ChatStreamEvent,
@@ -204,6 +205,7 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   mcp_servers_text: ["mcp_servers"],
   mcp_tool_timeout_seconds: ["mcp_tool_timeout_seconds"],
   longbridge_app_key: ["longbridge_app_key"],
+  longbridge_auth_mode: ["longbridge_auth_mode"],
   longbridge_app_secret: ["longbridge_app_secret"],
   longbridge_access_token: ["longbridge_access_token"],
   longbridge_http_url: ["longbridge_http_url"],
@@ -243,6 +245,7 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "mcp_servers",
   "mcp_tool_timeout_seconds",
   "longbridge_app_key",
+  "longbridge_auth_mode",
   "longbridge_app_secret",
   "longbridge_access_token",
   "longbridge_http_url",
@@ -1195,6 +1198,7 @@ function ConsoleApp() {
       mcp_servers: mcpServers,
       mcp_tool_timeout_seconds: Number(source.mcp_tool_timeout_seconds) || 60,
       longbridge_http_url: source.longbridge_http_url ?? "",
+      longbridge_auth_mode: source.longbridge_auth_mode ?? "apikey",
       longbridge_quote_ws_url: source.longbridge_quote_ws_url ?? "",
       search_api_url: source.search_api_url ?? "https://api.bocha.cn/v1/web-search",
     };
@@ -1301,6 +1305,19 @@ function ConsoleApp() {
     setConfig(next);
     setDraft(toDraft(next));
     setConfigState("saved");
+  }
+
+  function applyLongbridgeOAuthStatus(status: LongbridgeOAuthStatus, replaceDraftMode = false) {
+    const patch = {
+      longbridge_auth_mode: status.auth_mode,
+      longbridge_oauth_connected: status.status === "connected",
+      longbridge_oauth_client_id: status.client_id,
+    };
+    const pendingMode = configDirtyPatchRef.current.longbridge_auth_mode;
+    const draftPatch = { ...patch, longbridge_auth_mode: !replaceDraftMode && pendingMode ? pendingMode : patch.longbridge_auth_mode };
+    setConfig((current) => current && Object.entries(patch).some(([key, value]) => current[key as keyof AppConfig] !== value) ? { ...current, ...patch } : current);
+    setDraft((current) => current && Object.entries(draftPatch).some(([key, value]) => current[key as keyof ConfigDraft] !== value) ? { ...current, ...draftPatch } : current);
+    if (replaceDraftMode || pendingMode === patch.longbridge_auth_mode) delete configDirtyPatchRef.current.longbridge_auth_mode;
   }
 
   function handleNavigate(nextPage: Page, configTab?: ConfigTab) {
@@ -1551,6 +1568,7 @@ function ConsoleApp() {
                   draft={draft}
                   enabledCount={enabledCount}
                   handleSaveConfig={handleSaveConfig}
+                  onLongbridgeAuthChanged={applyLongbridgeOAuthStatus}
                   initialTab={configInitialTab}
                   language={language}
                   onMarketConfigSaved={setMarketConfig}

@@ -11,6 +11,7 @@ import app.config as config_module
 from app.config import ALWAYS_USER_CONFIG_KEYS, Settings, USER_CONFIG_KEYS, get_effective_config, get_effective_settings, get_settings
 from app.core.app_store import get_app_store
 from app.core.notifications.telegram import TelegramConfigError, TelegramSender
+from app.core.market.longbridge_oauth import longbridge_oauth_service, oauth_connected
 from app.core.security import CurrentUser, require_permissions
 from app.schemas.config import (
     AppConfig,
@@ -22,6 +23,7 @@ from app.schemas.config import (
     TelegramTestRequest,
     TelegramTestResponse,
 )
+from app.schemas.longbridge_oauth import LongbridgeOAuthStatus
 
 router = APIRouter()
 
@@ -42,7 +44,7 @@ def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
             and settings.embedding_model
         )
     )
-    longbridge_configured = bool(
+    longbridge_configured = oauth_connected(settings) if settings.longbridge_auth_mode == "oauth" else bool(
         settings.longbridge_app_key and settings.longbridge_app_secret and settings.longbridge_access_token
     )
     telegram_configured = bool(
@@ -67,7 +69,7 @@ def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
             component="longbridge",
             status="ready" if longbridge_configured else "missing",
             configured=longbridge_configured,
-            detail="Longbridge 凭据已配置" if longbridge_configured else "请配置 App Key、App Secret 和 Access Token",
+            detail="Longbridge 凭据已配置" if longbridge_configured else "请完成长桥 OAuth 授权或配置 App Key、App Secret 和 Access Token",
             depends_on=["market", "financials", "watchlist"],
         ),
         ConnectionCheck(
@@ -175,6 +177,9 @@ def _settings_to_response(
         system_prompt=settings.system_prompt,
         mcp_servers=_mask_mcp_servers(settings.mcp_servers) if show_all or owns("mcp_servers") else {},
         mcp_tool_timeout_seconds=settings.mcp_tool_timeout_seconds if show_all or owns("mcp_tool_timeout_seconds") else 60.0,
+        longbridge_auth_mode=settings.longbridge_auth_mode,
+        longbridge_oauth_client_id=settings.longbridge_oauth_client_id if show_all or owns("longbridge_oauth_client_id") else "",
+        longbridge_oauth_connected=oauth_connected(settings) if show_all or owns("longbridge_oauth_client_id") else False,
         longbridge_app_key_masked=_mask_secret(settings.longbridge_app_key) if show_all or owns("longbridge_app_key") else "",
         has_longbridge_app_key=(show_all or owns("longbridge_app_key")) and bool(settings.longbridge_app_key),
         longbridge_app_secret_masked=_mask_secret(settings.longbridge_app_secret) if show_all or owns("longbridge_app_secret") else "",
@@ -256,6 +261,8 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
     tool_keys = {"workspace_dir", "memory_enabled"}
     skill_keys = {"workspace_dir"}
     longbridge_keys = {
+        "longbridge_auth_mode",
+        "longbridge_oauth_client_id",
         "longbridge_app_key",
         "longbridge_app_secret",
         "longbridge_access_token",
@@ -362,6 +369,8 @@ async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> 
         # 用户个人配置写入后必须清除有效配置缓存，否则后续读取返回旧值。
         config_module.clear_effective_settings_cache()
         settings = get_effective_settings(current.id)
+        if any(key.startswith("longbridge_") for key in user_patch):
+            _refresh_runtime_caches(user_patch)
         if (
             {
                 "llm_provider",
@@ -442,6 +451,21 @@ async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> 
 async def patch_config(update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))):
     """局部更新并持久化应用配置。"""
     return await _persist_config_update(update, current)
+
+
+@router.get("/longbridge/oauth/status", response_model=LongbridgeOAuthStatus)
+def longbridge_oauth_status(current: CurrentUser = Depends(require_permissions("config:read"))):
+    return longbridge_oauth_service.status(current)
+
+
+@router.post("/longbridge/oauth/start", response_model=LongbridgeOAuthStatus)
+async def start_longbridge_oauth(current: CurrentUser = Depends(require_permissions("config:read"))):
+    return await longbridge_oauth_service.start(current)
+
+
+@router.delete("/longbridge/oauth/disconnect", response_model=LongbridgeOAuthStatus)
+async def disconnect_longbridge_oauth(current: CurrentUser = Depends(require_permissions("config:read"))):
+    return await longbridge_oauth_service.disconnect(current)
 
 
 @router.put("", response_model=AppConfig)
