@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { clearChatSessionMessages, createChatSession, deleteAllChatSessions, deleteChatSession, getChatSession, listChatSessions, updateChatSessionTitle } from "@/lib/api";
 import { mergeChatInputs, upsertChatInput } from "@/lib/chat-inputs";
+import { reconcileConversationClear } from "@/lib/conversation-reconciliation";
 import type { ChatInput, ChatMessage, ChatRunSummary, Conversation } from "@/types/app";
 
 const ACTIVE_SESSION_KEY = "stocks-assistant-active-session";
@@ -29,6 +30,16 @@ export function useConversations() {
   const switchLoadVersionRef = useRef(0);
   const conversationsRef = useRef<Conversation[]>([]);
   const activeIdRef = useRef<string | null>(activeId);
+  const clearOperationRef = useRef(0);
+  const deletedConversationIdsRef = useRef(new Set<string>());
+  const conversationMutationRef = useRef(new Map<string, number>());
+
+  function beginConversationMutation(id: string) {
+    const version = (conversationMutationRef.current.get(id) ?? 0) + 1;
+    conversationMutationRef.current.set(id, version);
+    const clearOperation = clearOperationRef.current;
+    return () => conversationMutationRef.current.get(id) === version && clearOperationRef.current === clearOperation;
+  }
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? null,
@@ -225,11 +236,15 @@ export function useConversations() {
 
   function deleteConversation(id: string) {
     userMutationVersionRef.current += 1;
-    const remaining = conversations.filter((c) => c.id !== id);
-    setConversations(remaining);
+    const isCurrent = beginConversationMutation(id);
+    deletedConversationIdsRef.current.add(id);
+    const remaining = conversationsRef.current.filter((c) => c.id !== id);
+    setConversations((current) => current.filter((c) => c.id !== id));
     if (activeId === id) rememberActive(remaining[0]?.id ?? null);
     deleteChatSession(id).catch(() => {
-      loadConversation(id).catch(() => {
+      if (!isCurrent()) return;
+      deletedConversationIdsRef.current.delete(id);
+      loadConversation(id, isCurrent).catch(() => {
         // 删除失败时尽量恢复该会话；恢复失败说明服务端也不存在。
       });
     });
@@ -237,6 +252,7 @@ export function useConversations() {
 
   function clearMessages(convId: string) {
     userMutationVersionRef.current += 1;
+    const isCurrent = beginConversationMutation(convId);
     setConversations((prev) => {
       const next = prev.map((c) => {
         if (c.id !== convId) return c;
@@ -246,7 +262,8 @@ export function useConversations() {
       return next;
     });
     clearChatSessionMessages(convId).catch(() => {
-      loadConversation(convId).catch(() => {
+      if (!isCurrent()) return;
+      loadConversation(convId, isCurrent).catch(() => {
         // 清空失败时尝试恢复最新服务端状态。
       });
     });
@@ -254,18 +271,29 @@ export function useConversations() {
 
   function clearAllConversations() {
     userMutationVersionRef.current += 1;
-    const previousConversations = conversations;
-    const previousActiveId = activeId;
+    const mutationVersion = userMutationVersionRef.current;
+    const operation = ++clearOperationRef.current;
+    const previousConversations = conversationsRef.current;
+    const previousActiveId = activeIdRef.current;
     setConversations([]);
     rememberActive(null);
-    deleteAllChatSessions().catch(() => {
-      setConversations(previousConversations);
-      rememberActive(previousActiveId);
+    deleteAllChatSessions().catch(async () => {
+      // A lost response may mean the delete succeeded. Prefer fresh server truth,
+      // and retain new conversations, local edits, and later explicit deletions.
+      const persisted = await listChatSessions().catch(() => previousConversations);
+      if (clearOperationRef.current !== operation) return;
+      setConversations((current) => reconcileConversationClear({
+        current, persisted, snapshot: previousConversations, deletedIds: deletedConversationIdsRef.current,
+      }));
+      if (userMutationVersionRef.current === mutationVersion && !activeIdRef.current) {
+        rememberActive(persisted.find((item) => item.id === previousActiveId)?.id ?? persisted[0]?.id ?? null);
+      }
     });
   }
 
   function updateTitle(convId: string, title: string) {
     userMutationVersionRef.current += 1;
+    const isCurrent = beginConversationMutation(convId);
     setConversations((prev) => {
       const next = prev.map((c) => {
         if (c.id !== convId) return c;
@@ -273,7 +301,12 @@ export function useConversations() {
       });
       return next;
     });
-    updateChatSessionTitle(convId, title).then((conv) => mergeConversation(conv, true)).catch(() => {
+    updateChatSessionTitle(convId, title).then((conv) => {
+      if (!isCurrent()) return;
+      // A title acknowledgement owns only title metadata, never streamed messages or run state.
+      setConversations((current) => current.map((item) => item.id === convId
+        ? { ...item, title: conv.title, updatedAt: conv.updatedAt } : item));
+    }).catch(() => {
       // 标题同步失败不影响当前对话。
     });
   }

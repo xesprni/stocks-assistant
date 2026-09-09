@@ -5,6 +5,7 @@ import {
   clearAuthTokens,
   devLogin,
   getMe,
+  getAuthSessionGeneration,
   getSetupStatus,
   getStoredAccessToken,
   heartbeatLoginDevice,
@@ -12,6 +13,7 @@ import {
   logout as apiLogout,
   rejectAuthRecovery,
   resolveAuthRecovery,
+  restoreAuthTokens,
   setAuthTokens,
   setupAdmin,
   updateOwnProfile,
@@ -194,14 +196,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     async reauthenticate(password: string) {
       if (!user) throw new Error("Authentication required");
+      const generation = getAuthSessionGeneration();
       const tokens = await apiLogin({ username: user.username, password });
+      if (getAuthSessionGeneration() !== generation) throw new DOMException("Authentication session changed", "AbortError");
       if (tokens.user.id !== user.id) {
         clearAuthTokens();
         setUser(null);
         rejectAuthRecovery("Please sign in with the same account to continue");
         throw new Error("Please sign in with the same account to continue");
       }
-      setAuthTokens(tokens);
+      restoreAuthTokens(tokens, generation);
       setReauthRequired(false);
       setReauthMessage("");
       setSetupRequired(false);
@@ -223,11 +227,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return nextUser;
     },
     async logout() {
-      await apiLogout();
+      const pending = apiLogout();
       setReauthRequired(false);
       setReauthMessage("");
       setUser(null);
       rejectAuthRecovery();
+      await pending;
     },
     can(permission: string) {
       return permissions.has("*") || permissions.has(permission);

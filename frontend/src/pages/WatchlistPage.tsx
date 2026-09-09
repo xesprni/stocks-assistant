@@ -9,7 +9,8 @@ import { useToast } from "@/components/common/Toast";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addWatchlistItem, deleteWatchlistItem, getWatchlistOverview, listWatchlist, reorderWatchlist, searchWatchlist } from "@/lib/api";
+import { searchWatchlist } from "@/lib/api";
+import { useWatchlistController } from "@/hooks/useWatchlistController";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -243,17 +244,14 @@ export function WatchlistPage({
     inferCategoryFromSymbol(selectedSymbol) ?? readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["US", "A", "H"], "US"),
   );
   const [activeSymbol, setActiveSymbol] = useState(selectedSymbol);
-  const [items, setItems] = useState<WatchlistItem[]>([]);
+  const { controller, items, loading: isLoading, refreshing: isRefreshingQuotes, error: resourceError } = useWatchlistController(category, loadStoredWatchlistRefreshSeconds());
   const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
   const [activeDragSize, setActiveDragSize] = useState<DragPreviewSize | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WatchlistSearchResult[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [isRefreshingQuotes, setIsRefreshingQuotes] = useState(false);
 
   const searchControllerRef = useRef<AbortController | null>(null);
-  const quoteRefreshInFlightRef = useRef(false);
   const lastErrorToastRef = useRef({ message: "", time: 0 });
   const { showToast } = useToast();
   const sensors = useSensors(
@@ -276,22 +274,8 @@ export function WatchlistPage({
     showToast({ kind: "error", message, title: copy.title });
   }, [copy.title, showToast]);
 
-  useEffect(() => {
-    writeStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, category);
-    const controller = new AbortController();
-    setIsLoading(true);
-    listWatchlist(category, { signal: controller.signal })
-      .then((response) => setItems(response.items))
-      .catch((caught) => {
-        if (!controller.signal.aborted) {
-          showWatchlistError(caught instanceof Error ? caught.message : copy.loadFailed);
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setIsLoading(false);
-      });
-    return () => controller.abort();
-  }, [category, copy.loadFailed, showWatchlistError]);
+  useEffect(() => { writeStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, category); }, [category]);
+  useEffect(() => { if (resourceError) showWatchlistError(resourceError); }, [resourceError, showWatchlistError]);
 
   useEffect(() => {
     if (!selectedSymbol || selectedSymbol === activeSymbol) return;
@@ -324,7 +308,7 @@ export function WatchlistPage({
       setIsSearching(true);
       searchWatchlist(text, category, { signal: controller.signal })
         .then((response) => {
-          setResults(response.results);
+          if (!controller.signal.aborted) setResults(response.results);
         })
         .catch((caught) => {
           if (!controller.signal.aborted) {
@@ -346,7 +330,6 @@ export function WatchlistPage({
   function selectCategory(next: WatchlistCategory) {
     if (next === category) return;
     setCategory(next);
-    setItems([]);
     setActiveSymbol("");
     onSelectedSymbolChange?.("");
     setResults([]);
@@ -360,74 +343,14 @@ export function WatchlistPage({
   }, [onSelectedSymbolChange]);
 
   async function handleAdd(result: WatchlistSearchResult) {
-    try {
-      const item = await addWatchlistItem(result);
-      if (item.category === category) {
-        setItems((current) => [...current.filter((e) => e.symbol !== item.symbol), item]);
-        handleSelectSymbol(item);
-      }
-    } catch (caught) {
-      showWatchlistError(caught instanceof Error ? caught.message : copy.addFailed);
-    }
+    const item = await controller.add(result);
+    if (item) handleSelectSymbol(item);
   }
 
   async function handleDelete(item: WatchlistItem) {
-    const previous = items;
-    const wasActive = item.symbol === activeSymbol;
-    setItems((current) => current.filter((e) => e.id !== item.id));
-    if (wasActive) setActiveSymbol("");
-    try {
-      await deleteWatchlistItem(item.id);
-    } catch (caught) {
-      setItems(previous);
-      if (wasActive) setActiveSymbol(item.symbol);
-      showWatchlistError(caught instanceof Error ? caught.message : copy.deleteFailed);
-    }
+    if (item.symbol === activeSymbol) setActiveSymbol("");
+    await controller.remove(item);
   }
-
-  const handleRefreshQuotes = useCallback(async (options?: { silent?: boolean }) => {
-    const silent = options?.silent ?? false;
-    if (quoteRefreshInFlightRef.current) return;
-    quoteRefreshInFlightRef.current = true;
-    setIsRefreshingQuotes(true);
-    try {
-      const response = await getWatchlistOverview();
-      const nextItems = response.items.filter((item) => item.category === category);
-      setItems(nextItems);
-      if (activeSymbol && !nextItems.some((item) => item.symbol === activeSymbol)) {
-        setActiveSymbol("");
-        onSelectedSymbolChange?.("");
-      }
-      if (response.quote_error || response.error) {
-        showWatchlistError(response.quote_error || response.error || copy.overviewFailed);
-        return;
-      }
-      if (!silent) {
-        const time = formatQuoteTime(response.fetched_at, language);
-        const source = quoteSourceLabel(response.source, copy);
-        showToast({
-          kind: "success",
-          message: formatTemplate(copy.quotesUpdated, { time, source }),
-          title: copy.title,
-        });
-      }
-    } catch (caught) {
-      showWatchlistError(caught instanceof Error ? caught.message : copy.overviewFailed);
-    } finally {
-      quoteRefreshInFlightRef.current = false;
-      setIsRefreshingQuotes(false);
-    }
-  }, [activeSymbol, category, copy, language, onSelectedSymbolChange, showToast, showWatchlistError]);
-
-  useEffect(() => {
-    if (items.length === 0) return;
-    void handleRefreshQuotes({ silent: true });
-    const intervalSeconds = loadStoredWatchlistRefreshSeconds();
-    const timer = window.setInterval(() => {
-      void handleRefreshQuotes({ silent: true });
-    }, intervalSeconds * 1000);
-    return () => window.clearInterval(timer);
-  }, [category, handleRefreshQuotes, items.length]);
 
   function handleDragStart(event: DragStartEvent) {
     const initialRect = event.active.rect.current.initial;
@@ -446,19 +369,10 @@ export function WatchlistPage({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    setItems((current) => {
-      const oldIndex = current.findIndex((e) => e.id === active.id);
-      const newIndex = current.findIndex((e) => e.id === over.id);
-      if (oldIndex < 0 || newIndex < 0) return current;
-      const previous = current;
-      const next = arrayMove(current, oldIndex, newIndex);
-      reorderWatchlist(next.map((e) => e.id))
-        .catch(() => {
-          setItems(previous);
-          showWatchlistError(copy.reorderFailed);
-        });
-      return next;
-    });
+    const oldIndex = items.findIndex((item) => item.id === active.id);
+    const newIndex = items.findIndex((item) => item.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    controller.reorder(arrayMove(items, oldIndex, newIndex).map((item) => item.id));
   }
 
   return (
@@ -672,19 +586,6 @@ function stockName(item: NameParts) {
 function searchResultName(item: NameParts & { symbol: string }) {
   const name = stockName(item);
   return name === "-" ? item.symbol : name;
-}
-
-function formatQuoteTime(value: string | null | undefined, language: AppLanguage) {
-  if (!value) return new Date().toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" });
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" });
-}
-
-function quoteSourceLabel(source: string | null | undefined, copy: typeof i18n.zh.watchlist) {
-  if (source === "cache") return copy.quoteSourceCache;
-  if (source === "live") return copy.quoteSourceLive;
-  return copy.quoteSourceLocal;
 }
 
 function inferCategoryFromSymbol(symbol: string): WatchlistCategory | null {

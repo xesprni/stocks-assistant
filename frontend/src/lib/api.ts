@@ -103,6 +103,7 @@ import type {
 } from "@/types/app";
 import { ChatStreamHttpError, consumeChatStream, parseChatSseBlock as parseSseBlock } from "@/lib/chat-stream";
 import { readStoredText, removeStoredValue, writeStoredValue } from "@/lib/local-storage";
+import { AuthExpiredError, AuthSessionManager, waitWithSignal } from "@/lib/auth-session";
 import { parseRenderedImages } from "@/lib/rendered-images";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -112,12 +113,6 @@ const DEVICE_ID_KEY = "stocks_assistant_device_id";
 const DEVICE_ID_HEADER = "X-Device-Id";
 const AUTH_EXPIRED_EVENT = "stocks-assistant:auth-expired";
 
-let accessToken = readStoredText(ACCESS_TOKEN_KEY);
-let refreshToken = readStoredText(REFRESH_TOKEN_KEY);
-let refreshPromise: Promise<AuthTokenResponse> | null = null;
-let authRecoveryPromise: Promise<void> | null = null;
-let resolveAuthRecoveryPromise: (() => void) | null = null;
-let rejectAuthRecoveryPromise: ((error: Error) => void) | null = null;
 const AUTH_RETRY_EXCLUDED_PATHS = new Set([
   "/api/v1/auth/login",
   "/api/v1/auth/dev-login",
@@ -129,14 +124,29 @@ const AUTH_RETRY_EXCLUDED_PATHS = new Set([
 
 // GET 请求在途去重：同一 path 同时只保留一个请求，完成自动清除。
 const inflightGetRequests = new Map<string, Promise<unknown>>();
-let authSessionEpoch = 0;
-
-function advanceAuthSession() {
-  authSessionEpoch += 1;
-  // 不同登录会话绝不能共享旧 Promise；正在飞行的请求可以自行结束，
-  // 但新会话会使用新的 epoch key 发起独立请求。
-  inflightGetRequests.clear();
-}
+const authSession = new AuthSessionManager({
+  initial: { access_token: readStoredText(ACCESS_TOKEN_KEY), refresh_token: readStoredText(REFRESH_TOKEN_KEY) },
+  persist(tokens) {
+    for (const [key, value] of [[ACCESS_TOKEN_KEY, tokens.access_token], [REFRESH_TOKEN_KEY, tokens.refresh_token]]) {
+      if (value) writeStoredValue(key, value);
+      else removeStoredValue(key);
+    }
+  },
+  async refresh(token, signal) {
+    const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+      method: "POST", signal,
+      headers: { "Content-Type": "application/json", [DEVICE_ID_HEADER]: getDeviceId() },
+      body: JSON.stringify({ refresh_token: token, device_id: getDeviceId() }),
+    });
+    if (!response.ok) {
+      const message = apiErrorDetail(await response.json().catch(() => null), "Authentication expired");
+      if (response.status === 401 || response.status === 403) throw new AuthExpiredError(message);
+      throw new ApiHttpError(response.status, message);
+    }
+    return response.json() as Promise<AuthTokenResponse>;
+  },
+  onExpired: notifyAuthExpired,
+});
 
 export class ApiHttpError extends Error {
   status: number;
@@ -148,22 +158,12 @@ export class ApiHttpError extends Error {
   }
 }
 
-class AuthRecoveryError extends Error {
-  recovery: Promise<void>;
-
-  constructor(message: string, recovery: Promise<void>) {
-    super(message);
-    this.name = "AuthRecoveryError";
-    this.recovery = recovery;
-  }
-}
-
 export function getStoredAccessToken() {
-  return accessToken;
+  return authSession.accessToken;
 }
 
 export function getStoredRefreshToken() {
-  return refreshToken;
+  return authSession.refreshToken;
 }
 
 export function getDeviceId() {
@@ -176,19 +176,19 @@ export function getDeviceId() {
 }
 
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
-  advanceAuthSession();
-  accessToken = tokens.access_token;
-  refreshToken = tokens.refresh_token;
-  writeStoredValue(ACCESS_TOKEN_KEY, accessToken);
-  writeStoredValue(REFRESH_TOKEN_KEY, refreshToken);
+  authSession.replace(tokens);
+  inflightGetRequests.clear();
+}
+
+export function getAuthSessionGeneration() { return authSession.generation; }
+
+export function restoreAuthTokens(tokens: { access_token: string; refresh_token: string }, generation: number) {
+  authSession.restore(tokens, generation);
 }
 
 export function clearAuthTokens() {
-  advanceAuthSession();
-  accessToken = "";
-  refreshToken = "";
-  removeStoredValue(ACCESS_TOKEN_KEY);
-  removeStoredValue(REFRESH_TOKEN_KEY);
+  authSession.clear();
+  inflightGetRequests.clear();
 }
 
 function notifyAuthExpired(message: string) {
@@ -196,28 +196,9 @@ function notifyAuthExpired(message: string) {
   window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }));
 }
 
-function startAuthRecovery(message: string) {
-  if (!authRecoveryPromise) {
-    authRecoveryPromise = new Promise<void>((resolve, reject) => {
-      resolveAuthRecoveryPromise = resolve;
-      rejectAuthRecoveryPromise = reject;
-    }).finally(() => {
-      authRecoveryPromise = null;
-      resolveAuthRecoveryPromise = null;
-      rejectAuthRecoveryPromise = null;
-    });
-  }
-  notifyAuthExpired(message);
-  return authRecoveryPromise;
-}
+export function resolveAuthRecovery() { authSession.resolveRecovery(); }
 
-export function resolveAuthRecovery() {
-  resolveAuthRecoveryPromise?.();
-}
-
-export function rejectAuthRecovery(message = "Authentication required") {
-  rejectAuthRecoveryPromise?.(new Error(message));
-}
+export function rejectAuthRecovery(message = "Authentication required") { authSession.rejectRecovery(message); }
 
 export function addAuthExpiredListener(listener: (message: string) => void) {
   const handler = (event: Event) => {
@@ -229,42 +210,33 @@ export function addAuthExpiredListener(listener: (message: string) => void) {
 }
 
 function authHeaders(init?: RequestInit) {
+  const headers = new Headers(init?.headers);
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
-  return {
-    ...(isFormData ? {} : { "Content-Type": "application/json" }),
-    [DEVICE_ID_HEADER]: getDeviceId(),
-    ...init?.headers,
-    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-  };
+  if (!isFormData && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  headers.set(DEVICE_ID_HEADER, getDeviceId());
+  if (authSession.accessToken) headers.set("Authorization", `Bearer ${authSession.accessToken}`);
+  return headers;
 }
 
-async function refreshAuthToken() {
-  if (!refreshToken) {
-    const message = "Authentication required";
-    throw new AuthRecoveryError(message, startAuthRecovery(message));
+function sessionSignal(signal?: AbortSignal | null) {
+  return signal ? AbortSignal.any([signal, authSession.signal]) : authSession.signal;
+}
+
+/** Shared authentication boundary for JSON, blobs and both streaming protocols. */
+async function authenticatedFetch(path: string, init?: RequestInit, generation = authSession.generation): Promise<Response> {
+  authSession.assertCurrent(generation);
+  const signal = sessionSignal(init?.signal);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    signal.throwIfAborted();
+    authSession.assertCurrent(generation);
+    const access = authSession.accessToken;
+    const response = await waitWithSignal(fetch(`${API_BASE}${path}`, { ...init, signal, headers: authHeaders(init) }), signal);
+    authSession.assertCurrent(generation);
+    if (response.status !== 401 || attempt > 0 || AUTH_RETRY_EXCLUDED_PATHS.has(path)) return response;
+    await response.body?.cancel();
+    await authSession.authorizeRetry(generation, access, signal);
   }
-  if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/api/v1/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", [DEVICE_ID_HEADER]: getDeviceId() },
-      body: JSON.stringify({ refresh_token: refreshToken, device_id: getDeviceId() }),
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          clearAuthTokens();
-          const body = await response.json().catch(() => null);
-          const message = apiErrorDetail(body, "Authentication expired");
-          throw new AuthRecoveryError(message, startAuthRecovery(message));
-        }
-        const next = await response.json() as AuthTokenResponse;
-        setAuthTokens(next);
-        return next;
-      })
-      .finally(() => {
-        refreshPromise = null;
-      });
-  }
-  return refreshPromise;
+  throw new Error("Authentication required");
 }
 
 function apiErrorDetail(body: unknown, fallback: string) {
@@ -291,60 +263,32 @@ function apiErrorDetail(body: unknown, fallback: string) {
   return fallback;
 }
 
-async function request<T>(path: string, init?: RequestInit, retry = true, responseType: "json" | "blob" = "json"): Promise<T> {
-  const initWithoutHeaders = init ? { ...init } : {};
-  delete initWithoutHeaders.headers;
-
-  // 对无副作用的 GET 请求做在途去重：同一 path 同时只有一个请求在飞，
-  // 后续调用复用同一个 Promise。请求完成（无论成功或失败）后自动清除。
-  // 携带 AbortSignal 的请求跳过去重，避免某个调用方 abort 后
-  // 其他共享同一 Promise 的调用方收到 "signal is aborted without reason" 异常。
+async function request<T>(path: string, init?: RequestInit, responseType: "json" | "blob" = "json"): Promise<T> {
+  const generation = authSession.generation;
   const isGet = !init?.method || init.method === "GET";
-  const hasAbortSignal = Boolean(init?.signal);
-  const inflightKey = `${authSessionEpoch}:${responseType}:${path}`;
-  // 刷新令牌后的重试不能复用正在等待自己的首个 Promise。
-  if (isGet && !hasAbortSignal && retry) {
-    const inflight = inflightGetRequests.get(inflightKey);
-    if (inflight) return inflight as Promise<T>;
+  // Abortable requests own their lifetime and cannot share another caller's cancellation.
+  const deduplicate = isGet && !init?.signal;
+  const key = `${generation}:${responseType}:${path}`;
+  if (deduplicate) {
+    const existing = inflightGetRequests.get(key);
+    if (existing) return existing as Promise<T>;
   }
-
-  const run = async (): Promise<T> => {
-    const response = await fetch(`${API_BASE}${path}`, {
-      ...initWithoutHeaders,
-      headers: authHeaders(init),
-    });
-
-    if (response.status === 401 && retry && !AUTH_RETRY_EXCLUDED_PATHS.has(path)) {
-      try {
-        await refreshAuthToken();
-      } catch (error) {
-        if (error instanceof AuthRecoveryError) {
-          await error.recovery;
-        } else {
-          throw error;
-        }
-      }
-      return request<T>(path, init, false, responseType);
-    }
-
+  const run = async () => {
+    const response = await authenticatedFetch(path, init, generation);
     if (!response.ok) {
       const body = await response.json().catch(() => null);
-      const detail = apiErrorDetail(body, response.statusText);
-      throw new ApiHttpError(response.status, detail || "Request failed");
+      throw new ApiHttpError(response.status, apiErrorDetail(body, response.statusText || "Request failed"));
     }
-
-    return (responseType === "blob" ? response.blob() : response.json()) as Promise<T>;
+    const value = await (responseType === "blob" ? response.blob() : response.json());
+    authSession.assertCurrent(generation);
+    init?.signal?.throwIfAborted();
+    return value as T;
   };
-
-  if (isGet && !hasAbortSignal && retry) {
-    const promise = run().finally(() => {
-      if (inflightGetRequests.get(inflightKey) === promise) inflightGetRequests.delete(inflightKey);
-    });
-    inflightGetRequests.set(inflightKey, promise);
-    return promise;
-  }
-
-  return run();
+  const promise = run().finally(() => {
+    if (inflightGetRequests.get(key) === promise) inflightGetRequests.delete(key);
+  });
+  if (deduplicate) inflightGetRequests.set(key, promise);
+  return promise;
 }
 
 export function checkHealth() {
@@ -435,14 +379,14 @@ export function deleteLoginRecord(deviceId: string, recordId: string, userId?: s
 }
 
 export async function logout() {
-  const token = refreshToken;
+  const token = authSession.refreshToken;
+  const headers = authHeaders();
+  clearAuthTokens();
   if (token) {
-    await request<{ status: string }>("/api/v1/auth/logout", {
-      method: "POST",
-      body: JSON.stringify({ refresh_token: token }),
+    await fetch(`${API_BASE}/api/v1/auth/logout`, {
+      method: "POST", headers, body: JSON.stringify({ refresh_token: token }),
     }).catch(() => null);
   }
-  clearAuthTokens();
 }
 
 export function listUsers() {
@@ -562,12 +506,12 @@ export function updateResearchDecision(decisionId: string, outcome: string) {
   return request<ResearchDecision>(`/api/v1/research/decisions/${encodeURIComponent(decisionId)}`, { method: "PATCH", body: JSON.stringify({ outcome }) });
 }
 
-export function listResearchDocuments(symbol: string) {
-  return request<ResearchDocument[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents`);
+export function listResearchDocuments(symbol: string, init?: RequestInit) {
+  return request<ResearchDocument[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents`, init);
 }
 
-export function getResearchDocument(documentId: string) {
-  return request<ResearchDocument>(`/api/v1/research/documents/${encodeURIComponent(documentId)}`);
+export function getResearchDocument(documentId: string, init?: RequestInit) {
+  return request<ResearchDocument>(`/api/v1/research/documents/${encodeURIComponent(documentId)}`, init);
 }
 
 export function createResearchDocument(symbol: string, payload: Record<string, unknown>) {
@@ -645,20 +589,10 @@ export function getLabAIRun(id: string, init?: RequestInit) {
 }
 
 export async function streamLabAI(requestBody: LabAIRequest, onEvent: (event: LabAIStreamEvent) => void, signal?: AbortSignal) {
-  const connect = () => fetch(`${API_BASE}/api/v1/labs/ai/stream`, {
-    method: "POST", headers: authHeaders(), signal, body: JSON.stringify(requestBody),
+  signal = sessionSignal(signal);
+  const response = await authenticatedFetch("/api/v1/labs/ai/stream", {
+    method: "POST", signal, body: JSON.stringify(requestBody),
   });
-  let response = await connect();
-  // Only retry an HTTP auth failure before a run starts. Never replay a partially received AI run.
-  if (response.status === 401) {
-    try { await refreshAuthToken(); }
-    catch (error) {
-      if (error instanceof AuthRecoveryError) await error.recovery;
-      else throw error;
-    }
-    signal?.throwIfAborted();
-    response = await connect();
-  }
   if (!response.ok) throw new Error(apiErrorDetail(await response.json().catch(() => null), response.statusText));
   if (!response.body) throw new Error("This browser does not support streaming responses");
   const reader = response.body.getReader();
@@ -710,7 +644,7 @@ export function listTools() {
 }
 
 export function getRenderedImage(artifactId: string, filename: RenderedImageFile, signal?: AbortSignal) {
-  return request<Blob>(`/api/v1/tools/render-image/${encodeURIComponent(artifactId)}/${encodeURIComponent(filename)}`, { signal }, true, "blob");
+  return request<Blob>(`/api/v1/tools/render-image/${encodeURIComponent(artifactId)}/${encodeURIComponent(filename)}`, { signal }, "blob");
 }
 
 function formatChatTime(iso: string) {
@@ -769,19 +703,8 @@ export function sendChat(message: string, sessionId?: string | null, clearHistor
   });
 }
 
-async function fetchChatStream(path: string, init: RequestInit, refreshed = false): Promise<Response> {
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: authHeaders(init) });
-  if (response.status === 401 && !refreshed) {
-    await response.body?.cancel();
-    try {
-      await refreshAuthToken();
-    } catch (error) {
-      if (error instanceof AuthRecoveryError) await error.recovery;
-      else throw error;
-    }
-    init.signal?.throwIfAborted();
-    return fetchChatStream(path, init, true);
-  }
+async function fetchChatStream(path: string, init: RequestInit): Promise<Response> {
+  const response = await authenticatedFetch(path, init);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new ChatStreamHttpError(response.status, apiErrorDetail(body, response.statusText || "Request failed"));
@@ -798,6 +721,7 @@ export async function streamChat(
   thinkingEnabled = false,
   requestId: string = crypto.randomUUID(),
 ) {
+  signal = sessionSignal(signal);
   // 首帧前掉线也复用同一 request_id，不重复添加消息或执行工具。
   const startedAt = Date.now();
   let runId: string | undefined;
@@ -832,6 +756,7 @@ export async function streamChat(
 }
 
 export function resumeChatStream(runId: string, onEvent: (event: ChatStreamEvent) => void, signal?: AbortSignal) {
+  signal = sessionSignal(signal);
   return consumeChatStream({
     connect: (afterEventId, connectionSignal) => fetchChatStream(
       `/api/v1/agent/runs/${encodeURIComponent(runId)}/stream?after_event_id=${afterEventId}`,
