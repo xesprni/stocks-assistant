@@ -180,8 +180,12 @@ function signedChange(value: string | null | undefined, tone: Tone, language: Ap
 }
 
 function marketLabel(market: PortfolioMarket, language: AppLanguage) {
-  if (market === "US") return language === "en" ? "US" : "美股";
-  return language === "en" ? "A-share" : "A股";
+  const labels: Record<PortfolioMarket, string> = {
+    US: i18n[language].markets.us,
+    A: i18n[language].markets.a,
+    H: i18n[language].markets.h,
+  };
+  return labels[market];
 }
 
 function categoryLabel(category: WatchlistCategory, language: AppLanguage) {

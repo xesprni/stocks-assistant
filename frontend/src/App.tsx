@@ -59,6 +59,7 @@ import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
 import { ChatStreamHttpError } from "@/lib/chat-stream";
 import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
+import { createConfigAutosave, type ConfigSaveState } from "@/lib/config-autosave";
 import { parseJsonObject } from "@/lib/json";
 import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
@@ -502,7 +503,7 @@ function ConsoleApp() {
   const [isSending, setIsSending] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
-  const [configState, setConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [configState, setConfigState] = useState<ConfigSaveState>("idle");
   const [configToast, setConfigToast] = useState<ConfigToast | null>(null);
   const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const [isMobileHeaderVisible, setIsMobileHeaderVisible] = useState(() => {
@@ -525,7 +526,9 @@ function ConsoleApp() {
   const streamSessionRef = useRef<string | null>(null);
   const stopRequestedRef = useRef(false);
   const isSendingRef = useRef(false);
-  const configDirtyPatchRef = useRef<Partial<ConfigDraft>>({});
+  const configAutosaveRef = useRef<ReturnType<typeof createConfigAutosave> | null>(null);
+  const persistConfigRef = useRef(persistConfigChanges);
+  persistConfigRef.current = persistConfigChanges;
   const configToastTimerRef = useRef<number | null>(null);
   const configToastExitTimerRef = useRef<number | null>(null);
   const routeReadyRef = useRef(false);
@@ -533,6 +536,12 @@ function ConsoleApp() {
   const confirmDialog = useConfirmDialog();
   const language = normalizeLanguage(draft?.app_language ?? config?.app_language);
   const ui = i18n[language];
+  const configErrorRef = useRef((caught: unknown) => {
+    showConfigToast("error", caught instanceof Error ? caught.message : ui.config.saveFailed);
+  });
+  configErrorRef.current = (caught) => {
+    showConfigToast("error", caught instanceof Error ? caught.message : ui.config.saveFailed);
+  };
 
   const messages = chatHistory.activeConversation?.messages ?? [];
   const activeConvId = chatHistory.activeId;
@@ -695,6 +704,30 @@ function ConsoleApp() {
   }, [isMobileHeaderVisible]);
 
   useEffect(() => {
+    const autosave = createConfigAutosave({
+      persist: (source, patch) => persistConfigRef.current(source, patch),
+      toDraft,
+      onDraft: setDraft,
+      onSaved: setConfig,
+      onState: setConfigState,
+      onError: (caught) => configErrorRef.current(caught),
+      canSave: () => !document.getElementById("config-form")?.querySelector("input:invalid, textarea:invalid, select:invalid"),
+    });
+    configAutosaveRef.current = autosave;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!autosave.isDirty()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      autosave.dispose();
+      window.removeEventListener("beforeunload", beforeUnload);
+      if (configAutosaveRef.current === autosave) configAutosaveRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     async function bootstrap() {
@@ -705,8 +738,7 @@ function ConsoleApp() {
       if (!mounted) return;
 
       if (configResult.status === "fulfilled") {
-        setConfig(configResult.value);
-        setDraft(toDraft(configResult.value));
+        configAutosaveRef.current?.acceptSaved(configResult.value);
       } else {
         const message = configResult.reason instanceof Error ? configResult.reason.message : (language === "en" ? "Failed to load configuration" : "配置加载失败");
         showToast({ kind: "error", message, title: language === "en" ? "Configuration" : "配置" });
@@ -1298,63 +1330,33 @@ function ConsoleApp() {
     }, 180);
   }
 
-  async function saveDraftConfig(source: ConfigDraft, patch?: Partial<ConfigDraft>) {
-    setConfigState("saving");
-    try {
-      const changedKeys = patch ? Object.keys(patch) as Array<keyof ConfigDraft> : undefined;
-      const payload = buildConfigPayload(source, changedKeys);
-      if (Object.keys(payload).length === 0) {
-        setConfigState("idle");
-        return;
-      }
-
-      const next = await saveConfig(payload);
-      setConfig(next);
-      setDraft(toDraft(next));
-      configDirtyPatchRef.current = {};
-      setConfigState("saved");
-      showConfigToast("success", ui.config.saved);
-      window.setTimeout(() => setConfigState("idle"), 1400);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : ui.config.saveFailed;
-      setConfigState("error");
-      showConfigToast("error", message);
-    }
+  async function persistConfigChanges(source: ConfigDraft, patch: Partial<ConfigDraft>) {
+    const changedKeys = Object.keys(patch) as Array<keyof ConfigDraft>;
+    if (changedKeys.length === 0) return null;
+    const payload = buildConfigPayload(source, changedKeys);
+    return Object.keys(payload).length ? saveConfig(payload) : null;
   }
 
-  async function handleSaveConfig() {
-    const source = draft;
-    if (!source) return;
-    const pendingPatch = configDirtyPatchRef.current;
-    const patch = Object.keys(pendingPatch).length ? pendingPatch : undefined;
-    await saveDraftConfig(source, patch);
+  function handleSaveConfig() {
+    const invalid = document.getElementById("config-form")?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input:invalid, textarea:invalid, select:invalid");
+    if (invalid) { invalid.reportValidity(); return; }
+    void configAutosaveRef.current?.flush();
   }
 
   function patchDraft(patch: Partial<ConfigDraft>) {
-    configDirtyPatchRef.current = { ...configDirtyPatchRef.current, ...patch };
-    setDraft((current) => {
-      if (!current) return current;
-      return { ...current, ...patch };
-    });
+    configAutosaveRef.current?.patch(patch);
   }
 
   function applySavedConfig(next: AppConfig) {
-    setConfig(next);
-    setDraft(toDraft(next));
-    setConfigState("saved");
+    configAutosaveRef.current?.acceptSaved(next);
   }
 
   function applyLongbridgeOAuthStatus(status: LongbridgeOAuthStatus, replaceDraftMode = false) {
-    const patch = {
+    configAutosaveRef.current?.acceptSavedPatch({
       longbridge_auth_mode: status.auth_mode,
       longbridge_oauth_connected: status.status === "connected",
       longbridge_oauth_client_id: status.client_id,
-    };
-    const pendingMode = configDirtyPatchRef.current.longbridge_auth_mode;
-    const draftPatch = { ...patch, longbridge_auth_mode: !replaceDraftMode && pendingMode ? pendingMode : patch.longbridge_auth_mode };
-    setConfig((current) => current && Object.entries(patch).some(([key, value]) => current[key as keyof AppConfig] !== value) ? { ...current, ...patch } : current);
-    setDraft((current) => current && Object.entries(draftPatch).some(([key, value]) => current[key as keyof ConfigDraft] !== value) ? { ...current, ...draftPatch } : current);
-    if (replaceDraftMode || pendingMode === patch.longbridge_auth_mode) delete configDirtyPatchRef.current.longbridge_auth_mode;
+    }, replaceDraftMode ? ["longbridge_auth_mode"] : []);
   }
 
   function handleNavigate(nextPage: Page, configTab?: ConfigTab) {
@@ -1606,15 +1608,15 @@ function ConsoleApp() {
                   draft={draft}
                   enabledCount={enabledCount}
                   handleSaveConfig={handleSaveConfig}
+                  onConfigBlur={() => { void configAutosaveRef.current?.flush(); }}
+                  onConfigCompositionStart={() => configAutosaveRef.current?.compositionStart()}
+                  onConfigCompositionEnd={() => configAutosaveRef.current?.compositionEnd()}
                   onLongbridgeAuthChanged={applyLongbridgeOAuthStatus}
                   initialTab={configInitialTab}
                   language={language}
                   onMarketConfigSaved={setMarketConfig}
                   patchDraft={patchDraft}
-                  setDraft={(next) => {
-                    configDirtyPatchRef.current = {};
-                    setDraft(next);
-                  }}
+                  setDraft={() => configAutosaveRef.current?.reset()}
                 />
               ) : null}
             </Suspense>

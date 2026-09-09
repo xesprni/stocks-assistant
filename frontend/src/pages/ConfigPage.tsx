@@ -51,6 +51,9 @@ export function ConfigPage({
   handleSaveConfig,
   initialTab,
   language,
+  onConfigBlur,
+  onConfigCompositionStart,
+  onConfigCompositionEnd,
   onLongbridgeAuthChanged,
   onMarketConfigSaved,
   patchDraft,
@@ -60,12 +63,15 @@ export function ConfigPage({
   canReadMarket: boolean;
   canWriteMarket: boolean;
   config: AppConfig | null;
-  configState: "idle" | "saving" | "saved" | "error";
+  configState: "idle" | "pending" | "saving" | "saved" | "error";
   draft: ConfigDraft | null;
   enabledCount: number;
   handleSaveConfig: () => void;
   initialTab?: ConfigTab;
   language: AppLanguage;
+  onConfigBlur: () => void;
+  onConfigCompositionStart: () => void;
+  onConfigCompositionEnd: () => void;
   onLongbridgeAuthChanged: (status: LongbridgeOAuthStatus, replaceDraftMode?: boolean) => void;
   onMarketConfigSaved: (config: MarketDashboardConfig) => void;
   patchDraft: (patch: Partial<ConfigDraft>) => void;
@@ -330,7 +336,17 @@ export function ConfigPage({
   }
 
   return (
-    <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl lg:h-full">
+    <section
+      id="config-form"
+      className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl lg:h-full"
+      onBlurCapture={(event) => {
+        if (!(event.target instanceof Element) || !event.target.matches("input, textarea, select")) return;
+        if (event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-config-reset]")) return;
+        onConfigBlur();
+      }}
+      onCompositionStartCapture={onConfigCompositionStart}
+      onCompositionEndCapture={onConfigCompositionEnd}
+    >
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border/65 px-4 py-5 sm:px-6">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
@@ -344,17 +360,20 @@ export function ConfigPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span aria-live="polite" className={cn("mr-2 flex items-center gap-1.5 text-xs", configState === "error" ? "text-destructive" : "text-muted-foreground")}>
-            {configState === "error" ? (
+          <span aria-live="polite" title={layoutCopy.autosaveHint} className={cn("mr-2 flex items-center gap-1.5 text-xs", configState === "error" ? "text-destructive" : "text-muted-foreground")}>
+            {configState === "saving" ? (
+              <><Loader2 className="size-3.5 animate-spin" />{copy.saving}</>
+            ) : configState === "error" ? (
               layoutCopy.saveFailed
-            ) : hasChanges ? (
+            ) : configState === "pending" || hasChanges ? (
               <><span className="size-1.5 rounded-full bg-amber-500" />{layoutCopy.unsaved}</>
             ) : config ? (
-              <><CircleCheck className="size-3.5" />{layoutCopy.synced}</>
+              <><CircleCheck className="size-3.5" />{configState === "saved" ? layoutCopy.autosaved : layoutCopy.autosaveEnabled}</>
             ) : null}
           </span>
           <Button
             aria-label={copy.reload}
+            data-config-reset
             disabled={!config || configState === "saving"}
             variant="outline"
             size="sm"
@@ -364,8 +383,8 @@ export function ConfigPage({
             {copy.reload}
           </Button>
           <Button size="sm" disabled={configState === "saving" || !draft} onClick={handleSaveConfig}>
-            {configState === "saving" ? <Loader2 className="animate-spin" /> : configState === "saved" && !hasChanges ? <Check /> : <Save />}
-            {configState === "saving" ? copy.saving : configState === "saved" && !hasChanges ? copy.saved : copy.save}
+            {configState === "saving" ? <Loader2 className="animate-spin" /> : <Save />}
+            {configState === "saving" ? copy.saving : configState === "error" ? layoutCopy.retrySave : layoutCopy.saveNow}
           </Button>
         </div>
       </header>
