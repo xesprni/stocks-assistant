@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Any
 
@@ -11,6 +12,7 @@ import httpx
 class ProviderErrorKind(StrEnum):
     CONTEXT = "context"
     MESSAGE_FORMAT = "message_format"
+    UNSUPPORTED_CONTENT = "unsupported_content"
     AUTH = "auth"
     CONFIGURATION = "configuration"
     RATE_LIMIT = "rate_limit"
@@ -47,6 +49,13 @@ def classify_error_detail(
         return ProviderErrorKind.AUTH
     if code in {"model_not_found", "unsupported_model", "invalid_model"}:
         return ProviderErrorKind.CONFIGURATION
+    if (
+        status == 400
+        and re.search(r"messages(?:\[\d+\])?\.content(?:\[\d+\])?\.type", text)
+        and re.search(r"allowed values:\s*\[\s*(['\"])text\1\s*\]", text)
+    ):
+        # 只识别明确的纯文本内容约束；图片过大、坏参数等其他 400 不可据此降级。
+        return ProviderErrorKind.UNSUPPORTED_CONTENT
     if code in {"context_length_exceeded", "context_window_exceeded", "max_context_length"} or any(
         phrase in text
         for phrase in (

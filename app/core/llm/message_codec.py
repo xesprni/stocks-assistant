@@ -78,3 +78,35 @@ def image_data_urls(content: list[Any]) -> list[str]:
             raise ValueError("Invalid image attachment: expected base64 PNG or JPEG")
         urls.append(f"data:{source['media_type']};base64,{source['data']}")
     return urls
+
+
+def text_only_chat_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """纯文本网关明确拒绝图片后，复制传输消息并标明未完成视觉检查。"""
+    messages = []
+    omitted = 0
+    for message in payload["messages"]:
+        content = message.get("content")
+        if not isinstance(content, list) or not any(
+            isinstance(block, dict) and block.get("type") == "image_url" for block in content
+        ):
+            messages.append(message)
+            continue
+        # 只处理本地适配器生成的文本/图片组合，不能顺手丢弃未知类型或工具协议。
+        if message.get("role") != "user" or any(
+            not isinstance(block, dict) or block.get("type") not in {"text", "image_url"}
+            for block in content
+        ):
+            return None
+        text = [block["text"] for block in content if block["type"] == "text"]
+        count = sum(block["type"] == "image_url" for block in content)
+        omitted += count
+        text.append(
+            f"[Image input unavailable: the current model or gateway accepts text only. "
+            f"{count} attached image(s) could not be inspected. Continue using the available "
+            "text and tool results; do not infer image contents or claim visual inspection "
+            "was completed. Calling view_image again on this endpoint cannot enable vision. "
+            "If visual inspection is required, explain that an image-capable model or "
+            "gateway is needed.]"
+        )
+        messages.append({**message, "content": "\n".join(text)})
+    return {**payload, "messages": messages} if omitted else None

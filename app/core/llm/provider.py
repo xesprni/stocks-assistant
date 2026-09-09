@@ -17,8 +17,13 @@ import httpx
 from app.core.agent.models import LLMModel, LLMRequest
 from app.core.llm.client_pool import LLMClientPool, default_llm_client_pool
 from app.core.llm.client_pool import close_llm_client_pool as close_llm_client_pool
-from app.core.llm.errors import ProviderHTTPError
-from app.core.llm.message_codec import image_data_urls, iter_sse_objects, split_message_blocks
+from app.core.llm.errors import ProviderErrorKind, ProviderHTTPError
+from app.core.llm.message_codec import (
+    image_data_urls,
+    iter_sse_objects,
+    split_message_blocks,
+    text_only_chat_payload,
+)
 
 logger = logging.getLogger("stocks-assistant.llm")
 
@@ -123,10 +128,15 @@ class OpenAICompatibleProvider(LLMModel):
         payload = self._build_payload(request, stream=False)
         headers = self._headers()
         url = f"{self.api_base}/chat/completions"
-        with self._borrow_client() as client:
-            resp = client.post(url, json=payload, headers=headers)
-        _raise_for_llm_status(resp, "Chat Completions")
-        return resp.json()
+        while True:
+            with self._borrow_client() as client:
+                resp = client.post(url, json=payload, headers=headers)
+            try:
+                _raise_for_llm_status(resp, "Chat Completions")
+            except ProviderHTTPError as error:
+                payload = self._recover_content_payload(payload, error)
+            else:
+                return resp.json()
 
     def call_stream(self, request: LLMRequest) -> Generator[dict, None, None]:
         """流式调用 LLM，逐 chunk 返回 SSE 数据"""
@@ -134,12 +144,36 @@ class OpenAICompatibleProvider(LLMModel):
         headers = self._headers()
         url = f"{self.api_base}/chat/completions"
 
-        with (
-            self._borrow_client() as client,
-            client.stream("POST", url, json=payload, headers=headers) as resp,
-        ):
-            _raise_for_llm_status(resp, "Chat Completions")
-            yield from iter_sse_objects(resp.iter_lines(), require_complete=True)
+        while True:
+            output_started = False
+            try:
+                with (
+                    self._borrow_client() as client,
+                    client.stream("POST", url, json=payload, headers=headers) as resp,
+                ):
+                    _raise_for_llm_status(resp, "Chat Completions")
+                    for chunk in iter_sse_objects(resp.iter_lines(), require_complete=True):
+                        output_started = True
+                        yield chunk
+                return
+            except ProviderHTTPError as error:
+                if output_started:
+                    raise
+                # 退出失败响应的 context 后再重发，避免重试期间占用旧连接。
+                payload = self._recover_content_payload(payload, error)
+
+    @staticmethod
+    def _recover_content_payload(payload: dict, error: ProviderHTTPError) -> dict:
+        recovered = (
+            text_only_chat_payload(payload)
+            if error.kind == ProviderErrorKind.UNSUPPORTED_CONTENT
+            else None
+        )
+        if recovered is None:
+            raise error
+        # 新副本已没有图片，因此相同错误最多恢复一次；不修改原请求或 Agent 历史。
+        logger.warning("Chat Completions rejected image input; retrying once with a text notice")
+        return recovered
 
     def _build_payload(self, request: LLMRequest, stream: bool = False) -> dict:
         """构建 API 请求体
