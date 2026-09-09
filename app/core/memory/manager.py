@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import os
@@ -11,7 +12,11 @@ from typing import Any
 
 from app.core.memory.chunker import TextChunker
 from app.core.memory.config import MemoryConfig
-from app.core.memory.embedding import EmbeddingProvider, create_embedding_provider
+from app.core.memory.embedding import (
+    EmbeddingProvider,
+    EmbeddingUnavailableError,
+    create_embedding_provider,
+)
 from app.core.memory.storage import MemoryChunk, MemoryStorage, SearchResult
 from app.core.memory.summarizer import MemoryFlushManager, create_memory_files_if_needed
 
@@ -41,6 +46,7 @@ class MemoryManager:
         db_path = self.config.get_db_path()
         self.storage = MemoryStorage(db_path)
         self._index_lock = threading.RLock()
+        self._pending_embeddings: set[str] = set()
 
         self.chunker = TextChunker(
             max_tokens=self.config.chunk_max_tokens,
@@ -105,7 +111,8 @@ class MemoryManager:
         if not scopes:
             return []
 
-        if self.config.sync_on_search and self._dirty:
+        retry_embeddings = self._pending_embeddings and not self._embedding_in_cooldown()
+        if self.config.sync_on_search and (self._dirty or retry_embeddings):
             await self.sync()
 
         return await asyncio.to_thread(
@@ -127,7 +134,8 @@ class MemoryManager:
     ) -> list[SearchResult]:
         """在线程池执行 embedding 与 SQLite 检索，避免阻塞 API 事件循环。"""
         vector_results = []
-        if self.embedding_provider:
+        vector_available = self.embedding_provider is not None and not self._embedding_in_cooldown()
+        if vector_available:
             try:
                 query_embedding = self.embedding_provider.embed(query)
                 vector_results = self.storage.search_vector(
@@ -138,6 +146,7 @@ class MemoryManager:
                 )
                 logger.info("[MemoryManager] Vector search found %s results", len(vector_results))
             except Exception as e:
+                vector_available = False
                 logger.warning("[MemoryManager] Vector search failed: %s", e)
 
         keyword_results = self.storage.search_keyword(
@@ -152,7 +161,8 @@ class MemoryManager:
             vector_results,
             keyword_results,
             self.config.vector_weight,
-            self.config.keyword_weight,
+            # 向量接口不可用时，关键词结果使用完整权重，避免被混合权重误过滤。
+            self.config.keyword_weight if vector_available else 1.0,
         )
         filtered = [r for r in merged if r.score >= min_score]
         return filtered[:max_results]
@@ -222,6 +232,9 @@ class MemoryManager:
         对有变化的文件重新分块、向量化并更新索引。
         """
         workspace_dir = self.config.get_workspace().resolve()
+        for path in tuple(self._pending_embeddings):
+            if not (workspace_dir / path).is_file():
+                self._pending_embeddings.discard(path)
 
         if self.owner_user_id:
             user_memory_dir = workspace_dir / "memory" / "users" / self.owner_user_id
@@ -351,46 +364,70 @@ class MemoryManager:
 
         stored_hash = self.storage.get_file_hash(rel_path)
         if stored_hash == file_hash:
+            self._pending_embeddings.discard(rel_path)
             return
 
         chunks = self.chunker.chunk_text(content)
         texts = [chunk.text for chunk in chunks]
+        keyword_only = self.embedding_provider is None or self._embedding_in_cooldown()
+        embeddings = [None] * len(texts)
         if texts and self.embedding_provider:
-            embeddings = self.embedding_provider.embed_batch(texts)
-        else:
-            embeddings = [None] * len(texts)
+            if not keyword_only:
+                try:
+                    embeddings = self.embedding_provider.embed_batch(texts)
+                except EmbeddingUnavailableError as exc:
+                    keyword_only = True
+                    logger.warning("[MemoryManager] Indexing with keyword search only: %s", exc)
+            if keyword_only:
+                self._pending_embeddings.add(rel_path)
 
+        if keyword_only:
+            # 单独标记无向量索引；重启或服务恢复后仍可补齐，不能误认为向量已同步。
+            file_hash = self._index_hash(content, keyword_only=True)
+            if stored_hash == file_hash:
+                return
+
+        # 自动补向量没有新元数据，复用同一文本版本的来源，避免丢失研究文档关联。
+        previous_chunks = {}
+        if metadata is None and stored_hash == self._index_hash(content, keyword_only=True):
+            previous_chunks = {row["id"]: row for row in self.storage.get_chunks_by_path(rel_path)}
         memory_chunks = []
         for chunk, embedding in zip(chunks, embeddings, strict=False):
             chunk_id = self._generate_chunk_id(rel_path, chunk.start_line, chunk.end_line)
             chunk_hash = MemoryStorage.compute_hash(chunk.text)
+            previous = previous_chunks.get(chunk_id)
+            chunk_source, chunk_metadata = source, metadata
+            if previous is not None and previous["hash"] == chunk_hash:
+                chunk_source = previous["source"]
+                chunk_metadata = json.loads(previous["metadata"]) if previous["metadata"] else None
             memory_chunks.append(
                 MemoryChunk(
                     id=chunk_id,
                     user_id=user_id,
                     scope=scope,
-                    source=source,
+                    source=chunk_source,
                     path=rel_path,
                     start_line=chunk.start_line,
                     end_line=chunk.end_line,
                     text=chunk.text,
                     embedding=embedding,
                     hash=chunk_hash,
-                    metadata=metadata,
+                    metadata=chunk_metadata,
                 )
             )
 
         stat = file_path.stat()
-        # 在 embedding 全部成功后再用单一事务替换旧索引；失败时保留上一版，
-        # 搜索线程也不会观察到“旧 chunks 已删、新 chunks 未写”的中间态。
+        # 网络/套餐不可用时原子更新文本索引；其他异常仍保留旧索引，避免半成品覆盖。
         self.storage.replace_file_chunks(
             memory_chunks,
             path=rel_path,
-            source=source,
+            source=memory_chunks[0].source if memory_chunks else source,
             file_hash=file_hash,
             mtime=int(stat.st_mtime),
             size=stat.st_size,
         )
+        if not keyword_only:
+            self._pending_embeddings.discard(rel_path)
 
     def flush_memory(
         self,
@@ -414,6 +451,7 @@ class MemoryManager:
 
     def get_status(self) -> dict[str, Any]:
         stats = self.storage.get_stats()
+        vector_available = self.embedding_provider is not None and not self._embedding_in_cooldown()
         return {
             "chunks": stats["chunks"],
             "files": stats["files"],
@@ -425,9 +463,12 @@ class MemoryManager:
             else "disabled",
             "embedding_model": self.config.embedding_model if self.embedding_provider else "N/A",
             "search_mode": "hybrid (vector + keyword)"
-            if self.embedding_provider
+            if vector_available
             else "keyword only (FTS5)",
         }
+
+    def _embedding_in_cooldown(self) -> bool:
+        return bool(getattr(self.embedding_provider, "in_cooldown", False))
 
     def mark_dirty(self):
         self._dirty = True
@@ -449,6 +490,7 @@ class MemoryManager:
             deleted_file = True
 
         deleted_index = self.storage.delete_indexed_file(path)
+        self._pending_embeddings.discard(path)
         self._dirty = False
         return {"deleted_file": deleted_file, **deleted_index}
 
@@ -477,6 +519,7 @@ class MemoryManager:
             if not path.startswith(user_prefix):
                 continue
             result = self.storage.delete_indexed_file(path)
+            self._pending_embeddings.discard(path)
             deleted_chunks += result["deleted_chunks"]
             deleted_index_files += result["deleted_index_files"]
 
@@ -495,13 +538,15 @@ class MemoryManager:
         content = f"{path}:{start_line}:{end_line}"
         return hashlib.md5(content.encode("utf-8")).hexdigest()
 
-    def _index_hash(self, content: str) -> str:
+    def _index_hash(self, content: str, *, keyword_only: bool = False) -> str:
         """Hash file content together with the embedding config signature."""
         content_hash = MemoryStorage.compute_hash(content)
         signature = (
             self.config.embedding_signature
             or f"{self.config.embedding_provider}:{self.config.embedding_model}"
         )
+        if keyword_only or self.embedding_provider is None:
+            signature = f"keyword-only:{signature}"
         return MemoryStorage.compute_hash(f"{content_hash}\nembedding:{signature}")
 
     @staticmethod
