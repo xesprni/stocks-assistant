@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.core.research.records import DocumentIngestion
 from app.core.research.repository import ResearchRepository
 from app.core.research.utils import _id, _iso_timestamp, _json, _now
 from app.schemas.research import (
@@ -81,6 +82,11 @@ class ResearchService:
     ) -> dict[str, Any]:
         return self.repository.ingest_document(user_id, symbol, request)
 
+    def ingest_document_version(
+        self, user_id: str, symbol: str, request: ResearchDocumentCreate
+    ) -> DocumentIngestion:
+        return self.repository.ingest_document_version(user_id, symbol, request)
+
     def list_documents(self, user_id: str, symbol: str) -> list[dict[str, Any]]:
         return self.repository.list_documents(user_id, symbol)
 
@@ -89,10 +95,21 @@ class ResearchService:
     ) -> dict[str, Any]:
         return self.repository.get_document(user_id, document_id, include_content=include_content)
 
-    def materialize_document_version(self, user_id: str, document_id: str) -> Path:
-        """将最新材料版本写入用户 knowledge 路径，供统一 RAG 索引和引用定位。"""
+    def materialize_document_version(
+        self, user_id: str, document_id: str, *, version_id: str | None = None
+    ) -> Path:
+        """将指定材料版本写入用户 knowledge；省略版本保留旧调用方的最新版本语义。"""
         document = self.get_document(user_id, document_id, include_content=True)
-        version = document["versions"][0]
+        version = next(
+            (
+                item
+                for item in document["versions"]
+                if version_id is None or item["id"] == version_id
+            ),
+            None,
+        )
+        if version is None:
+            raise KeyError(version_id)
         target = (
             self.db_path.parent.parent
             / "users"
@@ -306,7 +323,7 @@ class ResearchService:
         if not self.portfolio_service:
             return {}
         for market in ("US", "A", "H"):
-            for item in self.portfolio_service.repository.list_items(market, user_id=user_id):
+            for item in self.portfolio_service.get_local_snapshot(market, user_id=user_id)["items"]:
                 if str(item.get("symbol") or "").upper() == symbol:
                     return {
                         "held": True,

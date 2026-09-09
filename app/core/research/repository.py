@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.market.utils import canonical_symbol
+from app.core.research.records import DocumentIngestion
 from app.core.research.utils import _id, _json, _loads, _now
 from app.schemas.research import (
     AlertRuleCreate,
@@ -343,6 +344,11 @@ class ResearchRepository:
     def ingest_document(
         self, user_id: str, symbol: str, request: ResearchDocumentCreate
     ) -> dict[str, Any]:
+        return self.ingest_document_version(user_id, symbol, request).document
+
+    def ingest_document_version(
+        self, user_id: str, symbol: str, request: ResearchDocumentCreate
+    ) -> DocumentIngestion:
         symbol = self.normalize_symbol(symbol)
         content = request.content.replace("\x00", "").strip()
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -389,7 +395,9 @@ class ResearchRepository:
                 "SELECT id FROM research_document_versions WHERE document_id = ? AND content_hash = ?",
                 (document_id, content_hash),
             ).fetchone()
-            if not duplicate:
+            if duplicate:
+                version_id = duplicate["id"]
+            else:
                 previous = connection.execute(
                     "SELECT * FROM research_document_versions WHERE document_id = ? ORDER BY version DESC LIMIT 1",
                     (document_id,),
@@ -400,12 +408,13 @@ class ResearchRepository:
                 change_summary = self._document_diff(
                     previous_content, content, previous["id"] if previous else None
                 )
+                version_id = _id("docv")
                 connection.execute(
                     """INSERT INTO research_document_versions
                        (id,document_id,user_id,version,published_at,content_hash,content_text,locator_json,change_summary_json,created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        _id("docv"),
+                        version_id,
                         document_id,
                         user_id,
                         version,
@@ -417,7 +426,18 @@ class ResearchRepository:
                         _now(),
                     ),
                 )
-        return self.get_document(user_id, document_id, include_content=False)
+            # 响应快照和内容版本标识均在写事务内取得，避免并发更新替换本次材料。
+            document_row = connection.execute(
+                "SELECT * FROM research_documents WHERE id=? AND user_id=?", (document_id, user_id)
+            ).fetchone()
+            versions = connection.execute(
+                "SELECT * FROM research_document_versions "
+                "WHERE document_id=? AND user_id=? ORDER BY version DESC",
+                (document_id, user_id),
+            ).fetchall()
+            parsed = [self._document_version_row(row, include_content=False) for row in versions]
+            document = self._document_row(document_row, parsed, int(versions[0]["version"]))
+        return DocumentIngestion(document, version_id)
 
     def list_documents(self, user_id: str, symbol: str) -> list[dict[str, Any]]:
         symbol = self.normalize_symbol(symbol)

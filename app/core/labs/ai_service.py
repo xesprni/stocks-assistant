@@ -21,6 +21,11 @@ from pydantic import ValidationError
 from app.core.agent.agent import Agent
 from app.core.agent.executor import AgentCancelledError
 from app.core.agent.models import LLMModel
+from app.core.labs.completion import (
+    LabCompletionCommand,
+    LabRunCompletionService,
+    LabRunTerminalError,
+)
 from app.core.labs.service import InvestmentLabService, _now, _number
 from app.core.security import CurrentUser, user_workspace_dir
 from app.core.tools.base_tool import ToolResult
@@ -56,15 +61,8 @@ def _dump(value: Any) -> str:
 
 class LabAIRunStore:
     def __init__(self, service: InvestmentLabService):
-        self.service = service
-        with service._connect() as connection:
-            connection.execute("""CREATE TABLE IF NOT EXISTS ai_runs (
-                id TEXT PRIMARY KEY, user_id TEXT NOT NULL, lab TEXT NOT NULL,
-                status TEXT NOT NULL, created_at TEXT NOT NULL, payload_json TEXT NOT NULL
-            )""")
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_labs_ai_user ON ai_runs(user_id,lab,created_at DESC)"
-            )
+        self.repository = service.runs
+        self.completion = LabRunCompletionService(service)
 
     def create(self, user_id: str, request: LabAIRequest) -> dict:
         labels = {
@@ -91,86 +89,37 @@ class LabAIRunStore:
             "completed_at": None,
             "error": None,
         }
-        with self.service._connect() as connection:
-            connection.execute(
-                "INSERT INTO ai_runs VALUES (?,?,?,?,?,?)",
-                (
-                    run["id"],
-                    user_id,
-                    request.lab,
-                    run["status"],
-                    run["created_at"],
-                    _dump(run),
-                ),
-            )
+        self.repository.create(user_id, run)
         return run
 
     def get(self, user_id: str, run_id: str) -> dict:
-        with self.service._connect() as connection:
-            row = connection.execute(
-                "SELECT payload_json FROM ai_runs WHERE id=? AND user_id=?", (run_id, user_id)
-            ).fetchone()
-        if not row:
-            raise KeyError(run_id)
-        return json.loads(row[0])
+        return self.repository.get(user_id, run_id)
 
     def list(self, user_id: str, lab: str | None = None, limit: int = 20) -> list[dict]:
-        values: list[Any] = [user_id]
-        clause = "user_id=?"
-        if lab:
-            clause += " AND lab=?"
-            values.append(lab)
-        values.append(max(1, min(limit, 50)))
-        with self.service._connect() as connection:
-            rows = connection.execute(
-                # SQLite端去除大型证据/正文，历史列表不会把多份财报读进应用内存。
-                f"SELECT json_set(payload_json,'$.report','','$.artifacts',json('[]'),'$.warnings',json('[]')) "
-                f"FROM ai_runs WHERE {clause} ORDER BY created_at DESC LIMIT ?",
-                values,
-            ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return self.repository.list(user_id, lab, limit)
 
     def update(self, user_id: str, run: dict) -> None:
-        # 终态只允许写入一次，迟到的 SDK/LLM 回调不能把取消或超时改成成功。
-        with self.service._connect() as connection:
-            connection.execute(
-                "UPDATE ai_runs SET status=?,payload_json=? WHERE id=? AND user_id=? AND status='running'",
-                (run["status"], _dump(run), run["id"], user_id),
-            )
+        self.repository.update_running(user_id, run)
 
     def complete(self, runtime, report: str):
-        # 模型和run成功状态在同一事务提交；取消或任何模型失败会回滚本次全部模型。
-        with self.service._write_lock, self.service._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            runtime.check()
-            completed = json.loads(_dump(runtime.run))
-            if runtime.user.can("knowledge:write"):
-                for artifact in completed["artifacts"]:
-                    runtime.check()
-                    request = runtime.pending_models.get(artifact["id"])
-                    if request:
-                        saved = self.service.create_valuation_model(
-                            runtime.user.id,
-                            artifact["data"]["symbol"],
-                            request,
-                            _connection=connection,
-                        )
-                        artifact["data"]["saved_model_id"] = saved["id"]
-            completed.update(
-                status="completed", report=runtime.clean(report)[:100_000], completed_at=_now()
+        # 先冻结执行结果；应用命令和仓储无需了解运行时锁、权限对象或 Agent。
+        completed = json.loads(_dump(runtime.run))
+        models = tuple(
+            (
+                artifact["id"],
+                artifact["data"]["symbol"],
+                runtime.pending_models[artifact["id"]].model_copy(deep=True),
             )
-            runtime.check()
-            updated = connection.execute(
-                "UPDATE ai_runs SET status='completed',payload_json=? WHERE id=? AND user_id=? AND status='running'",
-                (
-                    _dump(completed),
-                    completed["id"],
-                    runtime.user.id,
-                ),
-            )
-            if updated.rowcount != 1:
-                raise AgentCancelledError("The persisted run is already terminal")
-            runtime.check()
+            for artifact in completed["artifacts"]
+            if runtime.user.can("knowledge:write") and artifact["id"] in runtime.pending_models
+        )
+        command = LabCompletionCommand(
+            runtime.user.id, completed, runtime.clean(report)[:100_000], models
+        )
+        try:
+            completed = self.completion.complete(command, runtime.check)
+        except LabRunTerminalError as exc:
+            raise AgentCancelledError(str(exc)) from exc
         with runtime.lock:
             runtime.run.update(completed)
 

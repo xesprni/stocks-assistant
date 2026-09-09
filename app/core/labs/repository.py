@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.core.labs.database import LabsDatabase
 from app.core.research.utils import _json, _loads, _now
 from app.schemas.labs import ValuationModelCreate
 
@@ -15,36 +19,24 @@ from app.schemas.labs import ValuationModelCreate
 class ValuationRepository:
     """Keep atomic version allocation independent from valuation calculations."""
 
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path).expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.write_lock = threading.RLock()
-        self._init_schema()
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        database: LabsDatabase | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        self.database = database or LabsDatabase(db_path)
+        self.db_path = self.database.db_path
+        self._connection = connection
 
-    def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout=15000")
-        return connection
-
-    def _init_schema(self) -> None:
-        with self.connect() as connection:
-            # journal_mode 是数据库级持久设置，只在初始化时协商，避免每次查询
-            # 都触发额外锁竞争。
-            connection.execute("PRAGMA journal_mode=WAL")
-            connection.execute("PRAGMA synchronous=NORMAL")
-            connection.execute(
-                """CREATE TABLE IF NOT EXISTS valuation_models (
-                    id TEXT PRIMARY KEY, model_key TEXT NOT NULL, user_id TEXT NOT NULL, symbol TEXT NOT NULL,
-                    version INTEGER NOT NULL, model_type TEXT NOT NULL, title TEXT NOT NULL,
-                    assumptions_json TEXT NOT NULL, peer_symbols_json TEXT NOT NULL, result_json TEXT NOT NULL,
-                    source_ids_json TEXT NOT NULL, thesis_snapshot_id TEXT, reason TEXT NOT NULL, created_at TEXT NOT NULL,
-                    UNIQUE(user_id, model_key, version)
-                )"""
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_valuation_user_symbol ON valuation_models(user_id,symbol,created_at DESC)"
-            )
+    @contextmanager
+    def _read(self) -> Iterator[sqlite3.Connection]:
+        if self._connection is not None:
+            yield self._connection
+        else:
+            with self.database.connect() as connection:
+                yield connection
 
     def save_model(
         self,
@@ -54,8 +46,6 @@ class ValuationRepository:
         request: ValuationModelCreate,
         result: dict[str, Any],
         peer_symbols: list[str],
-        *,
-        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         model_id = f"val_{uuid.uuid4().hex[:20]}"
 
@@ -93,10 +83,10 @@ class ValuationRepository:
             return self._valuation_row(row)
 
         # AI 实验传入同一事务，仓储不能提交该连接，避免报告失败后留下孤立模型。
-        if connection is not None:
-            return insert(connection)
+        if self._connection is not None:
+            return insert(self._connection)
         # 版本读取及写入处于同一写事务，保留独立仓储实例间的并发约束。
-        with self.write_lock, self.connect() as owned_connection:
+        with self.database.write_lock, self.database.connect() as owned_connection:
             owned_connection.execute("BEGIN IMMEDIATE")
             insert(owned_connection)
         return self.get_model(user_id, model_id)
@@ -106,7 +96,7 @@ class ValuationRepository:
         if symbol:
             clauses.append("symbol=?")
             values.append(symbol)
-        with self.connect() as connection:
+        with self._read() as connection:
             rows = connection.execute(
                 f"SELECT * FROM valuation_models WHERE {' AND '.join(clauses)} ORDER BY created_at DESC",
                 values,
@@ -114,7 +104,7 @@ class ValuationRepository:
         return [self._valuation_row(row) for row in rows]
 
     def get_model(self, user_id: str, model_id: str) -> dict[str, Any]:
-        with self.connect() as connection:
+        with self._read() as connection:
             row = connection.execute(
                 "SELECT * FROM valuation_models WHERE id=? AND user_id=?", (model_id, user_id)
             ).fetchone()
@@ -139,3 +129,89 @@ class ValuationRepository:
             "reason": row["reason"],
             "created_at": row["created_at"],
         }
+
+
+class LabRunRepository:
+    """Persist run records without knowing agents, runtime state or valuation use cases."""
+
+    def __init__(
+        self, database: LabsDatabase, *, connection: sqlite3.Connection | None = None
+    ) -> None:
+        self.database = database
+        self._connection = connection
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        if self._connection is not None:
+            yield self._connection
+        else:
+            with self.database.connect() as connection:
+                yield connection
+
+    def create(self, user_id: str, run: dict[str, Any]) -> None:
+        payload = json.dumps(run, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO ai_runs VALUES (?,?,?,?,?,?)",
+                (run["id"], user_id, run["lab"], run["status"], run["created_at"], payload),
+            )
+
+    def get(self, user_id: str, run_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM ai_runs WHERE id=? AND user_id=?", (run_id, user_id)
+            ).fetchone()
+        if not row:
+            raise KeyError(run_id)
+        return json.loads(row[0])
+
+    def list(self, user_id: str, lab: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        values: list[Any] = [user_id]
+        clause = "user_id=?"
+        if lab:
+            clause += " AND lab=?"
+            values.append(lab)
+        values.append(max(1, min(limit, 50)))
+        with self._connect() as connection:
+            rows = connection.execute(
+                # 在 SQLite 中去除历史列表不需要的大型报告和证据正文。
+                "SELECT json_set(payload_json,'$.report','','$.artifacts',json('[]'),"
+                "'$.warnings',json('[]')) "
+                f"FROM ai_runs WHERE {clause} ORDER BY created_at DESC LIMIT ?",
+                values,
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def update_running(self, user_id: str, run: dict[str, Any]) -> bool:
+        # 终态的条件更新与模型写入共用事务，迟到的回调不能改写取消/超时。
+        payload = json.dumps(run, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE ai_runs SET status=?,payload_json=? "
+                "WHERE id=? AND user_id=? AND status='running'",
+                (run["status"], payload, run["id"], user_id),
+            )
+            return updated.rowcount == 1
+
+
+@dataclass(frozen=True)
+class LabsTransaction:
+    models: ValuationRepository
+    runs: LabRunRepository
+
+
+class LabsUnitOfWork:
+    def __init__(self, database: LabsDatabase) -> None:
+        self.database = database
+
+    @contextmanager
+    def transaction(self) -> Iterator[LabsTransaction]:
+        # 原子分配版本、保存模型并完成报告；任何失败（包括取消）均整体回滚。
+        with self.database.write_lock, self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            yield LabsTransaction(
+                ValuationRepository(
+                    self.database.db_path, database=self.database, connection=connection
+                ),
+                LabRunRepository(self.database, connection=connection),
+            )

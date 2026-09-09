@@ -11,9 +11,8 @@ from time import monotonic
 from typing import Any, Literal
 
 from app.core.market.utils import canonical_symbol, normalize_symbol_map, normalize_symbols
+from app.core.portfolio.valuation import HistoricalDisplayValuation, value_portfolio
 from app.core.portfolio.valuation import money as _money
-from app.core.portfolio.valuation import pnl_ratio as _pnl_ratio
-from app.core.portfolio.valuation import position_ratio as _position_ratio
 from app.core.portfolio.valuation import ratio as _ratio
 from app.schemas.portfolio import PortfolioMarket
 
@@ -728,22 +727,7 @@ class DashboardService:
         }
 
     def _portfolio_local_payload(self, market: PortfolioMarket, *, user: Any) -> dict[str, Any]:
-        repository = getattr(self.portfolio_service, "repository", None)
-        if repository is not None and hasattr(repository, "list_items"):
-            rows = repository.list_items(market, user_id=user.id)
-            settings = self.portfolio_service.get_settings(market, user_id=user.id)
-            cash_amount = settings.get("total_capital", "0")
-            return {
-                "market": market,
-                "total_capital": cash_amount,
-                "total_assets": None,
-                "cash_ratio": None,
-                "items": [self._empty_portfolio_item(row) for row in rows],
-                "total": len(rows),
-                "quote_error": None,
-            }
-
-        payload = self.portfolio_service.list_items(market, user_id=user.id, settings=None)
+        payload = self.portfolio_service.get_local_snapshot(market, user_id=user.id)
         return {
             **payload,
             "items": [self._empty_portfolio_item(row) for row in payload.get("items", [])],
@@ -794,60 +778,33 @@ class DashboardService:
     def _enrich_portfolio_payload(
         self, payload: dict[str, Any], quotes: dict[str, dict[str, Any]]
     ) -> dict[str, Any]:
-        rows = payload.get("items") or []
         cash_value = _decimal(payload.get("total_capital")) or Decimal("0")
-        total_market_value = Decimal("0")
-        has_market_value = False
-        enriched_rows: list[dict[str, Any]] = []
-
-        for row in rows:
-            symbol = canonical_symbol(row.get("symbol", ""))
-            quote = quotes.get(symbol, {})
-            shares = _decimal(row.get("shares"))
-            current_price = quote.get("last_done") or row.get("current_price")
-            price = _decimal(current_price)
-            cost_price = _decimal(row.get("cost_price"))
-            stock_value = (
-                shares * price
-                if shares is not None and price is not None
-                else _decimal(row.get("stock_value"))
-            )
-            if stock_value is not None:
-                total_market_value += stock_value
-                has_market_value = True
-            pnl_ratio = _pnl_ratio(price, cost_price, fallback=_decimal(row.get("pnl_ratio")))
-            enriched_rows.append(
-                {
-                    **row,
-                    "symbol": symbol,
-                    "current_price": current_price,
-                    "change_value": quote.get("change_value") or row.get("change_value"),
-                    "change_rate": quote.get("change_rate") or row.get("change_rate"),
-                    "stock_value": _money(stock_value),
-                    "pnl_ratio": _ratio(pnl_ratio),
-                }
-            )
-
-        total_assets_value = cash_value + total_market_value
-        for row in enriched_rows:
-            stock_value = _decimal(row.get("stock_value"))
-            position_ratio = _position_ratio(
-                stock_value, total_assets_value, fallback=_decimal(row.get("position_ratio"))
-            )
-            row["position_ratio"] = _ratio(position_ratio)
-
+        valuation = value_portfolio(
+            payload.get("items") or [], quotes, cash_value, HistoricalDisplayValuation()
+        )
+        enriched_rows = [
+            {
+                **item.row,
+                "symbol": item.symbol,
+                "current_price": item.current_price,
+                "change_value": item.quote.get("change_value") or item.row.get("change_value"),
+                "change_rate": item.quote.get("change_rate") or item.row.get("change_rate"),
+                "stock_value": _money(item.stock_value),
+                "pnl_ratio": _ratio(item.pnl),
+                "position_ratio": _ratio(item.position),
+            }
+            for item in valuation.items
+        ]
         return {
             **payload,
             "items": enriched_rows,
             "total": len(enriched_rows),
-            "total_assets": _money(total_assets_value)
-            if has_market_value or cash_value
+            "total_assets": _money(valuation.total_assets)
+            if valuation.has_market_value or cash_value
             else payload.get("total_assets"),
-            "cash_ratio": (
-                _ratio(cash_value / total_assets_value * Decimal("100"))
-                if total_assets_value > 0
-                else payload.get("cash_ratio")
-            ),
+            "cash_ratio": _ratio(valuation.cash_ratio)
+            if valuation.total_assets > 0
+            else payload.get("cash_ratio"),
         }
 
     def _portfolio_market_summary(self, payload: dict[str, Any]) -> dict[str, Any]:

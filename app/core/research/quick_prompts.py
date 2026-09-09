@@ -276,6 +276,8 @@ class ResearchQuickPromptsService:
         if can_read_portfolio and self.portfolio_service:
             rows = []
             for market in ("US", "A", "H"):
-                rows.extend(self.portfolio_service.repository.list_items(market, user_id=user_id))
+                rows.extend(
+                    self.portfolio_service.get_local_snapshot(market, user_id=user_id)["items"]
+                )
             context["held_symbols"] = symbols(rows)
         return context

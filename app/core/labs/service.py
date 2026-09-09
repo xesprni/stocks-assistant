@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import sqlite3
 import statistics
 import uuid
 from collections.abc import Iterable
@@ -13,7 +12,14 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.core.labs.repository import ValuationRepository
+from app.core.labs.calculators import calculate_dcf, calculate_valuation
+from app.core.labs.calculators import number as _number
+from app.core.labs.repository import (
+    LabRunRepository,
+    LabsTransaction,
+    LabsUnitOfWork,
+    ValuationRepository,
+)
 from app.schemas.labs import (
     GreaterChinaRequest,
     PeerComparisonRequest,
@@ -24,20 +30,6 @@ from app.schemas.labs import (
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _number(value: Any, default: float | None = None) -> float | None:
-    if value is None:
-        return default
-    try:
-        text = str(value).replace(",", "").strip()
-        is_percent = text.endswith("%")
-        number = float(text[:-1] if is_percent else text)
-        if not math.isfinite(number):
-            return default
-        return number / 100 if is_percent else number
-    except (TypeError, ValueError):
-        return default
 
 
 _MARKET_CURRENCIES = {"US": "USD", "A": "CNY", "H": "HKD"}
@@ -65,12 +57,8 @@ class InvestmentLabService:
         self.market = market_service
         self.fundamentals = fundamental_service
         self.research = research_service
-        # Labs AI 保存报告与估值模型仍共享这把锁和同一连接。
-        self._write_lock = self.repository.write_lock
-
-    def _connect(self) -> sqlite3.Connection:
-        """Compatibility connection for Labs AI's multi-record transaction."""
-        return self.repository.connect()
+        self.runs = LabRunRepository(self.repository.database)
+        self.unit_of_work = LabsUnitOfWork(self.repository.database)
 
     def analyze_portfolio(
         self, user_id: str, request: PortfolioLabRequest, *, settings=None
@@ -612,27 +600,27 @@ class InvestmentLabService:
         symbol: str,
         request: ValuationModelCreate,
         *,
-        _connection=None,
+        unit_of_work: LabsTransaction | None = None,
     ) -> dict[str, Any]:
         symbol = self.research.normalize_symbol(symbol)
         if request.thesis_snapshot_id:
             self.research.validate_thesis_symbol(user_id, request.thesis_snapshot_id, symbol)
+        repository = unit_of_work.models if unit_of_work is not None else self.repository
         if request.model_id:
-            previous = self.get_valuation_model(user_id, request.model_id)
+            previous = repository.get_model(user_id, request.model_id)
             if previous["symbol"] != symbol:
                 raise ValueError("model symbol cannot change")
             model_key = previous["model_key"]
         else:
             model_key = f"valuation_{uuid.uuid4().hex[:16]}"
         result = self._calculate_valuation(request.model_type, request.assumptions)
-        return self.repository.save_model(
+        return repository.save_model(
             user_id,
             symbol,
             model_key,
             request,
             result,
             [self.research.normalize_symbol(value) for value in request.peer_symbols],
-            connection=_connection,
         )
 
     def list_valuation_models(
@@ -646,137 +634,11 @@ class InvestmentLabService:
 
     @staticmethod
     def _calculate_valuation(model_type: str, assumptions: dict[str, Any]) -> dict[str, Any]:
-        if model_type == "relative":
-            metric = str(assumptions.get("metric") or "pe_ttm_ratio")
-            peer_median = _number(assumptions.get("peer_median"))
-            target_metric = _number(assumptions.get("target_metric"))
-            if peer_median is None or target_metric is None:
-                raise ValueError("relative valuation requires peer_median and target_metric")
-            return {
-                "metric": metric,
-                "peer_median": peer_median,
-                "target_metric": target_metric,
-                "implied_equity_value": round(peer_median * target_metric, 4),
-                "formula": "peer_median × target_metric",
-            }
-        if model_type == "reverse_dcf":
-            target_price = _number(assumptions.get("target_price"))
-            if target_price is None or target_price <= 0:
-                raise ValueError("reverse DCF requires a finite positive target_price")
-            low, high = -0.5, 1.0
-            low_price = InvestmentLabService._dcf({**assumptions, "revenue_growth": low})[
-                "value_per_share"
-            ]
-            high_price = InvestmentLabService._dcf({**assumptions, "revenue_growth": high})[
-                "value_per_share"
-            ]
-            lower_price, upper_price = sorted((low_price, high_price))
-            if target_price < lower_price or target_price > upper_price:
-                raise ValueError(
-                    "reverse DCF target is outside the solvable growth range "
-                    f"[-50%, 100%] ({lower_price:.4f} to {upper_price:.4f} per share)"
-                )
-            increasing = high_price >= low_price
-            for _ in range(80):
-                growth = (low + high) / 2
-                trial = {**assumptions, "revenue_growth": growth}
-                price = InvestmentLabService._dcf(trial)["value_per_share"]
-                if (price < target_price) == increasing:
-                    low = growth
-                else:
-                    high = growth
-            result = InvestmentLabService._dcf({**assumptions, "revenue_growth": (low + high) / 2})
-            return {
-                **result,
-                "target_price": target_price,
-                "implied_revenue_growth": round((low + high) / 2, 6),
-            }
-        return InvestmentLabService._dcf(assumptions)
+        return calculate_valuation(model_type, assumptions)
 
     @staticmethod
     def _dcf(assumptions: dict[str, Any]) -> dict[str, Any]:
-        revenue = _number(assumptions.get("revenue"))
-        fcf_margin = _number(assumptions.get("fcf_margin"))
-        growth = _number(assumptions.get("revenue_growth"))
-        wacc = _number(assumptions.get("wacc"))
-        terminal_growth = _number(assumptions.get("terminal_growth"))
-        shares = _number(assumptions.get("shares_outstanding"))
-        if None in {revenue, fcf_margin, growth, wacc, terminal_growth, shares}:
-            raise ValueError(
-                "DCF requires revenue, fcf_margin, revenue_growth, wacc, terminal_growth and shares_outstanding"
-            )
-        years_value = _number(assumptions.get("years")) if "years" in assumptions else 5.0
-        if years_value is None or not years_value.is_integer():
-            raise ValueError("DCF years must be a whole number")
-        years = int(years_value)
-        if (
-            years < 1
-            or years > 20
-            or revenue < 0
-            or growth <= -1
-            or wacc <= -1
-            or terminal_growth <= -1
-            or wacc <= terminal_growth
-            or shares <= 0
-        ):
-            raise ValueError("invalid DCF horizon, discount rate, terminal growth or share count")
-        cash = _number(assumptions.get("cash")) if "cash" in assumptions else 0.0
-        debt = _number(assumptions.get("debt")) if "debt" in assumptions else 0.0
-        if cash is None or debt is None or cash < 0 or debt < 0:
-            raise ValueError("cash and debt must be finite non-negative numbers")
-        forecasts, present_value = [], 0.0
-        raw_forecasts: list[tuple[int, float]] = []
-        current_revenue = revenue
-        for year in range(1, years + 1):
-            current_revenue *= 1 + growth
-            fcf = current_revenue * fcf_margin
-            pv = fcf / ((1 + wacc) ** year)
-            present_value += pv
-            raw_forecasts.append((year, fcf))
-            forecasts.append(
-                {
-                    "year": year,
-                    "revenue": round(current_revenue, 4),
-                    "fcf": round(fcf, 4),
-                    "present_value": round(pv, 4),
-                }
-            )
-        terminal_value = raw_forecasts[-1][1] * (1 + terminal_growth) / (wacc - terminal_growth)
-        terminal_pv = terminal_value / ((1 + wacc) ** years)
-        enterprise_value = present_value + terminal_pv
-        equity_value = enterprise_value + cash - debt
-        value_per_share = equity_value / shares
-        sensitivity = []
-        for wacc_delta in (-0.01, 0, 0.01):
-            row = []
-            for terminal_delta in (-0.005, 0, 0.005):
-                test_wacc, test_terminal = wacc + wacc_delta, terminal_growth + terminal_delta
-                if test_wacc <= test_terminal:
-                    value = None
-                else:
-                    tv = raw_forecasts[-1][1] * (1 + test_terminal) / (test_wacc - test_terminal)
-                    ev = sum(
-                        fcf / ((1 + test_wacc) ** year) for year, fcf in raw_forecasts
-                    ) + tv / ((1 + test_wacc) ** years)
-                    value = round((ev + cash - debt) / shares, 4)
-                row.append(
-                    {
-                        "wacc": round(test_wacc, 4),
-                        "terminal_growth": round(test_terminal, 4),
-                        "value_per_share": value,
-                    }
-                )
-            sensitivity.extend(row)
-        return {
-            "enterprise_value": round(enterprise_value, 4),
-            "equity_value": round(equity_value, 4),
-            "value_per_share": round(value_per_share, 4),
-            "terminal_value_share": round(terminal_pv / enterprise_value, 6)
-            if enterprise_value
-            else None,
-            "forecast": forecasts,
-            "sensitivity": sensitivity,
-        }
+        return calculate_dcf(assumptions)
 
     def compare_peers(self, request: PeerComparisonRequest, *, settings=None) -> dict[str, Any]:
         errors: list[dict[str, str]] = []

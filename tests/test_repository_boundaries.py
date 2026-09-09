@@ -99,11 +99,62 @@ def test_valuation_joins_callers_transaction_without_committing(tmp_path):
     )
     with (
         pytest.raises(RuntimeError, match="report failed"),
-        service._write_lock,
-        service._connect() as connection,
+        service.unit_of_work.transaction() as transaction,
     ):
-        connection.execute("BEGIN IMMEDIATE")
-        saved = service.create_valuation_model("reader", "AAA.US", request, _connection=connection)
+        saved = service.create_valuation_model(
+            "reader", "AAA.US", request, unit_of_work=transaction
+        )
         assert saved["version"] == 1
         raise RuntimeError("report failed")
     assert service.list_valuation_models("reader") == []
+
+
+def test_labs_transaction_rolls_back_model_and_run_when_run_update_fails(tmp_path):
+    service = InvestmentLabService(
+        str(tmp_path),
+        portfolio_service=None,
+        market_service=None,
+        fundamental_service=None,
+        research_service=ResearchService(str(tmp_path)),
+    )
+    run = {"id": "run", "lab": "valuation", "status": "running", "created_at": "now"}
+    service.runs.create("reader", run)
+    request = ValuationModelCreate(
+        title="Relative", model_type="relative", assumptions={"peer_median": 12, "target_metric": 3}
+    )
+    with (
+        pytest.raises(ValueError, match="JSON compliant"),
+        service.unit_of_work.transaction() as transaction,
+    ):
+        service.create_valuation_model("reader", "AAA.US", request, unit_of_work=transaction)
+        transaction.runs.update_running(
+            "reader", {**run, "status": "completed", "report": float("nan")}
+        )
+    assert service.list_valuation_models("reader") == []
+    assert service.runs.get("reader", "run")["status"] == "running"
+
+
+def test_concurrent_labs_instances_allocate_distinct_versions(tmp_path):
+    def service():
+        return InvestmentLabService(
+            str(tmp_path),
+            portfolio_service=None,
+            market_service=None,
+            fundamental_service=None,
+            research_service=ResearchService(str(tmp_path)),
+        )
+
+    first, second = service(), service()
+    request = ValuationModelCreate(
+        title="Relative", model_type="relative", assumptions={"peer_median": 12, "target_metric": 3}
+    )
+    original = first.create_valuation_model("reader", "AAA.US", request)
+    update = request.model_copy(update={"model_id": original["id"]})
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda instance: instance.create_valuation_model("reader", "AAA.US", update),
+                (first, second),
+            )
+        )
+    assert sorted(row["version"] for row in results) == [2, 3]

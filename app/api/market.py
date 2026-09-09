@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_effective_settings
+from app.core.market.config_repository import MarketConfigError
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
 from app.deps import get_market_service, get_watchlist_service
@@ -26,7 +27,10 @@ router = APIRouter()
 def get_market_config(current_user: CurrentUser = Depends(require_permissions("market:read"))):
     """获取行情监控仪表盘配置。"""
     service = get_market_service()
-    return MarketDashboardConfig(**service.get_config(user_id=current_user.id))
+    try:
+        return MarketDashboardConfig(**service.get_config(user_id=current_user.id))
+    except MarketConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.put("/config", response_model=MarketDashboardConfig)
@@ -36,9 +40,12 @@ def update_market_config(
 ):
     """保存行情监控仪表盘配置。"""
     service = get_market_service()
-    return MarketDashboardConfig(
-        **service.save_config(config.model_dump(), user_id=current_user.id)
-    )
+    try:
+        return MarketDashboardConfig(
+            **service.save_config(config.model_dump(), user_id=current_user.id)
+        )
+    except MarketConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/index-quotes", response_model=MarketQuotesResponse)

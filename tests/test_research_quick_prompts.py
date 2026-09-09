@@ -192,26 +192,28 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
             {"symbol": "AAPL.US", "name": "Apple", "note": "private-note"}
         ]
         portfolio = Mock()
-        portfolio.repository.list_items.return_value = [
-            {
-                "symbol": "MSFT.US",
-                "name": "Microsoft",
-                "shares": "123456",
-                "cost_price": "987654",
-            }
-        ]
+        portfolio.get_local_snapshot.return_value = {
+            "items": [
+                {
+                    "symbol": "MSFT.US",
+                    "name": "Microsoft",
+                    "shares": "123456",
+                    "cost_price": "987654",
+                }
+            ]
+        }
         self.service = self.make_service(watchlist_service=watchlist, portfolio_service=portfolio)
 
         self.get()
         watchlist.list_items.assert_not_called()
-        portfolio.repository.list_items.assert_not_called()
+        portfolio.get_local_snapshot.assert_not_called()
 
         self.get(can_read_watchlist=True, can_read_portfolio=True)
         self.assertEqual("user-1", watchlist.list_items.call_args.kwargs["user_id"])
         self.assertTrue(
             all(
                 call.kwargs["user_id"] == "user-1"
-                for call in portfolio.repository.list_items.call_args_list
+                for call in portfolio.get_local_snapshot.call_args_list
             )
         )
         request = self.provider.calls[-1]

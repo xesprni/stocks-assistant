@@ -10,9 +10,8 @@ from typing import Any
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.orm.repositories.portfolio import PortfolioRepository
 from app.core.portfolio.symbols import canonical_portfolio_symbol
+from app.core.portfolio.valuation import CostBasisValuation, value_portfolio
 from app.core.portfolio.valuation import money as _money
-from app.core.portfolio.valuation import pnl_ratio as _pnl_ratio
-from app.core.portfolio.valuation import position_ratio as _position_ratio
 from app.core.portfolio.valuation import ratio as _ratio
 from app.core.watchlist.service import LongbridgeSearchClient
 from app.schemas.portfolio import (
@@ -90,8 +89,7 @@ class PortfolioService:
     def list_items(
         self, market: PortfolioMarket, user_id: str | None = None, settings: Any = None
     ) -> dict[str, Any]:
-        cash_amount = self.get_settings(market, user_id=user_id)["total_capital"]
-        rows = self.repository.list_items(market, user_id=user_id)
+        rows, cash_amount = self.repository.snapshot(market, user_id=user_id)
 
         quote_error = None
         try:
@@ -120,6 +118,21 @@ class PortfolioService:
             "quote_error": quote_error,
             "valuation_complete": not unpriced_symbols,
             "unpriced_symbols": unpriced_symbols,
+        }
+
+    def get_local_snapshot(
+        self, market: PortfolioMarket, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Expose local holdings and cash without requesting quotes or applying valuation."""
+        rows, cash_amount = self.repository.snapshot(market, user_id=user_id)
+        return {
+            "market": market,
+            "total_capital": cash_amount,
+            "total_assets": None,
+            "cash_ratio": None,
+            "items": [self._empty_enriched_item(row) for row in rows],
+            "total": len(rows),
+            "quote_error": None,
         }
 
     def get_settings(self, market: PortfolioMarket, user_id: str | None = None) -> dict[str, str]:
@@ -213,49 +226,48 @@ class PortfolioService:
     def sell_item(
         self, item_id: int, request: PortfolioSellRequest, user_id: str | None = None
     ) -> dict[str, Any]:
-        current = self.repository.get_item(item_id, user_id=user_id)
-        shares_to_sell = _decimal(request.shares)
-        sell_price = _decimal(request.price)
-        if shares_to_sell is None or shares_to_sell <= 0:
-            raise ValueError("shares must be greater than 0")
-        if sell_price is None or sell_price <= 0:
-            raise ValueError("price must be greater than 0")
+        with self.repository.sale(item_id, user_id=user_id) as sale:
+            current = sale.item
+            shares_to_sell = _decimal(request.shares)
+            sell_price = _decimal(request.price)
+            if shares_to_sell is None or shares_to_sell <= 0:
+                raise ValueError("shares must be greater than 0")
+            if sell_price is None or sell_price <= 0:
+                raise ValueError("price must be greater than 0")
 
-        current_shares = _decimal(current.get("shares")) or Decimal("0")
-        if shares_to_sell > current_shares:
-            raise ValueError("shares exceed current holding")
+            current_shares = _decimal(current.get("shares")) or Decimal("0")
+            if shares_to_sell > current_shares:
+                raise ValueError("shares exceed current holding")
 
-        amount = shares_to_sell * sell_price
-        cost_price = _decimal(current.get("cost_price"))
-        realized_pnl = (
-            (sell_price - cost_price) * shares_to_sell if cost_price is not None else None
-        )
-        market = current["market"]
-        cash = _decimal(self.get_settings(market, user_id=user_id)["total_capital"]) or Decimal("0")
-        remaining_shares = current_shares - shares_to_sell
-        updated_at = _now()
+            amount = shares_to_sell * sell_price
+            cost_price = _decimal(current.get("cost_price"))
+            realized_pnl = (
+                (sell_price - cost_price) * shares_to_sell if cost_price is not None else None
+            )
+            market = current["market"]
+            cash = _decimal(sale.total_capital) or Decimal("0")
+            remaining_shares = current_shares - shares_to_sell
+            updated_at = _now()
 
-        transaction = {
-            "user_id": user_id or "",
-            "market": market,
-            "symbol": current["symbol"],
-            "name": current.get("name") or "",
-            "side": "sell",
-            "shares": _decimal_text(shares_to_sell) or "0",
-            "price": _decimal_text(sell_price) or "0",
-            "amount": _money(amount) or "0.00",
-            "realized_pnl": _money(realized_pnl),
-            "note": request.note.strip(),
-            "created_at": updated_at,
-        }
-        item, saved_transaction, setting = self.repository.sell_item(
-            item_id,
-            user_id=user_id,
-            remaining_shares=_decimal_text(remaining_shares) or "0",
-            total_capital=_decimal_text(cash + amount) or "0",
-            transaction=transaction,
-            updated_at=updated_at,
-        )
+            transaction = {
+                "user_id": user_id or "",
+                "market": market,
+                "symbol": current["symbol"],
+                "name": current.get("name") or "",
+                "side": "sell",
+                "shares": _decimal_text(shares_to_sell) or "0",
+                "price": _decimal_text(sell_price) or "0",
+                "amount": _money(amount) or "0.00",
+                "realized_pnl": _money(realized_pnl),
+                "note": request.note.strip(),
+                "created_at": updated_at,
+            }
+            item, saved_transaction, setting = sale.record(
+                remaining_shares=_decimal_text(remaining_shares) or "0",
+                total_capital=_decimal_text(cash + amount) or "0",
+                transaction=transaction,
+                updated_at=updated_at,
+            )
         return {
             "item": self._empty_enriched_item(item),
             "transaction": saved_transaction,
@@ -319,62 +331,28 @@ class PortfolioService:
         quotes: dict[str, dict[str, Any]],
         calc_indexes: dict[str, dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], str, str | None]:
-        cash_value = _decimal(cash_amount) or Decimal("0")
-        row_values: dict[str, Decimal | None] = {}
-        total_market_value = Decimal("0")
-        # 先算出总市值和总资产，再回填每只股票的仓位占比，避免边遍历边依赖未完成的总数。
-        for row in rows:
-            quote = quotes.get(row["symbol"], {})
-            shares = _non_negative_decimal(row.get("shares"))
-            live_price = _non_negative_decimal(quote.get("last_done"))
-            price = (
-                live_price
-                if live_price is not None
-                else _non_negative_decimal(row.get("cost_price"))
-            )
-            stock_value = shares * price if shares is not None and price is not None else None
-            row_values[row["symbol"]] = stock_value
-            if stock_value is not None:
-                total_market_value += stock_value
-
-        total_assets_value = cash_value + total_market_value
-        cash_ratio = _ratio(_position_ratio(cash_value, total_assets_value))
+        valuation = value_portfolio(
+            rows, quotes, _decimal(cash_amount) or Decimal("0"), CostBasisValuation()
+        )
         enriched = []
-        for row in rows:
-            symbol = row["symbol"]
-            quote = quotes.get(symbol, {})
-            calc = calc_indexes.get(symbol, {})
-            current_price = quote.get("last_done")
-            shares = _non_negative_decimal(row.get("shares"))
-            cost_price = _non_negative_decimal(row.get("cost_price"))
-            price = _non_negative_decimal(current_price)
-            valuation_price = price if price is not None else cost_price
-            stock_value = row_values.get(symbol)
-            position_ratio = _position_ratio(stock_value, total_assets_value)
-            pnl_ratio = _pnl_ratio(price, cost_price)
+        for item in valuation.items:
             enriched.append(
                 {
-                    **row,
-                    # 旧版本曾允许无效数字落库；读模型降级为空值，避免一次
-                    # 历史脏数据让整个列表响应校验失败。
-                    "shares": _decimal_text(shares),
-                    "cost_price": _decimal_text(cost_price),
-                    "currency": quote.get("currency", ""),
-                    "current_price": _decimal_text(price),
-                    "change_value": quote.get("change_value"),
-                    "change_rate": quote.get("change_rate"),
-                    "pe_ttm_ratio": calc.get("pe_ttm_ratio"),
-                    "stock_value": _money(stock_value),
-                    "position_ratio": _ratio(position_ratio),
-                    "pnl_ratio": _ratio(pnl_ratio),
-                    "valuation_price_source": "live"
-                    if price is not None
-                    else "cost"
-                    if valuation_price is not None
-                    else "unavailable",
+                    **item.row,
+                    "shares": _decimal_text(item.shares),
+                    "cost_price": _decimal_text(item.cost_price),
+                    "currency": item.quote.get("currency", ""),
+                    "current_price": _decimal_text(item.current_price),
+                    "change_value": item.quote.get("change_value"),
+                    "change_rate": item.quote.get("change_rate"),
+                    "pe_ttm_ratio": calc_indexes.get(item.symbol, {}).get("pe_ttm_ratio"),
+                    "stock_value": _money(item.stock_value),
+                    "position_ratio": _ratio(item.position),
+                    "pnl_ratio": _ratio(item.pnl),
+                    "valuation_price_source": item.source,
                 }
             )
-        return enriched, _money(total_assets_value) or "0.00", cash_ratio
+        return enriched, _money(valuation.total_assets) or "0.00", _ratio(valuation.cash_ratio)
 
     def _empty_enriched_item(self, row: dict[str, Any]) -> dict[str, Any]:
         shares = _non_negative_decimal(row.get("shares"))

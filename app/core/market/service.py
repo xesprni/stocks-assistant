@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from app.core.market.config_repository import MarketConfigRepository
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.longbridge_data import LongbridgeMarketDataMixin
 from app.core.market.utils import (
@@ -81,44 +81,22 @@ def _normalize_config(config: Any) -> dict:
 class MarketService(LongbridgeMarketDataMixin):
     """行情监控服务，依赖 Longbridge SDK 拉取报价数据。"""
 
-    def __init__(self, workspace_dir: str) -> None:
+    def __init__(
+        self, workspace_dir: str, *, config_repository: MarketConfigRepository | None = None
+    ) -> None:
         root = Path(workspace_dir).expanduser()
         root.mkdir(parents=True, exist_ok=True)
         self.config_path = root / "market_config.json"
+        self.config_repository = config_repository or MarketConfigRepository(self.config_path)
 
     # ------------------------------------------------------------------ config
 
     def get_config(self, user_id: str | None = None) -> dict:
-        if user_id:
-            try:
-                from app.core.app_store import get_app_store
-
-                stored = get_app_store().get_market_config(user_id)
-                if stored:
-                    return _normalize_config(stored)
-            except Exception:
-                pass
-            return _default_config()
-        if self.config_path.exists():
-            try:
-                with open(self.config_path, encoding="utf-8") as f:
-                    return _normalize_config(json.load(f))
-            except Exception:
-                pass
-        return _default_config()
+        stored = self.config_repository.load(user_id)
+        return _normalize_config(stored) if stored else _default_config()
 
     def save_config(self, config: dict, user_id: str | None = None) -> dict:
-        config = _normalize_config(config)
-        if user_id:
-            try:
-                from app.core.app_store import get_app_store
-
-                return get_app_store().save_market_config(user_id, config)
-            except Exception:
-                pass
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-        return config
+        return self.config_repository.save(_normalize_config(config), user_id)
 
     # ------------------------------------------------------------------ quotes
 

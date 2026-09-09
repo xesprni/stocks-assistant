@@ -56,9 +56,15 @@ class ResearchDocumentService:
         self, user_id: str, symbol: str, request: ResearchDocumentCreate
     ) -> dict[str, Any]:
         # SQLite 和材料写盘继续放在线程池；索引失败保留已保存的版本，便于用户重试。
-        document = await run_in_threadpool(self.research.ingest_document, user_id, symbol, request)
+        ingestion = await run_in_threadpool(
+            self.research.ingest_document_version, user_id, symbol, request
+        )
+        document = ingestion.document
         path = await run_in_threadpool(
-            self.research.materialize_document_version, user_id, document["id"]
+            self.research.materialize_document_version,
+            user_id,
+            document["id"],
+            version_id=ingestion.version_id,
         )
         manager = self.memory_factory(user_id)
         await manager.index_file(
@@ -66,7 +72,10 @@ class ResearchDocumentService:
             source="knowledge",
             scope="user",
             user_id=user_id,
-            metadata={"research_document_id": document["id"]},
+            metadata={
+                "research_document_id": document["id"],
+                "research_document_version_id": ingestion.version_id,
+            },
         )
         return document
 

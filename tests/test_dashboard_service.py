@@ -68,7 +68,7 @@ class FakePortfolioService:
     def __init__(self, payloads=None):
         self.payloads = payloads or {}
 
-    def list_items(self, market, user_id=None, settings=None):
+    def get_local_snapshot(self, market, user_id=None):
         return self.payloads.get(
             market,
             {
