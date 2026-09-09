@@ -9,6 +9,15 @@ export type ChatTraceStatus = "info" | "running" | "done" | "error";
 export type LlmReasoningEffort = "minimal" | "low" | "medium" | "high";
 export type LlmToolChoice = "auto" | "none" | "required";
 
+export type RenderedImageFile = "image.png" | "top.png" | "middle.png" | "bottom.png" | "mobile.png";
+
+export interface RenderedImage {
+  artifact_id: string;
+  width: number;
+  height: number;
+  files: Partial<Record<"image" | "top" | "middle" | "bottom" | "mobile", string>>;
+}
+
 export interface ChatTraceEvent {
   id: string;
   label: string;
@@ -40,6 +49,7 @@ export interface ChatMessage {
   status?: string;
   trace?: ChatTraceEvent[];
   sources?: SourceReference[];
+  renderedImages?: RenderedImage[];
 }
 
 export interface ResearchQuickPromptsResponse {
@@ -331,6 +341,7 @@ export interface ChatResponse {
   tool_calls: number;
   steps: number;
   sources: SourceReference[];
+  rendered_images?: RenderedImage[];
 }
 
 export interface ChatStreamEvent {

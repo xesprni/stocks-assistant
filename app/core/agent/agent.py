@@ -58,6 +58,7 @@ class Agent:
         self.settings = settings  # 当前请求/用户的有效配置
         self.last_evidence: list[dict[str, Any]] = []
         self.last_sources: list[dict[str, Any]] = []
+        self.last_rendered_images: list[dict[str, Any]] = []
 
         # 技能管理器（从 Markdown 文件加载技能定义）
         self.skill_manager = None
@@ -181,19 +182,19 @@ When tool results include evidence or sources metadata:
                     return 32000
                 else:
                     return 8000
-            elif "glm-5.1" in model_name:
-                return 200000
+            elif "glm-5.3" in model_name:
+                return 1000000
             elif "gpt-3.5" in model_name:
                 return 16000 if "16k" in model_name else 4000
             elif "deepseek" in model_name:
                 return 64000
-        return 128000  # 保守默认值
+        return 1000000  # 保守默认值
 
     def _get_context_reserve_tokens(self) -> int:
         """获取上下文预留 token 数（约 10%，用于模型生成回复）"""
         context_window = self._get_model_context_window()
         reserve = int(context_window * 0.1)
-        return max(10000, min(200000, reserve))
+        return max(10000, min(1000000, reserve))
 
     def _estimate_message_tokens(self, message: dict) -> int:
         """估算单条消息的 token 消耗
@@ -363,6 +364,7 @@ When tool results include evidence or sources metadata:
         self.stream_executor = executor
         self.last_evidence = list(executor.evidence)
         self.last_sources = list(executor.sources)
+        self.last_rendered_images = list(executor.rendered_images)
         return response
 
     def clear_history(self):

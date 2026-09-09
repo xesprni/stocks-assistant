@@ -4,6 +4,7 @@
 Agent 实例仍按请求创建，对话历史由后端 session store 持久化。
 """
 
+import json
 import logging
 import threading
 import time
@@ -121,6 +122,14 @@ def _init_agent(request: ChatRequest, history_messages: list[dict]):
         role = msg.get("role")
         content = msg.get("content", "")
         if role in ("user", "assistant") and content:
+            rendered_images = (msg.get("metadata") or {}).get("rendered_images")
+            if rendered_images:
+                # 历史仅注入产物引用；需要再次看图时由模型显式调用 view_image。
+                content += (
+                    "\n\n[Rendered image artifacts: "
+                    + json.dumps(rendered_images, ensure_ascii=False)
+                    + "]"
+                )
             agent.messages.append(_agent_message(role, content))
     return agent
 
@@ -177,6 +186,7 @@ def _persist_exchange(
     was_empty: bool,
     *,
     sources: list[dict] | None = None,
+    rendered_images: list[dict] | None = None,
 ) -> tuple[str, str]:
     store = get_session_store()
     user_msg = store.append_message(session_id, "user", user_message)
@@ -184,7 +194,7 @@ def _persist_exchange(
         session_id,
         "assistant",
         assistant_response,
-        {"sources": sources or []},
+        {"sources": sources or [], "rendered_images": rendered_images or []},
     )
     if was_empty:
         store.update_title(session_id, _title_from_text(user_message))
@@ -247,10 +257,16 @@ def _complete_exchange(
     sources: list[dict],
     history_messages: list[dict],
     recorder,
+    rendered_images: list[dict] | None = None,
 ) -> str:
     """落库成功后完成追踪和记忆整理，终止事件由传输层随后发送。"""
     user_message_id, message_id = _persist_exchange(
-        session_id, request.message, response, was_empty=not history_messages, sources=sources
+        session_id,
+        request.message,
+        response,
+        was_empty=not history_messages,
+        sources=sources,
+        rendered_images=rendered_images,
     )
     _finish_trace(
         recorder,
@@ -290,13 +306,20 @@ def chat(
             thinking_enabled=request.thinking_enabled,
         )
         message_id = _complete_exchange(
-            request, session_id, response, agent.last_sources, history_messages, recorder
+            request,
+            session_id,
+            response,
+            agent.last_sources,
+            history_messages,
+            recorder,
+            getattr(agent, "last_rendered_images", []),
         )
         return ChatResponse(
             response=response,
             session_id=session_id,
             message_id=message_id,
             sources=agent.last_sources,
+            rendered_images=getattr(agent, "last_rendered_images", []),
         )
     except HTTPException:
         raise
@@ -351,7 +374,13 @@ def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[
         # 会话快照与完成状态原子切换，刷新不会漏掉刚落库的最终回复。
         with chat_runs.lock:
             message_id = _complete_exchange(
-                request, run.session_id, response, agent.last_sources, history_messages, recorder
+                request,
+                run.session_id,
+                response,
+                agent.last_sources,
+                history_messages,
+                recorder,
+                getattr(agent, "last_rendered_images", []),
             )
             run.publish(
                 {
@@ -362,6 +391,7 @@ def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[
                         "session_id": run.session_id,
                         "message_id": message_id,
                         "sources": agent.last_sources,
+                        "rendered_images": getattr(agent, "last_rendered_images", []),
                     },
                 }
             )

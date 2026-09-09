@@ -20,6 +20,9 @@ dependencies = [
     "pypdf>=5.0.0",
 ]
 
+[project.optional-dependencies]
+rendering = ["playwright>=1.48,<2", "Pillow>=10.4,<13", "psutil>=6,<8"]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
@@ -61,6 +64,11 @@ files = [
     "app/core/llm/message_codec.py",
     "app/core/tools/builtin_registry.py",
     "app/core/tools/paths.py",
+    "app/core/tools/render_artifacts.py",
+    "app/core/rendering/document.py",
+    "app/core/rendering/layout.py",
+    "app/core/rendering/service.py",
+    "app/schemas/rendering.py",
     "app/core/tools/parameters.py",
     "app/core/tools/portfolio_output.py",
     "app/core/tracing/payloads.py",

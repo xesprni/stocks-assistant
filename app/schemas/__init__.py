@@ -35,6 +35,7 @@ class ChatResponse(BaseModel):
     tool_calls: int = 0  # 工具调用次数
     steps: int = 0  # 执行步数
     sources: list[SourceReference] = Field(default_factory=list)
+    rendered_images: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatSessionCreateRequest(BaseModel):

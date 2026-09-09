@@ -44,7 +44,7 @@ class ToolManager:
     ) -> None:
         """加载所有内置工具
 
-        内置工具包括：bash、web_search、web_fetch、read_file、write_file、
+        内置工具包括：bash、web_search、web_fetch、read_file、write_file、render_image、view_image、
         financial_reports、market_data、portfolio_positions、portfolio、watchlist、memory_search、memory_get、scheduler。
         """
         if memory_manager:

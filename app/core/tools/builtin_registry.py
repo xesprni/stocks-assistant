@@ -37,9 +37,11 @@ def builtin_factories(manager: ToolManager) -> dict[type[BaseTool], Callable[[],
     from app.core.tools.portfolio_positions import GetPortfolioPositionsTool
     from app.core.tools.read_file import ReadFileTool
     from app.core.tools.read_skill import ReadSkillTool
+    from app.core.tools.render_image import RenderImageTool
     from app.core.tools.research_context import GetResearchContextTool
     from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
     from app.core.tools.scheduler.tool import SchedulerTool
+    from app.core.tools.view_image import ViewImageTool
     from app.core.tools.watchlist import WatchlistTool
     from app.core.tools.web_fetch import WebFetchTool
     from app.core.tools.web_search import WebSearchTool
@@ -74,6 +76,8 @@ def builtin_factories(manager: ToolManager) -> dict[type[BaseTool], Callable[[],
         ReadFileTool: lambda: ReadFileTool(workspace_dir=manager.workspace_dir or "."),
         ReadSkillTool: ReadSkillTool,
         WriteFileTool: lambda: WriteFileTool(workspace_dir=manager.workspace_dir or "."),
+        RenderImageTool: lambda: RenderImageTool(workspace_dir=manager.workspace_dir or "."),
+        ViewImageTool: lambda: ViewImageTool(workspace_dir=manager.workspace_dir or "."),
         GetFinancialReportsTool: with_settings(GetFinancialReportsTool),
         GetSecurityNewsTool: with_settings(GetSecurityNewsTool),
         GetSecurityInsightsTool: with_settings(GetSecurityInsightsTool),

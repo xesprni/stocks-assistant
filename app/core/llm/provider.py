@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from app.core.agent.models import LLMModel, LLMRequest
-from app.core.llm.message_codec import iter_sse_objects, split_message_blocks
+from app.core.llm.message_codec import image_data_urls, iter_sse_objects, split_message_blocks
 
 logger = logging.getLogger("stocks-assistant.llm")
 
@@ -224,7 +224,25 @@ class OpenAICompatibleProvider(LLMModel):
                                 "content": tr.get("content", ""),
                             }
                         )
-                if text_parts:
+                image_urls = image_data_urls(content)
+                if image_urls:
+                    # 工具输出保持文本协议；图片作为紧随其后的用户视觉输入传递。
+                    openai_messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                *({"type": "text", "text": text} for text in text_parts),
+                                *(
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": url, "detail": "high"},
+                                    }
+                                    for url in image_urls
+                                ),
+                            ],
+                        }
+                    )
+                elif text_parts:
                     openai_messages.append(
                         {
                             "role": "user",
@@ -374,6 +392,18 @@ class OpenAIResponsesProvider(LLMModel):
                             "type": "function_call_output",
                             "call_id": tool_result.get("tool_use_id", ""),
                             "output": tool_result.get("content", ""),
+                        }
+                    )
+                image_urls = image_data_urls(content)
+                if image_urls:
+                    response_items.append(
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_image", "image_url": url, "detail": "high"}
+                                for url in image_urls
+                            ],
                         }
                     )
 

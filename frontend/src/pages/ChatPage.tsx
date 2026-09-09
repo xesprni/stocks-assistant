@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
+import { RenderImagePreview } from "@/components/RenderImagePreview";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
@@ -1060,6 +1061,9 @@ export function ChatPage({
                   )}
                 >
                   {message.role === "assistant" ? <ChatTraceList trace={message.trace} /> : null}
+                  {message.role === "assistant" ? message.renderedImages?.map((artifact) => (
+                    <RenderImagePreview artifact={artifact} key={artifact.artifact_id} language={language} />
+                  )) : null}
                   {message.role === "assistant" && message.pending && message.status ? (
                     <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
                       <Loader2 className="size-3 animate-spin text-primary" />

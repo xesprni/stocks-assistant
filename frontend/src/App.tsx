@@ -61,6 +61,7 @@ import { cn } from "@/lib/utils";
 import { toDraft } from "@/lib/config";
 import { createConfigAutosave, type ConfigSaveState } from "@/lib/config-autosave";
 import { parseJsonObject } from "@/lib/json";
+import { parseRenderedImage, parseRenderedImages } from "@/lib/rendered-images";
 import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
 import { CHAT_AUTO_SCROLL_THRESHOLD, useConversations } from "@/hooks/useConversations";
@@ -806,6 +807,7 @@ function ConsoleApp() {
     let streamEventHandler: ((event: ChatStreamEvent) => void) | undefined;
     let currentStatus = ui.chat.connecting;
     let trace = pendingMessage.trace ?? [];
+    let renderedImages = pendingMessage.renderedImages ?? [];
     let sawAgentEnd = false;
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
@@ -827,6 +829,7 @@ function ConsoleApp() {
         content: streamedContent || displayStatus,
         status: displayStatus,
         trace,
+        renderedImages,
         ...patch,
       });
     };
@@ -1009,6 +1012,10 @@ function ConsoleApp() {
             const status = getStreamText(childData, "status") === "success" ? "done" : "error";
             const seconds = getStreamNumber(childData, "execution_time");
             const detail = seconds == null ? undefined : `${seconds.toFixed(2)}s`;
+            if (toolName === "render_image" && status === "done") {
+              const artifact = parseRenderedImage(childData?.result);
+              if (artifact) renderedImages = parseRenderedImages([...renderedImages, artifact]);
+            }
             if (toolCallId) updateTrace(`sub:${batchId}:${taskId}:tool:${toolCallId}`, { label: `${role} ${formatTemplate(ui.chat.toolDone, { tool: toolName })}`, status, detail });
             currentStatus = `${role} ${ui.chat.subToolReturned}`;
             commitStreamState();
@@ -1060,6 +1067,10 @@ function ConsoleApp() {
           const status = getStreamText(data, "status") === "success" ? "done" : "error";
           const seconds = getStreamNumber(data, "execution_time");
           const detail = seconds == null ? undefined : `${seconds.toFixed(2)}s`;
+          if (toolName === "render_image" && status === "done") {
+            const artifact = parseRenderedImage(data?.result);
+            if (artifact) renderedImages = parseRenderedImages([...renderedImages, artifact]);
+          }
           if (toolCallId) {
             updateTrace(toolCallId, { label: formatTemplate(ui.chat.toolDone, { tool: toolName }), status, detail });
           } else {
@@ -1082,6 +1093,7 @@ function ConsoleApp() {
           if (convId) chatHistory.updateRun(convId, null);
           const finalResponse = getStreamText(data, "final_response");
           const messageId = getStreamText(data, "message_id");
+          renderedImages = parseRenderedImages([...renderedImages, ...parseRenderedImages(data?.rendered_images)]);
           const sources = Array.isArray(data?.sources)
             ? data.sources.filter((item): item is NonNullable<ChatMessage["sources"]>[number] => Boolean(item && typeof item === "object" && "id" in item))
             : [];
@@ -1097,6 +1109,7 @@ function ConsoleApp() {
             pending: false,
             status: currentStatus,
             trace,
+            renderedImages,
             sources,
             createdAt: chatTime(language),
           });

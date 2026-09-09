@@ -4,15 +4,38 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from app.config import get_effective_settings
 from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 from app.core.tools.permissions import is_tool_allowed_for_agent, mcp_server_name_from_tool
+from app.core.tools.render_artifacts import rendered_image_path
 from app.core.tools.tool_manager import ToolManager
 from app.deps import get_mcp_manager_for_user, get_memory_manager_for_user
 from app.schemas.tools import ToolExecuteRequest, ToolExecuteResponse, ToolListResponse
 
 router = APIRouter()
+
+
+@router.get("/render-image/{artifact_id}/{filename}", response_class=FileResponse)
+def get_rendered_image(
+    artifact_id: str,
+    filename: str,
+    current_user: CurrentUser = Depends(require_permissions("chat:read")),
+):
+    settings = get_effective_settings(current_user.id)
+    try:
+        workspace = user_workspace_dir(settings.workspace_dir, current_user.id)
+        path = rendered_image_path(workspace, artifact_id, filename)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Rendered image not found") from exc
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename=f"{artifact_id}-{filename}",
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 def _tool_manager_for_user(current_user: CurrentUser, settings) -> ToolManager:

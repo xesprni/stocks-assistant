@@ -26,6 +26,7 @@ from app.core.agent.context import (
     build_summary_messages,
     format_turns_text,
     identify_complete_turns,
+    omit_image_data,
     truncate_historical_tool_results,
 )
 from app.core.agent.message_utils import compress_turn_to_text_only, sanitize_claude_messages
@@ -105,6 +106,7 @@ class AgentStreamExecutor:
         self.tool_failure_history = []  # 工具执行历史（用于失败重试保护）
         self.evidence: list[dict[str, Any]] = []
         self.sources: list[dict[str, Any]] = []
+        self.rendered_images: list[dict[str, Any]] = []
         self._evidence_lock = threading.Lock()
 
     def _collect_evidence(self, result: dict[str, Any]) -> None:
@@ -358,6 +360,21 @@ class AgentStreamExecutor:
                 try:
                     results = self._execute_tool_calls_batch(tool_calls)
                     for tool_call, result in zip(tool_calls, results, strict=False):
+                        image_blocks = result.pop("_image_blocks", [])
+                        if (
+                            tool_call["name"] == "render_image"
+                            and result.get("status") == "success"
+                        ):
+                            artifact = result.get("result")
+                            if isinstance(artifact, dict) and artifact.get("artifact_id"):
+                                # 会话只保存可重建预览的产物引用，不保存 HTML、快照或图片字节。
+                                self.rendered_images.append(
+                                    {
+                                        key: artifact[key]
+                                        for key in ("artifact_id", "width", "height", "files")
+                                        if key in artifact
+                                    }
+                                )
                         self._collect_evidence(result)
                         if result.get("status") == "critical_error":
                             final_response = result.get("result", "Task execution failed")
@@ -401,6 +418,8 @@ class AgentStreamExecutor:
                         if is_error:
                             tool_result_block["is_error"] = True
                         tool_result_blocks.append(tool_result_block)
+                        if not is_error:
+                            tool_result_blocks.extend(image_blocks)
 
                 finally:
                     if tool_result_blocks:
@@ -473,6 +492,8 @@ class AgentStreamExecutor:
             self._emit_event("error", {"error": str(e)})
             raise
         finally:
+            # 运行结束后不把图片字节带入会话历史、记忆整理或下次对话。
+            self.messages = omit_image_data(self.messages)
             final_response = final_response.strip() if final_response else final_response
             logger.info("[Agent] Done (%s turns)", turn)
             if not cancelled:
@@ -550,7 +571,7 @@ class AgentStreamExecutor:
                     "max_tokens": request.max_tokens,
                     "stream": request.stream,
                     "system": request.system,
-                    "messages": messages,
+                    "messages": omit_image_data(messages),
                     "tools": tools_summary,
                     "thinking_enabled": self.thinking_enabled,
                     "reasoning_effort": getattr(request, "reasoning_effort", None),
@@ -905,6 +926,13 @@ class AgentStreamExecutor:
                     "source_count": len(result_dict.get("sources", [])),
                 },
             )
+            if (
+                result.status == "success"
+                and isinstance(result.ext_data, dict)
+                and result.ext_data.get("image_blocks")
+            ):
+                # 公共事件发射完成后才附加私有字段，避免 SSE/追踪泄露 base64。
+                result_dict["_image_blocks"] = result.ext_data.get("image_blocks", [])
             return result_dict
 
         except Exception as e:
@@ -1015,7 +1043,7 @@ class AgentStreamExecutor:
                 discarded_messages.extend(turn["messages"])
             if discarded_messages:
                 self.agent.memory_manager.flush_memory(
-                    messages=discarded_messages,
+                    messages=omit_image_data(discarded_messages),
                     reason="trim",
                     max_messages=0,
                 )

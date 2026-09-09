@@ -34,6 +34,7 @@ DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
     "web_search",
     "web_fetch",
     "read_file",
+    "view_image",
     "read_skill",
     "memory_search",
     "memory_get",
@@ -65,6 +66,8 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "read_file",
     "read_skill",
     "write_file",
+    "render_image",
+    "view_image",
     "get_financial_reports",
     "get_security_news",
     "get_security_insights",
@@ -282,7 +285,14 @@ class Settings(BaseSettings):
     multi_agent_default_max_steps: int = 8  # 智能体默认最大执行步数
     multi_agent_max_depth: int = 1  # V1 固定为 1，避免递归委派
     multi_agent_dangerous_tools: list[str] = Field(
-        default_factory=lambda: ["bash", "write_file", "scheduler", "watchlist", "portfolio"],
+        default_factory=lambda: [
+            "bash",
+            "write_file",
+            "render_image",
+            "scheduler",
+            "watchlist",
+            "portfolio",
+        ],
     )
     multi_agent_roles: dict[str, dict[str, Any]] = Field(
         default_factory=lambda: deepcopy(DEFAULT_MULTI_AGENT_ROLES),

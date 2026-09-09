@@ -8,6 +8,34 @@ from typing import Any
 logger = logging.getLogger("stocks-assistant.agent")
 
 
+def omit_image_data(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """历史与追踪只保留附件路径；图片字节只存在于本次模型调用内存。"""
+    result = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            result.append(message)
+            continue
+        result.append(
+            {
+                **message,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"[Image attachment omitted: {block.get('source_path', 'image')}. "
+                            "Call view_image again to inspect it.]"
+                        ),
+                    }
+                    if isinstance(block, dict) and block.get("type") == "image"
+                    else block
+                    for block in content
+                ],
+            }
+        )
+    return result
+
+
 def identify_complete_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """识别完整对话轮次
 

@@ -59,3 +59,22 @@ def split_message_blocks(
             case "tool_result":
                 results.append(block)
     return texts, calls, results
+
+
+def image_data_urls(content: list[Any]) -> list[str]:
+    """将内部图片块转换为原生视觉输入，禁止把无效附件静默当作已查看。"""
+    urls = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "image":
+            continue
+        source = block.get("source")
+        if (
+            not isinstance(source, dict)
+            or source.get("type") != "base64"
+            or source.get("media_type") not in {"image/png", "image/jpeg"}
+            or not isinstance(source.get("data"), str)
+            or not source["data"]
+        ):
+            raise ValueError("Invalid image attachment: expected base64 PNG or JPEG")
+        urls.append(f"data:{source['media_type']};base64,{source['data']}")
+    return urls

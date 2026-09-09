@@ -116,6 +116,8 @@ Telegram 通知支持文字和图片。在配置页的 Telegram 测试区、定�
 | `web_fetch` | 网页内容抓取 |
 | `read_file` | 读取文件 |
 | `write_file` | 写入文件 |
+| `render_image` | 在本地把 HTML/CSS/SVG 导出为默认 2400 px 宽 PNG，自动高度并返回排版诊断与检查图 |
+| `view_image` | 把用户工作空间内的 PNG/JPEG 交给视觉模型检查 |
 | `bash` | 执行 Shell 命令 |
 | `memory_search` | 语义搜索记忆 |
 | `memory_get` | 获取记忆内容 |
@@ -124,6 +126,8 @@ Telegram 通知支持文字和图片。在配置页的 Telegram 测试区、定�
 | `get_research_context` | 读取当前用户的公司 Thesis、证据、材料、决策、持仓与提醒上下文 |
 | `get_investment_labs` | 运行组合风险/归因、同业估值和大中华市场专项分析，或读取已保存估值模型 |
 | `delegate_agent` | 批量委派智能体执行独立研究/分析任务 |
+
+本地制图需安装可选依赖和 Chromium：`uv sync --extra rendering`、`uv run playwright install chromium`。支持聊天内预览、下载和历史回看；调用协议、中文字体、工作空间隔离与视觉检查流程见 [本地制图文档](docs/local-rendering.md)。
 
 ## 快速开始
 

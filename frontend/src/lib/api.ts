@@ -36,6 +36,7 @@ import type {
   ResearchEvidence,
   ResearchDocument,
   ResearchQuickPromptsResponse,
+  RenderedImageFile,
   SecurityWorkspaceSummary,
   SourceReference,
   ThesisPayload,
@@ -100,6 +101,7 @@ import type {
 } from "@/types/app";
 import { ChatStreamHttpError, consumeChatStream, parseChatSseBlock as parseSseBlock } from "@/lib/chat-stream";
 import { readStoredText, removeStoredValue, writeStoredValue } from "@/lib/local-storage";
+import { parseRenderedImages } from "@/lib/rendered-images";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const ACCESS_TOKEN_KEY = "stocks_assistant_access_token";
@@ -277,7 +279,7 @@ function apiErrorDetail(body: unknown, fallback: string) {
   return fallback;
 }
 
-async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, retry = true, responseType: "json" | "blob" = "json"): Promise<T> {
   const initWithoutHeaders = init ? { ...init } : {};
   delete initWithoutHeaders.headers;
 
@@ -287,8 +289,9 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   // 其他共享同一 Promise 的调用方收到 "signal is aborted without reason" 异常。
   const isGet = !init?.method || init.method === "GET";
   const hasAbortSignal = Boolean(init?.signal);
-  const inflightKey = `${authSessionEpoch}:${path}`;
-  if (isGet && !hasAbortSignal) {
+  const inflightKey = `${authSessionEpoch}:${responseType}:${path}`;
+  // 刷新令牌后的重试不能复用正在等待自己的首个 Promise。
+  if (isGet && !hasAbortSignal && retry) {
     const inflight = inflightGetRequests.get(inflightKey);
     if (inflight) return inflight as Promise<T>;
   }
@@ -309,7 +312,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
           throw error;
         }
       }
-      return request<T>(path, init, false);
+      return request<T>(path, init, false, responseType);
     }
 
     if (!response.ok) {
@@ -318,10 +321,10 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
       throw new Error(detail || "Request failed");
     }
 
-    return response.json() as Promise<T>;
+    return (responseType === "blob" ? response.blob() : response.json()) as Promise<T>;
   };
 
-  if (isGet && !hasAbortSignal) {
+  if (isGet && !hasAbortSignal && retry) {
     const promise = run().finally(() => {
       if (inflightGetRequests.get(inflightKey) === promise) inflightGetRequests.delete(inflightKey);
     });
@@ -694,6 +697,10 @@ export function listTools() {
   return request<ToolListResponse>("/api/v1/tools");
 }
 
+export function getRenderedImage(artifactId: string, filename: RenderedImageFile, signal?: AbortSignal) {
+  return request<Blob>(`/api/v1/tools/render-image/${encodeURIComponent(artifactId)}/${encodeURIComponent(filename)}`, { signal }, true, "blob");
+}
+
 function formatChatTime(iso: string) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
@@ -710,6 +717,7 @@ function mapChatMessage(message: ChatSessionMessage): ChatMessage {
     content: message.content,
     createdAt: formatChatTime(message.created_at),
     sources,
+    renderedImages: parseRenderedImages(message.metadata?.rendered_images),
   };
 }
 
