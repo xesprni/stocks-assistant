@@ -40,6 +40,7 @@ bash scripts/check_backend.sh
 cd frontend
 npm ci
 npm run dev      # 开发服务器 http://localhost:5175
+npm test         # Node >=22.15；统一执行 .mjs 和 TypeScript 测试
 npm run build    # TypeScript build + Vite build，输出 frontend/dist/
 npm run preview  # 预览构建产物
 ```
@@ -136,6 +137,7 @@ app/
 - 新增请求/响应结构放在 `app/schemas/`，不要在路由里散落复杂 dict 协议。
 - 用户请求内需要配置时优先使用 `get_effective_settings(current_user.id)`；涉及用户文件、知识库、记忆和工具 cwd 时使用 `user_workspace_dir(...)`。
 - 新增依赖单例放到 `app/deps.py`，如果配置变更会影响它，需要同步更新 `app/core/configuration/runtime.py` 的失效规则；API 和 OAuth 共用这个入口。
+- 配置失效与资源关闭分离；单次 Agent 使用同一 settings 快照，并通过资源租约保持在途 MCP/Memory 可用。扩展约定见 [架构边界文档](docs/architecture-boundaries.md)。
 - 新增后端代码时，需要在核心流程、复杂分支、关键安全边界、数据迁移和外部服务调用处补充简洁中文注释，帮助后续维护者快速理解意图；不要给一眼可见的赋值或普通 CRUD 写流水账注释。
 - 日志使用 Python logging，logger 名称统一以 `stocks-assistant.*` 开头。
 - 直接文件读写工具必须限制在工作空间内；`read_file`、`write_file` 已做路径约束，新增类似能力时保持同等约束。
@@ -159,6 +161,8 @@ app/
 新增工具时通常需要同步：
 
 - 实现 `BaseTool` 子类，设置 `name`、`description`、`params` 和 `execute`
+- 需要单次调用上下文的新工具优先实现 `invoke(params, context)`；统一经 `execute_tool` 校验和调用，旧 `execute` 入口保持兼容。通过 `ToolCallContext` 获取身份、取消与事件，不向共享工具实例写入运行状态。
+- 明确安全的只读工具声明 `read_only`；混合工具根据 action 判断。未知调用、写操作及委派默认为顺序屏障，工具产物通过统一结果 metadata 返回。
 - 在 `ToolManager.load_builtin_tools()` 注册，或明确走动态/MCP 加载
 - 必要时在 `app/core/tools/builtin_registry.py` 的显式工厂中注入 workspace、user_id、settings 或 service；`load_builtin_tools(..., settings=...)` 可接收同次 Agent 执行的配置快照
 - 更新 `DEFAULT_AGENT_TOOL_ALLOWLIST`、多 Agent 角色 allowlist 和前端/文档说明
@@ -172,7 +176,7 @@ app/
 - UI 使用 React 19、Radix UI、Tailwind CSS、lucide-react 和项目内 `components/ui/` 组件风格。
 - 业务页面应复用现有 API client、认证状态和错误处理模式，不要在组件里散落裸 `fetch`。
 - 涉及行情、持仓、K 线和分时图时优先沿用现有数据结构和 `lightweight-charts` 集成。
-- 修改前端后至少运行 `npm run build`；联调时确认 Vite proxy 与后端端口一致。
+- 修改前端后运行 `npm test` 和 `npm run build`；联调时确认 Vite proxy 与后端端口一致。领域加载和写命令使用控制器，React 状态 updater 中不发网络请求。
 
 ## Longbridge SDK / OpenAPI
 
@@ -209,7 +213,7 @@ Longbridge OpenAPI 提供程序化行情和交易接口，用于构建投研、�
 
 - 后端改动优先跑相关 pytest；涉及共享配置、权限、Agent、MCP、Longbridge service 或调度时扩大到完整 `uv run pytest`。
 - `tests/conftest.py` 隔离默认数据库和工作空间，并禁止默认 MCP 外部传输；协议测试需要显式提供传输替身。新增依赖连接也应由测试替身覆盖。
-- 前端改动跑 `npm run build`，必要时启动后端和 `npm run dev` 做浏览器联调。
+- 前端改动跑 `npm test` 和 `npm run build`；StrictMode 回归用 `npm run test:browser`，运行条件见 `frontend/tests/README.md`。必要时启动后端和 `npm run dev` 做浏览器联调。
 - 修改配置持久化、权限或迁移逻辑时，使用临时 `STOCKS_ASSISTANT_DB_PATH` 验证首次初始化和旧 `config.json` 一次性迁移。
 - 修改 Agent 流式事件时，同时检查同步 `/chat`、SSE `/stream`、session 持久化、memory curator 和 tracing 是否仍然一致。
 
