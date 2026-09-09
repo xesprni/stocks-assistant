@@ -39,6 +39,7 @@ import {
   type AppNavGroup,
   type AppNavItem,
 } from "@/components/shell/AppNavigation";
+import { ResearchQueueMenu } from "@/components/shell/ResearchQueueMenu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
@@ -515,6 +516,7 @@ function ConsoleApp() {
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [companyRoute, setCompanyRoute] = useState(() => companyRouteFromPath(window.location.pathname) ?? { symbol: "AAPL.US", tab: "overview" as CompanyTab });
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
+  const [inboxOpenRequest, setInboxOpenRequest] = useState(0);
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = readStoredValue("stocks-assistant-theme", ["system", "dark", "light"], "system");
     return isTheme(stored) ? stored : "system";
@@ -1396,6 +1398,18 @@ function ConsoleApp() {
           onUpdateProfile={auth.updateProfile}
           navigationGroups={navigationGroups}
           page={activePage}
+          researchQueue={auth.can("scheduler:read") && canPage("scheduler") ? (
+            <ResearchQueueMenu
+              active={!isMobileViewport || isMobileHeaderVisible}
+              key={auth.user?.id}
+              language={language}
+              onOpenEvent={canPage("company") ? (symbol) => { openCompany(symbol, "alerts"); } : undefined}
+              onOpenInbox={() => {
+                if (handleNavigate("scheduler")) setInboxOpenRequest((current) => current + 1);
+              }}
+              page={activePage}
+            />
+          ) : null}
           setPage={handleNavigate}
           onThemeChange={setTheme}
           resolvedTheme={resolvedTheme}
@@ -1519,7 +1533,7 @@ function ConsoleApp() {
 
             {activePage === "knowledge" ? <KnowledgePage language={language} /> : null}
 
-            {activePage === "scheduler" ? <AlertsPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
+            {activePage === "scheduler" ? <AlertsPage confirmAction={confirmDialog.confirm} inboxOpenRequest={inboxOpenRequest} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
 
             {activePage === "mcp" ? <MCPPage language={language} /> : null}
 
@@ -1679,6 +1693,7 @@ function Header({
   onLogout,
   onUpdateProfile,
   page,
+  researchQueue,
   setPage,
   onThemeChange,
   resolvedTheme,
@@ -1693,6 +1708,7 @@ function Header({
   onLogout: () => void;
   onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
   page: Page | null;
+  researchQueue: ReactNode;
   setPage: (page: Page) => void;
   onThemeChange: (theme: Theme) => void;
   resolvedTheme: EffectiveTheme;
@@ -1751,6 +1767,7 @@ function Header({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {researchQueue}
         <Button
           aria-label={hideMobileChromeLabel}
           className="rounded-full lg:hidden"

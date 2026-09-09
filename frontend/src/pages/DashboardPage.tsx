@@ -6,7 +6,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   BarChart2,
-  Bell,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -36,14 +35,12 @@ import {
   getDashboard,
   getDashboardSymbolInsights,
   getIntraday,
-  listAlertEvents,
 } from "@/lib/api";
 import { useChartColors } from "@/lib/color-scheme";
 import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type {
   CandlestickItem,
-  AlertEvent,
   DashboardMarketModule,
   DashboardModuleSource,
   DashboardPortfolioModule,
@@ -385,26 +382,24 @@ const QuoteRow = memo(function QuoteRow({
   const meta = [rangeMeta, activityMeta].filter(Boolean).join(" · ");
   return (
     <div
-      className={cn(
-        "dashboard-quote-row group grid w-full min-w-0 select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-transparent transition-colors",
-      )}
+      className="dashboard-quote-row group grid w-full min-w-0 select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-1 transition-colors"
       data-selected={selected ? "true" : undefined}
     >
       <button
         aria-pressed={selected}
-        className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-1 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 sm:px-2"
+        className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3 pl-3 pr-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
         onClick={() => onSelect?.(row.symbol)}
         type="button"
       >
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <p className="truncate text-sm font-semibold">{row.symbol}</p>
-            {row.category ? <Badge className="h-5 px-1.5 text-[10px]" variant="outline">{row.category}</Badge> : null}
+            <p className="truncate text-sm font-semibold tracking-tight">{row.symbol}</p>
+            {row.category ? <span className="shrink-0 text-[10px] font-medium tracking-wide text-muted-foreground/75">{row.category}</span> : null}
           </div>
-          <p className="truncate text-xs text-muted-foreground">{row.name || "-"}</p>
-          {meta ? <p className="mt-0.5 truncate text-[11px] text-muted-foreground/85">{meta}</p> : null}
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{row.name || "-"}</p>
+          {meta ? <p className="mt-1 truncate text-[10px] text-muted-foreground/75">{meta}</p> : null}
         </div>
-        <div className="text-right">
+        <div className="self-start pt-0.5 text-right">
           <p className="text-sm font-semibold tabular-nums">{formatNumeric(row.last_done, language, 3)}</p>
           <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-xs font-semibold tabular-nums", toneClass(tone))}>
             <Icon className="size-3.5" />
@@ -415,7 +410,7 @@ const QuoteRow = memo(function QuoteRow({
       {onOpenChart ? (
         <Button
           aria-label={chartLabel}
-          className="mr-1 h-8 w-8 shrink-0 text-muted-foreground hover:text-primary"
+          className="mr-1 h-8 w-7 shrink-0 text-muted-foreground/60 hover:text-primary group-hover:text-muted-foreground focus-visible:text-primary"
           onClick={() => onOpenChart(row.symbol)}
           size="icon"
           title={chartLabel}
@@ -903,7 +898,7 @@ function WatchlistMovers({
         <InlineState>{copy.emptyMovers}</InlineState>
       ) : (
         <div className="space-y-2.5">
-          <div className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2 pb-0.5">
             <div className="flex shrink-0 gap-1 rounded-full bg-muted/40 p-0.5">
               {WATCHLIST_VIEWS.map((item) => (
                 <button
@@ -1663,7 +1658,6 @@ export function DashboardPage({
   const canWatchlist = canPermission("watchlist:read");
   const canFundamentals = canPermission("fundamentals:read");
   const canChat = canPermission("chat:read");
-  const canAlerts = canPermission("scheduler:read");
 
   const initialSnapshotRef = useRef<DashboardResponse | null | undefined>(undefined);
   if (initialSnapshotRef.current === undefined) {
@@ -1675,21 +1669,12 @@ export function DashboardPage({
   );
   const [dashboardError, setDashboardError] = useState("");
   const [selectedWatchlistSymbol, setSelectedWatchlistSymbol] = useState("");
-  const [researchQueue, setResearchQueue] = useState<AlertEvent[]>([]);
   const dashboardRef = useRef<DashboardResponse | null>(dashboard);
   const modulesAbortRef = useRef<AbortController | null>(null);
   const errorToastRef = useRef(new Map<string, { message: string; time: number }>());
   const snapshotSerializedRef = useRef("");
   const snapshotTimerRef = useRef(0);
   const [, startDashboardTransition] = useTransition();
-
-  useEffect(() => {
-    if (!canAlerts) return;
-    const priority: Record<AlertEvent["severity"], number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
-    listAlertEvents(undefined, "unread", 20)
-      .then((events) => setResearchQueue(events.sort((left, right) => priority[right.severity] - priority[left.severity]).slice(0, 5)))
-      .catch(() => setResearchQueue([]));
-  }, [canAlerts]);
 
   const notifyDashboardError = useCallback((key: string, scope: DashboardModuleKey | "dashboard" | "quote", message: string) => {
     const text = message.trim();
@@ -1895,7 +1880,6 @@ export function DashboardPage({
 
   return (
     <div className="page-enter flex min-h-0 w-full flex-1 flex-col gap-3">
-      {canAlerts ? <section className="rounded-lg border border-border/80 bg-card/70 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Bell className="size-4 text-primary" /><div><h2 className="text-sm font-semibold">{language === "en" ? "Daily Research Queue" : "每日研究队列"}</h2><p className="text-xs text-muted-foreground">{language === "en" ? "Unread changes ranked by severity" : "按严重度排序的待复核变化"}</p></div></div><Button asChild size="sm" variant="outline"><a href="/alerts">{language === "en" ? "Open inbox" : "打开收件箱"}</a></Button></div>{researchQueue.length ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">{researchQueue.map((event) => <a className="rounded-md border border-border/70 bg-background/55 p-2 transition hover:border-primary/45" href={`/security/${encodeURIComponent(event.symbol)}/alerts`} key={event.id}><div className="flex items-center justify-between gap-1"><Badge variant="outline">{event.severity}</Badge><span className="text-[10px] text-muted-foreground">{event.symbol}</span></div><p className="mt-2 line-clamp-2 text-xs font-medium">{event.title}</p></a>)}</div> : <p className="mt-3 text-xs text-muted-foreground">{language === "en" ? "No unread changes require review." : "目前没有需要复核的未读变化。"}</p>}</section> : null}
       <div
         className={cn(
           "dashboard-wide-grid grid min-h-0 gap-4 xl:grid-cols-[300px_minmax(0,1fr)_minmax(360px,0.88fr)] xl:gap-5 2xl:grid-cols-[320px_minmax(420px,1fr)_minmax(390px,0.86fr)]",

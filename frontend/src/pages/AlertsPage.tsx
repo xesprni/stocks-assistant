@@ -28,11 +28,13 @@ const operators = ["gt", "gte", "lt", "lte", "eq", "contains", "changed"];
 
 export function AlertsPage({
   confirmAction,
+  inboxOpenRequest = 0,
   initialSymbol = "",
   language,
   telegramEnabled,
 }: {
   confirmAction: ConfirmFn;
+  inboxOpenRequest?: number;
   initialSymbol?: string;
   language: AppLanguage;
   telegramEnabled: boolean;
@@ -68,6 +70,10 @@ export function AlertsPage({
   }
 
   useEffect(() => { void load(); }, [initialSymbol]);
+
+  useEffect(() => {
+    if (inboxOpenRequest > 0) setTab("inbox");
+  }, [inboxOpenRequest]);
 
   async function handleCreate() {
     if (!form.symbol.trim() || !form.name.trim()) return;

@@ -623,16 +623,12 @@
   }
 
   .dashboard-quote-row:hover {
-    background: var(--list-hover-bg);
-    border-color: var(--list-hover-border);
-    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.08);
+    background: hsl(var(--muted) / 0.45);
   }
 
   .dashboard-quote-row[data-selected="true"] {
     background:
-      linear-gradient(90deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.035) 48%, transparent);
-    border-color: hsl(var(--primary) / 0.34);
-    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.08);
+      linear-gradient(90deg, hsl(var(--primary) / 0.09), hsl(var(--primary) / 0.025) 65%, transparent);
   }
 
   .dashboard-quote-row:hover::before,
