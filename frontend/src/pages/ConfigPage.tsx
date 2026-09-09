@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Bot, BrainCircuit, Check, ChevronDown, CircleCheck, CircleDashed, Cpu, Database, Globe2, KeyRound, Loader2, LayoutDashboard, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowRight, Bot, BrainCircuit, Check, ChevronDown, CircleCheck, Cpu, Database, Globe2, KeyRound, Loader2, LayoutDashboard, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench } from "lucide-react";
 
-import { Field } from "@/components/common/Field";
+import { ConfigChoiceCard, ConfigField as Field, ConfigSegmentedControl } from "@/components/config/ConfigForm";
 import { ToggleRow } from "@/components/common/ToggleRow";
 import { LongbridgeAuthPanel } from "@/components/LongbridgeAuthPanel";
 import { MarketConfigPage } from "@/components/MarketConfigPage";
+import { ChangePasswordDialog } from "@/components/security/ChangePasswordDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { changeOwnPassword, getConfigReadiness, listTools, seedDemoData, sendTelegramTestMessage, testConfigConnection } from "@/lib/api";
+import { getConfigReadiness, listTools, seedDemoData, sendTelegramTestMessage, testConfigConnection } from "@/lib/api";
 import { useColorScheme } from "@/lib/color-scheme";
 import { toDraft } from "@/lib/config";
 import { formatTemplate, i18n } from "@/lib/i18n";
@@ -31,9 +32,6 @@ const TOOL_CHOICE_OPTIONS = ["auto", "none", "required"] as const;
 export type ConfigTab = "model" | "agent" | "longbridge" | "market" | "channels" | "features";
 
 type SettingsTab = ConfigTab | "overview" | "security";
-
-type PasswordForm = { current: string; next: string; confirm: string };
-type PasswordState = "idle" | "saving" | "saved" | "error";
 
 function isCompatibleBase(value?: string | null): value is string {
   const normalized = value?.trim().replace(/\/+$/, "");
@@ -72,7 +70,6 @@ export function ConfigPage({
   setDraft: (draft: ConfigDraft) => void;
 }) {
   const copy = i18n[language].config;
-  const common = i18n[language].common;
   const layoutCopy = copy.settingsLayout;
   const defaultTab = initialTab === "market" && !canReadMarket ? "model" : initialTab ?? "model";
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab);
@@ -80,9 +77,6 @@ export function ConfigPage({
   const [telegramTestMessage, setTelegramTestMessage] = useState(copy.telegramTestDefault);
   const [telegramTestState, setTelegramTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [telegramTestResult, setTelegramTestResult] = useState("");
-  const [passwordForm, setPasswordForm] = useState<PasswordForm>({ current: "", next: "", confirm: "" });
-  const [passwordState, setPasswordState] = useState<PasswordState>("idle");
-  const [passwordMessage, setPasswordMessage] = useState("");
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
@@ -262,49 +256,6 @@ export function ConfigPage({
       setConnectionMessage(caught instanceof Error ? caught.message : (language === "en" ? "Could not create sample data" : "无法创建示例数据"));
     } finally {
       setDemoDataLoading(false);
-    }
-  }
-
-  function openPasswordDialog() {
-    setPasswordForm({ current: "", next: "", confirm: "" });
-    setPasswordState("idle");
-    setPasswordMessage("");
-    setIsPasswordDialogOpen(true);
-  }
-
-  function closePasswordDialog() {
-    if (passwordState === "saving") return;
-    setIsPasswordDialogOpen(false);
-    setPasswordForm({ current: "", next: "", confirm: "" });
-    setPasswordState("idle");
-    setPasswordMessage("");
-  }
-
-  async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!passwordForm.current || !passwordForm.next || passwordForm.next !== passwordForm.confirm) {
-      setPasswordState("error");
-      setPasswordMessage(copy.passwordMismatch);
-      return;
-    }
-    setPasswordState("saving");
-    setPasswordMessage("");
-    try {
-      await changeOwnPassword({
-        current_password: passwordForm.current,
-        new_password: passwordForm.next,
-      });
-      setPasswordForm({ current: "", next: "", confirm: "" });
-      setPasswordState("saved");
-      setPasswordMessage(copy.passwordChanged);
-      window.setTimeout(() => {
-        setPasswordState("idle");
-        setPasswordMessage("");
-        setIsPasswordDialogOpen(false);
-      }, 1200);
-    } catch (caught) {
-      setPasswordState("error");
-      setPasswordMessage(caught instanceof Error ? caught.message : copy.passwordChangeFailed);
     }
   }
 
@@ -514,7 +465,7 @@ export function ConfigPage({
                     title={copy.accountSecurity}
                   >
                     <div className="flex justify-start">
-                      <Button size="sm" variant="outline" onClick={openPasswordDialog}>
+                      <Button size="sm" variant="outline" onClick={() => setIsPasswordDialogOpen(true)}>
                         <KeyRound />
                         {copy.changePassword}
                       </Button>
@@ -548,16 +499,16 @@ export function ConfigPage({
                 icon={<KeyRound className="size-4 text-primary" />}
                 title={copy.modelSection}
               >
-                <p className="mb-2 text-xs font-semibold text-muted-foreground">{copy.invocationMode}</p>
-                <div className="mb-5 grid gap-4 lg:grid-cols-2">
-                  <ModelProviderCard
+                <p className="mb-3 text-[13px] font-medium text-foreground">{copy.invocationMode}</p>
+                <div aria-label={copy.invocationMode} className="mb-5 grid gap-3 md:grid-cols-2" role="group">
+                  <ConfigChoiceCard
                     description={copy.openaiCompatibleHint}
                     icon={<Cpu className="size-4 text-primary" />}
                     label={copy.openaiCompatible}
                     selected={!isCodexOAuth}
                     onSelect={() => selectLlmProvider("openai_compatible")}
                   />
-                  <ModelProviderCard
+                  <ConfigChoiceCard
                     description={copy.codexOauthHint}
                     icon={<TerminalSquare className="size-4 text-secondary" />}
                     label={copy.codexOauth}
@@ -565,13 +516,30 @@ export function ConfigPage({
                     onSelect={() => selectLlmProvider("openai_responses")}
                   />
                 </div>
-                <div className="mb-3 rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                  {isCodexOAuth ? copy.codexProviderHint : copy.compatibleProviderHint}
+                <div className="mb-5 flex flex-col gap-3 rounded-lg bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs leading-5 text-muted-foreground">{isCodexOAuth ? copy.codexProviderHint : copy.compatibleProviderHint}</p>
+                  {!isCodexOAuth ? (
+                    <Button
+                      className="shrink-0 self-start sm:self-center"
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => patchDraft({
+                        llm_provider: "openai_responses",
+                        llm_auth_mode: "codex",
+                        llm_codex_api_base: CODEX_OAUTH_API_BASE,
+                        llm_codex_model: CODEX_DEFAULT_MODEL,
+                      })}
+                    >
+                      <TerminalSquare />
+                      {copy.useCodexPreset}
+                    </Button>
+                  ) : null}
                 </div>
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
                   {isCodexOAuth ? (
                     <>
-                      <Field label={copy.codexApiBase}>
+                      <Field className="md:col-span-2" label={copy.codexApiBase}>
                         <Input
                           value={draft.llm_codex_api_base ?? ""}
                           onChange={(event) => patchDraft({ llm_codex_api_base: event.target.value })}
@@ -590,7 +558,7 @@ export function ConfigPage({
                           onChange={(event) => patchDraft({ llm_codex_auth_file: event.target.value })}
                         />
                       </Field>
-                      <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                      <div className="rounded-lg bg-muted/30 px-4 py-3 text-xs leading-5 text-muted-foreground md:col-span-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={draft.has_codex_oauth ? "secondary" : "outline"}>
                             {draft.has_codex_oauth ? copy.codexOauthReady : copy.codexOauthMissing}
@@ -603,40 +571,23 @@ export function ConfigPage({
                     </>
                   ) : (
                     <>
-                      <Field label={copy.llmApiBase}>
+                      <Field className="md:col-span-2" label={copy.llmApiBase}>
                         <Input value={draft.llm_api_base} onChange={(event) => patchDraft({ llm_api_base: event.target.value })} />
                       </Field>
                       <Field label={copy.llmModel}>
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                          <Input
-                            className="flex-1"
-                            value={draft.llm_model}
-                            onChange={(event) => patchDraft({ llm_model: event.target.value })}
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            type="button"
-                            onClick={() => patchDraft({
-                              llm_provider: "openai_responses",
-                              llm_auth_mode: "codex",
-                              llm_codex_api_base: CODEX_OAUTH_API_BASE,
-                              llm_codex_model: CODEX_DEFAULT_MODEL,
-                            })}
-                          >
-                            <TerminalSquare />
-                            {copy.useCodexPreset}
-                          </Button>
-                        </div>
+                        <Input
+                          value={draft.llm_model}
+                          onChange={(event) => patchDraft({ llm_model: event.target.value })}
+                        />
                       </Field>
-                    <Field label={copy.llmApiKey}>
-                      <Input
-                        placeholder={draft.has_llm_api_key ? draft.llm_api_key_masked : "sk-..."}
-                        type="password"
-                        value={draft.llm_api_key}
-                        onChange={(event) => patchDraft({ llm_api_key: event.target.value })}
-                      />
-                    </Field>
+                      <Field label={copy.llmApiKey}>
+                        <Input
+                          placeholder={draft.has_llm_api_key ? draft.llm_api_key_masked : "sk-..."}
+                          type="password"
+                          value={draft.llm_api_key}
+                          onChange={(event) => patchDraft({ llm_api_key: event.target.value })}
+                        />
+                      </Field>
                     </>
                   )}
                 </div>
@@ -647,16 +598,16 @@ export function ConfigPage({
                 icon={<Database className="size-4 text-secondary" />}
                 title={copy.embeddingSection}
               >
-                <p className="mb-2 text-xs font-semibold text-muted-foreground">{copy.invocationMode}</p>
-                <div className="mb-5 grid gap-4 lg:grid-cols-2">
-                  <ModelProviderCard
+                <p className="mb-3 text-[13px] font-medium text-foreground">{copy.invocationMode}</p>
+                <div aria-label={copy.invocationMode} className="mb-5 grid gap-3 md:grid-cols-2" role="group">
+                  <ConfigChoiceCard
                     description={copy.embeddingCompatibleHint}
                     icon={<Database className="size-4 text-secondary" />}
                     label={copy.openaiCompatible}
                     selected={!isEmbeddingCodexOAuth}
                     onSelect={() => selectEmbeddingProvider("api_key")}
                   />
-                  <ModelProviderCard
+                  <ConfigChoiceCard
                     description={copy.embeddingCodexHint}
                     icon={<TerminalSquare className="size-4 text-secondary" />}
                     label={copy.codexOauth}
@@ -664,10 +615,10 @@ export function ConfigPage({
                     onSelect={() => selectEmbeddingProvider("codex")}
                   />
                 </div>
-                <div className="grid gap-4 xl:grid-cols-3">
+                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
                   {isEmbeddingCodexOAuth ? (
                     <>
-                      <Field label={copy.codexApiBase}>
+                      <Field className="md:col-span-2" label={copy.codexApiBase}>
                         <Input
                           value={draft.embedding_codex_api_base ?? ""}
                           onChange={(event) => patchDraft({ embedding_codex_api_base: event.target.value })}
@@ -686,7 +637,7 @@ export function ConfigPage({
                           onChange={(event) => patchDraft({ embedding_codex_auth_file: event.target.value })}
                         />
                       </Field>
-                      <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground xl:col-span-3">
+                      <div className="rounded-lg bg-muted/30 px-4 py-3 text-xs leading-5 text-muted-foreground md:col-span-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={draft.has_embedding_codex_oauth ? "secondary" : "outline"}>
                             {draft.has_embedding_codex_oauth ? copy.codexOauthReady : copy.codexOauthMissing}
@@ -701,7 +652,7 @@ export function ConfigPage({
                     </>
                   ) : (
                     <>
-                      <Field label={copy.embeddingApiBase}>
+                      <Field className="md:col-span-2" label={copy.embeddingApiBase}>
                         <Input
                           value={draft.embedding_api_base}
                           onChange={(event) => patchDraft({ embedding_api_base: event.target.value })}
@@ -737,7 +688,7 @@ export function ConfigPage({
                     </Field>
                   </div>
                 ) : null}
-                <div className={cn("grid gap-3 sm:grid-cols-3", canManageSystem && "mt-3")}>
+                <div className={cn("grid items-start gap-x-5 gap-y-5 md:grid-cols-2", canManageSystem && "mt-5")}>
                   <Field label={copy.maxSteps}>
                     <Input
                       min={1}
@@ -763,8 +714,18 @@ export function ConfigPage({
                       onChange={(event) => patchDraft({ agent_max_context_turns: Number(event.target.value) })}
                     />
                   </Field>
+                  <Field description={copy.researchQuickPromptsRefreshHint} label={copy.researchQuickPromptsRefresh}>
+                    <Input
+                      max={10080}
+                      min={1}
+                      step={1}
+                      type="number"
+                      value={(draft.research_quick_prompts_refresh_seconds ?? 3600) / 60}
+                      onChange={(event) => patchDraft({ research_quick_prompts_refresh_seconds: Math.round(Number(event.target.value) * 60) })}
+                    />
+                  </Field>
                 </div>
-                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div className="mt-6 grid items-start gap-x-5 gap-y-5 border-t border-border/60 pt-6 md:grid-cols-2">
                   <Field label={copy.temperature}>
                     <Input
                       max={2}
@@ -775,7 +736,7 @@ export function ConfigPage({
                       onChange={(event) => patchDraft({ llm_temperature: Number(event.target.value) })}
                     />
                   </Field>
-                  <Field label={copy.maxOutputTokens}>
+                  <Field description={copy.maxOutputTokensHint} label={copy.maxOutputTokens}>
                     <Input
                       min={0}
                       step={1024}
@@ -783,39 +744,20 @@ export function ConfigPage({
                       value={draft.llm_max_output_tokens}
                       onChange={(event) => patchDraft({ llm_max_output_tokens: Number(event.target.value) })}
                     />
-                    <p className="text-xs leading-5 text-muted-foreground">{copy.maxOutputTokensHint}</p>
                   </Field>
                   <Field label={copy.reasoningEffort}>
-                    <div className="grid grid-cols-2 gap-1 rounded-md border border-border/60 bg-muted/30 p-1">
-                      {REASONING_EFFORT_OPTIONS.map((effort) => (
-                        <Button
-                          className="min-w-0"
-                          key={effort}
-                          size="sm"
-                          type="button"
-                          variant={draft.llm_reasoning_effort === effort ? "default" : "ghost"}
-                          onClick={() => patchDraft({ llm_reasoning_effort: effort })}
-                        >
-                          {reasoningEffortLabels[effort]}
-                        </Button>
-                      ))}
-                    </div>
+                    <ConfigSegmentedControl
+                      options={REASONING_EFFORT_OPTIONS.map((value) => ({ value, label: reasoningEffortLabels[value] }))}
+                      value={draft.llm_reasoning_effort}
+                      onValueChange={(llm_reasoning_effort) => patchDraft({ llm_reasoning_effort })}
+                    />
                   </Field>
                   <Field label={copy.toolChoice}>
-                    <div className="grid grid-cols-3 gap-1 rounded-md border border-border/60 bg-muted/30 p-1">
-                      {TOOL_CHOICE_OPTIONS.map((choice) => (
-                        <Button
-                          className="min-w-0"
-                          key={choice}
-                          size="sm"
-                          type="button"
-                          variant={draft.llm_tool_choice === choice ? "default" : "ghost"}
-                          onClick={() => patchDraft({ llm_tool_choice: choice })}
-                        >
-                          {toolChoiceLabels[choice]}
-                        </Button>
-                      ))}
-                    </div>
+                    <ConfigSegmentedControl
+                      options={TOOL_CHOICE_OPTIONS.map((value) => ({ value, label: toolChoiceLabels[value] }))}
+                      value={draft.llm_tool_choice}
+                      onValueChange={(llm_tool_choice) => patchDraft({ llm_tool_choice })}
+                    />
                   </Field>
                 </div>
               </ConfigSection>
@@ -848,13 +790,15 @@ export function ConfigPage({
                 icon={<Plug className="size-4 text-primary" />}
                 title={copy.multiAgentSection}
               >
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="mb-5">
                   <ToggleRow
                     checked={draft.multi_agent_enabled}
                     icon={<Bot className="size-4 text-primary" />}
                     label={copy.multiAgent}
                     onCheckedChange={(checked) => patchDraft({ multi_agent_enabled: checked })}
                   />
+                </div>
+                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-3">
                   <Field label={copy.parallelLimit}>
                     <Input
                       min={1}
@@ -917,7 +861,7 @@ export function ConfigPage({
                 icon={<Database className="size-4 text-secondary" />}
                 title={copy.endpointSection}
               >
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
                   <Field label="HTTP URL">
                     <Input
                       placeholder={layoutCopy.sdkDefault}
@@ -939,8 +883,8 @@ export function ConfigPage({
                 icon={<Globe2 className="size-4 text-primary" />}
                 title={copy.guardianSection}
               >
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-                  <Field label={copy.guardianApiKey}>
+                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
+                  <Field className="md:col-span-2" description={copy.guardianApiKeyHint} label={copy.guardianApiKey}>
                     <Input
                       placeholder={draft.has_guardian_api_key ? draft.guardian_api_key_masked : "Guardian Open Platform API key"}
                       type="password"
@@ -948,9 +892,6 @@ export function ConfigPage({
                       onChange={(event) => patchDraft({ guardian_api_key: event.target.value })}
                     />
                   </Field>
-                  <div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                    {copy.guardianApiKeyHint}
-                  </div>
                 </div>
               </ConfigSection>
               <ConfigSection
@@ -958,7 +899,7 @@ export function ConfigPage({
                 icon={<Globe2 className="size-4 text-secondary" />}
                 title={copy.webSearchSection}
               >
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
                   <Field label={copy.webSearchApiUrl}>
                     <Input
                       value={draft.search_api_url ?? ""}
@@ -1175,20 +1116,10 @@ export function ConfigPage({
               </div>
             </div>
           </Tabs>
-          <PasswordChangeDialog
-            common={common}
-            copy={copy}
-            form={passwordForm}
-            isOpen={isPasswordDialogOpen}
-            message={passwordMessage}
-            onChange={(patch) => {
-              setPasswordState("idle");
-              setPasswordMessage("");
-              setPasswordForm((current) => ({ ...current, ...patch }));
-            }}
-            onClose={closePasswordDialog}
-            onSubmit={handleChangePassword}
-            state={passwordState}
+          <ChangePasswordDialog
+            language={language}
+            onClose={() => setIsPasswordDialogOpen(false)}
+            open={isPasswordDialogOpen}
           />
 
         </>
@@ -1199,139 +1130,6 @@ export function ConfigPage({
         </div>
       )}
     </section>
-  );
-}
-
-
-function PasswordChangeDialog({
-  common,
-  copy,
-  form,
-  isOpen,
-  message,
-  onChange,
-  onClose,
-  onSubmit,
-  state,
-}: {
-  common: typeof i18n.zh.common;
-  copy: typeof i18n.zh.config;
-  form: PasswordForm;
-  isOpen: boolean;
-  message: string;
-  onChange: (patch: Partial<PasswordForm>) => void;
-  onClose: () => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  state: PasswordState;
-}) {
-  if (!isOpen) return null;
-
-  const disabled = state === "saving" || form.next.length < 8 || !form.current || !form.confirm;
-
-  return (
-    <div className="fixed inset-0 z-[1100] grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
-      <button aria-label={common.close} className="absolute inset-0" onClick={onClose} type="button" />
-      <form
-        aria-labelledby="change-password-title"
-        aria-modal="true"
-        className="panel motion-panel relative w-full max-w-[440px] rounded-md p-5 shadow-2xl"
-        onSubmit={onSubmit}
-        role="dialog"
-      >
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="grid size-10 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary">
-              <KeyRound className="size-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 id="change-password-title" className="text-base font-semibold">{copy.changePassword}</h2>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.accountSecurityHint}</p>
-            </div>
-          </div>
-          <Button aria-label={common.close} className="h-8 w-8 shrink-0" disabled={state === "saving"} onClick={onClose} size="icon" type="button" variant="ghost">
-            <X className="size-4" />
-          </Button>
-        </div>
-
-        <div className="space-y-3">
-          <Field label={copy.currentPassword}>
-            <Input
-              autoFocus
-              autoComplete="current-password"
-              type="password"
-              value={form.current}
-              onChange={(event) => onChange({ current: event.target.value })}
-            />
-          </Field>
-          <Field label={copy.newPassword}>
-            <Input
-              autoComplete="new-password"
-              type="password"
-              value={form.next}
-              onChange={(event) => onChange({ next: event.target.value })}
-            />
-          </Field>
-          <Field label={copy.confirmPassword}>
-            <Input
-              autoComplete="new-password"
-              type="password"
-              value={form.confirm}
-              onChange={(event) => onChange({ confirm: event.target.value })}
-            />
-          </Field>
-        </div>
-
-        {message ? (
-          <p className={cn("mt-3 rounded-md border px-3 py-2 text-xs", state === "error" ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")}>
-            {message}
-          </p>
-        ) : null}
-
-        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button disabled={state === "saving"} onClick={onClose} size="sm" type="button" variant="outline">
-            {common.cancel}
-          </Button>
-          <Button disabled={disabled} size="sm" type="submit">
-            {state === "saving" ? <Loader2 className="animate-spin" /> : state === "saved" ? <Check /> : <KeyRound />}
-            {state === "saving" ? copy.changingPassword : copy.changePassword}
-          </Button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-
-function ModelProviderCard({
-  description,
-  icon,
-  label,
-  onSelect,
-  selected,
-}: {
-  description: string;
-  icon: ReactNode;
-  label: string;
-  onSelect: () => void;
-  selected: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        "flex min-h-[112px] w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-        selected ? "border-primary/60 bg-primary/5" : "border-border/75 bg-background/60 hover:border-primary/40 hover:bg-muted/20",
-      )}
-      aria-pressed={selected}
-      onClick={onSelect}
-    >
-      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/70">{icon}</span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold">{label}</span>
-        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
-      </span>
-      {selected ? <CircleCheck className="ml-auto mt-0.5 size-4 shrink-0 text-primary" /> : <CircleDashed className="ml-auto mt-0.5 size-4 shrink-0 text-muted-foreground/50" />}
-    </button>
   );
 }
 
@@ -1472,14 +1270,14 @@ function ToolPermissionTile({
   return (
     <label
       className={cn(
-        "flex min-h-[90px] cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors",
-        selected ? "border-primary/60 bg-primary/10" : "border-border/75 bg-muted/10 hover:border-primary/40",
+        "flex min-h-[96px] cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors focus-within:ring-2 focus-within:ring-primary/40",
+        selected ? "border-primary/40 bg-primary/5" : "border-border/75 bg-background/40 hover:border-primary/40",
         disabled && "cursor-not-allowed opacity-60",
       )}
     >
       <input
         checked={selected}
-        className="mt-1"
+        className="mt-0.5 size-4 shrink-0 accent-primary"
         disabled={disabled}
         type="checkbox"
         onChange={onToggle}
@@ -1510,15 +1308,15 @@ function ConfigSection({
   title: string;
 }) {
   return (
-    <section className={cn("overflow-hidden rounded-xl border border-border/70 bg-card/70", className)}>
-      <div className="flex items-start gap-3 border-b border-border/50 px-4 py-4 sm:px-5">
+    <section className={cn("config-section min-w-0 rounded-xl border border-border/70 bg-card/70", className)}>
+      <div className="flex items-start gap-3 border-b border-border/50 px-4 py-4 sm:px-6">
         <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/60">{icon}</div>
         <div className="min-w-0">
           <h3 className="text-sm font-semibold leading-6">{title}</h3>
           {description ? <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{description}</p> : null}
         </div>
       </div>
-      <div className="p-4 sm:p-5">{children}</div>
+      <div className="p-4 sm:p-6">{children}</div>
     </section>
   );
 }

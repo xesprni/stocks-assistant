@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -47,6 +48,14 @@ class AuthSecurityTest(unittest.TestCase):
         response = self.client.post(
             "/api/v1/auth/setup",
             json={"username": "admin", "password": "Password123!", "display_name": "Admin"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def login_device(self, username, device_id):
+        response = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": username, "password": "Password123!", "device_id": device_id},
         )
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
@@ -209,6 +218,179 @@ class AuthSecurityTest(unittest.TestCase):
         relisted = self.client.get("/api/v1/auth/sessions", headers=headers)
         self.assertEqual(relisted.status_code, 200, relisted.text)
         self.assertEqual(relisted.json()["sessions"][0]["session_count"], 1)
+
+    def test_revoke_others_is_scoped_to_normal_user_and_invalidates_tokens(self):
+        admin = self.setup_admin()
+        self.store.create_user(username="trader", password_hash=hash_password("Password123!"), role_names=["user"])
+        current = self.login_device("trader", "shared-browser")
+        other = self.login_device("trader", "other-browser")
+        admin_other = self.login_device("admin", "other-browser")
+
+        response = self.client.post(
+            f"/api/v1/auth/sessions/revoke-others?user_id={admin['user']['id']}",
+            json={"user_id": admin["user"]["id"], "device_id": "other-browser"},
+            headers={"Authorization": f"Bearer {current['access_token']}", "X-Device-Id": "other-browser"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1})
+        for tokens in (admin, admin_other, current):
+            checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
+            self.assertEqual(checked.status_code, 200, checked.text)
+        other_access = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {other['access_token']}"})
+        self.assertEqual(other_access.status_code, 401)
+        other_refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": other["refresh_token"]})
+        self.assertEqual(other_refresh.status_code, 401)
+
+    def test_admin_revoke_others_does_not_affect_other_users(self):
+        admin = self.setup_admin()
+        self.login_device("admin", "other-browser")
+        user = self.store.create_user(username="trader", password_hash=hash_password("Password123!"), role_names=["user"])
+        trader = self.login_device("trader", "other-browser")
+
+        response = self.client.post(
+            f"/api/v1/auth/sessions/revoke-others?user_id={user['id']}",
+            headers={"Authorization": f"Bearer {admin['access_token']}"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1})
+        checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {trader['access_token']}"})
+        self.assertEqual(checked.status_code, 200, checked.text)
+
+    def test_revoke_others_preserves_all_current_device_records_and_is_idempotent(self):
+        current = self.setup_admin()
+        current_record = self.store.get_refresh_token(hash_refresh_token(current["refresh_token"]))
+        current_device = self.store.get_login_session(current_record["session_id"])["device_id"]
+        current_second = self.login_device("admin", current_device)
+        other = self.login_device("admin", "other-browser")
+        other_second = self.login_device("admin", "other-browser")
+        # 模拟迁移或并发登录遗留的同设备多个活跃会话，批量退出必须按设备保留整组。
+        with self.store.connect() as conn:
+            conn.execute("UPDATE login_sessions SET revoked_at = NULL")
+            conn.execute("UPDATE refresh_tokens SET revoked_at = NULL")
+            conn.commit()
+
+        headers = {"Authorization": f"Bearer {current['access_token']}"}
+        first = self.client.post("/api/v1/auth/sessions/revoke-others", headers=headers)
+        second = self.client.post("/api/v1/auth/sessions/revoke-others", headers=headers)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 2})
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json(), {"status": "ok", "revoked_devices": 0, "revoked_sessions": 0})
+        for tokens in (current, current_second):
+            checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
+            self.assertEqual(checked.status_code, 200, checked.text)
+            refreshed = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+            self.assertEqual(refreshed.status_code, 200, refreshed.text)
+        for tokens in (other, other_second):
+            record = self.store.get_refresh_token(hash_refresh_token(tokens["refresh_token"]))
+            self.assertIsNotNone(record["revoked_at"])
+        with self.store.connect() as conn:
+            audits = conn.execute("SELECT * FROM audit_events WHERE action = 'auth.sessions_revoke_others'").fetchall()
+        self.assertEqual(len(audits), 2)
+        details = [json.loads(item["detail_json"]) for item in audits]
+        self.assertEqual({item["user_id"] for item in audits}, {current["user"]["id"]})
+        self.assertEqual({item["revoked_sessions"] for item in details}, {0, 2})
+        changed = next(item for item in details if item["revoked_sessions"])
+        self.assertEqual(changed["current_device_id"], current_device)
+        self.assertEqual(changed["revoked_device_ids"], ["other-browser"])
+        self.assertEqual(len(changed["revoked_session_ids"]), 2)
+
+    def test_revoke_others_skips_expired_and_revoked_records_but_revokes_offline_sessions(self):
+        current = self.setup_admin()
+        offline = self.login_device("admin", "offline-browser")
+        expired = self.login_device("admin", "expired-browser")
+        revoked = self.login_device("admin", "revoked-browser")
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(microsecond=0).isoformat()
+        self.client.post("/api/v1/auth/logout", json={"refresh_token": revoked["refresh_token"]})
+        with self.store.connect() as conn:
+            conn.execute("UPDATE login_sessions SET expires_at = ? WHERE device_id = 'expired-browser'", (old_time,))
+            conn.execute("UPDATE login_sessions SET last_seen_at = ? WHERE device_id = 'offline-browser'", (old_time,))
+            conn.execute(
+                "UPDATE refresh_tokens SET expires_at = ? WHERE token_hash = ?",
+                (old_time, hash_refresh_token(offline["refresh_token"])),
+            )
+            conn.commit()
+
+        response = self.client.post(
+            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1})
+        offline_access = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {offline['access_token']}"})
+        self.assertEqual(offline_access.status_code, 401)
+        expired_record = self.store.get_refresh_token(hash_refresh_token(expired["refresh_token"]))
+        self.assertIsNone(self.store.get_login_session(expired_record["session_id"])["revoked_at"])
+
+    def test_concurrent_revoke_others_counts_each_session_once(self):
+        current = self.setup_admin()
+        self.login_device("admin", "other-browser")
+        record = self.store.get_refresh_token(hash_refresh_token(current["refresh_token"]))
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            requests = [
+                executor.submit(
+                    self.store.revoke_other_login_devices,
+                    current["user"]["id"],
+                    current_session_id=record["session_id"],
+                )
+                for _ in range(2)
+            ]
+            results = [request.result(timeout=10) for request in requests]
+        self.assertEqual(sorted(item["revoked_sessions"] for item in results), [0, 1])
+        self.assertEqual(sorted(item["revoked_devices"] for item in results), [0, 1])
+
+    def test_revoke_others_rejects_unverifiable_current_device(self):
+        current = self.setup_admin()
+        self.login_device("admin", "other-browser")
+        user = self.store.get_user_by_id(current["user"]["id"])
+        legacy_token = create_access_token(user)
+        response = self.client.post(
+            "/api/v1/auth/sessions/revoke-others",
+            headers={"Authorization": f"Bearer {legacy_token}", "X-Device-Id": "other-browser"},
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("sign in again", response.json()["detail"])
+
+        current_record = self.store.get_refresh_token(hash_refresh_token(current["refresh_token"]))
+        with self.store.connect() as conn:
+            conn.execute("UPDATE login_sessions SET device_id = '' WHERE id = ?", (current_record["session_id"],))
+            conn.commit()
+        missing_device = self.client.post(
+            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+        )
+        self.assertEqual(missing_device.status_code, 409, missing_device.text)
+        self.assertTrue(all(not item["revoked_at"] for item in self.store.list_login_sessions(user["id"])))
+
+    def test_revoke_others_rejects_invalid_expired_and_revoked_tokens(self):
+        current = self.setup_admin()
+        other = self.login_device("admin", "other-browser")
+        record = self.store.get_refresh_token(hash_refresh_token(current["refresh_token"]))
+        user = self.store.get_user_by_id(current["user"]["id"])
+        with patch("app.core.security.ACCESS_TOKEN_MINUTES", -1):
+            expired_token = create_access_token(user, session_id=record["session_id"])
+        for token in ("invalid-token", expired_token):
+            response = self.client.post(
+                "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(response.status_code, 401, response.text)
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+        with self.store.connect() as conn:
+            conn.execute("UPDATE login_sessions SET expires_at = ? WHERE id = ?", (expired_at, record["session_id"]))
+            conn.commit()
+        expired_session = self.client.post(
+            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+        )
+        self.assertEqual(expired_session.status_code, 401, expired_session.text)
+        self.store.revoke_login_session(record["session_id"])
+        revoked = self.client.post(
+            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+        )
+        self.assertEqual(revoked.status_code, 401, revoked.text)
+        checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {other['access_token']}"})
+        self.assertEqual(checked.status_code, 200, checked.text)
 
     def test_admin_lists_all_user_login_devices(self):
         admin_tokens = self.setup_admin()
@@ -505,12 +687,25 @@ class AuthSecurityTest(unittest.TestCase):
         )
         self.assertEqual(wrong_current.status_code, 400)
 
+        unchanged = self.client.patch(
+            "/api/v1/auth/me/password",
+            json={"current_password": "Password123!", "new_password": "Password123!"},
+            headers=user_headers,
+        )
+        self.assertEqual(unchanged.status_code, 400, unchanged.text)
+        self.assertEqual(unchanged.json()["detail"], "New password must be different from current password")
+
         changed = self.client.patch(
             "/api/v1/auth/me/password",
             json={"current_password": "Password123!", "new_password": "NewPassword123!"},
             headers=user_headers,
         )
         self.assertEqual(changed.status_code, 200, changed.text)
+
+        still_signed_in = self.client.get("/api/v1/auth/me", headers=user_headers)
+        self.assertEqual(still_signed_in.status_code, 200, still_signed_in.text)
+        refreshed = self.client.post("/api/v1/auth/refresh", json={"refresh_token": login.json()["refresh_token"]})
+        self.assertEqual(refreshed.status_code, 200, refreshed.text)
 
         old_login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "Password123!"})
         self.assertEqual(old_login.status_code, 401)

@@ -460,7 +460,9 @@ class InvestmentLabService:
                           "invalidation_conditions": thesis["payload"].get("invalidation_conditions", []) if thesis else []})
         return links
 
-    def create_valuation_model(self, user_id: str, symbol: str, request: ValuationModelCreate) -> dict[str, Any]:
+    def create_valuation_model(
+        self, user_id: str, symbol: str, request: ValuationModelCreate, *, _connection=None,
+    ) -> dict[str, Any]:
         symbol = self.research.normalize_symbol(symbol)
         if request.thesis_snapshot_id:
             self.research.validate_thesis_symbol(user_id, request.thesis_snapshot_id, symbol)
@@ -473,10 +475,7 @@ class InvestmentLabService:
             model_key = f"valuation_{uuid.uuid4().hex[:16]}"
         result = self._calculate_valuation(request.model_type, request.assumptions)
         model_id = f"val_{uuid.uuid4().hex[:20]}"
-        # 版本分配和写入必须在同一写事务中；否则两个并发请求会拿到
-        # 相同 MAX(version)+1 并撞 UNIQUE 约束。
-        with self._write_lock, self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        def insert(connection):
             version = int(connection.execute(
                 "SELECT COALESCE(MAX(version),0)+1 FROM valuation_models WHERE user_id=? AND model_key=?", (user_id, model_key)
             ).fetchone()[0])
@@ -488,6 +487,16 @@ class InvestmentLabService:
                  _json([self.research.normalize_symbol(value) for value in request.peer_symbols]), _json(result), _json(request.source_ids),
                  request.thesis_snapshot_id, request.reason, _now()),
             )
+            row = connection.execute("SELECT * FROM valuation_models WHERE id=? AND user_id=?", (model_id, user_id)).fetchone()
+            return self._valuation_row(row)
+
+        # AI 实验用同一事务保存所有模型与最终报告；普通接口仍自行分配写事务。
+        if _connection is not None:
+            return insert(_connection)
+        # 版本分配和写入必须在同一写事务中，避免并发版本号冲突。
+        with self._write_lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            insert(connection)
         return self.get_valuation_model(user_id, model_id)
 
     def list_valuation_models(self, user_id: str, symbol: Optional[str] = None) -> list[dict[str, Any]]:

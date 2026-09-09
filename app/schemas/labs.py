@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.portfolio import PortfolioMarket
 
@@ -146,3 +146,112 @@ class GreaterChinaRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=40)
     paired_symbol: Optional[str] = Field(default=None, max_length=40)
     china_related_us_listing: bool = False
+
+
+LabKind = Literal["portfolio", "valuation", "greater_china"]
+
+
+class LabAIRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lab: LabKind
+    objective: str = Field(min_length=1, max_length=4000)
+    symbols: list[str] = Field(default_factory=list, max_length=10)
+    locale: Literal["zh-CN", "en-US"] = "zh-CN"
+
+    @field_validator("objective")
+    @classmethod
+    def nonempty_objective(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("objective is required")
+        return value.strip()
+
+    @field_validator("symbols")
+    @classmethod
+    def canonical_symbols(cls, value: list[str]) -> list[str]:
+        from app.core.research.service import ResearchService
+
+        return list(dict.fromkeys(ResearchService.normalize_symbol(symbol) for symbol in value))
+
+
+class LabAIArtifact(BaseModel):
+    id: str
+    kind: str
+    title: str
+    data: dict[str, Any]
+    created_at: str
+
+
+class LabAIRun(BaseModel):
+    id: str
+    lab: LabKind
+    title: str
+    objective: str
+    symbols: list[str]
+    status: Literal["running", "completed", "failed", "canceled"]
+    report: str = ""
+    artifacts: list[LabAIArtifact] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    steps: int = 0
+    created_at: str
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class LabDataRequest(BaseModel):
+    """AI 只能提供查询条件，身份与配置始终由后端绑定。"""
+
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["portfolio", "financial_reports", "security_insights", "quotes", "peers", "greater_china", "valuation_models"]
+    symbol: str = Field(default="", max_length=40)
+    symbols: list[str] = Field(default_factory=list, max_length=10)
+    market: PortfolioMarket = "US"
+    benchmark_symbol: str = Field(default="SPY.US", min_length=1, max_length=40)
+    lookback_days: int = Field(default=252, ge=30, le=500)
+    paired_symbol: Optional[str] = Field(default=None, max_length=40)
+    china_related_us_listing: bool = False
+    scenario_shocks: dict[str, float] = Field(default_factory=dict, max_length=100)
+    scenario_note: str = Field(default="", max_length=1000, description="Describe these hypothetical stress assumptions; they are not a market forecast")
+
+    @model_validator(mode="after")
+    def validate_scenario(self):
+        PortfolioLabRequest.valid_scenario_shocks(self.scenario_shocks)
+        if self.scenario_shocks and not self.scenario_note.strip():
+            raise ValueError("Stress scenarios require an explicit assumption note")
+        if any(abs(value) > 5 for value in self.scenario_shocks.values()):
+            raise ValueError("Stress shocks must be decimal fractions between -1 and 5")
+        return self
+
+
+class LabValuationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["source", "assumption"]
+    note: str = Field(min_length=1, max_length=1000)
+    artifact_id: Optional[str] = None
+    path: Optional[str] = Field(default=None, max_length=500, description="JSON Pointer into the source artifact's data, e.g. /statements/0/rows/0/values/0/value")
+    scale: float = Field(default=1, description="Explicit unit conversion only: 1, 1000, 1e6, 1e9 or their reciprocals")
+    denominator_artifact_id: Optional[str] = None
+    denominator_path: Optional[str] = Field(default=None, max_length=500)
+
+
+class LabAIValuationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=40)
+    title: str = Field(min_length=1, max_length=200)
+    model_type: Literal["dcf", "reverse_dcf", "relative"] = "dcf"
+    currency: str = Field(min_length=3, max_length=3)
+    assumptions: dict[str, Any]
+    evidence: dict[str, LabValuationEvidence]
+    peer_symbols: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator("peer_symbols")
+    @classmethod
+    def valid_peers(cls, value: list[str]) -> list[str]:
+        return LabAIRequest.canonical_symbols(value)
+
+    @field_validator("currency")
+    @classmethod
+    def valid_currency(cls, value: str) -> str:
+        normalized = value.upper()
+        if not normalized.isascii() or not normalized.isalpha():
+            raise ValueError("currency must be a three-letter currency code")
+        return normalized

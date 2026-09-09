@@ -1,19 +1,42 @@
 """统一公司研究工作区 API。"""
 
 from io import BytesIO
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
 
+from app.config import get_effective_settings
+from app.core.research.quick_prompts import QuickPromptsUnavailableError
 from app.core.security import CurrentUser, require_permissions
-from app.deps import get_memory_manager_for_user, get_research_service
+from app.deps import get_memory_manager_for_user, get_research_quick_prompts_service, get_research_service
 from app.schemas.research import (
     DecisionCreate, DecisionResponse, DecisionUpdate, ResearchDocumentCreate, ResearchDocumentResponse,
     ResearchEvidenceCreate, ResearchEvidenceResponse, SecurityWorkspaceSummary, ThesisSnapshotCreate, ThesisSnapshotResponse,
+    ResearchQuickPromptsResponse,
 )
 
 router = APIRouter()
+
+
+@router.get("/quick-prompts", response_model=ResearchQuickPromptsResponse)
+def quick_prompts(
+    language: Optional[Literal["zh", "en"]] = Query(None),
+    force_refresh: bool = Query(False),
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
+    settings = get_effective_settings(current_user.id)
+    try:
+        return get_research_quick_prompts_service().get_prompts(
+            current_user.id,
+            language=language or settings.app_language,
+            settings=settings,
+            force_refresh=force_refresh,
+            can_read_watchlist=current_user.can("watchlist:read"),
+            can_read_portfolio=current_user.can("portfolio:read"),
+        )
+    except QuickPromptsUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 async def _index_latest_document(user_id: str, document: dict) -> None:

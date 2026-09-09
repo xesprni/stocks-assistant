@@ -12,6 +12,7 @@ export function SideDrawer({
   cancelText,
   children,
   closeLabel,
+  dismissDisabled = false,
   footer,
   formId,
   isSaving = false,
@@ -26,6 +27,7 @@ export function SideDrawer({
   cancelText?: string;
   children: ReactNode;
   closeLabel?: string;
+  dismissDisabled?: boolean;
   footer?: ReactNode;
   formId?: string;
   isSaving?: boolean;
@@ -42,16 +44,28 @@ export function SideDrawer({
   const resolvedCloseLabel = closeLabel
     ?? (typeof document !== "undefined" && document.documentElement.lang.startsWith("zh") ? "关闭抽屉" : "Close drawer");
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const { dragHandleProps, layerRef, panelRef, present, requestClose } = useFluidSheet<HTMLElement>({
+  const { dragHandleProps, layerRef, panelRef, present, requestClose: requestSheetClose } = useFluidSheet<HTMLElement>({
     axis: "responsive",
-    onDismiss: onClose,
+    dragToDismiss: !dismissDisabled,
+    onDismiss: () => {
+      if (!dismissDisabled) onClose();
+    },
     open,
   });
+  const requestClose = () => {
+    if (!dismissDisabled) requestSheetClose();
+  };
+  const guardedDragHandleProps = dismissDisabled ? {
+    ...dragHandleProps,
+    onLostPointerCapture: dragHandleProps.onPointerCancel,
+    onPointerMove: dragHandleProps.onPointerCancel,
+    onPointerUp: dragHandleProps.onPointerCancel,
+  } : dragHandleProps;
   useDialogFocus(open, panelRef, requestClose, closeButtonRef);
 
   const defaultFooter = formId && cancelText && saveText ? (
     <>
-      <Button variant="outline" size="sm" type="button" className="min-w-20" onClick={requestClose}>
+      <Button variant="outline" size="sm" type="button" className="min-w-20" disabled={dismissDisabled} onClick={requestClose}>
         {cancelText}
       </Button>
       <Button form={formId} size="sm" type="submit" className="min-w-20" disabled={isSaving || saveDisabled}>
@@ -86,7 +100,7 @@ export function SideDrawer({
         <div
           aria-hidden="true"
           className="sheet-drag-handle flex h-6 shrink-0 touch-none items-center justify-center lg:hidden"
-          {...dragHandleProps}
+          {...guardedDragHandleProps}
         >
           <span className="h-1 w-10 rounded-full bg-muted-foreground/35" />
         </div>
@@ -98,6 +112,7 @@ export function SideDrawer({
           <Button
             aria-label={resolvedCloseLabel}
             className="shrink-0 rounded-full"
+            disabled={dismissDisabled}
             onClick={requestClose}
             ref={closeButtonRef}
             size="icon"

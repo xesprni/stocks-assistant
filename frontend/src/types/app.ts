@@ -42,6 +42,15 @@ export interface ChatMessage {
   sources?: SourceReference[];
 }
 
+export interface ResearchQuickPromptsResponse {
+  prompts: string[];
+  generated_at: string | null;
+  expires_at: string | null;
+  refresh_interval_seconds: number;
+  stale: boolean;
+  error: string | null;
+}
+
 export interface SubAgentRoleConfig {
   description: string;
   system_prompt: string;
@@ -206,6 +215,7 @@ export interface AppConfig {
   agent_max_steps: number;
   agent_max_context_tokens: number;
   agent_max_context_turns: number;
+  research_quick_prompts_refresh_seconds: number;
   agent_tool_allowlist: string[];
   agent_allow_all_mcp_tools: boolean;
   multi_agent_enabled: boolean;
@@ -476,6 +486,45 @@ export interface PortfolioLabResult {
   coverage: { holdings: number; valued_holdings: number; excluded_fx_holdings: number; history_available: number; history_weight: number };
   warnings: string[];
   limitations: string[];
+}
+
+export type LabAIKind = "portfolio" | "valuation" | "greater_china";
+
+export interface LabAIArtifact {
+  id: string;
+  kind: string;
+  title: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface LabAIRun {
+  id: string;
+  lab: LabAIKind;
+  title: string;
+  objective: string;
+  symbols: string[];
+  status: "running" | "completed" | "failed" | "canceled";
+  report: string;
+  artifacts: LabAIArtifact[];
+  warnings: string[];
+  steps: number;
+  created_at: string;
+  completed_at: string | null;
+  error: string | null;
+}
+
+export interface LabAIRequest {
+  lab: LabAIKind;
+  objective: string;
+  symbols?: string[];
+  locale?: "zh-CN" | "en-US";
+}
+
+export interface LabAIStreamEvent {
+  type: "run_started" | "status_update" | "tool_start" | "tool_end" | "message_delta" | "run_completed" | "error";
+  timestamp: number;
+  data: { run?: LabAIRun; message?: string; tool_name?: string; status?: string; delta?: string; reset?: boolean; error?: string };
 }
 
 export interface ValuationModel {

@@ -137,6 +137,7 @@ USER_CONFIG_KEYS = {
     "search_api_url",
     "search_api_key",
     "app_language",
+    "research_quick_prompts_refresh_seconds",
     "agent_max_steps",
     "agent_max_context_tokens",
     "agent_max_context_turns",
@@ -258,6 +259,9 @@ class Settings(BaseSettings):
     # ---- 工作空间 ----
     workspace_dir: str = "~/stocks-assistant"  # 工作空间根目录
     app_language: str = "zh"  # UI 语言：zh / en
+
+    # ---- Research 快速问答 ----
+    research_quick_prompts_refresh_seconds: int = Field(default=3600, ge=60, le=604800)  # AI 问题缓存有效期（秒）
 
     # ---- 认证安全配置 ----
     auth_max_devices_per_user: int = Field(default=5, ge=1, le=50)  # 单账号最多保留的活跃登录设备数

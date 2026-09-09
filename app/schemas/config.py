@@ -43,6 +43,7 @@ class AppConfig(BaseModel):
 
     workspace_dir: str
     app_language: str = "zh"
+    research_quick_prompts_refresh_seconds: int = Field(default=3600, ge=60, le=604800)
     auth_max_devices_per_user: int = 5
     agent_max_steps: int
     agent_max_context_tokens: int
@@ -126,6 +127,7 @@ class ConfigUpdate(BaseModel):
 
     workspace_dir: Optional[str] = None
     app_language: Optional[str] = None
+    research_quick_prompts_refresh_seconds: Optional[int] = Field(default=None, ge=60, le=604800)
     auth_max_devices_per_user: Optional[int] = Field(default=None, ge=1, le=50)
     agent_max_steps: Optional[int] = None
     agent_max_context_tokens: Optional[int] = None

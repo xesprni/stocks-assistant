@@ -1,5 +1,9 @@
 import type {
   AppConfig,
+  LabAIKind,
+  LabAIRequest,
+  LabAIRun,
+  LabAIStreamEvent,
   LongbridgeOAuthStatus,
   AlertEvent,
   AlertRule,
@@ -30,6 +34,7 @@ import type {
   ResearchDecision,
   ResearchEvidence,
   ResearchDocument,
+  ResearchQuickPromptsResponse,
   SecurityWorkspaceSummary,
   SourceReference,
   ThesisPayload,
@@ -371,8 +376,15 @@ export function changeOwnPassword(payload: ChangePasswordRequest) {
   });
 }
 
-export function listLoginSessions() {
-  return request<LoginSessionListResponse>("/api/v1/auth/sessions");
+export function listLoginSessions(init?: RequestInit) {
+  return request<LoginSessionListResponse>("/api/v1/auth/sessions", init);
+}
+
+export function revokeOtherLoginDevices() {
+  return request<{ status: string; revoked_devices: number; revoked_sessions: number }>(
+    "/api/v1/auth/sessions/revoke-others",
+    { method: "POST" },
+  );
 }
 
 export function heartbeatLoginDevice() {
@@ -520,6 +532,11 @@ export function listResearchEvidence(symbol: string, init?: RequestInit) {
   return request<ResearchEvidence[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`, init);
 }
 
+export function getResearchQuickPrompts(language: "zh" | "en", forceRefresh = false) {
+  const query = new URLSearchParams({ language, force_refresh: String(forceRefresh) });
+  return request<ResearchQuickPromptsResponse>(`/api/v1/research/quick-prompts?${query}`);
+}
+
 export function saveResearchEvidence(symbol: string, payload: { source_id: string; source: SourceReference; relation?: "supports" | "weakens" | "neutral"; note?: string }) {
   return request<ResearchEvidence>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`, { method: "POST", body: JSON.stringify(payload) });
 }
@@ -600,6 +617,60 @@ export function compareValuationPeers(symbols: string[], metrics?: string[]) {
 
 export function getGreaterChinaContext(payload: { symbol: string; paired_symbol?: string; china_related_us_listing?: boolean }) {
   return request<GreaterChinaContext>("/api/v1/labs/greater-china/context", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function listLabAIRuns(lab: LabAIKind, init?: RequestInit) {
+  return request<LabAIRun[]>(`/api/v1/labs/ai/runs?${new URLSearchParams({ lab, limit: "20" })}`, init);
+}
+
+export function getLabAIRun(id: string, init?: RequestInit) {
+  return request<LabAIRun>(`/api/v1/labs/ai/runs/${encodeURIComponent(id)}`, init);
+}
+
+export async function streamLabAI(requestBody: LabAIRequest, onEvent: (event: LabAIStreamEvent) => void, signal?: AbortSignal) {
+  const connect = () => fetch(`${API_BASE}/api/v1/labs/ai/stream`, {
+    method: "POST", headers: authHeaders(), signal, body: JSON.stringify(requestBody),
+  });
+  let response = await connect();
+  // Only retry an HTTP auth failure before a run starts. Never replay a partially received AI run.
+  if (response.status === 401) {
+    try { await refreshAuthToken(); }
+    catch (error) {
+      if (error instanceof AuthRecoveryError) await error.recovery;
+      else throw error;
+    }
+    signal?.throwIfAborted();
+    response = await connect();
+  }
+  if (!response.ok) throw new Error(apiErrorDetail(await response.json().catch(() => null), response.statusText));
+  if (!response.body) throw new Error("This browser does not support streaming responses");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let terminal = false;
+  const flush = (block: string) => {
+    const parsed = parseSseBlock(block);
+    if (!parsed) return;
+    const event = parsed as unknown as LabAIStreamEvent;
+    if (event.type === "run_completed" || event.type === "error") terminal = true;
+    onEvent(event);
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      blocks.forEach(flush);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) flush(buffer);
+    if (!terminal && !signal?.aborted) throw new Error(requestBody.locale === "en-US" ? "The analysis connection ended early. Check recent runs before retrying." : "分析连接提前结束，请先查看最近记录，再决定是否重试。");
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 export function setAlertEventStatus(eventId: string, status: AlertEvent["status"]) {

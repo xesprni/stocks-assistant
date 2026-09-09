@@ -147,6 +147,7 @@ def _settings_to_response(
         has_embedding_api_key=(show_all or owns("embedding_api_key")) and bool(settings.embedding_api_key),
         workspace_dir=settings.workspace_dir,
         app_language=settings.app_language,
+        research_quick_prompts_refresh_seconds=settings.research_quick_prompts_refresh_seconds,
         auth_max_devices_per_user=settings.auth_max_devices_per_user,
         agent_max_steps=settings.agent_max_steps,
         agent_max_context_tokens=settings.agent_max_context_tokens,
@@ -293,6 +294,11 @@ def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
             pass
     if skill_keys & patch.keys():
         deps.get_skill_manager.cache_clear()
+    if "workspace_dir" in patch:
+        # 快速问答缓存使用工作空间数据库；刷新间隔则在每次请求中读取有效配置。
+        deps.get_watchlist_service.cache_clear()
+        deps.get_portfolio_service.cache_clear()
+        deps.get_research_quick_prompts_service.cache_clear()
     if longbridge_keys & patch.keys():
         try:
             deps.get_fundamental_service().clear_cache()

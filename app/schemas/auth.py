@@ -105,6 +105,12 @@ class LoginSessionListResponse(BaseModel):
     refresh_token_days: int
 
 
+class RevokeOtherSessionsResponse(BaseModel):
+    status: str = "ok"
+    revoked_devices: int = Field(ge=0)
+    revoked_sessions: int = Field(ge=0)
+
+
 class UserCreateRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8, max_length=256)

@@ -838,6 +838,70 @@ class AppStoreRepository:
                         token.revoked_at = now
             return True
 
+    def revoke_other_login_devices(
+        self,
+        user_id: str,
+        *,
+        current_session_id: Optional[str],
+    ) -> dict[str, int]:
+        with session_scope(self.session_factory) as session:
+            # 校验、撤销及审计使用同一写事务，避免并发请求重复统计或保留已失效的当前会话。
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            now = utc_now()
+            now_dt = _parse_utc(now)
+            current = session.get(LoginSession, current_session_id) if current_session_id else None
+            if (
+                not current
+                or current.user_id != user_id
+                or current.revoked_at
+                or _parse_utc(current.expires_at) <= now_dt
+                or not current.device_id.strip()
+            ):
+                # 旧 token 的设备头及 UA/IP 指纹不可信，不能据此执行批量撤销。
+                raise ValueError("Current login device could not be verified; please sign in again")
+
+            rows = [
+                row
+                for row in session.scalars(
+                    select(LoginSession).where(
+                        LoginSession.user_id == user_id,
+                        LoginSession.device_id != current.device_id,
+                        LoginSession.revoked_at.is_(None),
+                    )
+                ).all()
+                if _parse_utc(row.expires_at) > now_dt
+            ]
+            session_ids = [row.id for row in rows]
+            device_ids = sorted({row.device_id or row.id for row in rows})
+            for row in rows:
+                # 未过期且未撤销的会话仍可持有访问 token，离线状态也必须撤销。
+                row.revoked_at = now
+            if session_ids:
+                tokens = session.scalars(
+                    select(RefreshToken).where(RefreshToken.session_id.in_(session_ids), RefreshToken.revoked_at.is_(None))
+                ).all()
+                for token in tokens:
+                    token.revoked_at = now
+
+            result = {"revoked_devices": len(device_ids), "revoked_sessions": len(session_ids)}
+            session.add(
+                AuditEvent(
+                    id=str(uuid.uuid4()),
+                    user_id=user_id,
+                    action="auth.sessions_revoke_others",
+                    resource="login_sessions",
+                    detail_json=json_dumps({
+                        "current_device_id": current.device_id,
+                        "current_session_id": current.id,
+                        "revoked_device_ids": device_ids,
+                        "revoked_session_ids": session_ids,
+                        **result,
+                    }),
+                    created_at=now,
+                )
+            )
+            return result
+
     def delete_login_session_record(self, session_id: str, user_id: Optional[str] = None) -> bool:
         with session_scope(self.session_factory) as session:
             row = session.get(LoginSession, session_id)

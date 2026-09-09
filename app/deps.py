@@ -520,6 +520,19 @@ def get_research_service():
 
 
 @lru_cache
+def get_research_quick_prompts_service():
+    """获取用户隔离的 Research AI 快速提问缓存服务。"""
+    from app.core.research.quick_prompts import ResearchQuickPromptsService
+
+    return ResearchQuickPromptsService(
+        workspace_dir=get_settings().workspace_dir,
+        llm_provider_factory=create_llm_provider,
+        portfolio_service=get_portfolio_service(),
+        watchlist_service=get_watchlist_service(),
+    )
+
+
+@lru_cache
 def get_investment_lab_service():
     """获取组合、估值/同业及大中华市场实验室服务。"""
     from app.core.labs import InvestmentLabService

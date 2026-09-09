@@ -13,10 +13,12 @@ import {
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
+import { LabAiWorkspace } from "@/components/labs/LabAiWorkspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +34,8 @@ import {
   listValuationModels,
 } from "@/lib/api";
 import type { AppLanguage } from "@/lib/i18n";
+import { useAuth } from "@/lib/auth";
+import { labAiCopy } from "@/lib/labs-ai";
 import type { GreaterChinaContext, PeerComparisonResult, PortfolioLabResult, ValuationModel } from "@/types/app";
 
 export type LabTab = "portfolio" | "valuation" | "greater-china";
@@ -137,7 +141,11 @@ export function InvestmentLabsPage({
   language: AppLanguage;
 }) {
   const [tab, setTab] = useState<LabTab>(initialTab || initialQueryTab());
+  const [mode, setMode] = useState<"ai" | "manual">("ai");
+  const [manualMounted, setManualMounted] = useState(false);
+  const auth = useAuth();
   const copy = tabLabels[language];
+  const aiCopy = labAiCopy[language];
 
   useEffect(() => {
     if (initialTab) setTab(initialTab);
@@ -162,7 +170,7 @@ export function InvestmentLabsPage({
             {language === "en" ? "Investment workspace" : "投资实验室"}
           </h1>
           <p className="text-xs text-muted-foreground">
-            {language === "en" ? "Pick a goal and get to an answer in a few steps." : "选一个目标，几步完成分析。专业参数需要时再展开。"}
+            {aiCopy.subtitle}
           </p>
         </div>
         <TabsList aria-label={language === "en" ? "Investment workspace" : "投资实验室"} className="grid h-auto grid-cols-3 gap-1">
@@ -179,9 +187,25 @@ export function InvestmentLabsPage({
         </TabsList>
       </div>
       <div className="panel-body min-h-0 min-w-0 flex-1 overflow-x-hidden lg:overflow-y-auto">
-        <TabsContent className="mt-0 min-w-0 data-[state=inactive]:hidden" forceMount value="portfolio"><PortfolioLab language={language} /></TabsContent>
-        <TabsContent className="mt-0 min-w-0 data-[state=inactive]:hidden" forceMount value="valuation"><ValuationLab initialSymbol={initialSymbol} language={language} /></TabsContent>
-        <TabsContent className="mt-0 min-w-0 data-[state=inactive]:hidden" forceMount value="greater-china"><GreaterChinaLab initialSymbol={initialSymbol} language={language} /></TabsContent>
+        <div className="mx-auto mb-5 flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">{mode === "ai" ? aiCopy.heading : language === "zh" ? "自定义参数，运行和比较你的分析模型。" : "Customize inputs, run calculations, and compare models."}</p>
+          <div className="flex gap-1 rounded-xl border border-border/60 bg-muted/50 p-1" role="group" aria-label={language === "zh" ? "分析方式" : "Analysis mode"}>
+            <Button aria-pressed={mode === "ai"} className={mode === "ai" ? "bg-card shadow-sm" : "text-muted-foreground"} onClick={() => setMode("ai")} size="sm" variant="ghost"><Sparkles />{aiCopy.ai}</Button>
+            <Button aria-pressed={mode === "manual"} className={mode === "manual" ? "bg-card shadow-sm" : "text-muted-foreground"} onClick={() => { setManualMounted(true); setMode("manual"); }} size="sm" variant="ghost"><SlidersHorizontal />{aiCopy.manual}</Button>
+          </div>
+        </div>
+        <TabsContent className="mt-0 min-w-0 data-[state=inactive]:hidden" forceMount value="portfolio">
+          <div hidden={mode !== "ai"}><LabAiWorkspace key={`${auth.user?.id}:portfolio`} lab="portfolio" language={language} /></div>
+          {manualMounted && <div hidden={mode !== "manual"}><PortfolioLab language={language} /></div>}
+        </TabsContent>
+        <TabsContent className="mt-0 min-w-0 data-[state=inactive]:hidden" forceMount value="valuation">
+          <div hidden={mode !== "ai"}><LabAiWorkspace initialSymbol={initialSymbol} key={`${auth.user?.id}:valuation`} lab="valuation" language={language} /></div>
+          {manualMounted && <div hidden={mode !== "manual"}><ValuationLab initialSymbol={initialSymbol} language={language} /></div>}
+        </TabsContent>
+        <TabsContent className="mt-0 min-w-0 data-[state=inactive]:hidden" forceMount value="greater-china">
+          <div hidden={mode !== "ai"}><LabAiWorkspace initialSymbol={initialSymbol} key={`${auth.user?.id}:greater_china`} lab="greater_china" language={language} /></div>
+          {manualMounted && <div hidden={mode !== "manual"}><GreaterChinaLab initialSymbol={initialSymbol} language={language} /></div>}
+        </TabsContent>
       </div>
     </Tabs>
   );

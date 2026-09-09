@@ -39,6 +39,7 @@ from app.schemas.auth import (
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
+    RevokeOtherSessionsResponse,
     SetupRequest,
     SetupStatusResponse,
     UserProfileUpdateRequest,
@@ -354,6 +355,19 @@ def heartbeat_login_device(
     )
 
 
+@router.post("/sessions/revoke-others", response_model=RevokeOtherSessionsResponse)
+def revoke_other_login_sessions(current_user=Depends(get_current_user)):
+    try:
+        # 用户范围和保留设备均来自已验证的登录会话，管理员也不能借此批量操作其他用户。
+        result = get_app_store().revoke_other_login_devices(
+            current_user.id,
+            current_session_id=current_user.session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return RevokeOtherSessionsResponse(**result)
+
+
 @router.delete("/sessions/{session_id}")
 def revoke_login_session(
     session_id: str,
@@ -454,6 +468,8 @@ def change_password(request: ChangePasswordRequest, current_user=Depends(get_cur
     user = store.get_user_by_id(current_user.id)
     if not user or not verify_password(request.current_password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    if request.new_password == request.current_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be different from current password")
     store.update_user(current_user.id, password_hash=hash_password(request.new_password))
     store.audit(current_user.id, "auth.password_change", "users")
     return {"status": "ok"}

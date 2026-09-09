@@ -180,6 +180,7 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   agent_max_steps: ["agent_max_steps"],
   agent_max_context_tokens: ["agent_max_context_tokens"],
   agent_max_context_turns: ["agent_max_context_turns"],
+  research_quick_prompts_refresh_seconds: ["research_quick_prompts_refresh_seconds"],
   agent_tool_allowlist: ["agent_tool_allowlist"],
   agent_allow_all_mcp_tools: ["agent_allow_all_mcp_tools"],
   multi_agent_enabled: ["multi_agent_enabled"],
@@ -257,6 +258,7 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "agent_max_steps",
   "agent_max_context_tokens",
   "agent_max_context_turns",
+  "research_quick_prompts_refresh_seconds",
   "multi_agent_enabled",
   "multi_agent_max_parallel_agents",
   "multi_agent_default_max_steps",
@@ -557,7 +559,6 @@ function ConsoleApp() {
   const confirmDialog = useConfirmDialog();
   const language = normalizeLanguage(draft?.app_language ?? config?.app_language);
   const ui = i18n[language];
-  const quickPrompts = ui.quickPrompts;
 
   const messages = chatHistory.activeConversation?.messages ?? [];
   const activeConvId = chatHistory.activeId;
@@ -1173,6 +1174,7 @@ function ConsoleApp() {
       agent_max_steps: Number(source.agent_max_steps),
       agent_max_context_tokens: Number(source.agent_max_context_tokens),
       agent_max_context_turns: Number(source.agent_max_context_turns),
+      research_quick_prompts_refresh_seconds: Number(source.research_quick_prompts_refresh_seconds),
       agent_tool_allowlist: source.agent_tool_allowlist,
       agent_allow_all_mcp_tools: source.agent_allow_all_mcp_tools,
       multi_agent_enabled: source.multi_agent_enabled,
@@ -1380,7 +1382,8 @@ function ConsoleApp() {
         }
       }}
       prompt={prompt}
-      quickPrompts={quickPrompts}
+      quickPromptsRefreshSeconds={config?.research_quick_prompts_refresh_seconds ?? 3600}
+      userId={auth.user?.id ?? ""}
       chatHistory={chatHistory}
       setPrompt={setPrompt}
     />

@@ -30,6 +30,15 @@ class ThesisPayload(BaseModel):
     next_review_at: Optional[str] = None
 
 
+class ResearchQuickPromptsResponse(BaseModel):
+    prompts: list[str]
+    generated_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    refresh_interval_seconds: int
+    stale: bool = False
+    error: Optional[str] = None
+
+
 class ThesisSnapshotCreate(BaseModel):
     payload: ThesisPayload
     reason: str = Field(min_length=1, max_length=1000)

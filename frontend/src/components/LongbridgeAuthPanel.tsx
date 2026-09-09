@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, ExternalLink, KeyRound, Link2, Loader2, RefreshCw, Unplug } from "lucide-react";
+import { ArrowUpRight, ExternalLink, KeyRound, Link2, Loader2, RefreshCw, Unplug } from "lucide-react";
 
-import { Field } from "@/components/common/Field";
+import { ConfigChoiceCard, ConfigField as Field } from "@/components/config/ConfigForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,25 +85,25 @@ export function LongbridgeAuthPanel({ draft, language, patchDraft, onAuthChanged
 
   return (
     <div className="space-y-5">
-      <div aria-label={copy.authMethod} className="grid gap-3 sm:grid-cols-2" role="group">
-        {([
-          { mode: "oauth", label: "OAuth 2.0", hint: copy.oauthHint, icon: Link2 },
-          { mode: "apikey", label: "API Key", hint: copy.apiKeyHint, icon: KeyRound },
-        ] as const).map(({ mode, label, hint, icon: Icon }) => {
-          const selected = (isOAuth ? "oauth" : "apikey") === mode;
-          return <button
-            aria-pressed={selected}
-            className={cn("flex items-start gap-3 rounded-xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", selected ? "border-primary/50 bg-primary/5" : "border-border bg-background hover:bg-muted/40")}
-            disabled={Boolean(busy) || pending}
-            key={mode}
-            onClick={() => patchDraft({ longbridge_auth_mode: mode })}
-            type="button"
-          >
-            <Icon className={cn("mt-0.5 size-4 shrink-0", selected ? "text-primary" : "text-muted-foreground")} />
-            <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">{label}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{hint}</span></span>
-            {selected ? <Check className="mt-0.5 size-4 shrink-0 text-primary" /> : null}
-          </button>;
-        })}
+      <div>
+        <p className="mb-3 text-[13px] font-medium text-foreground">{copy.authMethod}</p>
+        <div aria-label={copy.authMethod} className="grid gap-3 md:grid-cols-2" role="group">
+          {([
+            { mode: "oauth", label: "OAuth 2.0", hint: copy.oauthHint, icon: Link2 },
+            { mode: "apikey", label: "API Key", hint: copy.apiKeyHint, icon: KeyRound },
+          ] as const).map(({ mode, label, hint, icon: Icon }) => {
+            const selected = (isOAuth ? "oauth" : "apikey") === mode;
+            return <ConfigChoiceCard
+              description={hint}
+              disabled={Boolean(busy) || pending}
+              icon={<Icon className="size-4" />}
+              key={mode}
+              label={label}
+              onSelect={() => patchDraft({ longbridge_auth_mode: mode })}
+              selected={selected}
+            />;
+          })}
+        </div>
       </div>
 
       {isOAuth || pending ? (
@@ -140,7 +140,7 @@ export function LongbridgeAuthPanel({ draft, language, patchDraft, onAuthChanged
           {error || status?.error ? <p className="text-sm leading-6 text-destructive" role="alert">{error || status?.error}</p> : null}
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
           <Field label="App Key"><Input autoComplete="off" placeholder={draft.has_longbridge_app_key ? draft.longbridge_app_key_masked : "Longbridge app key"} type="password" value={draft.longbridge_app_key} onChange={(event) => patchDraft({ longbridge_app_key: event.target.value })} /></Field>
           <Field label="App Secret"><Input autoComplete="off" placeholder={draft.has_longbridge_app_secret ? draft.longbridge_app_secret_masked : "Longbridge app secret"} type="password" value={draft.longbridge_app_secret} onChange={(event) => patchDraft({ longbridge_app_secret: event.target.value })} /></Field>
           <Field className="md:col-span-2" label="Access Token"><Input autoComplete="off" placeholder={draft.has_longbridge_access_token ? draft.longbridge_access_token_masked : "Longbridge access token"} type="password" value={draft.longbridge_access_token} onChange={(event) => patchDraft({ longbridge_access_token: event.target.value })} /></Field>

@@ -16,6 +16,7 @@
   "embedding_codex_model": "text-embedding-3-small",
   "workspace_dir": "~/stocks-assistant",
   "app_language": "zh",
+  "research_quick_prompts_refresh_seconds": 3600,
   "agent_max_steps": 20,
   "agent_max_context_tokens": 50000,
   "agent_max_context_turns": 20,
