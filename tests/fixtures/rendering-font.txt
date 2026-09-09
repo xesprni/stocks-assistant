@@ -1,0 +1,11 @@
+rendering-font.ttf is an original synthetic test font generated with fontTools
+FontBuilder and TTGlyphPen. It contains an empty .notdef glyph and one ASCII A
+glyph drawn as a rectangle from (100, 0) to (500, 700), with 1000 units per em.
+No outlines or font data were copied from third-party fonts.
+
+The fixture is deliberately tiny and is embedded in browser rendering tests.
+Tests only require Playwright and Pillow; fontTools is not a runtime dependency.
+Creation and modification timestamps are fixed at 3786912000 (OpenType epoch).
+
+rendering-font.woff contains the same synthetic font, saved with fontTools
+TTFont.flavor = "woff" and zlib compression for WOFF format regression tests.

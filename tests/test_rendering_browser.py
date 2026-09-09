@@ -167,6 +167,70 @@ def test_unavailable_assets_fail_without_publishing_artifacts(
     assert list((tmp_path / "artifacts/renderings").iterdir()) == []
 
 
+@pytest.mark.parametrize("failed_weight", [400, 500, 700])
+def test_failed_embedded_font_identifies_only_the_failed_weight(
+    renderer: RenderImageService, tmp_path: Path, failed_weight: int
+) -> None:
+    valid_font = base64.b64encode(
+        (Path(__file__).parent / "fixtures/rendering-font.ttf").read_bytes()
+    ).decode("ascii")
+    broken_font = base64.b64encode(b"deliberately-invalid-font").decode("ascii")
+    faces = []
+    samples = []
+    for weight in (400, 500, 700):
+        font = broken_font if weight == failed_weight else valid_font
+        faces.append(
+            f"@font-face {{font-family:RenderFontProbe;font-weight:{weight};"
+            f"src:url(data:font/ttf;base64,{font}) format('truetype')}}"
+        )
+        # 三个字重都参与实际布局，确保 document.fonts.ready 触发各自字体加载。
+        samples.append(f'<p style="font-family:RenderFontProbe;font-weight:{weight}">A</p>')
+    with pytest.raises(RuntimeError, match="An embedded font failed to load") as error:
+        renderer.render(
+            RenderImageRequest(html=f"<style>{''.join(faces)}</style>{''.join(samples)}")
+        )
+
+    message = str(error.value)
+    assert '"family":"RenderFontProbe"' in message
+    assert f'"weight":"{failed_weight}"' in message
+    assert '"style":"normal"' in message
+    assert '"status":"error"' in message
+    assert message.count('"family":') == 1
+    assert "data:" not in message
+    assert broken_font not in message
+    assert valid_font not in message
+    assert list((tmp_path / "artifacts/renderings").iterdir()) == []
+
+
+def test_embedded_font_error_details_are_bounded_and_single_line(
+    renderer: RenderImageService, tmp_path: Path
+) -> None:
+    faces = []
+    samples = []
+    for index in range(6):
+        family = f"Diagnostic\u2028Font-{index}-" + "x" * 180
+        faces.append(
+            f'@font-face {{font-family:"{family}";'
+            'src:url(data:font/ttf;base64,aW52YWxpZA==) format("truetype")}'
+        )
+        samples.append(f"<p style='font-family:\"{family}\"'>A</p>")
+    with pytest.raises(RuntimeError, match="An embedded font failed to load") as error:
+        renderer.render(
+            RenderImageRequest(html=f"<style>{''.join(faces)}</style>{''.join(samples)}")
+        )
+
+    message = str(error.value)
+    assert message.count('"family":') == 4
+    assert message.endswith("; +2 more")
+    assert len(message) < 1000
+    assert not any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in message)
+    assert "\u2028" not in message
+    assert "\u2029" not in message
+    assert "x" * 81 not in message
+    assert "data:" not in message
+    assert list((tmp_path / "artifacts/renderings").iterdir()) == []
+
+
 def test_excessive_height_is_rejected_before_export(
     renderer: RenderImageService, tmp_path: Path
 ) -> None:

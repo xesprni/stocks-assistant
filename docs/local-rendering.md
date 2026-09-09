@@ -67,6 +67,17 @@ HTTP 直接执行沿用 `POST /api/v1/tools/render_image/execute`，请求体为
 
 出图前等待字体完成加载、所有图片解码和两帧布局稳定。静态 SVG 没有额外的异步图表生命周期。缺失资源、外部资源请求、横向超宽、尺寸超限或超时会失败，不发布半成品。疑似重叠等几何问题随 PNG 返回，便于模型查看后修改。
 
+嵌入字体加载失败时，错误保留 `An embedded font failed to load` 前缀，并列出失败字体的 `family`、`weight`、`style` 和 `status`，便于区分同名字体的不同字重。最多列出四个失败字体，更多失败项以数量提示；各描述符有长度上限并清理控制字符，错误不附带 CSS `src` 或字体 data URI。检查依据是 `document.fonts.ready` 完成后字体集合中的 `status=error`；未参与布局且仍为 `unloaded` 的字体不会被主动加载验证。发生字体错误仍会终止渲染，不会静默忽略；同一个 `@font-face` 的 `src` 列表中若有后续资源成功加载，该字体为 `loaded`，可正常导出。
+
+排查服务器上的间歇性字体错误，可在仓库根目录运行诊断脚本，把原始 frag 和候选 frag 的实际路径作为参数（工作空间不在仓库内时传绝对路径）：
+
+```bash
+uv run --extra rendering python scripts/diagnose_render_fonts.py original.html candidate.html \
+  --repeat 10 --output /tmp/font-diagnostics.json
+```
+
+每轮交替检查各输入，每次新建 Python、Playwright 和 Chromium 进程，沿用 worker 的 `https://render.invalid/` 路由、CSP、默认宽度/DPR 和 `_READY_JS`。不使用 `set_content` 或 `file://`，不主动加载未使用字体，也不修改源文件。报告包含 HTML/内嵌字体 SHA256、字体长度和文件签名、浏览器/依赖版本、每个字体的状态（最多 64 项）、CSP/请求阻断计数和有界 OTS 错误，不包含字体 base64。`passed` 只表示资源就绪检查通过；还应检查 `all_fonts_loaded`，防止候选方案没有实际使用自定义字体而误判成功；即使全部 `loaded`，也仍需查看 PNG 确认字形覆盖和实际显示。若输入是完整 HTML（例如产物 `source.html`），加 `--full-document`；如原请求更改了宽度或 DPR，使用相同的 `--width` 和 `--scale`。输出文件必须不存在；任一轮失败时退出码为 1。该脚本不执行截图和排版审核，修复候选仍须经 `render_image → view_image` 验证。
+
 DOM 检查有元素、文本与比较次数上限，达到上限会返回 `inspection_limit`，不能声称全检。它不能证明中文字形正确、视觉层级合理，也不能验证正文与图表数字语义一致。快照摘要记录输入版本；`snapshot_consistency` 仍标为 `requires_review`，没有快照时标为 `not_provided`。
 
 `view_image` 支持当前用户工作空间内的静态 PNG/JPEG，最多 20 MiB、5000 万像素。图片通过 Chat Completions 的 `image_url` 或 Responses/Codex OAuth 的 `input_image` 传递，要求所配置模型支持视觉。图片数据不进入公共 SSE、追踪和会话持久化；历史仅保留路径，需要复查时重新调用 `view_image`。模型服务仍可能按其视觉输入策略缩放整图，因此需同时查看局部检查图。很长的报告应拆图，确保所有内容被检查。

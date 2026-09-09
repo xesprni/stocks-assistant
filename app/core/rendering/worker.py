@@ -17,7 +17,7 @@ from app.core.rendering.document import (
 )
 from app.core.rendering.layout import LAYOUT_AUDIT_JS
 
-_READY_JS = """async () => {
+_READY_JS = r"""async () => {
   const timeout = new Promise((_, reject) => setTimeout(
     () => reject(new Error('Images or fonts did not become ready within 10 seconds')), 10000));
   await Promise.race([timeout, (async () => {
@@ -27,8 +27,20 @@ _READY_JS = """async () => {
       await image.decode();
       if (!image.naturalWidth) throw new Error('Image has no decoded pixels');
     }));
-    if ([...document.fonts].some(font => font.status === 'error'))
-      throw new Error('An embedded font failed to load');
+    const failedFonts = [...document.fonts].filter(font => font.status === 'error');
+    if (failedFonts.length) {
+      // 只回传有界字体描述符，清除控制字符；不包含 CSS 源码或字体 data URI。
+      const clean = (value, limit) => String(value)
+        .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0, limit);
+      const details = failedFonts.slice(0, 4).map(font => JSON.stringify({
+        family: clean(font.family, 80),
+        weight: clean(font.weight, 24),
+        style: clean(font.style, 32),
+        status: clean(font.status, 16),
+      })).join('; ');
+      const omitted = failedFonts.length > 4 ? `; +${failedFonts.length - 4} more` : '';
+      throw new Error(`An embedded font failed to load: ${details}${omitted}`);
+    }
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   })()]);
 }"""
