@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from app.schemas.evidence import Evidence, SourceReference
-
 
 LONGBRIDGE_DOCS_URL = "https://open.longbridge.com/docs"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def source_reference(
@@ -21,13 +21,13 @@ def source_reference(
     source_type: str,
     provider: str,
     title: str,
-    url: Optional[str] = None,
-    published_at: Optional[str] = None,
-    as_of: Optional[str] = None,
-    fetched_at: Optional[str] = None,
+    url: str | None = None,
+    published_at: str | None = None,
+    as_of: str | None = None,
+    fetched_at: str | None = None,
     stale: bool = False,
-    symbol: Optional[str] = None,
-    locator: Optional[str] = None,
+    symbol: str | None = None,
+    locator: str | None = None,
 ) -> SourceReference:
     fetched = fetched_at or utc_now_iso()
     identity = "|".join(
@@ -53,8 +53,8 @@ def source_reference(
 def evidence_for_source(
     source: SourceReference,
     *,
-    excerpt: Optional[str] = None,
-    data: Optional[dict[str, Any]] = None,
+    excerpt: str | None = None,
+    data: dict[str, Any] | None = None,
 ) -> Evidence:
     identity = f"{source.id}|{excerpt or ''}|{data or {}}"
     evidence_id = "ev_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
@@ -66,7 +66,7 @@ def evidence_metadata(items: Iterable[Evidence]) -> dict[str, Any]:
     return {"evidence": values, "sources": [item["source"] for item in values]}
 
 
-def infer_result_timestamp(data: Any) -> tuple[Optional[str], Optional[str], bool]:
+def infer_result_timestamp(data: Any) -> tuple[str | None, str | None, bool]:
     """从服务返回中尽力提取数据时间、抓取时间和陈旧状态。"""
     if isinstance(data, dict):
         as_of = data.get("as_of") or data.get("timestamp") or data.get("quote_time")
@@ -99,7 +99,7 @@ def longbridge_evidence(
     return evidence_metadata([evidence_for_source(source)])
 
 
-def merge_evidence_metadata(*metadata_values: Optional[dict[str, Any]]) -> dict[str, Any]:
+def merge_evidence_metadata(*metadata_values: dict[str, Any] | None) -> dict[str, Any]:
     evidence: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     seen_evidence: set[str] = set()
@@ -120,9 +120,8 @@ def merge_evidence_metadata(*metadata_values: Optional[dict[str, Any]]) -> dict[
     return {"evidence": evidence, "sources": sources}
 
 
-def _string_or_none(value: Any) -> Optional[str]:
+def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
-

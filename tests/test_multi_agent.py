@@ -4,9 +4,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.core.session import ChatSessionStore
 from app.core.agent.agent import Agent
 from app.core.agent.subagent import SubAgentRunner
+from app.core.session import ChatSessionStore
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.delegate_agent import DelegateAgentTool
 from app.core.tools.market_data import GetLongbridgeRealtimeQuotesTool
@@ -26,7 +26,11 @@ class NamedTool(BaseTool):
 class FakeParentAgent:
     def __init__(self, tools=None, depth=0, settings=None):
         self.model = object()
-        self.tools = tools or [NamedTool("web_fetch"), NamedTool("bash"), NamedTool("delegate_agent")]
+        self.tools = tools or [
+            NamedTool("web_fetch"),
+            NamedTool("bash"),
+            NamedTool("delegate_agent"),
+        ]
         self.max_context_tokens = 50_000
         self.max_context_turns = 20
         self.memory_manager = None
@@ -47,9 +51,27 @@ class FakeAgent:
             time.sleep(0.02)
         if on_event:
             on_event({"type": "agent_start", "timestamp": time.time(), "data": {}})
-            on_event({"type": "message_update", "timestamp": time.time(), "data": {"delta": f"child:{user_message}"}})
-            on_event({"type": "message_end", "timestamp": time.time(), "data": {"content": f"child:{user_message}"}})
-            on_event({"type": "agent_end", "timestamp": time.time(), "data": {"final_response": f"done:{user_message}"}})
+            on_event(
+                {
+                    "type": "message_update",
+                    "timestamp": time.time(),
+                    "data": {"delta": f"child:{user_message}"},
+                }
+            )
+            on_event(
+                {
+                    "type": "message_end",
+                    "timestamp": time.time(),
+                    "data": {"content": f"child:{user_message}"},
+                }
+            )
+            on_event(
+                {
+                    "type": "agent_end",
+                    "timestamp": time.time(),
+                    "data": {"final_response": f"done:{user_message}"},
+                }
+            )
         return f"done:{user_message}"
 
 
@@ -87,11 +109,15 @@ class DelegateAgentToolTest(unittest.TestCase):
         tool = DelegateAgentTool()
         tool.context = parent or FakeParentAgent()
         events = []
-        tool.event_emitter = lambda event_type, data: events.append({"type": event_type, "data": data})
+        tool.event_emitter = lambda event_type, data: events.append(
+            {"type": event_type, "data": data}
+        )
         tool.current_tool_call = {"id": "parent-tool", "name": "delegate_agent"}
-        with patch("app.core.agent.subagent.get_settings", return_value=settings or fake_settings()):
-            with patch("app.core.agent.subagent.Agent", FakeAgent):
-                result = tool.execute(params)
+        with (
+            patch("app.core.agent.subagent.get_settings", return_value=settings or fake_settings()),
+            patch("app.core.agent.subagent.Agent", FakeAgent),
+        ):
+            result = tool.execute(params)
         return result, events
 
     def test_disabled_returns_error(self):
@@ -125,25 +151,36 @@ class DelegateAgentToolTest(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertIn("Unknown sub-agent role", result.result)
 
-        result, _ = self.run_tool({"tasks": [{"role": "researcher", "task": "test", "tools": ["unknown"]}]})
+        result, _ = self.run_tool(
+            {"tasks": [{"role": "researcher", "task": "test", "tools": ["unknown"]}]}
+        )
         self.assertEqual(result.status, "error")
         self.assertIn("Unknown tool", result.result)
 
-        result, _ = self.run_tool({"tasks": [{"role": "researcher", "task": "test", "tools": ["bash"]}]})
+        result, _ = self.run_tool(
+            {"tasks": [{"role": "researcher", "task": "test", "tools": ["bash"]}]}
+        )
         self.assertEqual(result.status, "error")
         self.assertIn("not allowed", result.result)
 
-        result, _ = self.run_tool({"tasks": [{"role": "danger", "task": "test", "tools": ["bash"]}]})
+        result, _ = self.run_tool(
+            {"tasks": [{"role": "danger", "task": "test", "tools": ["bash"]}]}
+        )
         self.assertEqual(result.status, "error")
         self.assertIn("Dangerous tool", result.result)
 
     def test_rejects_too_many_tasks_and_delegate_tool(self):
-        tasks = [{"role": "researcher", "task": f"task {idx}", "tools": ["web_fetch"]} for idx in range(4)]
+        tasks = [
+            {"role": "researcher", "task": f"task {idx}", "tools": ["web_fetch"]}
+            for idx in range(4)
+        ]
         result, _ = self.run_tool({"tasks": tasks})
         self.assertEqual(result.status, "error")
         self.assertIn("maximum is 3", result.result)
 
-        result, _ = self.run_tool({"tasks": [{"role": "danger", "task": "test", "tools": ["delegate_agent"]}]})
+        result, _ = self.run_tool(
+            {"tasks": [{"role": "danger", "task": "test", "tools": ["delegate_agent"]}]}
+        )
         self.assertEqual(result.status, "error")
         self.assertIn("cannot receive", result.result)
 
@@ -158,13 +195,15 @@ class DelegateAgentToolTest(unittest.TestCase):
                 "allow_all_mcp_tools": True,
             },
         }
-        parent = FakeParentAgent(tools=[
-            NamedTool("web_fetch"),
-            NamedTool("mcp_alpha_search"),
-            NamedTool("mcp_beta_read"),
-            NamedTool("bash"),
-            NamedTool("delegate_agent"),
-        ])
+        parent = FakeParentAgent(
+            tools=[
+                NamedTool("web_fetch"),
+                NamedTool("mcp_alpha_search"),
+                NamedTool("mcp_beta_read"),
+                NamedTool("bash"),
+                NamedTool("delegate_agent"),
+            ]
+        )
 
         result, events = self.run_tool(
             {"tasks": [{"role": "mcp_researcher", "task": "test"}]},
@@ -195,12 +234,24 @@ class DelegateAgentToolTest(unittest.TestCase):
         self.assertIn("not allowed", result.result)
 
     def test_parallel_results_preserve_input_order_and_wrap_child_messages(self):
-        result, events = self.run_tool({
-            "tasks": [
-                {"id": "slow", "role": "researcher", "task": "slow task", "tools": ["web_fetch"]},
-                {"id": "fast", "role": "researcher", "task": "fast task", "tools": ["web_fetch"]},
-            ],
-        })
+        result, events = self.run_tool(
+            {
+                "tasks": [
+                    {
+                        "id": "slow",
+                        "role": "researcher",
+                        "task": "slow task",
+                        "tools": ["web_fetch"],
+                    },
+                    {
+                        "id": "fast",
+                        "role": "researcher",
+                        "task": "fast task",
+                        "tools": ["web_fetch"],
+                    },
+                ],
+            }
+        )
         self.assertEqual(result.status, "success")
         responses = [item["final_response"] for item in result.result["results"]]
         self.assertEqual(responses, ["done:slow task", "done:fast task"])
@@ -211,7 +262,9 @@ class DelegateAgentToolTest(unittest.TestCase):
     def test_clone_tool_preserves_injected_market_dependencies(self):
         service = object()
         settings = SimpleNamespace(longbridge_app_key="demo")
-        tool = GetLongbridgeRealtimeQuotesTool(market_service=service, user_id="user-1", settings=settings)
+        tool = GetLongbridgeRealtimeQuotesTool(
+            market_service=service, user_id="user-1", settings=settings
+        )
         tool.model = object()
         tool.context = object()
         tool.event_emitter = lambda *_args: None
@@ -237,60 +290,101 @@ class SubAgentTraceTest(unittest.TestCase):
             recorder = TraceRecorder.start(store, session_id=session["id"], user_message="analyze")
 
             recorder.handle_event({"type": "turn_start", "timestamp": 1.0, "data": {"turn": 1}})
-            recorder.handle_event({
-                "type": "tool_execution_start",
-                "timestamp": 1.1,
-                "data": {"tool_call_id": "parent-tool", "tool_name": "delegate_agent", "arguments": {}},
-            })
-            recorder.handle_event({
-                "type": "subagent_batch_start",
-                "timestamp": 1.2,
-                "data": {"batch_id": "batch-1", "task_count": 1, "parent_tool_call_id": "parent-tool"},
-            })
-            recorder.handle_event({
-                "type": "subagent_start",
-                "timestamp": 1.3,
-                "data": {"batch_id": "batch-1", "task_id": "t1", "role": "researcher", "task": "research"},
-            })
-            recorder.handle_event({
-                "type": "subagent_event",
-                "timestamp": 1.4,
-                "data": {
-                    "batch_id": "batch-1",
-                    "task_id": "t1",
-                    "role": "researcher",
-                    "child_event_type": "message_update",
-                    "child_timestamp": 1.4,
-                    "child_data": {"delta": "hello"},
-                },
-            })
-            recorder.handle_event({
-                "type": "subagent_event",
-                "timestamp": 1.5,
-                "data": {
-                    "batch_id": "batch-1",
-                    "task_id": "t1",
-                    "role": "researcher",
-                    "child_event_type": "message_end",
-                    "child_timestamp": 1.5,
-                    "child_data": {"content": "hello"},
-                },
-            })
-            recorder.handle_event({
-                "type": "subagent_end",
-                "timestamp": 1.6,
-                "data": {"batch_id": "batch-1", "task_id": "t1", "role": "researcher", "status": "success", "final_response": "hello"},
-            })
-            recorder.handle_event({
-                "type": "subagent_batch_end",
-                "timestamp": 1.7,
-                "data": {"batch_id": "batch-1", "status": "success", "duration_ms": 500},
-            })
-            recorder.handle_event({
-                "type": "tool_execution_end",
-                "timestamp": 1.8,
-                "data": {"tool_call_id": "parent-tool", "tool_name": "delegate_agent", "status": "success", "result": {}, "execution_time": 0.7},
-            })
+            recorder.handle_event(
+                {
+                    "type": "tool_execution_start",
+                    "timestamp": 1.1,
+                    "data": {
+                        "tool_call_id": "parent-tool",
+                        "tool_name": "delegate_agent",
+                        "arguments": {},
+                    },
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "subagent_batch_start",
+                    "timestamp": 1.2,
+                    "data": {
+                        "batch_id": "batch-1",
+                        "task_count": 1,
+                        "parent_tool_call_id": "parent-tool",
+                    },
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "subagent_start",
+                    "timestamp": 1.3,
+                    "data": {
+                        "batch_id": "batch-1",
+                        "task_id": "t1",
+                        "role": "researcher",
+                        "task": "research",
+                    },
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "subagent_event",
+                    "timestamp": 1.4,
+                    "data": {
+                        "batch_id": "batch-1",
+                        "task_id": "t1",
+                        "role": "researcher",
+                        "child_event_type": "message_update",
+                        "child_timestamp": 1.4,
+                        "child_data": {"delta": "hello"},
+                    },
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "subagent_event",
+                    "timestamp": 1.5,
+                    "data": {
+                        "batch_id": "batch-1",
+                        "task_id": "t1",
+                        "role": "researcher",
+                        "child_event_type": "message_end",
+                        "child_timestamp": 1.5,
+                        "child_data": {"content": "hello"},
+                    },
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "subagent_end",
+                    "timestamp": 1.6,
+                    "data": {
+                        "batch_id": "batch-1",
+                        "task_id": "t1",
+                        "role": "researcher",
+                        "status": "success",
+                        "final_response": "hello",
+                    },
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "subagent_batch_end",
+                    "timestamp": 1.7,
+                    "data": {"batch_id": "batch-1", "status": "success", "duration_ms": 500},
+                }
+            )
+            recorder.handle_event(
+                {
+                    "type": "tool_execution_end",
+                    "timestamp": 1.8,
+                    "data": {
+                        "tool_call_id": "parent-tool",
+                        "tool_name": "delegate_agent",
+                        "status": "success",
+                        "result": {},
+                        "execution_time": 0.7,
+                    },
+                }
+            )
             recorder.finish(status="done", final_response="final")
 
             run = store.get_session_traces(session_id=session["id"], limit=1)["runs"][0]

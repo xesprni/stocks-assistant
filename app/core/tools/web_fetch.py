@@ -2,16 +2,21 @@
 
 抓取指定 URL 的网页内容，提取纯文本供 Agent 分析。
 """
+
+import logging
 import re
-from typing import Any, Dict
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
 from app.core.tools.base_tool import BaseTool, ToolResult
-from app.core.tools.evidence import evidence_for_source, evidence_metadata, source_reference, utc_now_iso
-
-import logging
+from app.core.tools.evidence import (
+    evidence_for_source,
+    evidence_metadata,
+    source_reference,
+    utc_now_iso,
+)
 
 logger = logging.getLogger("stocks-assistant.tools.web_fetch")
 
@@ -29,7 +34,7 @@ class WebFetchTool(BaseTool):
         super().__init__()
         self.config = config or {}
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         url = args.get("url", "").strip()
         if not url:
             return ToolResult.fail("Error: url is required")
@@ -37,9 +42,14 @@ class WebFetchTool(BaseTool):
         if parsed.scheme not in ("http", "https"):
             return ToolResult.fail("Error: URL must start with http:// or https://")
         try:
-            resp = httpx.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-            }, timeout=30, follow_redirects=True)
+            resp = httpx.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                },
+                timeout=30,
+                follow_redirects=True,
+            )
             resp.raise_for_status()
             html = resp.text
             title = self._extract_title(html)
@@ -55,7 +65,9 @@ class WebFetchTool(BaseTool):
             )
             return ToolResult.success(
                 {"title": title, "url": str(resp.url), "content": text, "fetched_at": fetched_at},
-                ext_data=evidence_metadata([evidence_for_source(source, excerpt=text[:500] or None)]),
+                ext_data=evidence_metadata(
+                    [evidence_for_source(source, excerpt=text[:500] or None)]
+                ),
             )
         except httpx.TimeoutException:
             return ToolResult.fail("Error: Request timed out")
@@ -74,7 +86,13 @@ class WebFetchTool(BaseTool):
         text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r"<[^>]+>", "", text)
-        for old, new in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&nbsp;", " ")]:
+        for old, new in [
+            ("&amp;", "&"),
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&quot;", '"'),
+            ("&nbsp;", " "),
+        ]:
             text = text.replace(old, new)
         text = re.sub(r"[^\S\n]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)

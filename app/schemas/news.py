@@ -1,7 +1,5 @@
 """Longbridge security news schemas."""
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -10,11 +8,11 @@ class SecurityNewsItem(BaseModel):
     title: str
     description: str = ""
     url: str = ""
-    published_at: Optional[str] = None
-    published_at_ts: Optional[int] = None
-    likes_count: Optional[int] = None
-    comments_count: Optional[int] = None
-    shares_count: Optional[int] = None
+    published_at: str | None = None
+    published_at_ts: int | None = None
+    likes_count: int | None = None
+    comments_count: int | None = None
+    shares_count: int | None = None
 
 
 class SecurityNewsResponse(BaseModel):
@@ -28,8 +26,8 @@ class GuardianFeedItem(BaseModel):
     title: str
     description: str = ""
     url: str = ""
-    published_at: Optional[str] = None
-    published_at_ts: Optional[int] = None
+    published_at: str | None = None
+    published_at_ts: int | None = None
     author: str = ""
     categories: list[str] = Field(default_factory=list)
 
@@ -48,8 +46,8 @@ class GuardianArticleResponse(BaseModel):
     description: str = ""
     url: str = ""
     api_url: str = ""
-    published_at: Optional[str] = None
-    published_at_ts: Optional[int] = None
+    published_at: str | None = None
+    published_at_ts: int | None = None
     author: str = ""
     thumbnail: str = ""
     body_html: str = ""

@@ -6,15 +6,16 @@
 - interval: 固定间隔重复执行
 - once: 一次性延时执行
 """
+
 import asyncio
+import logging
+from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime, timedelta
-from typing import Callable, Optional
 
 from croniter import croniter
 
 from app.core.tools.scheduler.store import RunStore, TaskStore
-
-import logging
 
 logger = logging.getLogger("stocks-assistant.scheduler")
 
@@ -24,15 +25,15 @@ class SchedulerService:
         self,
         task_store: TaskStore,
         execute_callback: Callable,
-        run_store: Optional[RunStore] = None,
-        alert_callback: Optional[Callable] = None,
+        run_store: RunStore | None = None,
+        alert_callback: Callable | None = None,
     ):
         self.task_store = task_store
         self.run_store = run_store
         self.execute_callback = execute_callback
         self.alert_callback = alert_callback
         self.running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     async def start(self):
         if self.running:
@@ -45,10 +46,8 @@ class SchedulerService:
         self.running = False
         if self._task:
             self._task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("Scheduler service stopped")
 
     async def _run_loop(self):
@@ -56,7 +55,7 @@ class SchedulerService:
             try:
                 await self._check_and_execute()
             except Exception as e:
-                logger.error(f"Scheduler loop error: {e}")
+                logger.error("Scheduler loop error: %s", e)
             await asyncio.sleep(30)
 
     async def _check_and_execute(self):
@@ -64,10 +63,10 @@ class SchedulerService:
         for task in self.task_store.list_tasks(enabled_only=True):
             try:
                 if self._is_due(task, now):
-                    logger.info(f"Executing task: {task['id']} - {task['name']}")
+                    logger.info("Executing task: %s - %s", task["id"], task["name"])
                     await self._execute_due_task(task, now)
             except Exception as e:
-                logger.error(f"Error processing task {task.get('id')}: {e}")
+                logger.error("Error processing task %s: %s", task.get("id"), e)
         if self.alert_callback:
             try:
                 await asyncio.to_thread(self.alert_callback)
@@ -82,28 +81,36 @@ class SchedulerService:
         task = self.task_store.get_task(task_id)
         if not task:
             raise ValueError("Task not found")
-        return await self._execute_task(task, datetime.now(), trigger="manual", update_schedule=False)
+        return await self._execute_task(
+            task, datetime.now(), trigger="manual", update_schedule=False
+        )
 
-    async def _execute_task(self, task: dict, now: datetime, trigger: str, update_schedule: bool) -> dict:
+    async def _execute_task(
+        self, task: dict, now: datetime, trigger: str, update_schedule: bool
+    ) -> dict:
         task_id = task["id"]
         # 使用调用方注入的运行时间作为业务时间；另用墙钟差计算耗时，保证补跑和测试可复现。
         started = now
         wall_started = datetime.now()
-        result: Optional[str] = None
-        error: Optional[str] = None
-        task_for_execution = self._with_execution_context(task, trigger=trigger, due_at=now, started_at=started)
+        result: str | None = None
+        error: str | None = None
+        task_for_execution = self._with_execution_context(
+            task, trigger=trigger, due_at=now, started_at=started
+        )
         try:
             output = await asyncio.to_thread(self.execute_callback, task_for_execution)
             result = str(output or "")
         except Exception as exc:
             error = str(exc)
-            logger.error(f"Scheduled task failed {task_id}: {exc}")
+            logger.error("Scheduled task failed %s: %s", task_id, exc)
         ended = started + (datetime.now() - wall_started)
         record = self._record_run(task, trigger, started, ended, result, error)
         self._complete_task(task, now, error=error, update_schedule=update_schedule)
         return record
 
-    def _with_execution_context(self, task: dict, trigger: str, due_at: datetime, started_at: datetime) -> dict:
+    def _with_execution_context(
+        self, task: dict, trigger: str, due_at: datetime, started_at: datetime
+    ) -> dict:
         task_copy = dict(task)
         # 执行上下文只传给回调，不写回任务存储，避免后台 Agent 误把“今天”理解成旧会话日期。
         task_copy["_execution_context"] = {
@@ -113,7 +120,9 @@ class SchedulerService:
         }
         return task_copy
 
-    def _complete_task(self, task: dict, now: datetime, error: Optional[str], update_schedule: bool = True):
+    def _complete_task(
+        self, task: dict, now: datetime, error: str | None, update_schedule: bool = True
+    ):
         updates = {
             "last_run_at": now.isoformat(),
             "run_count": int(task.get("run_count", 0) or 0) + 1,
@@ -139,8 +148,8 @@ class SchedulerService:
         trigger: str,
         started: datetime,
         ended: datetime,
-        result: Optional[str],
-        error: Optional[str],
+        result: str | None,
+        error: str | None,
     ) -> dict:
         output = (result or "").strip()
         record = {
@@ -176,13 +185,15 @@ class SchedulerService:
                         return False
                     next_next = self._calculate_next(task, now)
                     if next_next:
-                        self.task_store.update_task(task["id"], {"next_run_at": next_next.isoformat()})
+                        self.task_store.update_task(
+                            task["id"], {"next_run_at": next_next.isoformat()}
+                        )
                     return False
             return now >= next_run
         except Exception:
             return False
 
-    def _calculate_next(self, task: dict, from_time: datetime) -> Optional[datetime]:
+    def _calculate_next(self, task: dict, from_time: datetime) -> datetime | None:
         schedule = task.get("schedule", {})
         stype = schedule.get("type")
         if stype == "cron":

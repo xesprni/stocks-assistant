@@ -55,14 +55,14 @@ class LongbridgeContextCacheTest(unittest.TestCase):
                 FundamentalContext=SlowFakeContext,
                 ContentContext=SlowFakeContext,
             ),
+            ThreadPoolExecutor(max_workers=8) as executor,
         ):
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                contexts = list(
-                    executor.map(
-                        lambda _: longbridge_context.get_cached_context("QuoteContext", self.settings),
-                        range(8),
-                    )
+            contexts = list(
+                executor.map(
+                    lambda _: longbridge_context.get_cached_context("QuoteContext", self.settings),
+                    range(8),
                 )
+            )
 
         self.assertEqual(1, SlowFakeContext.created)
         self.assertTrue(all(context is contexts[0] for context in contexts))
@@ -73,14 +73,16 @@ class LongbridgeContextCacheTest(unittest.TestCase):
         with (
             patch.object(longbridge_context, "longbridge_config", return_value=object()) as config,
             patch("longbridge.openapi.QuoteContext", SlowFakeContext),
+            ThreadPoolExecutor(max_workers=8) as executor,
         ):
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                contexts = list(
-                    executor.map(
-                        lambda settings: longbridge_context.get_cached_context("QuoteContext", settings),
-                        [english, chinese] * 4,
-                    )
+            contexts = list(
+                executor.map(
+                    lambda settings: longbridge_context.get_cached_context(
+                        "QuoteContext", settings
+                    ),
+                    [english, chinese] * 4,
                 )
+            )
 
         self.assertEqual(1, SlowFakeContext.created)
         self.assertTrue(all(context is contexts[0] for context in contexts))
@@ -108,7 +110,9 @@ class LongbridgeContextCacheTest(unittest.TestCase):
                     with ThreadPoolExecutor(max_workers=8) as executor:
                         contexts = list(
                             executor.map(
-                                lambda settings: longbridge_context.get_cached_context(context_type, settings),
+                                lambda settings, context_type=context_type: (
+                                    longbridge_context.get_cached_context(context_type, settings)
+                                ),
                                 [english, chinese] * 4,
                             )
                         )
@@ -149,7 +153,9 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
                 longbridge_context.longbridge_config(settings)
 
                 config.from_apikey.assert_called_once_with(
-                    "key", "secret", "token",
+                    "key",
+                    "secret",
+                    "token",
                     http_url="https://example.test/api",
                     quote_ws_url="wss://example.test/quotes",
                     language=expected,
@@ -163,8 +169,12 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
         with patch("longbridge.openapi.Config") as config:
             longbridge_context.longbridge_config(self.settings)
         self.assertEqual(Language.ZH_CN, config.from_apikey.call_args.kwargs["language"])
-        self.assertEqual("zh", longbridge_context.content_language(SimpleNamespace(app_language="invalid")))
-        self.assertEqual("en", longbridge_context.content_language(SimpleNamespace(app_language=" EN-US ")))
+        self.assertEqual(
+            "zh", longbridge_context.content_language(SimpleNamespace(app_language="invalid"))
+        )
+        self.assertEqual(
+            "en", longbridge_context.content_language(SimpleNamespace(app_language=" EN-US "))
+        )
 
     def test_quote_configuration_keeps_sdk_language_default(self):
         with patch("longbridge.openapi.Config") as config:
@@ -174,13 +184,15 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
     def test_environment_credentials_follow_app_language_without_mutation(self):
         from longbridge.openapi import Language
 
-        settings = SimpleNamespace(**{
-            **vars(self.settings),
-            "longbridge_app_key": "",
-            "longbridge_app_secret": "",
-            "longbridge_access_token": "",
-            "app_language": "en",
-        })
+        settings = SimpleNamespace(
+            **{
+                **vars(self.settings),
+                "longbridge_app_key": "",
+                "longbridge_app_secret": "",
+                "longbridge_access_token": "",
+                "app_language": "en",
+            }
+        )
         environment = {
             "LONGBRIDGE_APP_KEY": "env-key",
             "LONGBRIDGE_APP_SECRET": "env-secret",
@@ -197,7 +209,10 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
 
             config.from_apikey_env.assert_called_once_with()
             config.from_apikey.assert_called_once_with(
-                "env-key", "env-secret", "env-token", language=Language.EN,
+                "env-key",
+                "env-secret",
+                "env-token",
+                language=Language.EN,
             )
             # 先走 SDK 原生初始化保留可选环境参数，再只覆盖这次请求的内容语言。
             self.assertEqual("from_apikey_env", config.mock_calls[0][0])
@@ -206,12 +221,14 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
     def test_dotenv_credentials_keep_aliases_and_environment_precedence(self):
         from longbridge.openapi import Language
 
-        settings = SimpleNamespace(**{
-            **vars(self.settings),
-            "longbridge_app_key": "",
-            "longbridge_app_secret": "",
-            "longbridge_access_token": "",
-        })
+        settings = SimpleNamespace(
+            **{
+                **vars(self.settings),
+                "longbridge_app_key": "",
+                "longbridge_app_secret": "",
+                "longbridge_access_token": "",
+            }
+        )
         environment = {
             "LONGBRIDGE_ACCESS_TOKEN": "process-token",
             "LONGBRIDGE_LANGUAGE": "en",
@@ -236,7 +253,10 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
                 find_dotenv.assert_called_once_with(usecwd=True)
                 config.from_apikey_env.assert_called_once_with()
                 config.from_apikey.assert_called_once_with(
-                    "dotenv-key", "dotenv-secret", "process-token", language=Language.ZH_CN,
+                    "dotenv-key",
+                    "dotenv-secret",
+                    "process-token",
+                    language=Language.ZH_CN,
                 )
                 self.assertEqual(environment, dict(os.environ))
 
@@ -251,9 +271,11 @@ class LongbridgeContentLanguageTest(unittest.TestCase):
         settings = SimpleNamespace(**{**vars(self.settings), "longbridge_app_key": ""})
         config = MagicMock()
         config.from_apikey_env.side_effect = ValueError("missing credential")
-        with patch("longbridge.openapi.Config", config):
-            with self.assertRaisesRegex(LongbridgeUnavailableError, "credentials are not configured"):
-                longbridge_context.longbridge_config(settings)
+        with (
+            patch("longbridge.openapi.Config", config),
+            self.assertRaisesRegex(LongbridgeUnavailableError, "credentials are not configured"),
+        ):
+            longbridge_context.longbridge_config(settings)
 
 
 if __name__ == "__main__":

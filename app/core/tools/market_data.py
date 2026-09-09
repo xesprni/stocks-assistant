@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import longbridge_evidence
-from app.core.watchlist.service import LongbridgeUnavailableError
 
 
 def _string_list(value: Any) -> list[str]:
@@ -19,7 +19,7 @@ def _string_list(value: Any) -> list[str]:
     return [str(value).strip()] if str(value).strip() else []
 
 
-def _int_arg(value: Any, default: Optional[int], name: str) -> Optional[int]:
+def _int_arg(value: Any, default: int | None, name: str) -> int | None:
     if value is None or value == "":
         return default
     try:
@@ -29,7 +29,9 @@ def _int_arg(value: Any, default: Optional[int], name: str) -> Optional[int]:
 
 
 class _LongbridgeMarketTool(BaseTool):
-    def __init__(self, market_service: Any = None, user_id: Optional[str] = None, settings: Any = None):
+    def __init__(
+        self, market_service: Any = None, user_id: str | None = None, settings: Any = None
+    ):
         self.market_service = market_service
         self.user_id = user_id
         self.settings = settings
@@ -88,7 +90,7 @@ class GetLongbridgeRealtimeQuotesTool(_LongbridgeMarketTool):
         "required": ["symbols"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbols = _string_list(args.get("symbols") or args.get("symbol"))
         if not symbols:
             return ToolResult.fail("symbols is required")
@@ -110,7 +112,11 @@ class GetLongbridgeCandlesticksTool(_LongbridgeMarketTool):
                 "description": "K-line period: 1D, 1W, 1M, 1Y, 1min, 5min, 15min, 30min, 60min.",
                 "default": "1D",
             },
-            "count": {"type": "integer", "description": "Number of bars, capped at 1000.", "default": 200},
+            "count": {
+                "type": "integer",
+                "description": "Number of bars, capped at 1000.",
+                "default": 200,
+            },
             "adjust_type": {
                 "type": "string",
                 "enum": ["forward", "none"],
@@ -126,7 +132,7 @@ class GetLongbridgeCandlesticksTool(_LongbridgeMarketTool):
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")
@@ -154,7 +160,11 @@ class GetLongbridgeHistoryCandlesticksTool(_LongbridgeMarketTool):
         "type": "object",
         "properties": {
             "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK."},
-            "period": {"type": "string", "description": "1D, 1W, 1M, 1Y, 1min, 5min, etc.", "default": "1D"},
+            "period": {
+                "type": "string",
+                "description": "1D, 1W, 1M, 1Y, 1min, 5min, etc.",
+                "default": "1D",
+            },
             "start": {"type": "string", "description": "Start date in YYYY-MM-DD."},
             "end": {"type": "string", "description": "End date in YYYY-MM-DD."},
             "adjust_type": {"type": "string", "enum": ["forward", "none"], "default": "forward"},
@@ -163,7 +173,7 @@ class GetLongbridgeHistoryCandlesticksTool(_LongbridgeMarketTool):
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")
@@ -185,13 +195,16 @@ class GetLongbridgeIntradayTool(_LongbridgeMarketTool):
         "type": "object",
         "properties": {
             "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK."},
-            "since": {"type": "integer", "description": "Optional Unix timestamp; return data at or after this time."},
+            "since": {
+                "type": "integer",
+                "description": "Optional Unix timestamp; return data at or after this time.",
+            },
             "trade_sessions": {"type": "string", "enum": ["intraday", "all"]},
         },
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")
@@ -216,12 +229,15 @@ class GetLongbridgeCapitalFlowTool(_LongbridgeMarketTool):
     params = {
         "type": "object",
         "properties": {
-            "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK, 600519.SH."},
+            "symbol": {
+                "type": "string",
+                "description": "Longbridge symbol, e.g. AAPL.US, 700.HK, 600519.SH.",
+            },
         },
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")
@@ -235,12 +251,16 @@ class GetLongbridgeTradesTool(_LongbridgeMarketTool):
         "type": "object",
         "properties": {
             "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK."},
-            "count": {"type": "integer", "description": "Number of trades, capped at 500.", "default": 50},
+            "count": {
+                "type": "integer",
+                "description": "Number of trades, capped at 500.",
+                "default": 50,
+            },
         },
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")
@@ -262,7 +282,7 @@ class GetLongbridgeDepthTool(_LongbridgeMarketTool):
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")
@@ -274,7 +294,7 @@ class GetLongbridgeMarketStatusTool(_LongbridgeMarketTool):
     description = "查询 Longbridge 各市场当前交易状态时使用此工具。Use for market open/closed/pre-market status, 市场状态."
     params = {"type": "object", "properties": {}}
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         return self._call("get_market_status")
 
 
@@ -284,14 +304,19 @@ class GetLongbridgeTradingDaysTool(_LongbridgeMarketTool):
     params = {
         "type": "object",
         "properties": {
-            "market": {"type": "string", "enum": ["US", "HK", "CN", "SG"], "description": "Market code.", "default": "US"},
+            "market": {
+                "type": "string",
+                "enum": ["US", "HK", "CN", "SG"],
+                "description": "Market code.",
+                "default": "US",
+            },
             "begin": {"type": "string", "description": "Begin date in YYYY-MM-DD."},
             "end": {"type": "string", "description": "End date in YYYY-MM-DD."},
         },
         "required": ["market", "begin", "end"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         return self._call(
             "get_trading_days",
             str(args.get("market") or "US"),
@@ -326,7 +351,7 @@ class GetLongbridgeQuoteIndicatorsTool(_LongbridgeMarketTool):
         "required": ["symbols"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbols = _string_list(args.get("symbols") or args.get("symbol"))
         if not symbols:
             return ToolResult.fail("symbols is required")
@@ -343,7 +368,10 @@ class GetLongbridgeTechnicalIndicatorsTool(_LongbridgeMarketTool):
     params = {
         "type": "object",
         "properties": {
-            "symbol": {"type": "string", "description": "Longbridge symbol, e.g. AAPL.US, 700.HK, 600519.SH."},
+            "symbol": {
+                "type": "string",
+                "description": "Longbridge symbol, e.g. AAPL.US, 700.HK, 600519.SH.",
+            },
             "period": {
                 "type": "string",
                 "description": "K-line period: 1D, 1W, 1M, 1Y, 1min, 5min, 15min, 30min, 60min.",
@@ -358,7 +386,20 @@ class GetLongbridgeTechnicalIndicatorsTool(_LongbridgeMarketTool):
                 "type": "array",
                 "items": {
                     "type": "string",
-                    "enum": ["VOL", "MA", "EMA", "MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC", "BOLL", "BBIBOLL"],
+                    "enum": [
+                        "VOL",
+                        "MA",
+                        "EMA",
+                        "MACD",
+                        "KDJ",
+                        "RSI",
+                        "CCI",
+                        "WR",
+                        "DMI",
+                        "OSC",
+                        "BOLL",
+                        "BBIBOLL",
+                    ],
                 },
                 "description": "Optional indicator names. Empty means all supported indicators.",
             },
@@ -389,7 +430,7 @@ class GetLongbridgeTechnicalIndicatorsTool(_LongbridgeMarketTool):
         "required": ["symbol"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult.fail("symbol is required")

@@ -9,38 +9,38 @@
 - SkillSnapshot: 技能快照
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
 class SkillInstallSpec:
     kind: str
-    id: Optional[str] = None
-    label: Optional[str] = None
-    bins: List[str] = field(default_factory=list)
-    os: List[str] = field(default_factory=list)
-    formula: Optional[str] = None
-    package: Optional[str] = None
-    module: Optional[str] = None
-    url: Optional[str] = None
-    archive: Optional[str] = None
+    id: str | None = None
+    label: str | None = None
+    bins: list[str] = field(default_factory=list)
+    os: list[str] = field(default_factory=list)
+    formula: str | None = None
+    package: str | None = None
+    module: str | None = None
+    url: str | None = None
+    archive: str | None = None
     extract: bool = False
-    strip_components: Optional[int] = None
-    target_dir: Optional[str] = None
+    strip_components: int | None = None
+    target_dir: str | None = None
 
 
 @dataclass
 class SkillMetadata:
     always: bool = False
     default_enabled: bool = True
-    skill_key: Optional[str] = None
-    primary_env: Optional[str] = None
-    emoji: Optional[str] = None
-    homepage: Optional[str] = None
-    os: List[str] = field(default_factory=list)
-    requires: Dict[str, List[str]] = field(default_factory=dict)
-    install: List[SkillInstallSpec] = field(default_factory=list)
+    skill_key: str | None = None
+    primary_env: str | None = None
+    emoji: str | None = None
+    homepage: str | None = None
+    os: list[str] = field(default_factory=list)
+    requires: dict[str, list[str]] = field(default_factory=dict)
+    install: list[SkillInstallSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -52,25 +52,25 @@ class Skill:
     source: str
     content: str
     disable_model_invocation: bool = False
-    frontmatter: Dict[str, Any] = field(default_factory=dict)
+    frontmatter: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class SkillEntry:
     skill: Skill
-    metadata: Optional[SkillMetadata] = None
+    metadata: SkillMetadata | None = None
     user_invocable: bool = True
 
 
 @dataclass
 class LoadSkillsResult:
-    skills: List[Skill]
-    diagnostics: List[str] = field(default_factory=list)
+    skills: list[Skill]
+    diagnostics: list[str] = field(default_factory=list)
 
 
 @dataclass
 class SkillSnapshot:
     prompt: str
-    skills: List[Dict[str, str]]
-    resolved_skills: List[Skill] = field(default_factory=list)
-    version: Optional[int] = None
+    skills: list[dict[str, str]]
+    resolved_skills: list[Skill] = field(default_factory=list)
+    version: int | None = None

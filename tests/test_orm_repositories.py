@@ -16,7 +16,9 @@ class ORMRepositoryMigrationTest(unittest.TestCase):
             session = chat.create_session(title="trace")
             trace = TraceStore(tmp)
             run = trace.create_run(session_id=session["id"], user_message="hello")
-            trace.add_event(run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"])
+            trace.add_event(
+                run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"]
+            )
             self.assertEqual(len(trace.get_session_traces(session_id=session["id"])["runs"]), 1)
 
             chat.delete_session(session["id"])
@@ -132,4 +134,3 @@ class ORMRepositoryMigrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

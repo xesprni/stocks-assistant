@@ -7,10 +7,11 @@ import hashlib
 import hmac
 import json
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
@@ -48,7 +49,7 @@ class CurrentUser:
     roles: tuple[str, ...]
     permissions: frozenset[str]
     is_active: bool
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -88,7 +89,7 @@ def _jwt_decode(token: str, secret: str) -> dict[str, Any]:
         raise AuthError("Invalid token signature")
     payload = json.loads(_b64url_decode(parts[1]).decode())
     exp = payload.get("exp")
-    if exp is not None and datetime.now(timezone.utc).timestamp() > float(exp):
+    if exp is not None and datetime.now(UTC).timestamp() > float(exp):
         raise AuthError("Token expired")
     return payload
 
@@ -127,11 +128,11 @@ def get_jwt_secret() -> str:
 
 
 def _session_expires_at() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(days=LOGIN_SESSION_DAYS)
+    return datetime.now(UTC) + timedelta(days=LOGIN_SESSION_DAYS)
 
 
-def _refresh_expires_at(session: Optional[dict[str, Any]] = None) -> datetime:
-    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+def _refresh_expires_at(session: dict[str, Any] | None = None) -> datetime:
+    expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_DAYS)
     if session:
         session_expires = datetime.fromisoformat(session["expires_at"])
         expires = min(expires, session_expires)
@@ -140,7 +141,9 @@ def _refresh_expires_at(session: Optional[dict[str, Any]] = None) -> datetime:
 
 def normalize_device_id(value: str | None) -> str:
     """Normalize a client-provided stable device identifier."""
-    return "".join(ch for ch in (value or "").strip() if ch.isalnum() or ch in {"-", "_", ".", ":"})[:128]
+    return "".join(
+        ch for ch in (value or "").strip() if ch.isalnum() or ch in {"-", "_", ".", ":"}
+    )[:128]
 
 
 def resolve_device_id(
@@ -157,7 +160,7 @@ def resolve_device_id(
         return device_id
     source_user_agent = user_agent or (request.headers.get("user-agent", "") if request else "")
     source_ip = ip_address or (request_ip(request) if request else "")
-    fingerprint = hashlib.sha256(f"{source_user_agent}\0{source_ip}".encode("utf-8")).hexdigest()[:32]
+    fingerprint = hashlib.sha256(f"{source_user_agent}\0{source_ip}".encode()).hexdigest()[:32]
     return f"fp_{fingerprint}"
 
 
@@ -177,8 +180,8 @@ def create_login_session(
     )
 
 
-def create_access_token(user: dict[str, Any], *, session_id: Optional[str] = None) -> str:
-    now = datetime.now(timezone.utc)
+def create_access_token(user: dict[str, Any], *, session_id: str | None = None) -> str:
+    now = datetime.now(UTC)
     payload = {
         "sub": user["id"],
         "username": user["username"],
@@ -195,8 +198,8 @@ def create_access_token(user: dict[str, Any], *, session_id: Optional[str] = Non
 def create_refresh_token(
     user_id: str,
     *,
-    session_id: Optional[str] = None,
-    expires_at: Optional[datetime] = None,
+    session_id: str | None = None,
+    expires_at: datetime | None = None,
     user_agent: str = "",
     ip_address: str = "",
 ) -> tuple[str, str]:
@@ -230,7 +233,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def to_current_user(user: dict[str, Any], *, session_id: Optional[str] = None) -> CurrentUser:
+def to_current_user(user: dict[str, Any], *, session_id: str | None = None) -> CurrentUser:
     return CurrentUser(
         id=user["id"],
         username=user["username"],
@@ -242,7 +245,7 @@ def to_current_user(user: dict[str, Any], *, session_id: Optional[str] = None) -
     )
 
 
-def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
+def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     user = get_app_store().get_user_by_username(username)
     if not user or not user.get("is_active"):
         return None
@@ -269,7 +272,7 @@ def decode_access_token(token: str) -> CurrentUser:
             raise AuthError("Login session is no longer active")
         if session.get("revoked_at"):
             raise AuthError("Login session has been signed out")
-        if datetime.fromisoformat(session["expires_at"]) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(session["expires_at"]) <= datetime.now(UTC):
             get_app_store().revoke_login_session(session_id)
             raise AuthError("Login session expired; please sign in again")
     return to_current_user(user, session_id=session_id)
@@ -287,7 +290,7 @@ def refresh_tokens(
     if not record or record.get("revoked_at"):
         raise AuthError("Refresh token is invalid")
     expires_at = datetime.fromisoformat(record["expires_at"])
-    if expires_at <= datetime.now(timezone.utc):
+    if expires_at <= datetime.now(UTC):
         get_app_store().revoke_refresh_token(record["id"])
         raise AuthError("Refresh token expired")
     user = get_app_store().get_user_by_id(record["user_id"])
@@ -302,7 +305,7 @@ def refresh_tokens(
         if session.get("revoked_at"):
             get_app_store().revoke_refresh_token(record["id"])
             raise AuthError("Login session has been signed out")
-        if datetime.fromisoformat(session["expires_at"]) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(session["expires_at"]) <= datetime.now(UTC):
             get_app_store().revoke_login_session(session["id"])
             raise AuthError("Login session expired; please sign in again")
         resolved_device_id = normalize_device_id(device_id) or session.get("device_id") or ""
@@ -331,7 +334,7 @@ def refresh_tokens(
     return create_access_token(user, session_id=session["id"]), next_refresh, user
 
 
-def bearer_from_header(authorization: Optional[str]) -> Optional[str]:
+def bearer_from_header(authorization: str | None) -> str | None:
     if not authorization:
         return None
     scheme, _, token = authorization.partition(" ")
@@ -351,7 +354,7 @@ def ensure_legacy_device_active(request: Request, user: CurrentUser) -> None:
 
 async def get_current_user(
     request: Request,
-    authorization: Optional[str] = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> CurrentUser:
     cached = getattr(request.state, "current_user", None)
     if isinstance(cached, CurrentUser):

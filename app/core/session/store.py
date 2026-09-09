@@ -6,10 +6,9 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from app.core.orm.repositories.session import ChatSessionRepository
-
 
 VALID_MESSAGE_ROLES = {"user", "assistant"}
 
@@ -47,20 +46,25 @@ class ChatSessionStore:
 
     def create_session(
         self,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         title: str = "新对话",
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         sid = session_id or _new_id()
         clean_title = title.strip() or "新对话"
         created = self.repository.create_session(sid, user_id, clean_title, _now())
         return self._session_row_to_dict(created)
 
-    def count_sessions(self, user_id: Optional[str] = None) -> int:
+    def count_sessions(self, user_id: str | None = None) -> int:
         return self.repository.count_sessions(user_id=user_id)
 
-    def list_sessions(self, user_id: Optional[str] = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        return [self._session_row_to_dict(row) for row in self.repository.list_sessions(user_id=user_id, limit=limit, offset=offset)]
+    def list_sessions(
+        self, user_id: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        return [
+            self._session_row_to_dict(row)
+            for row in self.repository.list_sessions(user_id=user_id, limit=limit, offset=offset)
+        ]
 
     def get_session(self, session_id: str) -> dict[str, Any]:
         row = self.repository.get_session(session_id)
@@ -82,7 +86,7 @@ class ChatSessionStore:
         session_id: str,
         role: str,
         content: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if role not in VALID_MESSAGE_ROLES:
             raise ValueError(f"Invalid chat message role: {role}")
@@ -116,7 +120,7 @@ class ChatSessionStore:
         if not self.repository.delete_session(session_id):
             raise ChatSessionNotFound(session_id)
 
-    def delete_sessions(self, user_id: Optional[str] = None) -> int:
+    def delete_sessions(self, user_id: str | None = None) -> int:
         return self.repository.delete_sessions(user_id=user_id)
 
     @staticmethod
@@ -142,4 +146,3 @@ class ChatSessionStore:
             "metadata": _decode_metadata(row["metadata"]),
             "created_at": row["created_at"],
         }
-

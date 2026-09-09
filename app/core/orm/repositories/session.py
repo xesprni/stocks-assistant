@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import delete, desc, func, select
 
@@ -21,26 +21,36 @@ class ChatSessionRepository:
         self.session_factory = create_session_factory(self.engine)
         init_session_schema(self.engine)
 
-    def create_session(self, session_id: str, user_id: Optional[str], title: str, now: str) -> dict[str, Any]:
+    def create_session(
+        self, session_id: str, user_id: str | None, title: str, now: str
+    ) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
-            session.add(ChatSession(id=session_id, user_id=user_id, title=title, created_at=now, updated_at=now))
+            session.add(
+                ChatSession(
+                    id=session_id, user_id=user_id, title=title, created_at=now, updated_at=now
+                )
+            )
         return self.get_session(session_id)
 
-    def count_sessions(self, user_id: Optional[str] = None) -> int:
+    def count_sessions(self, user_id: str | None = None) -> int:
         with session_scope(self.session_factory) as session:
             stmt = select(func.count()).select_from(ChatSession)
             if user_id:
                 stmt = stmt.where(ChatSession.user_id == user_id)
             return int(session.scalar(stmt) or 0)
 
-    def list_sessions(self, user_id: Optional[str] = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def list_sessions(
+        self, user_id: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
         clean_limit = max(1, min(limit, 200))
         clean_offset = max(0, offset)
         with session_scope(self.session_factory) as session:
             stmt = select(ChatSession)
             if user_id:
                 stmt = stmt.where(ChatSession.user_id == user_id)
-            rows = session.scalars(stmt.order_by(desc(ChatSession.updated_at)).limit(clean_limit).offset(clean_offset)).all()
+            rows = session.scalars(
+                stmt.order_by(desc(ChatSession.updated_at)).limit(clean_limit).offset(clean_offset)
+            ).all()
             return [self._session_summary(session, row) for row in rows]
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
@@ -71,7 +81,9 @@ class ChatSessionRepository:
             if chat is None:
                 raise KeyError(session_id)
             seq = session.scalar(
-                select(func.coalesce(func.max(ChatMessage.seq), -1) + 1).where(ChatMessage.session_id == session_id)
+                select(func.coalesce(func.max(ChatMessage.seq), -1) + 1).where(
+                    ChatMessage.session_id == session_id
+                )
             )
             message = ChatMessage(
                 id=message_id,
@@ -101,7 +113,9 @@ class ChatSessionRepository:
             chat = session.get(ChatSession, session_id)
             if chat is None:
                 return None
-            result = session.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+            result = session.execute(
+                delete(ChatMessage).where(ChatMessage.session_id == session_id)
+            )
             if reset_title:
                 chat.title = "新对话"
             chat.updated_at = now
@@ -115,7 +129,7 @@ class ChatSessionRepository:
             session.delete(chat)
             return True
 
-    def delete_sessions(self, user_id: Optional[str] = None) -> int:
+    def delete_sessions(self, user_id: str | None = None) -> int:
         with session_scope(self.session_factory) as session:
             stmt = delete(ChatSession)
             if user_id:
@@ -124,7 +138,9 @@ class ChatSessionRepository:
             return int(result.rowcount or 0)
 
     def _session_summary(self, session, row: ChatSession) -> dict[str, Any]:
-        count = session.scalar(select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == row.id))
+        count = session.scalar(
+            select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == row.id)
+        )
         last = session.scalar(
             select(ChatMessage.content)
             .where(ChatMessage.session_id == row.id)

@@ -8,15 +8,16 @@
 
 知识库目录结构：workspace/knowledge/**/*.md
 """
-from html.parser import HTMLParser
+
+import logging
 import os
 import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
-from typing import Optional
 
 import httpx
-import logging
+
+from app.core.html_text import HTMLTextExtractor
 
 logger = logging.getLogger("stocks-assistant.knowledge")
 
@@ -25,89 +26,32 @@ MAX_URL_BYTES = 5_000_000
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".csv", ".json", ".log", ".html", ".htm"}
 
 
-class _HTMLTextExtractor(HTMLParser):
-    """Small stdlib HTML-to-text extractor for imported web pages."""
-
-    block_tags = {
-        "article",
-        "aside",
-        "blockquote",
-        "br",
-        "div",
-        "footer",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "header",
-        "li",
-        "main",
-        "p",
-        "pre",
-        "section",
-        "table",
-        "tr",
-    }
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self.title_parts: list[str] = []
-        self._skip_depth = 0
-        self._in_title = False
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        tag = tag.lower()
-        if tag in {"script", "style", "noscript", "svg"}:
-            self._skip_depth += 1
-            return
-        if tag == "title":
-            self._in_title = True
-        if tag in self.block_tags:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
-            self._skip_depth -= 1
-            return
-        if tag == "title":
-            self._in_title = False
-        if tag in self.block_tags:
-            self.parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth:
-            return
-        text = data.strip()
-        if not text:
-            return
-        if self._in_title:
-            self.title_parts.append(text)
-            return
-        self.parts.append(text)
-        self.parts.append(" ")
-
-    @property
-    def title(self) -> str:
-        return " ".join(" ".join(self.title_parts).split())
-
-    @property
-    def text(self) -> str:
-        raw = "".join(self.parts)
-        lines = [" ".join(line.split()) for line in raw.splitlines()]
-        compact: list[str] = []
-        blank = False
-        for line in lines:
-            if line:
-                compact.append(line)
-                blank = False
-            elif not blank and compact:
-                compact.append("")
-                blank = True
-        return "\n".join(compact).strip()
+class _HTMLTextExtractor(HTMLTextExtractor):
+    block_tags = frozenset(
+        [
+            "article",
+            "aside",
+            "blockquote",
+            "br",
+            "div",
+            "footer",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "header",
+            "li",
+            "main",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "tr",
+        ]
+    )
+    capture_title = True
 
 
 class KnowledgeService:
@@ -145,7 +89,7 @@ class KnowledgeService:
                 stats["size"] += size
                 title = name.replace(".md", "")
                 try:
-                    with open(full, "r", encoding="utf-8") as f:
+                    with open(full, encoding="utf-8") as f:
                         first_line = f.readline().strip()
                     if first_line.startswith("# "):
                         title = first_line[2:].strip()
@@ -164,7 +108,7 @@ class KnowledgeService:
             raise ValueError("path outside knowledge dir")
         if not os.path.isfile(full_path):
             raise FileNotFoundError(f"file not found: {rel_path}")
-        with open(full_path, "r", encoding="utf-8") as f:
+        with open(full_path, encoding="utf-8") as f:
             content = f.read()
         return {"content": content, "path": rel_path}
 
@@ -172,9 +116,9 @@ class KnowledgeService:
         self,
         filename: str,
         content: str,
-        directory: Optional[str] = None,
+        directory: str | None = None,
         *,
-        source_url: Optional[str] = None,
+        source_url: str | None = None,
     ) -> dict:
         """Save user-provided text as a Markdown knowledge file."""
         if not isinstance(content, str) or not content.strip():
@@ -189,7 +133,9 @@ class KnowledgeService:
         rel_saved = full_path.relative_to(self.knowledge_path).as_posix()
 
         title = Path(safe_name).stem.replace("-", " ").replace("_", " ").strip() or "Knowledge"
-        document = self._format_markdown_document(title=title, content=content, source_url=source_url)
+        document = self._format_markdown_document(
+            title=title, content=content, source_url=source_url
+        )
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(document, encoding="utf-8")
 
@@ -197,7 +143,7 @@ class KnowledgeService:
         logger.info("Saved knowledge file: %s", rel_saved)
         return {"status": "ok", "path": rel_saved, "size": size, "source": source_url}
 
-    def save_url(self, url: str, filename: Optional[str] = None, directory: Optional[str] = None) -> dict:
+    def save_url(self, url: str, filename: str | None = None, directory: str | None = None) -> dict:
         """Fetch an HTTP(S) URL and save its readable content as Markdown."""
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -224,16 +170,24 @@ class KnowledgeService:
     def _fetch_url(self, url: str) -> tuple[str, bytes, str]:
         with httpx.Client(timeout=20.0, follow_redirects=True) as client:
             try:
-                with client.stream("GET", url, headers={"User-Agent": "stocks-assistant/knowledge-import"}) as response:
+                with client.stream(
+                    "GET", url, headers={"User-Agent": "stocks-assistant/knowledge-import"}
+                ) as response:
                     response.raise_for_status()
                     chunks: list[bytes] = []
                     total = 0
                     for chunk in response.iter_bytes():
                         total += len(chunk)
                         if total > MAX_URL_BYTES:
-                            raise ValueError(f"url content is too large; limit is {MAX_URL_BYTES} bytes")
+                            raise ValueError(
+                                f"url content is too large; limit is {MAX_URL_BYTES} bytes"
+                            )
                         chunks.append(chunk)
-                    return response.headers.get("content-type", ""), b"".join(chunks), str(response.url)
+                    return (
+                        response.headers.get("content-type", ""),
+                        b"".join(chunks),
+                        str(response.url),
+                    )
             except httpx.HTTPError as exc:
                 raise ValueError(f"failed to fetch url: {exc}") from exc
 
@@ -246,7 +200,9 @@ class KnowledgeService:
             raise ValueError("knowledge files must be saved as .md")
         self.knowledge_path.mkdir(parents=True, exist_ok=True)
         full_path = (self.knowledge_path / path).resolve()
-        if os.path.commonpath([str(self.knowledge_path.resolve()), str(full_path)]) != str(self.knowledge_path.resolve()):
+        if os.path.commonpath([str(self.knowledge_path.resolve()), str(full_path)]) != str(
+            self.knowledge_path.resolve()
+        ):
             raise ValueError("path outside knowledge dir")
         return full_path
 
@@ -262,7 +218,7 @@ class KnowledgeService:
                 return candidate
         raise ValueError("unable to allocate a unique filename")
 
-    def _safe_directory(self, directory: Optional[str]) -> str:
+    def _safe_directory(self, directory: str | None) -> str:
         if not directory:
             return ""
         parts = []
@@ -295,7 +251,7 @@ class KnowledgeService:
         normalized = normalized.strip(".-")
         return normalized[:120]
 
-    def _format_markdown_document(self, title: str, content: str, source_url: Optional[str]) -> str:
+    def _format_markdown_document(self, title: str, content: str, source_url: str | None) -> str:
         body = content.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "").strip()
         prefix = ""
         if not body.lstrip().startswith("#"):
@@ -307,7 +263,7 @@ class KnowledgeService:
             return f"{source_block}{body}\n"
         return f"{prefix}{body}\n"
 
-    def _charset_from_content_type(self, content_type: str) -> Optional[str]:
+    def _charset_from_content_type(self, content_type: str) -> str | None:
         match = re.search(r"charset=([^;\s]+)", content_type, flags=re.IGNORECASE)
         return match.group(1).strip("\"'") if match else None
 
@@ -317,7 +273,7 @@ class KnowledgeService:
         if not knowledge_path.is_dir():
             return {"nodes": [], "links": []}
         nodes, links = {}, []
-        link_re = re.compile(r'\[([^\]]*)\]\(([^)]+\.md)\)')
+        link_re = re.compile(r"\[([^\]]*)\]\(([^)]+\.md)\)")
         for md_file in knowledge_path.rglob("*.md"):
             rel = str(md_file.relative_to(knowledge_path))
             if rel in ("index.md", "log.md"):
@@ -343,10 +299,10 @@ class KnowledgeService:
             nodes[rel] = {"id": rel, "label": title, "category": category}
         valid_ids = set(nodes.keys())
         seen, deduped = set(), []
-        for l in links:
-            if l["source"] in valid_ids and l["target"] in valid_ids:
-                key = tuple(sorted([l["source"], l["target"]]))
+        for link in links:
+            if link["source"] in valid_ids and link["target"] in valid_ids:
+                key = tuple(sorted([link["source"], link["target"]]))
                 if key not in seen:
                     seen.add(key)
-                    deduped.append(l)
+                    deduped.append(link)
         return {"nodes": list(nodes.values()), "links": deduped}

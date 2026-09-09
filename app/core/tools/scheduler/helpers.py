@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 import re
-from typing import Any, Optional
+from datetime import datetime, timedelta
+from typing import Any
 
 from croniter import croniter
 
@@ -79,7 +79,7 @@ def parse_schedule_expression(schedule_str: str) -> dict[str, Any]:
     return {"type": "once", "run_at": datetime.now().isoformat()}
 
 
-def parse_schedule_components(schedule_type: str, schedule_value: str) -> Optional[dict[str, Any]]:
+def parse_schedule_components(schedule_type: str, schedule_value: str) -> dict[str, Any] | None:
     """Parse the legacy tool schedule_type/schedule_value pair."""
 
     stype = str(schedule_type or "").strip().lower()
@@ -108,7 +108,7 @@ def parse_schedule_components(schedule_type: str, schedule_value: str) -> Option
     return None
 
 
-def _parse_relative_once(text: str) -> Optional[dict[str, Any]]:
+def _parse_relative_once(text: str) -> dict[str, Any] | None:
     match = re.fullmatch(r"\+(\d+)([smhd])", text)
     if not match:
         return None
@@ -123,7 +123,7 @@ def _parse_relative_once(text: str) -> Optional[dict[str, Any]]:
     return {"type": "once", "run_at": (datetime.now() + delta).isoformat()}
 
 
-def _parse_interval(text: str) -> Optional[dict[str, Any]]:
+def _parse_interval(text: str) -> dict[str, Any] | None:
     if text.isdigit():
         seconds = int(text)
         return {"type": "interval", "seconds": seconds} if seconds > 0 else None

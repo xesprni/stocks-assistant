@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
@@ -62,4 +62,3 @@ def connect_sqlite(db_path: str | Path, *, timeout: int = 30) -> sqlite3.Connect
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 15000")
     return conn
-

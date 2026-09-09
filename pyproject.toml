@@ -2,7 +2,7 @@
 name = "stocks-assistant"
 version = "0.1.0"
 description = "AI Agent service with memory, knowledge, skills and tools"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
@@ -26,3 +26,44 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.11", "mypy>=1.15"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Body", "fastapi.File",
+    "app.core.security.require_permissions",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+follow_imports = "silent"
+warn_unused_configs = true
+# 首批严格检查独立辅助模块；结构重构完成后按职责逐步扩大覆盖。
+files = [
+    "app/core/html_text.py",
+    "app/core/market/errors.py",
+    "app/core/memory/search_filters.py",
+    "app/core/portfolio/valuation.py",
+    "app/core/research/utils.py",
+    "app/core/agent/context.py",
+    "app/core/agent/stream_state.py",
+    "app/core/llm/message_codec.py",
+    "app/core/tools/builtin_registry.py",
+    "app/core/tools/paths.py",
+    "app/core/tools/parameters.py",
+    "app/core/tools/portfolio_output.py",
+    "app/core/tracing/payloads.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

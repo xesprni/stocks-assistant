@@ -1,7 +1,6 @@
 """读取 knowledge_search 返回的精确知识片段。"""
 
 from pathlib import Path
-from typing import Optional
 
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import evidence_for_source, evidence_metadata, source_reference
@@ -23,7 +22,7 @@ class KnowledgeGetTool(BaseTool):
         "required": ["path"],
     }
 
-    def __init__(self, memory_manager=None, user_id: Optional[str] = None):
+    def __init__(self, memory_manager=None, user_id: str | None = None):
         self.memory_manager = memory_manager
         self.user_id = user_id
 
@@ -51,7 +50,9 @@ class KnowledgeGetTool(BaseTool):
                 else workspace / "knowledge"
             ).resolve()
             if not file_path.is_relative_to(allowed_root):
-                return ToolResult.fail("Error: knowledge path is outside the current user's knowledge base")
+                return ToolResult.fail(
+                    "Error: knowledge path is outside the current user's knowledge base"
+                )
             if not file_path.is_file():
                 return ToolResult.fail(f"Error: file not found: {path}")
 
@@ -90,10 +91,9 @@ class KnowledgeGetTool(BaseTool):
             return ToolResult.fail(f"Error reading knowledge file: {exc}")
 
 
-def _extract_source_url(lines: list[str]) -> Optional[str]:
+def _extract_source_url(lines: list[str]) -> str | None:
     for line in lines[:20]:
         if line.startswith("> Source:"):
             value = line.split(":", 1)[1].strip()
             return value or None
     return None
-

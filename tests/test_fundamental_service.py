@@ -160,7 +160,10 @@ def test_security_insights_cache_keeps_each_users_content_language():
             self.language = language
 
         def company(self, symbol):
-            return {"name": symbol, "profile": "公司简介" if self.language == "zh" else "Company profile"}
+            return {
+                "name": symbol,
+                "profile": "公司简介" if self.language == "zh" else "Company profile",
+            }
 
     class LocalizedService(FakeFundamentalService):
         def _fundamental_context(self, settings=None):
@@ -168,7 +171,11 @@ def test_security_insights_cache_keeps_each_users_content_language():
             return LocalizedContext(settings.app_language)
 
     service = LocalizedService()
-    credentials = {"longbridge_app_key": "key", "longbridge_app_secret": "secret", "longbridge_access_token": "token"}
+    credentials = {
+        "longbridge_app_key": "key",
+        "longbridge_app_secret": "secret",
+        "longbridge_access_token": "token",
+    }
     chinese = SimpleNamespace(**credentials, app_language="zh")
     english = SimpleNamespace(**credentials, app_language="en")
 

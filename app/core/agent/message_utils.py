@@ -10,8 +10,6 @@ Anthropic API 要求：assistant 的 tool_use 后必须紧跟包含对应 tool_r
 
 from __future__ import annotations
 
-from typing import Dict, List, Set
-
 import logging
 
 logger = logging.getLogger("stocks-assistant.agent")
@@ -30,19 +28,22 @@ def _extract_text_from_content(content) -> str:
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):
-        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        parts = [
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+        ]
         return "\n".join(p for p in parts if p).strip()
     return ""
 
 
-def _repair_tool_use_adjacency(messages: List[Dict]) -> int:
+def _repair_tool_use_adjacency(messages: list[dict]) -> int:
     """修复 tool_use/tool_result 的相邻关系
 
     Anthropic API 要求：assistant 的 tool_use 后，下一条消息必须是 user 消息
     且包含每个 tool_use id 对应的 tool_result 块。
     不满足时会插入合成的 tool_result 块来修复。
     """
-    def _synth_block(tid: str) -> Dict:
+
+    def _synth_block(tid: str) -> dict:
         return {
             "type": "tool_result",
             "tool_use_id": tid,
@@ -80,14 +81,18 @@ def _repair_tool_use_adjacency(messages: List[Dict]) -> int:
 
         nxt = messages[i + 1]
         if nxt.get("role") != "user":
-            messages.insert(i + 1, {"role": "user", "content": [_synth_block(tid) for tid in required]})
+            messages.insert(
+                i + 1, {"role": "user", "content": [_synth_block(tid) for tid in required]}
+            )
             repairs += 1
             i += 2
             continue
 
         nc = nxt.get("content", [])
         if not isinstance(nc, list):
-            messages.insert(i + 1, {"role": "user", "content": [_synth_block(tid) for tid in required]})
+            messages.insert(
+                i + 1, {"role": "user", "content": [_synth_block(tid) for tid in required]}
+            )
             repairs += 1
             i += 2
             continue
@@ -109,7 +114,7 @@ def _repair_tool_use_adjacency(messages: List[Dict]) -> int:
     return repairs
 
 
-def sanitize_claude_messages(messages: List[Dict]) -> int:
+def sanitize_claude_messages(messages: list[dict]) -> int:
     """验证并修复 Claude 格式消息列表（原地修改）
 
     修复项：
@@ -132,8 +137,11 @@ def sanitize_claude_messages(messages: List[Dict]) -> int:
         if first.get("role") != "user":
             break
         content = first.get("content", [])
-        if isinstance(content, list) and _has_block_type(content, "tool_result") \
-                and not _has_block_type(content, "text"):
+        if (
+            isinstance(content, list)
+            and _has_block_type(content, "tool_result")
+            and not _has_block_type(content, "text")
+        ):
             messages.pop(0)
             removed += 1
         else:
@@ -141,10 +149,10 @@ def sanitize_claude_messages(messages: List[Dict]) -> int:
 
     # Iteratively remove unmatched tool_use / tool_result until stable
     for _ in range(5):
-        use_ids: Set[str] = set()
-        result_ids: Set[str] = set()
+        use_ids: set[str] = set()
+        result_ids: set[str] = set()
         for msg in messages:
-            for block in (msg.get("content") or []):
+            for block in msg.get("content") or []:
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "tool_use" and block.get("id"):
@@ -167,9 +175,13 @@ def sanitize_claude_messages(messages: List[Dict]) -> int:
                 i += 1
                 continue
 
-            if role == "assistant" and bad_use and any(
-                isinstance(b, dict) and b.get("type") == "tool_use"
-                and b.get("id") in bad_use for b in content
+            if (
+                role == "assistant"
+                and bad_use
+                and any(
+                    isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") in bad_use
+                    for b in content
+                )
             ):
                 messages.pop(i)
                 pass_removed += 1
@@ -177,8 +189,10 @@ def sanitize_claude_messages(messages: List[Dict]) -> int:
 
             if role == "user" and bad_result and _has_block_type(content, "tool_result"):
                 has_bad = any(
-                    isinstance(b, dict) and b.get("type") == "tool_result"
-                    and b.get("tool_use_id") in bad_result for b in content
+                    isinstance(b, dict)
+                    and b.get("type") == "tool_result"
+                    and b.get("tool_use_id") in bad_result
+                    for b in content
                 )
                 if has_bad:
                     if not _has_block_type(content, "text"):
@@ -188,9 +202,13 @@ def sanitize_claude_messages(messages: List[Dict]) -> int:
                     else:
                         before = len(content)
                         msg["content"] = [
-                            b for b in content
-                            if not (isinstance(b, dict) and b.get("type") == "tool_result"
-                                    and b.get("tool_use_id") in bad_result)
+                            b
+                            for b in content
+                            if not (
+                                isinstance(b, dict)
+                                and b.get("type") == "tool_result"
+                                and b.get("tool_use_id") in bad_result
+                            )
                         ]
                         pass_removed += before - len(msg["content"])
             i += 1
@@ -203,11 +221,11 @@ def sanitize_claude_messages(messages: List[Dict]) -> int:
         adj_repairs += _repair_tool_use_adjacency(messages)
 
     if removed:
-        logger.debug(f"Message validation: removed {removed} broken message(s)")
+        logger.debug("Message validation: removed %s broken message(s)", removed)
     return removed + adj_repairs
 
 
-def compress_turn_to_text_only(turn: Dict) -> Dict:
+def compress_turn_to_text_only(turn: dict) -> dict:
     """将完整对话轮次压缩为纯文本
 
     仅保留第一个用户文本和最后一个助手回复文本，
@@ -232,8 +250,12 @@ def compress_turn_to_text_only(turn: Dict) -> Dict:
 
     compressed_messages = []
     if user_text:
-        compressed_messages.append({"role": "user", "content": [{"type": "text", "text": user_text}]})
+        compressed_messages.append(
+            {"role": "user", "content": [{"type": "text", "text": user_text}]}
+        )
     if last_assistant_text:
-        compressed_messages.append({"role": "assistant", "content": [{"type": "text", "text": last_assistant_text}]})
+        compressed_messages.append(
+            {"role": "assistant", "content": [{"type": "text", "text": last_assistant_text}]}
+        )
 
     return {"messages": compressed_messages}

@@ -1,25 +1,26 @@
 """知识库 API Schema"""
 
-from typing import List, Optional
-
 from pydantic import BaseModel
 
 
 class KnowledgeTreeNode(BaseModel):
     """知识库目录树节点"""
+
     name: str  # 文件/目录名
     path: str  # 路径
     type: str  # 类型：file / dir
-    children: Optional[List["KnowledgeTreeNode"]] = None  # 子节点
+    children: list["KnowledgeTreeNode"] | None = None  # 子节点
 
 
 class KnowledgeTreeResponse(BaseModel):
     """知识库目录树响应"""
-    tree: List[KnowledgeTreeNode]
+
+    tree: list[KnowledgeTreeNode]
 
 
 class KnowledgeFileResponse(BaseModel):
     """知识文件内容响应"""
+
     path: str  # 文件路径
     content: str  # 文件内容
     size: int  # 文件大小
@@ -27,28 +28,32 @@ class KnowledgeFileResponse(BaseModel):
 
 class KnowledgeFileSaveRequest(BaseModel):
     """保存本地上传文本文件到知识库"""
+
     filename: str
     content: str
-    directory: Optional[str] = None
+    directory: str | None = None
 
 
 class KnowledgeUrlSaveRequest(BaseModel):
     """读取指定 URL 内容并保存到知识库"""
+
     url: str
-    filename: Optional[str] = None
-    directory: Optional[str] = None
+    filename: str | None = None
+    directory: str | None = None
 
 
 class KnowledgeSaveResponse(BaseModel):
     """知识文件保存响应"""
+
     status: str
     path: str
     size: int
-    source: Optional[str] = None
+    source: str | None = None
 
 
 class KnowledgeGraphNode(BaseModel):
     """知识图谱节点"""
+
     id: str  # 节点 ID（文件相对路径）
     label: str  # 节点标签（标题）
     type: str  # 节点类型
@@ -56,12 +61,14 @@ class KnowledgeGraphNode(BaseModel):
 
 class KnowledgeGraphEdge(BaseModel):
     """知识图谱边（Markdown 内部链接）"""
+
     source: str  # 源节点
     target: str  # 目标节点
-    label: Optional[str] = None  # 链接文本
+    label: str | None = None  # 链接文本
 
 
 class KnowledgeGraphResponse(BaseModel):
     """知识图谱响应"""
-    nodes: List[KnowledgeGraphNode]  # 节点列表
-    edges: List[KnowledgeGraphEdge]  # 边列表
+
+    nodes: list[KnowledgeGraphNode]  # 节点列表
+    edges: list[KnowledgeGraphEdge]  # 边列表

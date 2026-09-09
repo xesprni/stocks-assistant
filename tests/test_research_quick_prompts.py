@@ -12,9 +12,11 @@ from fastapi.testclient import TestClient
 
 from app.api import research as research_api
 from app.config import Settings
-from app.core.research.quick_prompts import QuickPromptsUnavailableError, ResearchQuickPromptsService
+from app.core.research.quick_prompts import (
+    QuickPromptsUnavailableError,
+    ResearchQuickPromptsService,
+)
 from app.core.security import CurrentUser, get_current_user
-
 
 PROMPTS = ["如何评估盈利质量？", "哪些风险需要持续跟踪？", "如何比较同业估值？"]
 
@@ -116,8 +118,12 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
         self.provider.call = delayed_call
         result = self.get()
 
-        self.assertEqual(started_at + 30, datetime.fromisoformat(result["generated_at"]).timestamp())
-        self.assertEqual(started_at + 30 + 3600, datetime.fromisoformat(result["expires_at"]).timestamp())
+        self.assertEqual(
+            started_at + 30, datetime.fromisoformat(result["generated_at"]).timestamp()
+        )
+        self.assertEqual(
+            started_at + 30 + 3600, datetime.fromisoformat(result["expires_at"]).timestamp()
+        )
 
     def test_shorter_configured_interval_applies_to_existing_cache(self):
         first = self.get()
@@ -128,7 +134,10 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
         self.assertEqual(600, cached["refresh_interval_seconds"])
         self.assertEqual(
             600,
-            (datetime.fromisoformat(cached["expires_at"]) - datetime.fromisoformat(cached["generated_at"])).total_seconds(),
+            (
+                datetime.fromisoformat(cached["expires_at"])
+                - datetime.fromisoformat(cached["generated_at"])
+            ).total_seconds(),
         )
 
         self.now += 1
@@ -169,19 +178,28 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
         for _ in range(2):
             for user_id, language, watchlist, portfolio in cases:
                 self.get(
-                    user_id, language=language,
-                    can_read_watchlist=watchlist, can_read_portfolio=portfolio,
+                    user_id,
+                    language=language,
+                    can_read_watchlist=watchlist,
+                    can_read_portfolio=portfolio,
                 )
 
         self.assertEqual(len(cases), len(self.provider.calls))
 
     def test_context_services_only_read_authorized_user(self):
         watchlist = Mock()
-        watchlist.list_items.return_value = [{"symbol": "AAPL.US", "name": "Apple", "note": "private-note"}]
+        watchlist.list_items.return_value = [
+            {"symbol": "AAPL.US", "name": "Apple", "note": "private-note"}
+        ]
         portfolio = Mock()
-        portfolio.repository.list_items.return_value = [{
-            "symbol": "MSFT.US", "name": "Microsoft", "shares": "123456", "cost_price": "987654",
-        }]
+        portfolio.repository.list_items.return_value = [
+            {
+                "symbol": "MSFT.US",
+                "name": "Microsoft",
+                "shares": "123456",
+                "cost_price": "987654",
+            }
+        ]
         self.service = self.make_service(watchlist_service=watchlist, portfolio_service=portfolio)
 
         self.get()
@@ -190,9 +208,12 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
 
         self.get(can_read_watchlist=True, can_read_portfolio=True)
         self.assertEqual("user-1", watchlist.list_items.call_args.kwargs["user_id"])
-        self.assertTrue(all(
-            call.kwargs["user_id"] == "user-1" for call in portfolio.repository.list_items.call_args_list
-        ))
+        self.assertTrue(
+            all(
+                call.kwargs["user_id"] == "user-1"
+                for call in portfolio.repository.list_items.call_args_list
+            )
+        )
         request = self.provider.calls[-1]
         request_text = json.dumps(request.messages, ensure_ascii=False)
         self.assertIn("AAPL.US", request_text)
@@ -203,10 +224,15 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
 
     def test_fenced_json_and_text_blocks_are_accepted_and_whitespace_normalized(self):
         self.provider.content = [
-            {"type": "text", "text": '```json\n{"prompts": ["  First  question?  ", "Second\\nquestion?", "Third question?"]}\n```'},
+            {
+                "type": "text",
+                "text": '```json\n{"prompts": ["  First  question?  ", "Second\\nquestion?", "Third question?"]}\n```',
+            },
         ]
         result = self.get()
-        self.assertEqual(["First question?", "Second question?", "Third question?"], result["prompts"])
+        self.assertEqual(
+            ["First question?", "Second question?", "Third question?"], result["prompts"]
+        )
 
     def test_invalid_ai_output_is_rejected_without_caching(self):
         invalid_contents = [
@@ -338,9 +364,12 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
     def use_stream_provider(self):
         self.provider = FakeStreamProvider()
         self.factory.return_value = self.provider
-        self.settings = self.settings.model_copy(update={
-            "llm_provider": "openai_responses", "llm_auth_mode": "codex",
-        })
+        self.settings = self.settings.model_copy(
+            update={
+                "llm_provider": "openai_responses",
+                "llm_auth_mode": "codex",
+            }
+        )
         return self.provider
 
     def test_codex_stream_assembles_public_json_and_ignores_reasoning(self):
@@ -349,7 +378,11 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
         provider.chunks = [
             {"choices": [{"delta": {"reasoning_content": "private reasoning is not JSON"}}]},
             {"choices": [{"delta": {"content": content[:17]}}]},
-            {"choices": [{"delta": {"content": content[17:], "reasoning_content": "private conclusion"}}]},
+            {
+                "choices": [
+                    {"delta": {"content": content[17:], "reasoning_content": "private conclusion"}}
+                ]
+            },
             {"choices": [{"delta": {}, "finish_reason": "stop"}]},
         ]
         result = self.get()
@@ -422,8 +455,12 @@ class ResearchQuickPromptsServiceTest(unittest.TestCase):
 class ResearchQuickPromptsApiTest(unittest.TestCase):
     def setUp(self):
         self.user = CurrentUser(
-            id="user-1", username="researcher", display_name="Researcher", roles=(),
-            permissions=frozenset({"chat:write", "watchlist:read"}), is_active=True,
+            id="user-1",
+            username="researcher",
+            display_name="Researcher",
+            roles=(),
+            permissions=frozenset({"chat:write", "watchlist:read"}),
+            is_active=True,
         )
         self.service = Mock()
         self.service.get_prompts.return_value = {
@@ -440,8 +477,12 @@ class ResearchQuickPromptsApiTest(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: self.user
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
-        service_patcher = patch.object(research_api, "get_research_quick_prompts_service", return_value=self.service)
-        settings_patcher = patch.object(research_api, "get_effective_settings", return_value=self.settings)
+        service_patcher = patch.object(
+            research_api, "get_research_quick_prompts_service", return_value=self.service
+        )
+        settings_patcher = patch.object(
+            research_api, "get_effective_settings", return_value=self.settings
+        )
         self.get_service = service_patcher.start()
         self.addCleanup(service_patcher.stop)
         self.get_settings = settings_patcher.start()
@@ -454,14 +495,22 @@ class ResearchQuickPromptsApiTest(unittest.TestCase):
         self.assertEqual(PROMPTS, response.json()["prompts"])
         self.get_settings.assert_called_once_with("user-1")
         self.service.get_prompts.assert_called_once_with(
-            "user-1", language="en", settings=self.settings, force_refresh=True,
-            can_read_watchlist=True, can_read_portfolio=False,
+            "user-1",
+            language="en",
+            settings=self.settings,
+            force_refresh=True,
+            can_read_watchlist=True,
+            can_read_portfolio=False,
         )
 
     def test_chat_permission_is_required_before_generating(self):
         self.user = CurrentUser(
-            id="user-2", username="reader", display_name="Reader", roles=(),
-            permissions=frozenset({"knowledge:read"}), is_active=True,
+            id="user-2",
+            username="reader",
+            display_name="Reader",
+            roles=(),
+            permissions=frozenset({"knowledge:read"}),
+            is_active=True,
         )
         response = self.client.get("/api/v1/research/quick-prompts")
 
@@ -475,7 +524,9 @@ class ResearchQuickPromptsApiTest(unittest.TestCase):
         self.service.get_prompts.assert_not_called()
 
     def test_generation_unavailable_returns_service_unavailable(self):
-        self.service.get_prompts.side_effect = QuickPromptsUnavailableError("Quick prompts unavailable")
+        self.service.get_prompts.side_effect = QuickPromptsUnavailableError(
+            "Quick prompts unavailable"
+        )
         response = self.client.get("/api/v1/research/quick-prompts")
 
         self.assertEqual(503, response.status_code)

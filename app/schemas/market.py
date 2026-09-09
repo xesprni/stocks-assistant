@@ -1,7 +1,5 @@
 """Market dashboard API schemas."""
 
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -16,7 +14,7 @@ class IndexConfig(BaseModel):
 class MarketDashboardConfig(BaseModel):
     """行情监控仪表盘配置。"""
 
-    indices: List[IndexConfig] = Field(default_factory=list)
+    indices: list[IndexConfig] = Field(default_factory=list)
     refresh_interval: int = Field(default=60, ge=1, le=3600)
 
 
@@ -26,21 +24,21 @@ class QuoteItem(BaseModel):
     symbol: str
     name: str = ""
     category: str = ""
-    last_done: Optional[str] = None
-    prev_close: Optional[str] = None
-    open: Optional[str] = None
-    high: Optional[str] = None
-    low: Optional[str] = None
-    volume: Optional[str] = None
-    turnover: Optional[str] = None
-    change_value: Optional[str] = None
-    change_rate: Optional[str] = None
+    last_done: str | None = None
+    prev_close: str | None = None
+    open: str | None = None
+    high: str | None = None
+    low: str | None = None
+    volume: str | None = None
+    turnover: str | None = None
+    change_value: str | None = None
+    change_rate: str | None = None
 
 
 class MarketQuotesResponse(BaseModel):
     """行情数据响应。"""
 
-    quotes: List[QuoteItem]
+    quotes: list[QuoteItem]
     total: int
 
 
@@ -61,7 +59,7 @@ class CandlesticksResponse(BaseModel):
 
     symbol: str
     period: str
-    bars: List[CandlestickItem]
+    bars: list[CandlestickItem]
 
 
 class IntradayItem(BaseModel):
@@ -78,8 +76,8 @@ class IntradayResponse(BaseModel):
     """分时数据响应。"""
 
     symbol: str
-    prev_close: Optional[str] = None
-    bars: List[IntradayItem]
+    prev_close: str | None = None
+    bars: list[IntradayItem]
 
 
 class CapitalFlowItem(BaseModel):
@@ -94,7 +92,7 @@ class CapitalFlowResponse(BaseModel):
 
     source: str = ""
     symbol: str
-    lines: List[CapitalFlowItem]
+    lines: list[CapitalFlowItem]
     total: int = 0
 
 
@@ -102,8 +100,8 @@ class MarketTemperatureResponse(BaseModel):
     """市场温度响应。"""
 
     market: str
-    temperature: Optional[int] = None
+    temperature: int | None = None
     description: str = ""
-    valuation: Optional[int] = None
-    sentiment: Optional[int] = None
-    updated_at: Optional[int] = None
+    valuation: int | None = None
+    sentiment: int | None = None
+    updated_at: int | None = None

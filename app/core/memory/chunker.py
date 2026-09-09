@@ -12,12 +12,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass
 class TextChunk:
     """文本块"""
+
     text: str  # 块文本内容
     start_line: int  # 起始行号（从 1 开始）
     end_line: int  # 结束行号
@@ -35,11 +35,11 @@ class TextChunker:
         self.overlap_tokens = overlap_tokens  # 相邻块重叠 token 数
         self.chars_per_token = 4  # 字符/token 比率
 
-    def chunk_text(self, text: str) -> List[TextChunk]:
+    def chunk_text(self, text: str) -> list[TextChunk]:
         """将文本切分为多个重叠块"""
         if not text.strip():
             return []
-        lines = text.split('\n')
+        lines = text.split("\n")
         chunks = []
         max_chars = self.max_tokens * self.chars_per_token  # 单块最大字符数
         overlap_chars = self.overlap_tokens * self.chars_per_token  # 重叠字符数
@@ -51,7 +51,11 @@ class TextChunker:
             # 超长单行：强制切分
             if line_chars > max_chars:
                 if current_chunk:
-                    chunks.append(TextChunk(text='\n'.join(current_chunk), start_line=start_line, end_line=i - 1))
+                    chunks.append(
+                        TextChunk(
+                            text="\n".join(current_chunk), start_line=start_line, end_line=i - 1
+                        )
+                    )
                     current_chunk, current_chars = [], 0
                 for sub in self._split_long_line(line, max_chars):
                     chunks.append(TextChunk(text=sub, start_line=i, end_line=i))
@@ -59,24 +63,28 @@ class TextChunker:
                 continue
             # 累积到当前块，超出时切分并保留重叠
             if current_chars + line_chars > max_chars and current_chunk:
-                chunks.append(TextChunk(text='\n'.join(current_chunk), start_line=start_line, end_line=i - 1))
+                chunks.append(
+                    TextChunk(text="\n".join(current_chunk), start_line=start_line, end_line=i - 1)
+                )
                 overlap_lines = self._get_overlap(current_chunk, overlap_chars)
                 current_chunk = overlap_lines + [line]
-                current_chars = sum(len(l) for l in current_chunk)
+                current_chars = sum(len(chunk_line) for chunk_line in current_chunk)
                 start_line = i - len(overlap_lines)
             else:
                 current_chunk.append(line)
                 current_chars += line_chars
         # 处理剩余内容
         if current_chunk:
-            chunks.append(TextChunk(text='\n'.join(current_chunk), start_line=start_line, end_line=len(lines)))
+            chunks.append(
+                TextChunk(text="\n".join(current_chunk), start_line=start_line, end_line=len(lines))
+            )
         return chunks
 
-    def _split_long_line(self, line: str, max_chars: int) -> List[str]:
+    def _split_long_line(self, line: str, max_chars: int) -> list[str]:
         """强制切分超长单行"""
-        return [line[i:i + max_chars] for i in range(0, len(line), max_chars)]
+        return [line[i : i + max_chars] for i in range(0, len(line), max_chars)]
 
-    def _get_overlap(self, lines: List[str], target_chars: int) -> List[str]:
+    def _get_overlap(self, lines: list[str], target_chars: int) -> list[str]:
         """从块末尾提取重叠行"""
         overlap, chars = [], 0
         for line in reversed(lines):

@@ -2,8 +2,8 @@ import unittest
 from types import SimpleNamespace
 
 from app.core.tools.market_data import (
-    GetLongbridgeCapitalFlowTool,
     GetLongbridgeCandlesticksTool,
+    GetLongbridgeCapitalFlowTool,
     GetLongbridgeDepthTool,
     GetLongbridgeHistoryCandlesticksTool,
     GetLongbridgeIntradayTool,
@@ -25,8 +25,12 @@ class FakeMarketService:
         self.calls.append(("get_realtime_quotes", symbols, settings))
         return {"quotes": [{"symbol": symbols[0], "last_done": "10"}], "total": 1}
 
-    def get_candlesticks(self, symbol, period, count=200, adjust_type="forward", trade_sessions=None, settings=None):
-        self.calls.append(("get_candlesticks", symbol, period, count, adjust_type, trade_sessions, settings))
+    def get_candlesticks(
+        self, symbol, period, count=200, adjust_type="forward", trade_sessions=None, settings=None
+    ):
+        self.calls.append(
+            ("get_candlesticks", symbol, period, count, adjust_type, trade_sessions, settings)
+        )
         return {"symbol": symbol, "bars": []}
 
     def get_history_candlesticks(
@@ -39,7 +43,18 @@ class FakeMarketService:
         trade_sessions=None,
         settings=None,
     ):
-        self.calls.append(("get_history_candlesticks", symbol, period, start, end, adjust_type, trade_sessions, settings))
+        self.calls.append(
+            (
+                "get_history_candlesticks",
+                symbol,
+                period,
+                start,
+                end,
+                adjust_type,
+                trade_sessions,
+                settings,
+            )
+        )
         return {"symbol": symbol, "bars": []}
 
     def get_intraday(self, symbol, since=None, trade_sessions=None, settings=None):
@@ -103,7 +118,9 @@ class MarketDataToolsTest(unittest.TestCase):
     def test_realtime_quotes_accepts_comma_separated_symbols(self):
         service = FakeMarketService()
         settings = SimpleNamespace(longbridge_app_key="demo")
-        tool = GetLongbridgeRealtimeQuotesTool(market_service=service, user_id="user-1", settings=settings)
+        tool = GetLongbridgeRealtimeQuotesTool(
+            market_service=service, user_id="user-1", settings=settings
+        )
 
         result = tool.execute({"symbols": "AAPL.US, 700.HK"})
 
@@ -124,13 +141,28 @@ class MarketDataToolsTest(unittest.TestCase):
         cases = [
             (
                 GetLongbridgeCandlesticksTool,
-                {"symbol": "AAPL.US", "period": "5min", "count": 10, "adjust_type": "none", "trade_sessions": "all"},
+                {
+                    "symbol": "AAPL.US",
+                    "period": "5min",
+                    "count": 10,
+                    "adjust_type": "none",
+                    "trade_sessions": "all",
+                },
                 ("get_candlesticks", "AAPL.US", "5min", 10, "none", "all", settings),
             ),
             (
                 GetLongbridgeHistoryCandlesticksTool,
                 {"symbol": "AAPL.US", "start": "2026-01-01", "end": "2026-01-31"},
-                ("get_history_candlesticks", "AAPL.US", "1D", "2026-01-01", "2026-01-31", "forward", None, settings),
+                (
+                    "get_history_candlesticks",
+                    "AAPL.US",
+                    "1D",
+                    "2026-01-01",
+                    "2026-01-31",
+                    "forward",
+                    None,
+                    settings,
+                ),
             ),
             (
                 GetLongbridgeIntradayTool,

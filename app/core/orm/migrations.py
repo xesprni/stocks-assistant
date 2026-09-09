@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy.engine import Connection, Engine
 
@@ -29,10 +28,18 @@ def init_session_schema(engine: Engine) -> None:
         cols = _table_columns(conn, "sessions")
         if "user_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE sessions ADD COLUMN user_id TEXT")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, updated_at)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, seq)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trace_runs_session_started ON trace_runs(session_id, started_at)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trace_events_run_seq ON trace_events(run_id, seq)")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, updated_at)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, seq)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_trace_runs_session_started ON trace_runs(session_id, started_at)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_trace_events_run_seq ON trace_events(run_id, seq)"
+        )
 
 
 def init_watchlist_schema(engine: Engine) -> None:
@@ -41,11 +48,17 @@ def init_watchlist_schema(engine: Engine) -> None:
     WatchlistBase.metadata.create_all(engine)
     with engine.begin() as conn:
         _migrate_watchlist_user_scope(conn)
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_watchlist_category ON watchlist_items(category)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_watchlist_user_category ON watchlist_items(user_id, category)")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_category ON watchlist_items(category)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_user_category ON watchlist_items(user_id, category)"
+        )
         cols = _table_columns(conn, "watchlist_items")
         if "sort_order" not in cols:
-            conn.exec_driver_sql("ALTER TABLE watchlist_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+            conn.exec_driver_sql(
+                "ALTER TABLE watchlist_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+            )
             # 旧数据没有排序字段时按 id 初始化，保证前端列表顺序稳定。
             conn.exec_driver_sql(
                 """
@@ -62,8 +75,12 @@ def init_portfolio_schema(engine: Engine) -> None:
     PortfolioBase.metadata.create_all(engine)
     with engine.begin() as conn:
         _migrate_portfolio_user_scope(conn)
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_portfolio_market ON portfolio_items(market)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_portfolio_market ON portfolio_items(market)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)"
+        )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_portfolio_transactions_user_market_created "
             "ON portfolio_transactions(user_id, market, created_at)"
@@ -99,9 +116,15 @@ def migrate_watchlist_db_user_scope(db_path: Path, admin_user_id: str) -> None:
         with engine.begin() as conn:
             cols = _table_columns(conn, "watchlist_items")
             if "user_id" not in cols:
-                conn.exec_driver_sql("ALTER TABLE watchlist_items ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
-            conn.exec_driver_sql("UPDATE watchlist_items SET user_id = ? WHERE user_id = ''", (admin_user_id,))
-            conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_watchlist_user_category ON watchlist_items(user_id, category)")
+                conn.exec_driver_sql(
+                    "ALTER TABLE watchlist_items ADD COLUMN user_id TEXT NOT NULL DEFAULT ''"
+                )
+            conn.exec_driver_sql(
+                "UPDATE watchlist_items SET user_id = ? WHERE user_id = ''", (admin_user_id,)
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_watchlist_user_category ON watchlist_items(user_id, category)"
+            )
     finally:
         engine.dispose()
 
@@ -114,18 +137,33 @@ def migrate_portfolio_db_user_scope(db_path: Path, admin_user_id: str) -> None:
         with engine.begin() as conn:
             item_cols = _table_columns(conn, "portfolio_items")
             if "user_id" not in item_cols:
-                conn.exec_driver_sql("ALTER TABLE portfolio_items ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
-            conn.exec_driver_sql("UPDATE portfolio_items SET user_id = ? WHERE user_id = ''", (admin_user_id,))
+                conn.exec_driver_sql(
+                    "ALTER TABLE portfolio_items ADD COLUMN user_id TEXT NOT NULL DEFAULT ''"
+                )
+            conn.exec_driver_sql(
+                "UPDATE portfolio_items SET user_id = ? WHERE user_id = ''", (admin_user_id,)
+            )
             settings_cols = _table_columns(conn, "portfolio_settings")
             if "user_id" not in settings_cols:
-                conn.exec_driver_sql("ALTER TABLE portfolio_settings ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
-            conn.exec_driver_sql("UPDATE portfolio_settings SET user_id = ? WHERE user_id = ''", (admin_user_id,))
+                conn.exec_driver_sql(
+                    "ALTER TABLE portfolio_settings ADD COLUMN user_id TEXT NOT NULL DEFAULT ''"
+                )
+            conn.exec_driver_sql(
+                "UPDATE portfolio_settings SET user_id = ? WHERE user_id = ''", (admin_user_id,)
+            )
             transaction_cols = _table_columns(conn, "portfolio_transactions")
             if transaction_cols and "user_id" not in transaction_cols:
-                conn.exec_driver_sql("ALTER TABLE portfolio_transactions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+                conn.exec_driver_sql(
+                    "ALTER TABLE portfolio_transactions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''"
+                )
             if transaction_cols:
-                conn.exec_driver_sql("UPDATE portfolio_transactions SET user_id = ? WHERE user_id = ''", (admin_user_id,))
-            conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)")
+                conn.exec_driver_sql(
+                    "UPDATE portfolio_transactions SET user_id = ? WHERE user_id = ''",
+                    (admin_user_id,),
+                )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_portfolio_user_market ON portfolio_items(user_id, market)"
+            )
     finally:
         engine.dispose()
 
@@ -149,7 +187,9 @@ def _unique_index_columns(conn: Connection, table: str) -> list[list[str]]:
         if not index[2]:
             continue
         name = index[1]
-        columns.append([row[2] for row in conn.exec_driver_sql(f"PRAGMA index_info({name})").fetchall()])
+        columns.append(
+            [row[2] for row in conn.exec_driver_sql(f"PRAGMA index_info({name})").fetchall()]
+        )
     return columns
 
 
@@ -157,16 +197,22 @@ def _ensure_refresh_tokens_session_schema(conn: Connection) -> None:
     cols = _table_columns(conn, "refresh_tokens")
     if "session_id" not in cols:
         conn.exec_driver_sql("ALTER TABLE refresh_tokens ADD COLUMN session_id TEXT")
-    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON refresh_tokens(session_id)")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON refresh_tokens(session_id)"
+    )
 
 
 def _ensure_login_sessions_device_schema(conn: Connection) -> None:
     cols = _table_columns(conn, "login_sessions")
     if "device_id" not in cols:
-        conn.exec_driver_sql("ALTER TABLE login_sessions ADD COLUMN device_id TEXT NOT NULL DEFAULT ''")
+        conn.exec_driver_sql(
+            "ALTER TABLE login_sessions ADD COLUMN device_id TEXT NOT NULL DEFAULT ''"
+        )
         # 旧会话缺少客户端设备标识，回填为自身 session id，避免错误合并历史设备。
         conn.exec_driver_sql("UPDATE login_sessions SET device_id = id WHERE device_id = ''")
-    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_login_sessions_user_device ON login_sessions(user_id, device_id)")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS idx_login_sessions_user_device ON login_sessions(user_id, device_id)"
+    )
 
 
 def _ensure_users_profile_schema(conn: Connection) -> None:
@@ -211,7 +257,10 @@ def _migrate_watchlist_user_scope(conn: Connection) -> None:
     cols = _table_columns(conn, "watchlist_items")
     needs_rebuild = "user_id" not in cols
     if not needs_rebuild:
-        needs_rebuild = any(index_cols == ["symbol"] for index_cols in _unique_index_columns(conn, "watchlist_items"))
+        needs_rebuild = any(
+            index_cols == ["symbol"]
+            for index_cols in _unique_index_columns(conn, "watchlist_items")
+        )
     if not needs_rebuild:
         return
 
@@ -268,7 +317,10 @@ def _migrate_portfolio_items_user_scope(conn: Connection) -> None:
     cols = _table_columns(conn, "portfolio_items")
     needs_rebuild = "user_id" not in cols
     if not needs_rebuild:
-        needs_rebuild = any(index_cols == ["symbol"] for index_cols in _unique_index_columns(conn, "portfolio_items"))
+        needs_rebuild = any(
+            index_cols == ["symbol"]
+            for index_cols in _unique_index_columns(conn, "portfolio_items")
+        )
     if not needs_rebuild:
         needs_rebuild = not _table_supports_portfolio_h(conn, "portfolio_items")
     if not needs_rebuild:
@@ -314,7 +366,10 @@ def _migrate_portfolio_settings_user_scope(conn: Connection) -> None:
     cols = _table_columns(conn, "portfolio_settings")
     needs_rebuild = "user_id" not in cols
     if not needs_rebuild:
-        needs_rebuild = any(index_cols == ["market"] for index_cols in _unique_index_columns(conn, "portfolio_settings"))
+        needs_rebuild = any(
+            index_cols == ["market"]
+            for index_cols in _unique_index_columns(conn, "portfolio_settings")
+        )
     if not needs_rebuild:
         needs_rebuild = not _table_supports_portfolio_h(conn, "portfolio_settings")
     if not needs_rebuild:
@@ -380,5 +435,7 @@ def _migrate_portfolio_transactions_user_scope(conn: Connection) -> None:
 
 
 def _table_supports_portfolio_h(conn: Connection, table: str) -> bool:
-    row = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    row = conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
     return bool(row and row[0] and "'H'" in row[0])

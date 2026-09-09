@@ -95,7 +95,9 @@ class PortfolioServiceTest(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 PortfolioItemCreate(market="US", symbol="AAPL.US", shares="oops", cost_price="100")
             with self.assertRaisesRegex(ValueError, "does not match market"):
-                service.add_item(PortfolioItemCreate(market="H", symbol="AAPL.US", shares="1", cost_price="1"))
+                service.add_item(
+                    PortfolioItemCreate(market="H", symbol="AAPL.US", shares="1", cost_price="1")
+                )
 
             item = service.add_item(
                 PortfolioItemCreate(market="US", symbol="AAPL.US", shares="1", cost_price="100")
@@ -118,7 +120,9 @@ class PortfolioServiceTest(unittest.TestCase):
                 )
             )
 
-            result = service.sell_item(item["id"], PortfolioSellRequest(shares="4", price="120", note=" trim "))
+            result = service.sell_item(
+                item["id"], PortfolioSellRequest(shares="4", price="120", note=" trim ")
+            )
             transactions = service.list_transactions("US")["transactions"]
 
         self.assertEqual(result["item"]["shares"], "6")

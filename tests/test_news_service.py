@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,7 +16,7 @@ class FakeNewsItem:
     title = "Apple announces product update"
     description = "Short summary"
     url = "https://example.com/news/123"
-    published_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    published_at = datetime(2026, 5, 21, 12, 0, tzinfo=UTC)
     likes_count = 3
     comments_count = 2
     shares_count = 1
@@ -58,15 +58,25 @@ class NewsServiceTest(unittest.TestCase):
         self.assertEqual(item["likes_count"], 3)
 
     def test_normalize_guardian_feed_url(self):
-        self.assertEqual(normalize_guardian_feed_url("https://www.theguardian.com/world"), "https://www.theguardian.com/world/rss")
-        self.assertEqual(normalize_guardian_feed_url("www.theguardian.com/business/rss"), "https://www.theguardian.com/business/rss")
-        self.assertEqual(normalize_guardian_feed_url("https://theguardian.com"), "https://www.theguardian.com/rss")
+        self.assertEqual(
+            normalize_guardian_feed_url("https://www.theguardian.com/world"),
+            "https://www.theguardian.com/world/rss",
+        )
+        self.assertEqual(
+            normalize_guardian_feed_url("www.theguardian.com/business/rss"),
+            "https://www.theguardian.com/business/rss",
+        )
+        self.assertEqual(
+            normalize_guardian_feed_url("https://theguardian.com"),
+            "https://www.theguardian.com/rss",
+        )
         with self.assertRaises(ValueError):
             normalize_guardian_feed_url("https://example.com/world")
 
     def test_get_guardian_feed_parses_rss_items(self):
         service = NewsService()
-        service._fetch_guardian_rss = lambda feed_url: """<?xml version="1.0"?>
+        service._fetch_guardian_rss = lambda feed_url: (
+            """<?xml version="1.0"?>
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>World news</title>
@@ -82,6 +92,7 @@ class NewsServiceTest(unittest.TestCase):
     </item>
   </channel>
 </rss>"""
+        )
 
         result = service.get_guardian_feed("https://www.theguardian.com/world", limit=10)
 
@@ -154,7 +165,9 @@ class NewsServiceTest(unittest.TestCase):
             )
 
         self.assertEqual(result["title"], "Guardian headline")
-        self.assertEqual(result["api_url"], "https://content.guardianapis.com/world/2026/may/28/story")
+        self.assertEqual(
+            result["api_url"], "https://content.guardianapis.com/world/2026/may/28/story"
+        )
         self.assertEqual(result["body_text"], "First paragraph.\n\nSecond paragraph.")
         self.assertEqual(result["author"], "Reporter Name")
 

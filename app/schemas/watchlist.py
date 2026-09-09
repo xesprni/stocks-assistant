@@ -1,6 +1,6 @@
 """Watchlist API Schema."""
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,9 +23,9 @@ class WatchlistItem(BaseModel):
     name_hk: str = ""
     exchange: str = ""
     currency: str = ""
-    last_done: Optional[str] = None
-    change_value: Optional[str] = None
-    change_rate: Optional[str] = None
+    last_done: str | None = None
+    change_value: str | None = None
+    change_rate: str | None = None
     note: str = ""
     created_at: str
     updated_at: str
@@ -42,9 +42,9 @@ class WatchlistItemCreate(BaseModel):
     name_hk: str = ""
     exchange: str = ""
     currency: str = ""
-    last_done: Optional[str] = None
-    change_value: Optional[str] = None
-    change_rate: Optional[str] = None
+    last_done: str | None = None
+    change_value: str | None = None
+    change_rate: str | None = None
     note: str = ""
 
 
@@ -66,9 +66,9 @@ class WatchlistSearchResult(BaseModel):
     name_hk: str = ""
     exchange: str = ""
     currency: str = ""
-    last_done: Optional[str] = None
-    change_value: Optional[str] = None
-    change_rate: Optional[str] = None
+    last_done: str | None = None
+    change_value: str | None = None
+    change_rate: str | None = None
 
 
 class WatchlistSearchResponse(BaseModel):
@@ -112,12 +112,12 @@ class WatchlistOverviewResponse(BaseModel):
     """Watchlist 手动行情概览响应。"""
 
     available: bool = True
-    error: Optional[str] = None
-    fetched_at: Optional[str] = None
+    error: str | None = None
+    fetched_at: str | None = None
     stale: bool = False
-    source: Optional[WatchlistOverviewSource] = None
+    source: WatchlistOverviewSource | None = None
     items: list[WatchlistOverviewRow] = Field(default_factory=list)
     views: WatchlistOverviewViews = Field(default_factory=WatchlistOverviewViews)
     counts_by_category: dict[str, int] = Field(default_factory=dict)
     total: int = 0
-    quote_error: Optional[str] = None
+    quote_error: str | None = None

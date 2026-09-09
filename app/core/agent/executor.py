@@ -12,17 +12,24 @@
 import copy as _copy
 import hashlib
 import json
+import logging
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
+from app.core.agent.context import (
+    aggressive_trim_for_overflow,
+    build_summary_messages,
+    format_turns_text,
+    identify_complete_turns,
+    truncate_historical_tool_results,
+)
+from app.core.agent.message_utils import compress_turn_to_text_only, sanitize_claude_messages
 from app.core.agent.models import LLMRequest
-from app.core.agent.message_utils import sanitize_claude_messages, compress_turn_to_text_only
+from app.core.agent.stream_state import StreamState
 from app.core.tools.base_tool import BaseTool, ToolResult
-
-import logging
 
 logger = logging.getLogger("stocks-assistant.agent")
 
@@ -75,10 +82,10 @@ class AgentStreamExecutor:
         agent,
         model,
         system_prompt: str,
-        tools: List[BaseTool],
+        tools: list[BaseTool],
         max_turns: int = 50,
         on_event=None,
-        messages: Optional[List[Dict]] = None,
+        messages: list[dict] | None = None,
         max_context_turns: int = 30,
         cancel_event=None,
         thinking_enabled: bool = False,
@@ -121,7 +128,7 @@ class AgentStreamExecutor:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise AgentCancelledError("Agent run cancelled")
 
-    def _runtime_llm_params(self) -> Dict[str, Any]:
+    def _runtime_llm_params(self) -> dict[str, Any]:
         """读取当前用户的主 Agent LLM 运行参数。"""
         settings = getattr(self.agent, "settings", None)
 
@@ -136,7 +143,9 @@ class AgentStreamExecutor:
         except (TypeError, ValueError):
             max_output_tokens = 0
 
-        reasoning_effort = str(getattr(settings, "llm_reasoning_effort", "medium") or "medium").strip().lower()
+        reasoning_effort = (
+            str(getattr(settings, "llm_reasoning_effort", "medium") or "medium").strip().lower()
+        )
         if reasoning_effort not in {"minimal", "low", "medium", "high"}:
             reasoning_effort = "medium"
 
@@ -164,7 +173,7 @@ class AgentStreamExecutor:
         args_str = json.dumps(args, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(args_str.encode()).hexdigest()[:8]
 
-    def _check_consecutive_failures(self, tool_name: str, args: dict) -> Tuple[bool, str, bool]:
+    def _check_consecutive_failures(self, tool_name: str, args: dict) -> tuple[bool, str, bool]:
         """检查工具是否存在连续失败或无限循环
 
         保护策略：
@@ -179,13 +188,17 @@ class AgentStreamExecutor:
         args_hash = self._hash_args(args)
 
         same_args_calls = 0
-        for name, ahash, success in reversed(self.tool_failure_history):
+        for name, ahash, _success in reversed(self.tool_failure_history):
             if name == tool_name and ahash == args_hash:
                 same_args_calls += 1
             else:
                 break
         if same_args_calls >= 5:
-            return True, f"Tool '{tool_name}' called {same_args_calls} times with same args, stopping.", False
+            return (
+                True,
+                f"Tool '{tool_name}' called {same_args_calls} times with same args, stopping.",
+                False,
+            )
 
         same_args_failures = 0
         for name, ahash, success in reversed(self.tool_failure_history):
@@ -197,10 +210,14 @@ class AgentStreamExecutor:
             else:
                 break
         if same_args_failures >= 3:
-            return True, f"Tool '{tool_name}' failed {same_args_failures} times with same args, stopping.", False
+            return (
+                True,
+                f"Tool '{tool_name}' failed {same_args_failures} times with same args, stopping.",
+                False,
+            )
 
         same_tool_failures = 0
-        for name, ahash, success in reversed(self.tool_failure_history):
+        for name, _ahash, success in reversed(self.tool_failure_history):
             if name == tool_name:
                 if not success:
                     same_tool_failures += 1
@@ -211,7 +228,11 @@ class AgentStreamExecutor:
         if same_tool_failures >= 8:
             return True, "Too many consecutive failures, aborting.", True
         if same_tool_failures >= 6:
-            return True, f"Tool '{tool_name}' failed {same_tool_failures} times consecutively, stopping.", False
+            return (
+                True,
+                f"Tool '{tool_name}' failed {same_tool_failures} times consecutively, stopping.",
+                False,
+            )
 
         return False, "", False
 
@@ -242,10 +263,12 @@ class AgentStreamExecutor:
         """
         logger.info("User: %s", user_message)
 
-        self.messages.append({
-            "role": "user",
-            "content": [{"type": "text", "text": user_message}],
-        })
+        self.messages.append(
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": user_message}],
+            }
+        )
 
         self._trim_messages()
         self._validate_and_fix_messages()
@@ -269,25 +292,41 @@ class AgentStreamExecutor:
                     if not assistant_msg:
                         if turn > 1:
                             prompt_insert_idx = len(self.messages)
-                            self.messages.append({
-                                "role": "user",
-                                "content": [{"type": "text", "text": "Please respond to the user based on the tool results."}],
-                            })
+                            self.messages.append(
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "Please respond to the user based on the tool results.",
+                                        }
+                                    ],
+                                }
+                            )
                             assistant_msg, tool_calls = self._call_llm_stream(retry_on_empty=False)
                             final_response = assistant_msg
 
-                            if (prompt_insert_idx < len(self.messages)
-                                    and self.messages[prompt_insert_idx].get("role") == "user"):
+                            if (
+                                prompt_insert_idx < len(self.messages)
+                                and self.messages[prompt_insert_idx].get("role") == "user"
+                            ):
                                 self.messages.pop(prompt_insert_idx)
 
                             if tool_calls:
                                 pass  # continue to tool execution
                             elif not assistant_msg:
-                                final_response = "Sorry, I'm unable to generate a response. Please try again."
+                                final_response = (
+                                    "Sorry, I'm unable to generate a response. Please try again."
+                                )
                         else:
-                            final_response = "Sorry, I'm unable to generate a response. Please try again."
+                            final_response = (
+                                "Sorry, I'm unable to generate a response. Please try again."
+                            )
                     else:
-                        logger.info("Response: %s", assistant_msg[:150] + ("..." if len(assistant_msg) > 150 else ""))
+                        logger.info(
+                            "Response: %s",
+                            assistant_msg[:150] + ("..." if len(assistant_msg) > 150 else ""),
+                        )
 
                     if not tool_calls:
                         self._emit_event("turn_end", {"turn": turn, "has_tool_calls": False})
@@ -296,7 +335,7 @@ class AgentStreamExecutor:
                 # Log tool calls
                 tool_calls_str = []
                 for tc in tool_calls:
-                    args = tc.get('arguments') or {}
+                    args = tc.get("arguments") or {}
                     if isinstance(args, dict):
                         parts = []
                         for k, v in args.items():
@@ -304,24 +343,26 @@ class AgentStreamExecutor:
                             if len(v_str) > 200:
                                 v_str = v_str[:200] + f"...({len(v_str)} chars)"
                             parts.append(f"{k}={v_str}")
-                        args_str = ', '.join(parts)
-                        tool_calls_str.append(f"{tc['name']}({args_str})" if args_str else tc['name'])
+                        args_str = ", ".join(parts)
+                        tool_calls_str.append(
+                            f"{tc['name']}({args_str})" if args_str else tc["name"]
+                        )
                     else:
-                        tool_calls_str.append(tc['name'])
+                        tool_calls_str.append(tc["name"])
                 logger.info("Tool calls: %s", ", ".join(tool_calls_str))
 
                 # Execute tools (parallel when 2+ calls)
                 tool_result_blocks = []
                 try:
                     results = self._execute_tool_calls_batch(tool_calls)
-                    for tool_call, result in zip(tool_calls, results):
+                    for tool_call, result in zip(tool_calls, results, strict=False):
                         self._collect_evidence(result)
                         if result.get("status") == "critical_error":
-                            final_response = result.get('result', 'Task execution failed')
+                            final_response = result.get("result", "Task execution failed")
                             return final_response
 
                         is_error = result.get("status") == "error"
-                        result_data = result.get('result', '')
+                        result_data = result.get("result", "")
 
                         evidence_items = result.get("evidence") or []
                         source_items = result.get("sources") or []
@@ -329,7 +370,11 @@ class AgentStreamExecutor:
                             result_content = f"Error: {result_data}"
                         elif evidence_items or source_items:
                             result_content = json.dumps(
-                                {"data": result_data, "evidence": evidence_items, "sources": source_items},
+                                {
+                                    "data": result_data,
+                                    "evidence": evidence_items,
+                                    "sources": source_items,
+                                },
                                 ensure_ascii=False,
                             )
                         elif isinstance(result_data, dict):
@@ -341,8 +386,10 @@ class AgentStreamExecutor:
 
                         MAX_CURRENT_TURN_RESULT_CHARS = 50000
                         if len(result_content) > MAX_CURRENT_TURN_RESULT_CHARS:
-                            result_content = result_content[:MAX_CURRENT_TURN_RESULT_CHARS] + \
-                                f"\n\n[Output truncated: {len(result_content)} chars total]"
+                            result_content = (
+                                result_content[:MAX_CURRENT_TURN_RESULT_CHARS]
+                                + f"\n\n[Output truncated: {len(result_content)} chars total]"
+                            )
 
                         tool_result_block = {
                             "type": "tool_result",
@@ -359,37 +406,57 @@ class AgentStreamExecutor:
                     elif tool_calls:
                         emergency_blocks = []
                         for tool_call in tool_calls:
-                            emergency_blocks.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_call["id"],
-                                "content": "Error: Tool execution was interrupted",
-                                "is_error": True,
-                            })
+                            emergency_blocks.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_call["id"],
+                                    "content": "Error: Tool execution was interrupted",
+                                    "is_error": True,
+                                }
+                            )
                         self.messages.append({"role": "user", "content": emergency_blocks})
 
-                self._emit_event("turn_end", {
-                    "turn": turn, "has_tool_calls": True, "tool_count": len(tool_calls),
-                })
+                self._emit_event(
+                    "turn_end",
+                    {
+                        "turn": turn,
+                        "has_tool_calls": True,
+                        "tool_count": len(tool_calls),
+                    },
+                )
 
             if turn >= self.max_turns:
                 self._raise_if_cancelled()
                 logger.warning("Max steps reached: %d", self.max_turns)
                 prompt_insert_idx = len(self.messages)
-                self.messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": f"You have reached the maximum step limit ({turn} steps). Please summarize the current progress."}],
-                })
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"You have reached the maximum step limit ({turn} steps). Please summarize the current progress.",
+                            }
+                        ],
+                    }
+                )
                 try:
                     summary_response, _ = self._call_llm_stream(retry_on_empty=False)
                     if summary_response:
                         final_response = summary_response
                     else:
-                        final_response = f"Reached maximum steps ({turn}). The task may not be fully complete."
+                        final_response = (
+                            f"Reached maximum steps ({turn}). The task may not be fully complete."
+                        )
                 except Exception:
-                    final_response = f"Reached maximum steps ({turn}). The task may not be fully complete."
+                    final_response = (
+                        f"Reached maximum steps ({turn}). The task may not be fully complete."
+                    )
                 finally:
-                    if (prompt_insert_idx < len(self.messages)
-                            and self.messages[prompt_insert_idx].get("role") == "user"):
+                    if (
+                        prompt_insert_idx < len(self.messages)
+                        and self.messages[prompt_insert_idx].get("role") == "user"
+                    ):
                         self.messages.pop(prompt_insert_idx)
 
         except AgentCancelledError:
@@ -397,19 +464,20 @@ class AgentStreamExecutor:
             logger.info("Agent execution cancelled")
             raise
         except Exception as e:
-            logger.error(f"Agent execution error: {e}")
+            logger.error("Agent execution error: %s", e)
             self._emit_event("error", {"error": str(e)})
             raise
         finally:
             final_response = final_response.strip() if final_response else final_response
-            logger.info(f"[Agent] Done ({turn} turns)")
+            logger.info("[Agent] Done (%s turns)", turn)
             if not cancelled:
                 self._emit_event("agent_end", {"final_response": final_response})
 
         return final_response
 
-    def _call_llm_stream(self, retry_on_empty=True, retry_count=0, max_retries=3,
-                         _overflow_retry: bool = False) -> Tuple[str, List[Dict]]:
+    def _call_llm_stream(
+        self, retry_on_empty=True, retry_count=0, max_retries=3, _overflow_retry: bool = False
+    ) -> tuple[str, list[dict]]:
         """流式调用 LLM
 
         处理流程：
@@ -431,17 +499,19 @@ class AgentStreamExecutor:
 
         messages = self._prepare_messages()
         turns = self._identify_complete_turns()
-        logger.info(f"Sending {len(messages)} messages ({len(turns)} turns) to LLM")
+        logger.info("Sending %s messages (%s turns) to LLM", len(messages), len(turns))
 
         tools_schema = None
         if self.tools:
             tools_schema = []
             for tool in self.tools.values():
-                tools_schema.append({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.params,
-                })
+                tools_schema.append(
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.params,
+                    }
+                )
 
         runtime_params = self._runtime_llm_params()
         request = LLMRequest(
@@ -449,7 +519,8 @@ class AgentStreamExecutor:
             temperature=runtime_params["temperature"],
             max_tokens=runtime_params["max_tokens"],
             stream=True,
-            tools=tools_schema, system=self.system_prompt,
+            tools=tools_schema,
+            system=self.system_prompt,
             thinking_enabled=self.thinking_enabled,
             reasoning_effort=runtime_params["reasoning_effort"] if self.thinking_enabled else None,
             tool_choice=runtime_params["tool_choice"],
@@ -461,30 +532,30 @@ class AgentStreamExecutor:
             {"name": tool.get("name", ""), "description": tool.get("description", "")}
             for tool in (tools_schema or [])
         ]
-        self._emit_event("llm_call_start", {
-            "llm_call_id": llm_call_id,
-            "retry_count": retry_count,
-            "message_count": len(messages),
-            "turn_count": len(turns),
-            "request": {
-                "model": request.model or getattr(self.model, "model", None),
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-                "stream": request.stream,
-                "system": request.system,
-                "messages": messages,
-                "tools": tools_summary,
-                "thinking_enabled": self.thinking_enabled,
-                "reasoning_effort": getattr(request, "reasoning_effort", None),
-                "tool_choice": getattr(request, "tool_choice", None),
+        self._emit_event(
+            "llm_call_start",
+            {
+                "llm_call_id": llm_call_id,
+                "retry_count": retry_count,
+                "message_count": len(messages),
+                "turn_count": len(turns),
+                "request": {
+                    "model": request.model or getattr(self.model, "model", None),
+                    "temperature": request.temperature,
+                    "max_tokens": request.max_tokens,
+                    "stream": request.stream,
+                    "system": request.system,
+                    "messages": messages,
+                    "tools": tools_summary,
+                    "thinking_enabled": self.thinking_enabled,
+                    "reasoning_effort": getattr(request, "reasoning_effort", None),
+                    "tool_choice": getattr(request, "tool_choice", None),
+                },
             },
-        })
+        )
         self._emit_event("message_start", {"role": "assistant"})
 
-        full_content = ""
-        full_reasoning = ""
-        tool_calls_buffer = {}
-        stop_reason = None
+        state = StreamState()
 
         try:
             self._raise_if_cancelled()
@@ -501,147 +572,166 @@ class AgentStreamExecutor:
                     status_code = chunk.get("status_code", "N/A")
 
                     error_msg_lower = error_msg.lower()
-                    is_overflow = any(kw in error_msg_lower for kw in [
-                        'context length exceeded', 'maximum context length', 'prompt is too long',
-                        'context overflow', 'context window', 'too large', 'exceeds model context',
-                        'request_too_large', 'request exceeds the maximum size', 'tokens exceed',
-                    ])
+                    is_overflow = any(
+                        kw in error_msg_lower
+                        for kw in [
+                            "context length exceeded",
+                            "maximum context length",
+                            "prompt is too long",
+                            "context overflow",
+                            "context window",
+                            "too large",
+                            "exceeds model context",
+                            "request_too_large",
+                            "request exceeds the maximum size",
+                            "tokens exceed",
+                        ]
+                    )
 
                     if is_overflow:
                         raise Exception(f"[CONTEXT_OVERFLOW] {error_msg} (Status: {status_code})")
                     else:
                         raise Exception(f"{error_msg} (Status: {status_code})")
 
-                if isinstance(chunk, dict) and chunk.get("choices"):
-                    choice = chunk["choices"][0]
-                    delta = choice.get("delta", {})
-
-                    finish_reason = choice.get("finish_reason")
-                    if finish_reason:
-                        stop_reason = finish_reason
-
-                    reasoning_delta = delta.get("reasoning_content") or ""
-                    if reasoning_delta:
-                        full_reasoning += reasoning_delta
-                        self._emit_event("reasoning_update", {"delta": reasoning_delta})
-
-                    content_delta = delta.get("content") or ""
-                    if content_delta:
-                        full_content += content_delta
-                        if content_delta:
-                            self._emit_event("message_update", {"delta": content_delta})
-
-                    if "tool_calls" in delta and delta["tool_calls"]:
-                        for tc_delta in delta["tool_calls"]:
-                            index = tc_delta.get("index", 0)
-                            if index not in tool_calls_buffer:
-                                tool_calls_buffer[index] = {"id": "", "name": "", "arguments": ""}
-                            if tc_delta.get("id"):
-                                tool_calls_buffer[index]["id"] = tc_delta["id"]
-                            if "function" in tc_delta:
-                                func = tc_delta["function"]
-                                if func.get("name"):
-                                    tool_calls_buffer[index]["name"] = func["name"]
-                                if func.get("arguments"):
-                                    tool_calls_buffer[index]["arguments"] += func["arguments"]
+                if isinstance(chunk, dict):
+                    for event_type, event_data in state.consume(chunk):
+                        self._emit_event(event_type, event_data)
 
         except Exception as e:
-            self._emit_event("llm_call_error", {
-                "llm_call_id": llm_call_id,
-                "retry_count": retry_count,
-                "error": str(e),
-                "duration_ms": (time.time() - llm_started_at) * 1000,
-            })
+            self._emit_event(
+                "llm_call_error",
+                {
+                    "llm_call_id": llm_call_id,
+                    "retry_count": retry_count,
+                    "error": str(e),
+                    "duration_ms": (time.time() - llm_started_at) * 1000,
+                },
+            )
             error_str = str(e)
             error_str_lower = error_str.lower()
 
-            is_context_overflow = '[context_overflow]' in error_str_lower
+            is_context_overflow = "[context_overflow]" in error_str_lower
             if not is_context_overflow:
-                is_context_overflow = any(kw in error_str_lower for kw in [
-                    'context length exceeded', 'maximum context length', 'prompt is too long',
-                    'context overflow', 'context window', 'too large', 'exceeds model context',
-                    'request_too_large', 'request exceeds the maximum size',
-                ])
+                is_context_overflow = any(
+                    kw in error_str_lower
+                    for kw in [
+                        "context length exceeded",
+                        "maximum context length",
+                        "prompt is too long",
+                        "context overflow",
+                        "context window",
+                        "too large",
+                        "exceeds model context",
+                        "request_too_large",
+                        "request exceeds the maximum size",
+                    ]
+                )
 
-            is_message_format_error = any(kw in error_str_lower for kw in [
-                'tool_use', 'tool_result', 'tool result', 'without', 'immediately after',
-                'corresponding', 'must have', 'tool_call_id', 'tool id', 'not found',
-            ]) and ('400' in error_str_lower or 'invalid_request' in error_str_lower)
+            is_message_format_error = any(
+                kw in error_str_lower
+                for kw in [
+                    "tool_use",
+                    "tool_result",
+                    "tool result",
+                    "without",
+                    "immediately after",
+                    "corresponding",
+                    "must have",
+                    "tool_call_id",
+                    "tool id",
+                    "not found",
+                ]
+            ) and ("400" in error_str_lower or "invalid_request" in error_str_lower)
 
             if is_context_overflow or is_message_format_error:
-                logger.error(f"Context error: {e}")
+                logger.error("Context error: %s", e)
 
                 if is_context_overflow and self.agent.memory_manager:
                     self.agent.memory_manager.flush_memory(
-                        messages=self.messages, reason="overflow", max_messages=0,
+                        messages=self.messages,
+                        reason="overflow",
+                        max_messages=0,
                     )
 
                 if is_context_overflow and not _overflow_retry:
                     trimmed = self._aggressive_trim_for_overflow()
                     if trimmed:
                         return self._call_llm_stream(
-                            retry_on_empty=retry_on_empty, retry_count=retry_count,
-                            max_retries=max_retries, _overflow_retry=True,
+                            retry_on_empty=retry_on_empty,
+                            retry_count=retry_count,
+                            max_retries=max_retries,
+                            _overflow_retry=True,
                         )
 
                 self.messages.clear()
                 if is_context_overflow:
-                    raise Exception("Context overflow. History has been cleared.")
+                    raise Exception("Context overflow. History has been cleared.") from e
                 else:
-                    raise Exception("Message format error. History has been cleared.")
+                    raise Exception("Message format error. History has been cleared.") from e
 
-            is_retryable = any(kw in error_str_lower for kw in [
-                'timeout', 'timed out', 'connection', 'network',
-                'rate limit', 'overloaded', 'unavailable', 'busy', 'retry',
-                '429', '500', '502', '503', '504',
-            ])
+            is_retryable = any(
+                kw in error_str_lower
+                for kw in [
+                    "timeout",
+                    "timed out",
+                    "connection",
+                    "network",
+                    "rate limit",
+                    "overloaded",
+                    "unavailable",
+                    "busy",
+                    "retry",
+                    "429",
+                    "500",
+                    "502",
+                    "503",
+                    "504",
+                ]
+            )
 
             if is_retryable and retry_count < max_retries:
-                is_rate_limit = '429' in error_str_lower or 'rate limit' in error_str_lower
+                is_rate_limit = "429" in error_str_lower or "rate limit" in error_str_lower
                 wait_time = (30 + retry_count * 15) if is_rate_limit else (retry_count + 1) * 2
-                logger.warning(f"LLM API error (attempt {retry_count + 1}/{max_retries}): {e}")
+                logger.warning("LLM API error (attempt %s/%s): %s", retry_count + 1, max_retries, e)
                 time.sleep(wait_time)
                 return self._call_llm_stream(
-                    retry_on_empty=retry_on_empty, retry_count=retry_count + 1, max_retries=max_retries,
+                    retry_on_empty=retry_on_empty,
+                    retry_count=retry_count + 1,
+                    max_retries=max_retries,
                 )
             else:
                 raise
 
-        # Parse tool calls
-        tool_calls = []
-        for idx in sorted(tool_calls_buffer.keys()):
-            tc = tool_calls_buffer[idx]
-            tool_id = tc.get("id") or f"call_{uuid.uuid4().hex[:24]}"
-
-            try:
-                args_str = tc.get("arguments") or ""
-                arguments = json.loads(args_str) if args_str else {}
-            except json.JSONDecodeError as e:
-                args_preview = (tc.get('arguments') or "")[:200]
-                logger.error(f"Failed to parse tool arguments for {tc['name']}: {e}")
-                tool_calls.append({
-                    "id": tool_id, "name": tc["name"], "arguments": {},
-                    "_parse_error": f"Invalid JSON in tool arguments: {args_preview}...",
-                })
-                continue
-
-            tool_calls.append({"id": tool_id, "name": tc["name"], "arguments": arguments})
+        full_content = state.content
+        full_reasoning = state.reasoning
+        stop_reason = state.stop_reason
+        tool_calls = state.parsed_tool_calls()
+        for call in tool_calls:
+            if "_parse_error" in call:
+                logger.error(
+                    "Failed to parse tool arguments for %s: %s", call["name"], call["_parse_error"]
+                )
 
         if retry_on_empty and not full_content and not tool_calls:
             logger.warning("LLM returned empty response, retrying once...")
-            self._emit_event("llm_call_end", {
-                "llm_call_id": llm_call_id,
-                "retry_count": retry_count,
-                "status": "empty",
-                "duration_ms": (time.time() - llm_started_at) * 1000,
-                "stop_reason": stop_reason,
-                "response": {
-                    "content": full_content,
-                    "tool_calls": tool_calls,
-                    "assistant_message": None,
+            self._emit_event(
+                "llm_call_end",
+                {
+                    "llm_call_id": llm_call_id,
+                    "retry_count": retry_count,
+                    "status": "empty",
+                    "duration_ms": (time.time() - llm_started_at) * 1000,
+                    "stop_reason": stop_reason,
+                    "response": {
+                        "content": full_content,
+                        "tool_calls": tool_calls,
+                        "assistant_message": None,
+                    },
                 },
-            })
-            return self._call_llm_stream(retry_on_empty=False, retry_count=retry_count, max_retries=max_retries)
+            )
+            return self._call_llm_stream(
+                retry_on_empty=False, retry_count=retry_count, max_retries=max_retries
+            )
 
         # Build assistant message for history
         assistant_msg = {"role": "assistant", "content": []}
@@ -655,37 +745,44 @@ class AgentStreamExecutor:
 
         if tool_calls:
             for tc in tool_calls:
-                assistant_msg["content"].append({
-                    "type": "tool_use", "id": tc.get("id", ""),
-                    "name": tc.get("name", ""), "input": tc.get("arguments", {}),
-                })
+                assistant_msg["content"].append(
+                    {
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": tc.get("name", ""),
+                        "input": tc.get("arguments", {}),
+                    }
+                )
 
         if assistant_msg["content"]:
             self.messages.append(assistant_msg)
 
         self._emit_event("message_end", {"content": full_content, "tool_calls": tool_calls})
-        self._emit_event("llm_call_end", {
-            "llm_call_id": llm_call_id,
-            "retry_count": retry_count,
-            "status": "success",
-            "duration_ms": (time.time() - llm_started_at) * 1000,
-            "stop_reason": stop_reason,
-            "response": {
-                "content": full_content,
-                "tool_calls": tool_calls,
-                "assistant_message": assistant_msg,
+        self._emit_event(
+            "llm_call_end",
+            {
+                "llm_call_id": llm_call_id,
+                "retry_count": retry_count,
+                "status": "success",
+                "duration_ms": (time.time() - llm_started_at) * 1000,
+                "stop_reason": stop_reason,
+                "response": {
+                    "content": full_content,
+                    "tool_calls": tool_calls,
+                    "assistant_message": assistant_msg,
+                },
             },
-        })
+        )
         return full_content, tool_calls
 
-    def _execute_tool(self, tool_call: Dict) -> Dict[str, Any]:
+    def _execute_tool(self, tool_call: dict) -> dict[str, Any]:
         """执行单个工具调用
 
         包含参数解析失败处理、连续失败保护、工具不存在提示。
         """
         return self._execute_tool_calls_batch([tool_call])[0]
 
-    def _execute_tool_calls_batch(self, tool_calls: List[Dict]) -> List[Dict[str, Any]]:
+    def _execute_tool_calls_batch(self, tool_calls: list[dict]) -> list[dict[str, Any]]:
         """批量执行工具调用。
 
         2 个以上工具时用线程池并行执行独立调用，缩短多工具场景延迟。
@@ -698,9 +795,9 @@ class AgentStreamExecutor:
             return [self._execute_tool_impl(tool_calls[0])]
 
         max_workers = min(len(tool_calls), 4)
-        results: List[Optional[Dict]] = [None] * len(tool_calls)
+        results: list[dict | None] = [None] * len(tool_calls)
 
-        def _run(idx: int, tc: Dict) -> tuple[int, Dict[str, Any]]:
+        def _run(idx: int, tc: dict) -> tuple[int, dict[str, Any]]:
             self._raise_if_cancelled()
             return idx, self._execute_tool_impl(tc)
 
@@ -712,7 +809,7 @@ class AgentStreamExecutor:
 
         return results  # type: ignore[return-value]
 
-    def _execute_tool_impl(self, tool_call: Dict) -> Dict[str, Any]:
+    def _execute_tool_impl(self, tool_call: dict) -> dict[str, Any]:
         """单个工具的实际执行逻辑（含参数解析、失败保护、事件发射）。"""
         tool_name = tool_call["name"]
         tool_id = tool_call["id"]
@@ -720,7 +817,7 @@ class AgentStreamExecutor:
 
         if "_parse_error" in tool_call:
             parse_error = tool_call["_parse_error"]
-            logger.error(f"Skipping tool due to parse error: {parse_error}")
+            logger.error("Skipping tool due to parse error: %s", parse_error)
             result = {
                 "status": "error",
                 "result": f"Failed to parse tool arguments. {parse_error}",
@@ -729,16 +826,23 @@ class AgentStreamExecutor:
             self._record_tool_result(tool_name, arguments, False)
             return result
 
-        should_stop, stop_reason, is_critical = self._check_consecutive_failures(tool_name, arguments)
+        should_stop, stop_reason, is_critical = self._check_consecutive_failures(
+            tool_name, arguments
+        )
         if should_stop:
             self._record_tool_result(tool_name, arguments, False)
             if is_critical:
                 return {"status": "critical_error", "result": stop_reason, "execution_time": 0}
             return {"status": "error", "result": stop_reason, "execution_time": 0}
 
-        self._emit_event("tool_execution_start", {
-            "tool_call_id": tool_id, "tool_name": tool_name, "arguments": arguments,
-        })
+        self._emit_event(
+            "tool_execution_start",
+            {
+                "tool_call_id": tool_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+        )
 
         try:
             tool = self.tools.get(tool_name)
@@ -771,182 +875,49 @@ class AgentStreamExecutor:
                 result_dict["sources"] = result.ext_data.get("sources", [])
 
             self._record_tool_result(tool_name, arguments, result.status == "success")
-            self._emit_event("tool_execution_end", {
-                "tool_call_id": tool_id,
-                "tool_name": tool_name,
-                **result_dict,
-                "source_count": len(result_dict.get("sources", [])),
-            })
+            self._emit_event(
+                "tool_execution_end",
+                {
+                    "tool_call_id": tool_id,
+                    "tool_name": tool_name,
+                    **result_dict,
+                    "source_count": len(result_dict.get("sources", [])),
+                },
+            )
             return result_dict
 
         except Exception as e:
-            logger.error(f"Tool execution error: {e}")
+            logger.error("Tool execution error: %s", e)
             self._record_tool_result(tool_name, arguments, False)
             error_result = {"status": "error", "result": str(e), "execution_time": 0}
-            self._emit_event("tool_execution_end", {
-                "tool_call_id": tool_id, "tool_name": tool_name, **error_result,
-            })
+            self._emit_event(
+                "tool_execution_end",
+                {
+                    "tool_call_id": tool_id,
+                    "tool_name": tool_name,
+                    **error_result,
+                },
+            )
             return error_result
 
     def _validate_and_fix_messages(self):
         """验证并修复消息历史（修复孤立的 tool_use/tool_result）"""
         sanitize_claude_messages(self.messages)
 
-    def _identify_complete_turns(self) -> List[Dict]:
-        """识别完整对话轮次
+    def _identify_complete_turns(self) -> list[dict[str, Any]]:
+        return identify_complete_turns(self.messages)
 
-        一个完整轮次包含：用户消息 -> AI 回复 -> 工具结果（如有）-> 后续 AI 回复。
-        以用户文本消息作为轮次分界点。
-        """
-        turns = []
-        current_turn = {'messages': []}
-
-        for msg in self.messages:
-            role = msg.get('role')
-            content = msg.get('content', [])
-
-            if role == 'user':
-                is_user_query = False
-                if isinstance(content, list):
-                    has_text = any(isinstance(b, dict) and b.get('type') == 'text' for b in content)
-                    has_tool_result = any(isinstance(b, dict) and b.get('type') == 'tool_result' for b in content)
-                    is_user_query = has_text and not has_tool_result
-                elif isinstance(content, str):
-                    is_user_query = True
-
-                if is_user_query:
-                    if current_turn['messages']:
-                        turns.append(current_turn)
-                    current_turn = {'messages': [msg]}
-                else:
-                    current_turn['messages'].append(msg)
-            else:
-                current_turn['messages'].append(msg)
-
-        if current_turn['messages']:
-            turns.append(current_turn)
-        return turns
-
-    def _estimate_turn_tokens(self, turn: Dict) -> int:
+    def _estimate_turn_tokens(self, turn: dict) -> int:
         """估算一轮对话的 token 消耗"""
-        return sum(self.agent._estimate_message_tokens(msg) for msg in turn['messages'])
+        return sum(self.agent._estimate_message_tokens(msg) for msg in turn["messages"])
 
-    def _truncate_historical_tool_results(self):
-        """截断历史工具结果，减小上下文体积
-
-        当前轮次的工具结果保留完整（最大 50K 字符），
-        历史轮次的工具结果截断到 20K 字符。
-        """
-        MAX_HISTORY_RESULT_CHARS = 20000
-        if len(self.messages) < 2:
-            return
-
-        current_turn_start = len(self.messages)
-        for i in range(len(self.messages) - 1, -1, -1):
-            msg = self.messages[i]
-            if msg.get("role") == "user":
-                content = msg.get("content", [])
-                if isinstance(content, list) and any(
-                    isinstance(b, dict) and b.get("type") == "text" for b in content
-                ):
-                    current_turn_start = i
-                    break
-                elif isinstance(content, str):
-                    current_turn_start = i
-                    break
-
-        truncated_count = 0
-        for i in range(current_turn_start):
-            msg = self.messages[i]
-            if msg.get("role") != "user":
-                continue
-            content = msg.get("content", [])
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_result":
-                    continue
-                result_str = block.get("content", "")
-                if isinstance(result_str, str) and len(result_str) > MAX_HISTORY_RESULT_CHARS:
-                    original_len = len(result_str)
-                    block["content"] = result_str[:MAX_HISTORY_RESULT_CHARS] + \
-                        f"\n\n[Historical output truncated: {original_len} -> {MAX_HISTORY_RESULT_CHARS} chars]"
-                    truncated_count += 1
-
-        if truncated_count > 0:
-            logger.info(f"Truncated {truncated_count} historical tool result(s)")
+    def _truncate_historical_tool_results(self) -> None:
+        return truncate_historical_tool_results(self.messages)
 
     def _aggressive_trim_for_overflow(self) -> bool:
-        """上下文溢出时的激进裁剪策略
+        return aggressive_trim_for_overflow(self.messages)
 
-        三步裁剪：
-        1. 将所有工具结果截断到 10K 字符
-        2. 将过长的用户消息截断到 10K 字符
-        3. 仅保留最近 5 个完整对话轮次
-
-        Returns:
-            True 表示有内容被裁剪（值得重试），False 表示无内容可裁剪
-        """
-        if not self.messages:
-            return False
-
-        original_count = len(self.messages)
-        AGGRESSIVE_LIMIT = 10000
-        truncated = 0
-
-        for msg in self.messages:
-            content = msg.get("content", [])
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "tool_result":
-                    result_str = block.get("content", "")
-                    if isinstance(result_str, str) and len(result_str) > AGGRESSIVE_LIMIT:
-                        block["content"] = result_str[:AGGRESSIVE_LIMIT] + \
-                            f"\n\n[Truncated for context recovery: {len(result_str)} -> {AGGRESSIVE_LIMIT} chars]"
-                        truncated += 1
-                if block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
-                    for key, val in block["input"].items():
-                        if isinstance(val, str) and len(val) > 1000:
-                            block["input"][key] = val[:1000] + f"... [truncated {len(val)} chars]"
-                            truncated += 1
-
-        USER_MSG_LIMIT = 10000
-        for msg in self.messages:
-            if msg.get("role") != "user":
-                continue
-            content = msg.get("content", [])
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text", "")
-                        if len(text) > USER_MSG_LIMIT:
-                            block["text"] = text[:USER_MSG_LIMIT] + \
-                                f"\n\n[Message truncated: {len(text)} -> {USER_MSG_LIMIT} chars]"
-                            truncated += 1
-            elif isinstance(content, str) and len(content) > USER_MSG_LIMIT:
-                msg["content"] = content[:USER_MSG_LIMIT] + \
-                    f"\n\n[Message truncated: {len(content)} -> {USER_MSG_LIMIT} chars]"
-                truncated += 1
-
-        turns = self._identify_complete_turns()
-        if len(turns) > 5:
-            kept_turns = turns[-5:]
-            new_messages = []
-            for turn in kept_turns:
-                new_messages.extend(turn["messages"])
-            self.messages[:] = new_messages
-            logger.info(f"Aggressive trim: {original_count} -> {len(self.messages)} messages")
-            return True
-
-        if truncated > 0:
-            return True
-
-        return False
-
-    def _summarize_turns_for_context(self, turns: List[Dict]) -> Optional[str]:
+    def _summarize_turns_for_context(self, turns: list[dict]) -> str | None:
         """通过 LLM 摘要压缩需要裁剪的对话轮次
 
         Returns:
@@ -961,7 +932,12 @@ class AgentStreamExecutor:
 
         try:
             request = LLMRequest(
-                messages=[{"role": "user", "content": _CONTEXT_SUMMARY_USER_PROMPT.format(conversation=conversation)}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": _CONTEXT_SUMMARY_USER_PROMPT.format(conversation=conversation),
+                    }
+                ],
                 temperature=0,
                 max_tokens=500,
                 stream=False,
@@ -970,11 +946,13 @@ class AgentStreamExecutor:
             response = self.agent.model.call(request)
             text = self._extract_response_text(response)
             if text and text.strip() and text.strip() != "无":
-                logger.info(f"[ContextSummarize] Summarized {len(turns)} turns into {len(text)} chars")
+                logger.info(
+                    "[ContextSummarize] Summarized %s turns into %s chars", len(turns), len(text)
+                )
                 return text.strip()
             return None
         except Exception as e:
-            logger.warning(f"[ContextSummarize] LLM summarization failed: {e}")
+            logger.warning("[ContextSummarize] LLM summarization failed: %s", e)
             return None
 
     @staticmethod
@@ -997,45 +975,11 @@ class AgentStreamExecutor:
             return response.choices[0].message.content or ""
         return ""
 
-    @staticmethod
-    def _format_turns_text(self, turns: List[Dict]) -> str:
-        """将对话轮次格式化为文本用于 LLM 摘要"""
-        lines = []
-        for turn in turns:
-            for msg in turn.get("messages", []):
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    text = content.strip()
-                elif isinstance(content, list):
-                    parts = []
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            parts.append(block.get("text", ""))
-                    text = "\n".join(p for p in parts if p).strip()
-                else:
-                    continue
-                if not text:
-                    continue
-                label = "用户" if role == "user" else "助手"
-                lines.append(f"{label}: {text[:300]}")
-        return "\n".join(lines)[:12000]
+    _format_turns_text = staticmethod(format_turns_text)
 
-    @staticmethod
-    def _build_summary_messages(self, summary: str) -> List[Dict]:
-        """将摘要文本构建为紧凑的消息对插入对话历史"""
-        return [
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": f"[之前的对话摘要]\n{summary}"}],
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "好的，我已了解之前的对话内容，让我们继续。"}],
-            },
-        ]
+    _build_summary_messages = staticmethod(build_summary_messages)
 
-    def _summarize_or_flush(self, discarded_turns: List[Dict]) -> List[Dict]:
+    def _summarize_or_flush(self, discarded_turns: list[dict]) -> list[dict]:
         """尝试通过 LLM 摘要压缩被裁剪的轮次，失败则写入记忆
 
         无论摘要是否成功，被裁剪的内容都会异步写入记忆文件。
@@ -1050,7 +994,9 @@ class AgentStreamExecutor:
                 discarded_messages.extend(turn["messages"])
             if discarded_messages:
                 self.agent.memory_manager.flush_memory(
-                    messages=discarded_messages, reason="trim", max_messages=0,
+                    messages=discarded_messages,
+                    reason="trim",
+                    max_messages=0,
                 )
 
         summary = self._summarize_turns_for_context(discarded_turns)
@@ -1084,7 +1030,9 @@ class AgentStreamExecutor:
             keep_count = len(turns) - removed_count
             discarded_turns = turns[:removed_count]
             turns = turns[-keep_count:]
-            logger.info(f"Context turns exceeded: keeping {keep_count}, removing {removed_count}")
+            logger.info(
+                "Context turns exceeded: keeping %s, removing %s", keep_count, removed_count
+            )
 
             summary_messages = self._summarize_or_flush(discarded_turns)
 
@@ -1095,14 +1043,16 @@ class AgentStreamExecutor:
             reserve_tokens = int(context_window * 0.1)
             max_tokens = context_window - reserve_tokens
 
-        system_tokens = self.agent._estimate_message_tokens({"role": "system", "content": self.system_prompt})
+        system_tokens = self.agent._estimate_message_tokens(
+            {"role": "system", "content": self.system_prompt}
+        )
         summary_tokens = sum(self.agent._estimate_message_tokens(m) for m in summary_messages)
         current_tokens = sum(self._estimate_turn_tokens(turn) for turn in turns)
 
         if current_tokens + system_tokens + summary_tokens <= max_tokens:
             new_messages = list(summary_messages)
             for turn in turns:
-                new_messages.extend(turn['messages'])
+                new_messages.extend(turn["messages"])
             self.messages = new_messages
             return
 
@@ -1117,7 +1067,7 @@ class AgentStreamExecutor:
             for turn in compressed_turns:
                 new_messages.extend(turn["messages"])
             self.messages = new_messages
-            logger.info(f"Compressed all turns to text-only ({len(turns)} turns)")
+            logger.info("Compressed all turns to text-only (%s turns)", len(turns))
             return
 
         removed_count = len(turns) // 2
@@ -1125,15 +1075,17 @@ class AgentStreamExecutor:
         discarded_turns = turns[:removed_count]
         kept_turns = turns[-keep_count:]
 
-        logger.info(f"Token limit exceeded: keeping {keep_count} turns, removing {removed_count}")
+        logger.info(
+            "Token limit exceeded: keeping %s turns, removing %s", keep_count, removed_count
+        )
 
         extra_summary = self._summarize_or_flush(discarded_turns)
 
         new_messages = summary_messages + extra_summary
         for turn in kept_turns:
-            new_messages.extend(turn['messages'])
+            new_messages.extend(turn["messages"])
         self.messages = new_messages
 
-    def _prepare_messages(self) -> List[Dict[str, Any]]:
+    def _prepare_messages(self) -> list[dict[str, Any]]:
         """准备发送给 LLM 的消息列表（不含系统提示词，由 provider 单独处理）"""
         return self.messages

@@ -4,7 +4,6 @@ from pathlib import Path
 
 from app.core.skills.manager import SkillManager
 
-
 SKILL_MD = """---
 name: demo-skill
 description: Demo skill

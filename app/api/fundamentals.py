@@ -1,13 +1,11 @@
 """Fundamental data API."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_effective_settings
-from app.core.watchlist.service import LongbridgeUnavailableError
-from app.deps import get_fundamental_service
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
+from app.deps import get_fundamental_service
 from app.schemas.fundamentals import FinancialReportsResponse
 
 router = APIRouter()
@@ -19,7 +17,7 @@ router = APIRouter()
 def get_financial_reports(
     symbol: str,
     kind: str = "All",
-    period: Optional[str] = None,
+    period: str | None = None,
     current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
 ):
     """Fetch normalized financial statements from Longbridge SDK."""
@@ -33,7 +31,7 @@ def get_financial_reports(
             settings=get_effective_settings(current_user.id),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return FinancialReportsResponse(**data)

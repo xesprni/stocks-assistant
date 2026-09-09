@@ -1,13 +1,11 @@
 """Market dashboard API — index quotes, watchlist quotes, and config."""
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_effective_settings
-from app.core.watchlist.service import LongbridgeUnavailableError
-from app.deps import get_market_service, get_watchlist_service
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
+from app.deps import get_market_service, get_watchlist_service
 from app.schemas.market import (
     CandlesticksResponse,
     CapitalFlowResponse,
@@ -38,7 +36,9 @@ def update_market_config(
 ):
     """保存行情监控仪表盘配置。"""
     service = get_market_service()
-    return MarketDashboardConfig(**service.save_config(config.model_dump(), user_id=current_user.id))
+    return MarketDashboardConfig(
+        **service.save_config(config.model_dump(), user_id=current_user.id)
+    )
 
 
 @router.get("/index-quotes", response_model=MarketQuotesResponse)
@@ -46,15 +46,20 @@ def get_index_quotes(current_user: CurrentUser = Depends(require_permissions("ma
     """拉取所有启用指数的实时报价。"""
     service = get_market_service()
     try:
-        quotes = [QuoteItem(**q) for q in service.get_index_quotes(user_id=current_user.id, settings=get_effective_settings(current_user.id))]
+        quotes = [
+            QuoteItem(**q)
+            for q in service.get_index_quotes(
+                user_id=current_user.id, settings=get_effective_settings(current_user.id)
+            )
+        ]
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return MarketQuotesResponse(quotes=quotes, total=len(quotes))
 
 
 @router.get("/stock-quotes", response_model=MarketQuotesResponse)
 def get_stock_quotes(
-    category: Optional[str] = None,
+    category: str | None = None,
     current_user: CurrentUser = Depends(require_permissions("market:read")),
 ):
     """拉取自选股列表的实时报价，可按市场分类过滤。"""
@@ -62,10 +67,12 @@ def get_stock_quotes(
     watchlist_svc = get_watchlist_service()
     try:
         items = watchlist_svc.list_items(category=category, user_id=current_user.id)
-        raw = market_svc.get_watchlist_quotes(items, settings=get_effective_settings(current_user.id))
+        raw = market_svc.get_watchlist_quotes(
+            items, settings=get_effective_settings(current_user.id)
+        )
         quotes = [QuoteItem(**q) for q in raw]
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return MarketQuotesResponse(quotes=quotes, total=len(quotes))
 
 
@@ -79,24 +86,28 @@ def get_candlesticks(
     """拉取指定标的 K 线数据。period: 1D | 1W | 1M。"""
     service = get_market_service()
     try:
-        data = service.get_candlesticks(symbol, period, count, settings=get_effective_settings(current_user.id))
+        data = service.get_candlesticks(
+            symbol, period, count, settings=get_effective_settings(current_user.id)
+        )
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return CandlesticksResponse(**data)
 
 
 @router.get("/intraday", response_model=IntradayResponse)
 def get_intraday(
     symbol: str,
-    since: Optional[int] = None,
+    since: int | None = None,
     current_user: CurrentUser = Depends(require_permissions("market:read")),
 ):
     """拉取今日分时数据。since 可用于增量返回指定时间戳后的数据。"""
     service = get_market_service()
     try:
-        data = service.get_intraday(symbol, since=since, settings=get_effective_settings(current_user.id))
+        data = service.get_intraday(
+            symbol, since=since, settings=get_effective_settings(current_user.id)
+        )
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return IntradayResponse(**data)
 
 
@@ -110,9 +121,9 @@ def get_capital_flow(
     try:
         data = service.get_capital_flow(symbol, settings=get_effective_settings(current_user.id))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return CapitalFlowResponse(**data)
 
 
@@ -124,7 +135,9 @@ def get_market_temperature(
     """获取市场温度数据。market: US / HK / CN"""
     service = get_market_service()
     try:
-        data = service.get_market_temperature(market, settings=get_effective_settings(current_user.id))
+        data = service.get_market_temperature(
+            market, settings=get_effective_settings(current_user.id)
+        )
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return MarketTemperatureResponse(**data)

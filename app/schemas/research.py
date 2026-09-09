@@ -1,14 +1,23 @@
 """公司研究工作区、Thesis、材料与提醒的数据协议。"""
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 DocumentType = Literal["note", "pdf", "filing", "transcript", "slides", "article"]
 AlertConditionType = Literal[
-    "price", "volume", "valuation", "kpi", "technical", "news", "filing", "keyword", "rating", "corporate_action", "portfolio_risk"
+    "price",
+    "volume",
+    "valuation",
+    "kpi",
+    "technical",
+    "news",
+    "filing",
+    "keyword",
+    "rating",
+    "corporate_action",
+    "portfolio_risk",
 ]
 AlertSeverity = Literal["info", "low", "medium", "high", "critical"]
 
@@ -27,16 +36,16 @@ class ThesisPayload(BaseModel):
     invalidation_conditions: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0, le=1)
     time_horizon: str = ""
-    next_review_at: Optional[str] = None
+    next_review_at: str | None = None
 
 
 class ResearchQuickPromptsResponse(BaseModel):
     prompts: list[str]
-    generated_at: Optional[str] = None
-    expires_at: Optional[str] = None
+    generated_at: str | None = None
+    expires_at: str | None = None
     refresh_interval_seconds: int
     stale: bool = False
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class ThesisSnapshotCreate(BaseModel):
@@ -60,7 +69,7 @@ class DecisionCreate(BaseModel):
     action: str = Field(min_length=1, max_length=120)
     rationale: str = Field(min_length=1, max_length=10000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=100)
-    thesis_snapshot_id: Optional[str] = None
+    thesis_snapshot_id: str | None = None
     outcome: str = Field(default="", max_length=10000)
 
 
@@ -74,10 +83,10 @@ class DecisionResponse(BaseModel):
     action: str
     rationale: str
     evidence_ids: list[str] = Field(default_factory=list)
-    thesis_snapshot_id: Optional[str] = None
+    thesis_snapshot_id: str | None = None
     outcome: str = ""
     created_at: str
-    reviewed_at: Optional[str] = None
+    reviewed_at: str | None = None
 
 
 class ResearchEvidenceCreate(BaseModel):
@@ -98,12 +107,12 @@ class ResearchEvidenceResponse(BaseModel):
 
 
 class ResearchDocumentCreate(BaseModel):
-    document_id: Optional[str] = None
+    document_id: str | None = None
     title: str = Field(min_length=1, max_length=300)
     document_type: DocumentType = "note"
     content: str = Field(min_length=1, max_length=5_000_000)
-    source_url: Optional[str] = Field(default=None, max_length=2000)
-    published_at: Optional[str] = None
+    source_url: str | None = Field(default=None, max_length=2000)
+    published_at: str | None = None
     page_texts: list[str] = Field(default_factory=list, max_length=2000)
 
     @field_validator("source_url")
@@ -118,9 +127,9 @@ class ResearchDocumentVersionResponse(BaseModel):
     id: str
     document_id: str
     version: int
-    published_at: Optional[str] = None
+    published_at: str | None = None
     content_hash: str
-    content: Optional[str] = None
+    content: str | None = None
     locator: dict[str, Any] = Field(default_factory=dict)
     change_summary: dict[str, Any] = Field(default_factory=dict)
     fetched_at: str
@@ -132,7 +141,7 @@ class ResearchDocumentResponse(BaseModel):
     symbol: str
     title: str
     document_type: DocumentType
-    source_url: Optional[str] = None
+    source_url: str | None = None
     latest_version: int = 0
     created_at: str
     updated_at: str
@@ -146,7 +155,7 @@ class AlertRuleCreate(BaseModel):
     operator: Literal["gt", "gte", "lt", "lte", "eq", "contains", "changed"] = "gt"
     threshold: Any = None
     severity: AlertSeverity = "medium"
-    thesis_snapshot_id: Optional[str] = None
+    thesis_snapshot_id: str | None = None
     enabled: bool = True
     channels: list[Literal["in_app", "telegram"]] = Field(default_factory=lambda: ["in_app"])
     evaluation_interval_seconds: int = Field(default=300, ge=30, le=86400)
@@ -154,15 +163,15 @@ class AlertRuleCreate(BaseModel):
 
 
 class AlertRuleUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
-    operator: Optional[Literal["gt", "gte", "lt", "lte", "eq", "contains", "changed"]] = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    operator: Literal["gt", "gte", "lt", "lte", "eq", "contains", "changed"] | None = None
     threshold: Any = None
-    severity: Optional[AlertSeverity] = None
-    thesis_snapshot_id: Optional[str] = None
-    enabled: Optional[bool] = None
-    channels: Optional[list[Literal["in_app", "telegram"]]] = None
-    evaluation_interval_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
-    metadata: Optional[dict[str, Any]] = None
+    severity: AlertSeverity | None = None
+    thesis_snapshot_id: str | None = None
+    enabled: bool | None = None
+    channels: list[Literal["in_app", "telegram"]] | None = None
+    evaluation_interval_seconds: int | None = Field(default=None, ge=30, le=86400)
+    metadata: dict[str, Any] | None = None
 
 
 class AlertRuleResponse(BaseModel):
@@ -173,23 +182,23 @@ class AlertRuleResponse(BaseModel):
     operator: str
     threshold: Any = None
     severity: AlertSeverity
-    thesis_snapshot_id: Optional[str] = None
+    thesis_snapshot_id: str | None = None
     enabled: bool
     channels: list[str] = Field(default_factory=list)
     evaluation_interval_seconds: int
     metadata: dict[str, Any] = Field(default_factory=dict)
-    last_evaluated_at: Optional[str] = None
-    next_evaluation_at: Optional[str] = None
-    last_error: Optional[str] = None
+    last_evaluated_at: str | None = None
+    next_evaluation_at: str | None = None
+    last_error: str | None = None
     created_at: str
     updated_at: str
 
 
 class AlertEvaluationRequest(BaseModel):
     observed_value: Any = None
-    observed_at: Optional[datetime] = None
-    event_key: Optional[str] = Field(default=None, max_length=500)
-    title: Optional[str] = Field(default=None, max_length=500)
+    observed_at: datetime | None = None
+    event_key: str | None = Field(default=None, max_length=500)
+    title: str | None = Field(default=None, max_length=500)
     source: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -207,17 +216,17 @@ class AlertEventResponse(BaseModel):
     status: Literal["unread", "read", "dismissed"] = "unread"
     delivery_status: str = "not_requested"
     retry_count: int = 0
-    last_error: Optional[str] = None
+    last_error: str | None = None
     occurred_at: str
     created_at: str
-    read_at: Optional[str] = None
+    read_at: str | None = None
 
 
 class SecurityWorkspaceSummary(BaseModel):
     symbol: str
     watchlisted: bool = False
-    position: Optional[dict[str, Any]] = None
-    latest_thesis: Optional[ThesisSnapshotResponse] = None
+    position: dict[str, Any] | None = None
+    latest_thesis: ThesisSnapshotResponse | None = None
     thesis_versions: int = 0
     documents: int = 0
     unread_alerts: int = 0

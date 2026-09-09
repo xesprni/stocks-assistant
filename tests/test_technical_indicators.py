@@ -26,7 +26,20 @@ class TechnicalIndicatorsTest(unittest.TestCase):
 
         result = calculate_technical_indicators(
             bars,
-            indicators=["vol", "ma", "ema", "macd", "kdj", "rsi", "cci", "wr", "dmi", "osc", "boll", "bbiboll"],
+            indicators=[
+                "vol",
+                "ma",
+                "ema",
+                "macd",
+                "kdj",
+                "rsi",
+                "cci",
+                "wr",
+                "dmi",
+                "osc",
+                "boll",
+                "bbiboll",
+            ],
             params={"vol_periods": [5], "ma_periods": [5], "ema_periods": [5], "wr_periods": [10]},
             series_limit=5,
         )

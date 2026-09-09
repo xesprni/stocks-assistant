@@ -23,8 +23,12 @@ class SchedulerToolTest(unittest.TestCase):
         self.workspace = Path(self.tmp.name) / "workspace"
         os.environ[APP_DB_ENV] = str(self.db_path)
         self.store = reset_app_store_for_tests(self.db_path)
-        self.store.set_config_values({"workspace_dir": str(self.workspace), "memory_enabled": False})
-        self.user = self.store.create_user("admin", "password-hash", display_name="Admin", role_names=["admin"])
+        self.store.set_config_values(
+            {"workspace_dir": str(self.workspace), "memory_enabled": False}
+        )
+        self.user = self.store.create_user(
+            "admin", "password-hash", display_name="Admin", role_names=["admin"]
+        )
         config_module._config_instance = None
         get_scheduler_service.cache_clear()
 

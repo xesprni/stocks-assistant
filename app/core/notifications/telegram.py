@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import html
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
-
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_FORMATTED_SOURCE_LIMIT = 3000
@@ -31,7 +30,7 @@ class TelegramSender:
     timeout_seconds: float = 15.0
 
     @classmethod
-    def from_settings(cls, settings: Any) -> "TelegramSender":
+    def from_settings(cls, settings: Any) -> TelegramSender:
         return cls(
             enabled=bool(getattr(settings, "telegram_enabled", False)),
             bot_token=str(getattr(settings, "telegram_bot_token", "") or ""),
@@ -60,7 +59,9 @@ class TelegramSender:
             if render_html:
                 rendered = _markdown_to_telegram_html(chunk)
                 if len(rendered) > TELEGRAM_MESSAGE_LIMIT:
-                    for sub_chunk in _chunk_message(chunk, limit=TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT):
+                    for sub_chunk in _chunk_message(
+                        chunk, limit=TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT
+                    ):
                         responses.append(
                             self._send_chunk(
                                 _markdown_to_telegram_html(sub_chunk),
@@ -69,12 +70,22 @@ class TelegramSender:
                             )
                         )
                 else:
-                    responses.append(self._send_chunk(rendered, parse_mode="HTML", fallback_text=_markdown_to_plain_text(chunk)))
+                    responses.append(
+                        self._send_chunk(
+                            rendered,
+                            parse_mode="HTML",
+                            fallback_text=_markdown_to_plain_text(chunk),
+                        )
+                    )
             else:
-                responses.append(self._send_chunk(chunk, parse_mode=_telegram_parse_mode(self.parse_mode)))
+                responses.append(
+                    self._send_chunk(chunk, parse_mode=_telegram_parse_mode(self.parse_mode))
+                )
         return {"ok": True, "chunks": len(responses), "responses": responses}
 
-    def _send_chunk(self, text: str, parse_mode: str = "", fallback_text: str | None = None) -> dict[str, Any]:
+    def _send_chunk(
+        self, text: str, parse_mode: str = "", fallback_text: str | None = None
+    ) -> dict[str, Any]:
         api_base = self.api_base.rstrip("/")
         url = f"{api_base}/bot{self.bot_token}/sendMessage"
         payload: dict[str, Any] = {
@@ -87,7 +98,11 @@ class TelegramSender:
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.post(url, json=payload)
-            if parse_mode and response.status_code >= 400 and _should_retry_without_parse_mode(response):
+            if (
+                parse_mode
+                and response.status_code >= 400
+                and _should_retry_without_parse_mode(response)
+            ):
                 fallback_payload = dict(payload)
                 fallback_payload.pop("parse_mode", None)
                 if fallback_text is not None:
@@ -100,7 +115,9 @@ class TelegramSender:
 
         data = response.json()
         if not data.get("ok", False):
-            raise RuntimeError(f"Telegram send failed: {data.get('description') or 'unknown error'}")
+            raise RuntimeError(
+                f"Telegram send failed: {data.get('description') or 'unknown error'}"
+            )
         return data
 
 
@@ -116,7 +133,7 @@ def _chunk_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
         if split_at > limit * 0.6:
             chunk = remaining[:split_at]
         chunks.append(chunk)
-        remaining = remaining[len(chunk):].lstrip()
+        remaining = remaining[len(chunk) :].lstrip()
     return chunks
 
 
@@ -183,7 +200,9 @@ def _markdown_to_telegram_html(text: str) -> str:
 
         numbered_heading = re.match(r"^(\d+(?:\.\d+)*)\.\s+(.+)$", stripped)
         if numbered_heading:
-            output.append(f"<b>{html.escape(numbered_heading.group(1), quote=False)}. {_format_inline_markdown(numbered_heading.group(2))}</b>")
+            output.append(
+                f"<b>{html.escape(numbered_heading.group(1), quote=False)}. {_format_inline_markdown(numbered_heading.group(2))}</b>"
+            )
             continue
 
         quote = re.match(r"^>\s?(.*)$", stripped)
@@ -233,7 +252,9 @@ def _format_inline_without_code(text: str) -> str:
 
 def _looks_like_markdown_table_line(line: str) -> bool:
     stripped = line.strip()
-    return stripped.count("|") >= 2 and ("---" in stripped or stripped.startswith("|") or stripped.endswith("|"))
+    return stripped.count("|") >= 2 and (
+        "---" in stripped or stripped.startswith("|") or stripped.endswith("|")
+    )
 
 
 def _markdown_table_to_html_lines(lines: list[str]) -> list[str]:
@@ -245,7 +266,9 @@ def _markdown_table_to_html_lines(lines: list[str]) -> list[str]:
     header = rows[0]
     body = rows[1:]
     if not body:
-        return [html.escape(" | ".join(_markdown_inline_to_plain(cell) for cell in header), quote=False)]
+        return [
+            html.escape(" | ".join(_markdown_inline_to_plain(cell) for cell in header), quote=False)
+        ]
 
     rendered: list[str] = []
     for row in body:
@@ -260,7 +283,9 @@ def _markdown_table_to_html_lines(lines: list[str]) -> list[str]:
             details.append(f"{label} {plain_value}".strip())
 
         if title and details:
-            rendered.append(f"• <b>{html.escape(title, quote=False)}</b>: {html.escape(' · '.join(details), quote=False)}")
+            rendered.append(
+                f"• <b>{html.escape(title, quote=False)}</b>: {html.escape(' · '.join(details), quote=False)}"
+            )
         elif title:
             rendered.append(f"• {html.escape(title, quote=False)}")
         elif details:
@@ -317,5 +342,6 @@ def _should_retry_without_parse_mode(response: httpx.Response) -> bool:
     return response.status_code == 400 and (
         "can't parse entities" in detail
         or "can't find end of the entity" in detail
-        or "entity" in detail and "parse" in detail
+        or "entity" in detail
+        and "parse" in detail
     )

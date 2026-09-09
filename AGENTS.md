@@ -14,7 +14,7 @@ Stocks Assistant 是一个面向股票投研、行情跟踪和个人资产管理
 
 ```bash
 # 安装依赖（推荐）
-uv sync
+uv sync --python 3.12
 
 # 备用安装方式
 pip install -r requirements.txt
@@ -29,6 +29,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 # 运行后端测试
 uv run pytest
 uv run pytest tests/test_market_service.py
+
+# 后端完整质量检查（Ruff、渐进 mypy、pytest、部署脚本语法）
+bash scripts/check_backend.sh
 ```
 
 ### 前端
@@ -55,7 +58,8 @@ app/
 ├── api/                 # HTTP 路由层，统一注册到 /api/v1
 ├── core/
 │   ├── agent/           # Agent 执行器、流式事件、多 Agent 委派、上下文裁剪
-│   ├── app_store.py     # 应用级 SQLite：配置、用户、角色、权限、刷新令牌、审计等
+│   ├── app_store.py     # 应用级 SQLite 兼容门面；领域仓储位于 orm/repositories/
+│   ├── configuration/  # 配置更新编排、运行时依赖与缓存失效
 │   ├── fundamentals/    # Longbridge 财报数据服务
 │   ├── knowledge/       # 知识库文件目录树、内容读取、图谱
 │   ├── llm/             # OpenAI 兼容与 Responses/Codex OAuth Provider
@@ -126,10 +130,12 @@ app/
 
 ## 后端开发约定
 
+- 最低 Python 版本为 3.12；Ruff 使用 100 字符行宽和 `E4/E7/E9/F/I/UP/B/SIM` 规则。新增纯辅助模块加入 `pyproject.toml` 的严格 mypy 清单。
+
 - API 路由保持薄层：校验请求、取当前用户/权限、调用 service、转换错误；业务逻辑放到 `app/core/*/service.py`。
 - 新增请求/响应结构放在 `app/schemas/`，不要在路由里散落复杂 dict 协议。
 - 用户请求内需要配置时优先使用 `get_effective_settings(current_user.id)`；涉及用户文件、知识库、记忆和工具 cwd 时使用 `user_workspace_dir(...)`。
-- 新增依赖单例放到 `app/deps.py`，如果配置变更会影响它，需要在 `app/api/config.py` 的缓存清理逻辑里同步处理。
+- 新增依赖单例放到 `app/deps.py`，如果配置变更会影响它，需要同步更新 `app/core/configuration/runtime.py` 的失效规则；API 和 OAuth 共用这个入口。
 - 新增后端代码时，需要在核心流程、复杂分支、关键安全边界、数据迁移和外部服务调用处补充简洁中文注释，帮助后续维护者快速理解意图；不要给一眼可见的赋值或普通 CRUD 写流水账注释。
 - 日志使用 Python logging，logger 名称统一以 `stocks-assistant.*` 开头。
 - 直接文件读写工具必须限制在工作空间内；`read_file`、`write_file` 已做路径约束，新增类似能力时保持同等约束。
@@ -154,7 +160,7 @@ app/
 
 - 实现 `BaseTool` 子类，设置 `name`、`description`、`params` 和 `execute`
 - 在 `ToolManager.load_builtin_tools()` 注册，或明确走动态/MCP 加载
-- 必要时在 `ToolManager._instantiate_tool()` 注入 workspace、user_id、settings 或 service
+- 必要时在 `app/core/tools/builtin_registry.py` 的显式工厂中注入 workspace、user_id、settings 或 service；`load_builtin_tools(..., settings=...)` 可接收同次 Agent 执行的配置快照
 - 更新 `DEFAULT_AGENT_TOOL_ALLOWLIST`、多 Agent 角色 allowlist 和前端/文档说明
 - 为权限、路径约束、错误分支和主要成功路径补测试
 
@@ -202,6 +208,7 @@ Longbridge OpenAPI 提供程序化行情和交易接口，用于构建投研、�
 ## 测试与验证
 
 - 后端改动优先跑相关 pytest；涉及共享配置、权限、Agent、MCP、Longbridge service 或调度时扩大到完整 `uv run pytest`。
+- `tests/conftest.py` 隔离默认数据库和工作空间，并禁止默认 MCP 外部传输；协议测试需要显式提供传输替身。新增依赖连接也应由测试替身覆盖。
 - 前端改动跑 `npm run build`，必要时启动后端和 `npm run dev` 做浏览器联调。
 - 修改配置持久化、权限或迁移逻辑时，使用临时 `STOCKS_ASSISTANT_DB_PATH` 验证首次初始化和旧 `config.json` 一次性迁移。
 - 修改 Agent 流式事件时，同时检查同步 `/chat`、SSE `/stream`、session 持久化、memory curator 和 tracing 是否仍然一致。

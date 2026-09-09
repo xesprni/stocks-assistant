@@ -1,11 +1,11 @@
 """Longbridge financial reports tool."""
 
-from typing import Any, Dict
+from typing import Any
 
 from app.core.fundamentals.service import FundamentalService
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import longbridge_evidence
-from app.core.watchlist.service import LongbridgeUnavailableError
 
 
 class GetFinancialReportsTool(BaseTool):
@@ -52,7 +52,7 @@ class GetFinancialReportsTool(BaseTool):
     def __init__(self, settings: Any = None):
         self.settings = settings
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         symbol = str(args.get("symbol", "")).strip()
         kind = str(args.get("kind") or "All")
         period_value = args.get("period")

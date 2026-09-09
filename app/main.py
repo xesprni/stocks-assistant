@@ -4,19 +4,25 @@
 所有 API 路由通过 app.api.router 统一注册。
 """
 
-from contextlib import asynccontextmanager
+import asyncio
 import logging
-from pathlib import Path
 import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api import router
 from app.config import get_settings
 from app.core.app_store import get_app_store
-from app.core.security import AuthError, bearer_from_header, decode_access_token, ensure_legacy_device_active
 from app.core.logging import setup_logging
-from app.api import router
+from app.core.security import (
+    AuthError,
+    bearer_from_header,
+    decode_access_token,
+    ensure_legacy_device_active,
+)
 
 
 @asynccontextmanager
@@ -54,6 +60,7 @@ async def lifespan(app: FastAPI):
     mcp_manager = None
     if settings.mcp_servers:
         import logging
+
         from app.deps import get_mcp_manager
 
         mcp_logger = logging.getLogger("stocks-assistant.mcp")
@@ -62,17 +69,23 @@ async def lifespan(app: FastAPI):
         mcp_manager.server_configs = settings.mcp_servers
         try:
             mcp_manager.connect_all_background()
-            mcp_logger.info(f"Scheduled MCP background connection for {len(settings.mcp_servers)} server(s)")
+            mcp_logger.info(
+                "Scheduled MCP background connection for %s server(s)", len(settings.mcp_servers)
+            )
         except Exception as exc:
-            mcp_logger.warning(f"MCP background initialization failed: {exc}")
+            mcp_logger.warning("MCP background initialization failed: %s", exc)
 
     try:
         yield
     finally:
-        if scheduler_service is not None:
-            await scheduler_service.stop()
-        if mcp_manager is not None:
-            mcp_manager.close_sync()
+        from app.deps import close_mcp_managers
+
+        try:
+            if scheduler_service is not None:
+                await scheduler_service.stop()
+        finally:
+            # 用户请求和运行时配置可创建更多 manager，调度关闭失败也必须释放它们。
+            await asyncio.to_thread(close_mcp_managers)
 
 
 app = FastAPI(
@@ -155,7 +168,9 @@ async def log_api_requests(request: Request, call_next):
 
     if path != "/api/v1/health":
         elapsed_ms = (time.perf_counter() - start) * 1000
-        logger.info("HTTP %s %s -> %s %.1fms", request.method, path, response.status_code, elapsed_ms)
+        logger.info(
+            "HTTP %s %s -> %s %.1fms", request.method, path, response.status_code, elapsed_ms
+        )
     return response
 
 

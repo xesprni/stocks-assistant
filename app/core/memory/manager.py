@@ -1,20 +1,19 @@
 import asyncio
 import hashlib
+import logging
+import math
 import os
 import re
-import math
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from app.core.memory.config import MemoryConfig
-from app.core.memory.storage import MemoryStorage, MemoryChunk, SearchResult
 from app.core.memory.chunker import TextChunker
-from app.core.memory.embedding import create_embedding_provider, EmbeddingProvider
+from app.core.memory.config import MemoryConfig
+from app.core.memory.embedding import EmbeddingProvider, create_embedding_provider
+from app.core.memory.storage import MemoryChunk, MemoryStorage, SearchResult
 from app.core.memory.summarizer import MemoryFlushManager, create_memory_files_if_needed
-
-import logging
 
 logger = logging.getLogger("stocks-assistant.memory")
 
@@ -32,8 +31,8 @@ class MemoryManager:
 
     def __init__(
         self,
-        config: Optional[MemoryConfig] = None,
-        embedding_provider: Optional[EmbeddingProvider] = None,
+        config: MemoryConfig | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
         llm_provider=None,
     ):
         self.config = config or MemoryConfig()
@@ -53,8 +52,8 @@ class MemoryManager:
             self.embedding_provider = embedding_provider
         else:
             try:
-                api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('EMBEDDING_API_KEY')
-                api_base = os.environ.get('OPENAI_API_BASE') or os.environ.get('EMBEDDING_API_BASE')
+                api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("EMBEDDING_API_KEY")
+                api_base = os.environ.get("OPENAI_API_BASE") or os.environ.get("EMBEDDING_API_BASE")
                 if api_key:
                     self.embedding_provider = create_embedding_provider(
                         provider="openai",
@@ -63,10 +62,12 @@ class MemoryManager:
                         api_base=api_base,
                     )
             except Exception as e:
-                logger.warning(f"[MemoryManager] Embedding init failed: {e}")
+                logger.warning("[MemoryManager] Embedding init failed: %s", e)
 
             if self.embedding_provider is None:
-                logger.info("[MemoryManager] Memory will work with keyword search only (no vector search)")
+                logger.info(
+                    "[MemoryManager] Memory will work with keyword search only (no vector search)"
+                )
 
         workspace_dir = self.config.get_workspace()
         self.flush_manager = MemoryFlushManager(
@@ -87,11 +88,11 @@ class MemoryManager:
     async def search(
         self,
         query: str,
-        user_id: Optional[str] = None,
-        max_results: Optional[int] = None,
-        min_score: Optional[float] = None,
+        user_id: str | None = None,
+        max_results: int | None = None,
+        min_score: float | None = None,
         include_shared: bool = True,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """混合搜索记忆（向量 + 关键词，加权融合 + 时序衰减）"""
         max_results = max_results or self.config.max_results
         min_score = min_score or self.config.min_score
@@ -119,11 +120,11 @@ class MemoryManager:
     def _search_sync(
         self,
         query: str,
-        user_id: Optional[str],
+        user_id: str | None,
         scopes: list[str],
         max_results: int,
         min_score: float,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """在线程池执行 embedding 与 SQLite 检索，避免阻塞 API 事件循环。"""
         vector_results = []
         if self.embedding_provider:
@@ -135,9 +136,9 @@ class MemoryManager:
                     scopes=scopes,
                     limit=max_results * 2,
                 )
-                logger.info(f"[MemoryManager] Vector search found {len(vector_results)} results")
+                logger.info("[MemoryManager] Vector search found %s results", len(vector_results))
             except Exception as e:
-                logger.warning(f"[MemoryManager] Vector search failed: {e}")
+                logger.warning("[MemoryManager] Vector search failed: %s", e)
 
         keyword_results = self.storage.search_keyword(
             query=query,
@@ -145,11 +146,13 @@ class MemoryManager:
             scopes=scopes,
             limit=max_results * 2,
         )
-        logger.info(f"[MemoryManager] Keyword search found {len(keyword_results)} results")
+        logger.info("[MemoryManager] Keyword search found %s results", len(keyword_results))
 
         merged = self._merge_results(
-            vector_results, keyword_results,
-            self.config.vector_weight, self.config.keyword_weight,
+            vector_results,
+            keyword_results,
+            self.config.vector_weight,
+            self.config.keyword_weight,
         )
         filtered = [r for r in merged if r.score >= min_score]
         return filtered[:max_results]
@@ -157,11 +160,11 @@ class MemoryManager:
     async def add_memory(
         self,
         content: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         scope: str = "shared",
         source: str = "memory",
-        path: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        path: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         """添加新的记忆内容（追加到固定文件后重新索引）"""
         await asyncio.to_thread(
@@ -177,11 +180,11 @@ class MemoryManager:
     def _add_memory_sync(
         self,
         content: str,
-        user_id: Optional[str],
+        user_id: str | None,
         scope: str,
         source: str,
-        path: Optional[str],
-        metadata: Optional[Dict[str, Any]],
+        path: str | None,
+        metadata: dict[str, Any] | None,
     ) -> None:
         if not content.strip():
             return
@@ -224,7 +227,9 @@ class MemoryManager:
             user_memory_dir = workspace_dir / "memory" / "users" / self.owner_user_id
             if user_memory_dir.exists():
                 for file_path in user_memory_dir.rglob("*.md"):
-                    if any(part.startswith('.') for part in file_path.relative_to(workspace_dir).parts):
+                    if any(
+                        part.startswith(".") for part in file_path.relative_to(workspace_dir).parts
+                    ):
                         continue
                     await self._sync_file(file_path, "memory", "user", self.owner_user_id)
             user_workspace = workspace_dir / "users" / self.owner_user_id
@@ -234,13 +239,17 @@ class MemoryManager:
             user_memory_dir = user_workspace / "memory"
             if user_memory_dir.exists():
                 for file_path in user_memory_dir.rglob("*.md"):
-                    if any(part.startswith(".") for part in file_path.relative_to(workspace_dir).parts):
+                    if any(
+                        part.startswith(".") for part in file_path.relative_to(workspace_dir).parts
+                    ):
                         continue
                     await self._sync_file(file_path, "memory", "user", self.owner_user_id)
             user_knowledge_dir = user_workspace / "knowledge"
             if user_knowledge_dir.exists():
                 for file_path in user_knowledge_dir.rglob("*.md"):
-                    if any(part.startswith(".") for part in file_path.relative_to(workspace_dir).parts):
+                    if any(
+                        part.startswith(".") for part in file_path.relative_to(workspace_dir).parts
+                    ):
                         continue
                     await self._sync_file(file_path, "knowledge", "user", self.owner_user_id)
             self._dirty = False
@@ -253,7 +262,7 @@ class MemoryManager:
         memory_dir = workspace_dir / "memory"
         if memory_dir.exists():
             for file_path in memory_dir.rglob("*.md"):
-                if any(part.startswith('.') for part in file_path.relative_to(workspace_dir).parts):
+                if any(part.startswith(".") for part in file_path.relative_to(workspace_dir).parts):
                     continue
                 rel_path = file_path.relative_to(workspace_dir)
                 parts = rel_path.parts
@@ -289,8 +298,8 @@ class MemoryManager:
         *,
         source: str,
         scope: str = "user",
-        user_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        user_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """增量索引一个已写入工作空间的文件。"""
         workspace_dir = self.config.get_workspace().resolve()
@@ -307,8 +316,8 @@ class MemoryManager:
         file_path: Path,
         source: str,
         scope: str,
-        user_id: Optional[str],
-        metadata: Optional[Dict[str, Any]] = None,
+        user_id: str | None,
+        metadata: dict[str, Any] | None = None,
     ):
         """同步单个文件到索引（基于哈希的增量更新）"""
         await asyncio.to_thread(self._sync_file_sync, file_path, source, scope, user_id, metadata)
@@ -318,8 +327,8 @@ class MemoryManager:
         file_path: Path,
         source: str,
         scope: str,
-        user_id: Optional[str],
-        metadata: Optional[Dict[str, Any]] = None,
+        user_id: str | None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         # 同一用户的索引更新串行执行，保证“删除旧 chunks → 写新 chunks →
         # 更新文件 hash”是不可交错的，同时避免共享 embedding provider 被并发调用。
@@ -331,11 +340,11 @@ class MemoryManager:
         file_path: Path,
         source: str,
         scope: str,
-        user_id: Optional[str],
-        metadata: Optional[Dict[str, Any]] = None,
+        user_id: str | None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         file_path = file_path.resolve()
-        content = file_path.read_text(encoding='utf-8')
+        content = file_path.read_text(encoding="utf-8")
         file_hash = self._index_hash(content)
         workspace_dir = self.config.get_workspace().resolve()
         rel_path = str(file_path.relative_to(workspace_dir))
@@ -352,28 +361,41 @@ class MemoryManager:
             embeddings = [None] * len(texts)
 
         memory_chunks = []
-        for chunk, embedding in zip(chunks, embeddings):
+        for chunk, embedding in zip(chunks, embeddings, strict=False):
             chunk_id = self._generate_chunk_id(rel_path, chunk.start_line, chunk.end_line)
             chunk_hash = MemoryStorage.compute_hash(chunk.text)
-            memory_chunks.append(MemoryChunk(
-                id=chunk_id, user_id=user_id, scope=scope, source=source,
-                path=rel_path, start_line=chunk.start_line, end_line=chunk.end_line,
-                text=chunk.text, embedding=embedding, hash=chunk_hash, metadata=metadata,
-            ))
+            memory_chunks.append(
+                MemoryChunk(
+                    id=chunk_id,
+                    user_id=user_id,
+                    scope=scope,
+                    source=source,
+                    path=rel_path,
+                    start_line=chunk.start_line,
+                    end_line=chunk.end_line,
+                    text=chunk.text,
+                    embedding=embedding,
+                    hash=chunk_hash,
+                    metadata=metadata,
+                )
+            )
 
         stat = file_path.stat()
         # 在 embedding 全部成功后再用单一事务替换旧索引；失败时保留上一版，
         # 搜索线程也不会观察到“旧 chunks 已删、新 chunks 未写”的中间态。
         self.storage.replace_file_chunks(
             memory_chunks,
-            path=rel_path, source=source, file_hash=file_hash,
-            mtime=int(stat.st_mtime), size=stat.st_size,
+            path=rel_path,
+            source=source,
+            file_hash=file_hash,
+            mtime=int(stat.st_mtime),
+            size=stat.st_size,
         )
 
     def flush_memory(
         self,
         messages: list,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         reason: str = "threshold",
         max_messages: int = 10,
         context_summary_callback=None,
@@ -390,23 +412,27 @@ class MemoryManager:
             self._dirty = True
         return success
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         stats = self.storage.get_stats()
         return {
-            'chunks': stats['chunks'],
-            'files': stats['files'],
-            'workspace': str(self.config.get_workspace()),
-            'dirty': self._dirty,
-            'embedding_enabled': self.embedding_provider is not None,
-            'embedding_provider': self.config.embedding_provider if self.embedding_provider else 'disabled',
-            'embedding_model': self.config.embedding_model if self.embedding_provider else 'N/A',
-            'search_mode': 'hybrid (vector + keyword)' if self.embedding_provider else 'keyword only (FTS5)',
+            "chunks": stats["chunks"],
+            "files": stats["files"],
+            "workspace": str(self.config.get_workspace()),
+            "dirty": self._dirty,
+            "embedding_enabled": self.embedding_provider is not None,
+            "embedding_provider": self.config.embedding_provider
+            if self.embedding_provider
+            else "disabled",
+            "embedding_model": self.config.embedding_model if self.embedding_provider else "N/A",
+            "search_mode": "hybrid (vector + keyword)"
+            if self.embedding_provider
+            else "keyword only (FTS5)",
         }
 
     def mark_dirty(self):
         self._dirty = True
 
-    def delete_memory_path(self, path: str, delete_file: bool = True) -> Dict[str, Any]:
+    def delete_memory_path(self, path: str, delete_file: bool = True) -> dict[str, Any]:
         """Delete a memory path from the index and optionally from disk."""
         workspace_dir = self.config.get_workspace().resolve()
         file_path = (workspace_dir / path).resolve()
@@ -426,7 +452,7 @@ class MemoryManager:
         self._dirty = False
         return {"deleted_file": deleted_file, **deleted_index}
 
-    def clear_user_memory(self, user_id: str) -> Dict[str, int]:
+    def clear_user_memory(self, user_id: str) -> dict[str, int]:
         """Clear all markdown memory files and indexed chunks for one user."""
         if not user_id:
             raise ValueError("user_id is required")
@@ -467,12 +493,15 @@ class MemoryManager:
     def _generate_chunk_id(self, path: str, start_line: int, end_line: int) -> str:
         """生成块唯一标识（基于路径和行号的 MD5 哈希）"""
         content = f"{path}:{start_line}:{end_line}"
-        return hashlib.md5(content.encode('utf-8')).hexdigest()
+        return hashlib.md5(content.encode("utf-8")).hexdigest()
 
     def _index_hash(self, content: str) -> str:
         """Hash file content together with the embedding config signature."""
         content_hash = MemoryStorage.compute_hash(content)
-        signature = self.config.embedding_signature or f"{self.config.embedding_provider}:{self.config.embedding_model}"
+        signature = (
+            self.config.embedding_signature
+            or f"{self.config.embedding_provider}:{self.config.embedding_model}"
+        )
         return MemoryStorage.compute_hash(f"{content_hash}\nembedding:{signature}")
 
     @staticmethod
@@ -483,7 +512,7 @@ class MemoryManager:
         MEMORY.md 和无日期文件为"常青"内容，不衰减（权重=1.0）。
         半衰期默认 30 天：30 天前的记忆权重减半。
         """
-        match = re.search(r'(\d{4})-(\d{2})-(\d{2})\.md$', path)
+        match = re.search(r"(\d{4})-(\d{2})-(\d{2})\.md$", path)
         if not match:
             return 1.0
         try:
@@ -498,11 +527,11 @@ class MemoryManager:
 
     def _merge_results(
         self,
-        vector_results: List[SearchResult],
-        keyword_results: List[SearchResult],
+        vector_results: list[SearchResult],
+        keyword_results: list[SearchResult],
         vector_weight: float,
         keyword_weight: float,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """融合向量搜索和关键词搜索结果
 
         对同一块在不同搜索中的得分进行加权平均，
@@ -511,26 +540,38 @@ class MemoryManager:
         merged_map = {}
         for result in vector_results:
             key = (result.path, result.start_line, result.end_line)
-            merged_map[key] = {'result': result, 'vector_score': result.score, 'keyword_score': 0.0}
+            merged_map[key] = {"result": result, "vector_score": result.score, "keyword_score": 0.0}
 
         for result in keyword_results:
             key = (result.path, result.start_line, result.end_line)
             if key in merged_map:
-                merged_map[key]['keyword_score'] = result.score
+                merged_map[key]["keyword_score"] = result.score
             else:
-                merged_map[key] = {'result': result, 'vector_score': 0.0, 'keyword_score': result.score}
+                merged_map[key] = {
+                    "result": result,
+                    "vector_score": 0.0,
+                    "keyword_score": result.score,
+                }
 
         merged_results = []
         for entry in merged_map.values():
-            combined_score = vector_weight * entry['vector_score'] + keyword_weight * entry['keyword_score']
-            result = entry['result']
+            combined_score = (
+                vector_weight * entry["vector_score"] + keyword_weight * entry["keyword_score"]
+            )
+            result = entry["result"]
             decay = self._compute_temporal_decay(result.path)
             combined_score *= decay
-            merged_results.append(SearchResult(
-                path=result.path, start_line=result.start_line, end_line=result.end_line,
-                score=combined_score, snippet=result.snippet, source=result.source,
-                user_id=result.user_id,
-            ))
+            merged_results.append(
+                SearchResult(
+                    path=result.path,
+                    start_line=result.start_line,
+                    end_line=result.end_line,
+                    score=combined_score,
+                    snippet=result.snippet,
+                    source=result.source,
+                    user_id=result.user_id,
+                )
+            )
 
         merged_results.sort(key=lambda r: r.score, reverse=True)
         return merged_results

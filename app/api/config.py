@@ -1,17 +1,18 @@
 """应用配置管理 API。"""
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
-import app.config as config_module
-from app.config import ALWAYS_USER_CONFIG_KEYS, Settings, USER_CONFIG_KEYS, get_effective_config, get_effective_settings, get_settings
+from app.config import Settings, get_effective_settings
 from app.core.app_store import get_app_store
-from app.core.notifications.telegram import TelegramConfigError, TelegramSender
+from app.core.configuration.runtime import invalidate_runtime
+from app.core.configuration.service import ConfigPermissionError, persist_config_update
 from app.core.market.longbridge_oauth import longbridge_oauth_service, oauth_connected
+from app.core.notifications.telegram import TelegramConfigError, TelegramSender
 from app.core.security import CurrentUser, require_permissions
 from app.schemas.config import (
     AppConfig,
@@ -44,8 +45,14 @@ def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
             and settings.embedding_model
         )
     )
-    longbridge_configured = oauth_connected(settings) if settings.longbridge_auth_mode == "oauth" else bool(
-        settings.longbridge_app_key and settings.longbridge_app_secret and settings.longbridge_access_token
+    longbridge_configured = (
+        oauth_connected(settings)
+        if settings.longbridge_auth_mode == "oauth"
+        else bool(
+            settings.longbridge_app_key
+            and settings.longbridge_app_secret
+            and settings.longbridge_access_token
+        )
     )
     telegram_configured = bool(
         settings.telegram_enabled and settings.telegram_bot_token and settings.telegram_chat_id
@@ -69,7 +76,9 @@ def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
             component="longbridge",
             status="ready" if longbridge_configured else "missing",
             configured=longbridge_configured,
-            detail="Longbridge 凭据已配置" if longbridge_configured else "请完成长桥 OAuth 授权或配置 App Key、App Secret 和 Access Token",
+            detail="Longbridge 凭据已配置"
+            if longbridge_configured
+            else "请完成长桥 OAuth 授权或配置 App Key、App Secret 和 Access Token",
             depends_on=["market", "financials", "watchlist"],
         ),
         ConnectionCheck(
@@ -97,6 +106,76 @@ def _mask_secret(value: str) -> str:
     return f"{value[:4]}{'*' * 8}{value[-4:]}"
 
 
+# 只从明确的公开字段白名单构造响应，新增 Settings 密钥不会自动出现在 API 中。
+_PUBLIC_CONFIG_FIELDS = (
+    "llm_provider",
+    "llm_auth_mode",
+    "llm_temperature",
+    "llm_max_output_tokens",
+    "llm_reasoning_effort",
+    "llm_tool_choice",
+    "embedding_auth_mode",
+    "workspace_dir",
+    "app_language",
+    "research_quick_prompts_refresh_seconds",
+    "auth_max_devices_per_user",
+    "agent_max_steps",
+    "agent_max_context_tokens",
+    "agent_max_context_turns",
+    "agent_tool_allowlist",
+    "agent_allow_all_mcp_tools",
+    "multi_agent_enabled",
+    "multi_agent_max_parallel_agents",
+    "multi_agent_default_max_steps",
+    "multi_agent_max_depth",
+    "multi_agent_dangerous_tools",
+    "multi_agent_roles",
+    "knowledge_enabled",
+    "memory_enabled",
+    "memory_auto_curate_enabled",
+    "memory_curator_min_importance",
+    "memory_curator_min_confidence",
+    "scheduler_enabled",
+    "tracing_enabled",
+    "product_analytics_enabled",
+    "debug",
+    "telegram_enabled",
+    "system_prompt",
+    "longbridge_auth_mode",
+)
+_PERSONAL_CONFIG_DEFAULTS = {
+    "llm_api_base": "",
+    "llm_model": "",
+    "llm_codex_auth_file": "",
+    "llm_codex_api_base": "",
+    "llm_codex_model": "",
+    "embedding_api_base": "",
+    "embedding_model": "",
+    "embedding_provider": "openai",
+    "embedding_codex_auth_file": "",
+    "embedding_codex_api_base": "",
+    "embedding_codex_model": "",
+    "telegram_chat_id": "",
+    "telegram_api_base": "https://api.telegram.org",
+    "telegram_parse_mode": "",
+    "mcp_tool_timeout_seconds": 60.0,
+    "longbridge_oauth_client_id": "",
+    "longbridge_http_url": "",
+    "longbridge_quote_ws_url": "",
+    "search_api_url": "",
+}
+_SECRET_CONFIG_FIELDS = (
+    "llm_api_key",
+    "embedding_api_key",
+    "telegram_bot_token",
+    "longbridge_app_key",
+    "longbridge_app_secret",
+    "longbridge_access_token",
+    "guardian_api_key",
+    "search_api_key",
+)
+
+
 def _settings_to_response(
     settings: Settings,
     *,
@@ -104,101 +183,63 @@ def _settings_to_response(
     hide_inherited_personal: bool = False,
 ) -> AppConfig:
     personal_keys = personal_keys or set()
-    show_all = not hide_inherited_personal
-    owns = personal_keys.__contains__
-    show_codex_status = show_all or any(
-        owns(key)
-        for key in {"llm_provider", "llm_auth_mode", "llm_codex_auth_file", "llm_codex_api_base", "llm_codex_model"}
+
+    def visible(key: str) -> bool:
+        return not hide_inherited_personal or key in personal_keys
+
+    values = {key: getattr(settings, key) for key in _PUBLIC_CONFIG_FIELDS}
+    values.update(
+        {
+            key: getattr(settings, key) if visible(key) else default
+            for key, default in _PERSONAL_CONFIG_DEFAULTS.items()
+        }
     )
-    show_embedding_codex_status = show_all or any(
-        owns(key)
-        for key in {"embedding_auth_mode", "embedding_codex_auth_file", "embedding_codex_api_base", "embedding_codex_model"}
-    )
-    codex_status = _codex_oauth_status(settings)
-    embedding_codex_status = _embedding_codex_oauth_status(settings)
-    return AppConfig(
-        llm_provider=settings.llm_provider,
-        llm_auth_mode=settings.llm_auth_mode,
-        llm_api_base=settings.llm_api_base if show_all or owns("llm_api_base") else "",
-        llm_model=settings.llm_model if show_all or owns("llm_model") else "",
-        llm_codex_auth_file=settings.llm_codex_auth_file if show_all or owns("llm_codex_auth_file") else "",
-        llm_codex_api_base=settings.llm_codex_api_base if show_all or owns("llm_codex_api_base") else "",
-        llm_codex_model=settings.llm_codex_model if show_all or owns("llm_codex_model") else "",
-        llm_temperature=settings.llm_temperature,
-        llm_max_output_tokens=settings.llm_max_output_tokens,
-        llm_reasoning_effort=settings.llm_reasoning_effort,
-        llm_tool_choice=settings.llm_tool_choice,
-        has_codex_oauth=show_codex_status and bool(codex_status.get("available")),
-        codex_oauth_account_id_masked=_mask_secret(str(codex_status.get("account_id") or "")) if show_codex_status else "",
-        codex_oauth_error=str(codex_status.get("error") or "") if show_codex_status else "",
-        llm_api_key_masked=_mask_secret(settings.llm_api_key) if show_all or owns("llm_api_key") else "",
-        has_llm_api_key=(show_all or owns("llm_api_key")) and bool(settings.llm_api_key),
-        embedding_auth_mode=settings.embedding_auth_mode,
-        embedding_api_base=settings.embedding_api_base if show_all or owns("embedding_api_base") else "",
-        embedding_model=settings.embedding_model if show_all or owns("embedding_model") else "",
-        embedding_provider=settings.embedding_provider if show_all or owns("embedding_provider") else "openai",
-        embedding_codex_auth_file=settings.embedding_codex_auth_file if show_all or owns("embedding_codex_auth_file") else "",
-        embedding_codex_api_base=settings.embedding_codex_api_base if show_all or owns("embedding_codex_api_base") else "",
-        embedding_codex_model=settings.embedding_codex_model if show_all or owns("embedding_codex_model") else "",
-        has_embedding_codex_oauth=show_embedding_codex_status and bool(embedding_codex_status.get("available")),
-        embedding_codex_oauth_account_id_masked=_mask_secret(str(embedding_codex_status.get("account_id") or "")) if show_embedding_codex_status else "",
-        embedding_codex_oauth_error=str(embedding_codex_status.get("error") or "") if show_embedding_codex_status else "",
-        embedding_api_key_masked=_mask_secret(settings.embedding_api_key) if show_all or owns("embedding_api_key") else "",
-        has_embedding_api_key=(show_all or owns("embedding_api_key")) and bool(settings.embedding_api_key),
-        workspace_dir=settings.workspace_dir,
-        app_language=settings.app_language,
-        research_quick_prompts_refresh_seconds=settings.research_quick_prompts_refresh_seconds,
-        auth_max_devices_per_user=settings.auth_max_devices_per_user,
-        agent_max_steps=settings.agent_max_steps,
-        agent_max_context_tokens=settings.agent_max_context_tokens,
-        agent_max_context_turns=settings.agent_max_context_turns,
-        agent_tool_allowlist=settings.agent_tool_allowlist,
-        agent_allow_all_mcp_tools=settings.agent_allow_all_mcp_tools,
-        multi_agent_enabled=settings.multi_agent_enabled,
-        multi_agent_max_parallel_agents=settings.multi_agent_max_parallel_agents,
-        multi_agent_default_max_steps=settings.multi_agent_default_max_steps,
-        multi_agent_max_depth=settings.multi_agent_max_depth,
-        multi_agent_dangerous_tools=settings.multi_agent_dangerous_tools,
-        multi_agent_roles=settings.multi_agent_roles,
-        knowledge_enabled=settings.knowledge_enabled,
-        memory_enabled=settings.memory_enabled,
-        memory_auto_curate_enabled=settings.memory_auto_curate_enabled,
-        memory_curator_min_importance=settings.memory_curator_min_importance,
-        memory_curator_min_confidence=settings.memory_curator_min_confidence,
-        scheduler_enabled=settings.scheduler_enabled,
-        tracing_enabled=settings.tracing_enabled,
-        product_analytics_enabled=settings.product_analytics_enabled,
-        debug=settings.debug,
-        telegram_enabled=settings.telegram_enabled,
-        telegram_bot_token_masked=_mask_secret(settings.telegram_bot_token) if show_all or owns("telegram_bot_token") else "",
-        has_telegram_bot_token=(show_all or owns("telegram_bot_token")) and bool(settings.telegram_bot_token),
-        telegram_chat_id=settings.telegram_chat_id if show_all or owns("telegram_chat_id") else "",
-        telegram_api_base=settings.telegram_api_base if show_all or owns("telegram_api_base") else "https://api.telegram.org",
-        telegram_parse_mode=settings.telegram_parse_mode if show_all or owns("telegram_parse_mode") else "",
-        system_prompt=settings.system_prompt,
-        mcp_servers=_mask_mcp_servers(settings.mcp_servers) if show_all or owns("mcp_servers") else {},
-        mcp_tool_timeout_seconds=settings.mcp_tool_timeout_seconds if show_all or owns("mcp_tool_timeout_seconds") else 60.0,
-        longbridge_auth_mode=settings.longbridge_auth_mode,
-        longbridge_oauth_client_id=settings.longbridge_oauth_client_id if show_all or owns("longbridge_oauth_client_id") else "",
-        longbridge_oauth_connected=oauth_connected(settings) if show_all or owns("longbridge_oauth_client_id") else False,
-        longbridge_app_key_masked=_mask_secret(settings.longbridge_app_key) if show_all or owns("longbridge_app_key") else "",
-        has_longbridge_app_key=(show_all or owns("longbridge_app_key")) and bool(settings.longbridge_app_key),
-        longbridge_app_secret_masked=_mask_secret(settings.longbridge_app_secret) if show_all or owns("longbridge_app_secret") else "",
-        has_longbridge_app_secret=(show_all or owns("longbridge_app_secret")) and bool(settings.longbridge_app_secret),
-        longbridge_access_token_masked=_mask_secret(settings.longbridge_access_token) if show_all or owns("longbridge_access_token") else "",
-        has_longbridge_access_token=(show_all or owns("longbridge_access_token")) and bool(settings.longbridge_access_token),
-        longbridge_http_url=settings.longbridge_http_url if show_all or owns("longbridge_http_url") else "",
-        longbridge_quote_ws_url=settings.longbridge_quote_ws_url if show_all or owns("longbridge_quote_ws_url") else "",
-        guardian_api_key_masked=_mask_secret(settings.guardian_api_key) if show_all or owns("guardian_api_key") else "",
-        has_guardian_api_key=(show_all or owns("guardian_api_key")) and bool(settings.guardian_api_key),
-        search_api_url=settings.search_api_url if show_all or owns("search_api_url") else "",
-        search_api_key_masked=_mask_secret(settings.search_api_key) if show_all or owns("search_api_key") else "",
-        has_search_api_key=(show_all or owns("search_api_key")) and bool(settings.search_api_key),
+    for key in _SECRET_CONFIG_FIELDS:
+        secret = getattr(settings, key) if visible(key) else ""
+        values[f"{key}_masked"] = _mask_secret(secret)
+        values[f"has_{key}"] = bool(secret)
+
+    for prefix, status_reader, keys in (
+        (
+            "codex_oauth",
+            _codex_oauth_status,
+            {
+                "llm_provider",
+                "llm_auth_mode",
+                "llm_codex_auth_file",
+                "llm_codex_api_base",
+                "llm_codex_model",
+            },
+        ),
+        (
+            "embedding_codex_oauth",
+            _embedding_codex_oauth_status,
+            {
+                "embedding_auth_mode",
+                "embedding_codex_auth_file",
+                "embedding_codex_api_base",
+                "embedding_codex_model",
+            },
+        ),
+    ):
+        show_status = any(visible(key) for key in keys)
+        oauth_status = status_reader(settings) if show_status else {}
+        values[f"has_{prefix}"] = bool(oauth_status.get("available"))
+        values[f"{prefix}_account_id_masked"] = _mask_secret(
+            str(oauth_status.get("account_id") or "")
+        )
+        values[f"{prefix}_error"] = str(oauth_status.get("error") or "")
+    values.update(
+        mcp_servers=_mask_mcp_servers(settings.mcp_servers) if visible("mcp_servers") else {},
+        longbridge_oauth_connected=oauth_connected(settings)
+        if visible("longbridge_oauth_client_id")
+        else False,
         personal_config_keys=sorted(personal_keys),
     )
+    return AppConfig(**values)
 
 
-def _mask_mcp_servers(servers: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _mask_mcp_servers(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     try:
         from app.core.tools.mcp.config import mask_mcp_server_config
 
@@ -207,7 +248,7 @@ def _mask_mcp_servers(servers: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str,
         return {}
 
 
-def _codex_oauth_status(settings: Settings) -> Dict[str, Any]:
+def _codex_oauth_status(settings: Settings) -> dict[str, Any]:
     try:
         from app.core.llm.codex_auth import inspect_codex_oauth
 
@@ -216,7 +257,7 @@ def _codex_oauth_status(settings: Settings) -> Dict[str, Any]:
         return {"available": False, "account_id": "", "error": str(exc)}
 
 
-def _embedding_codex_oauth_status(settings: Settings) -> Dict[str, Any]:
+def _embedding_codex_oauth_status(settings: Settings) -> dict[str, Any]:
     try:
         from app.core.llm.codex_auth import inspect_codex_oauth
 
@@ -226,103 +267,9 @@ def _embedding_codex_oauth_status(settings: Settings) -> Dict[str, Any]:
         return {"available": False, "account_id": "", "error": str(exc)}
 
 
-def _refresh_runtime_caches(patch: Dict[str, Any]) -> None:
-    """Clear cached dependencies that are affected by persisted config changes."""
-    try:
-        from app import deps
-    except Exception:
-        return
-
-    llm_keys = {
-        "llm_provider",
-        "llm_auth_mode",
-        "llm_api_key",
-        "llm_api_base",
-        "llm_model",
-        "llm_codex_auth_file",
-        "llm_codex_api_base",
-        "llm_codex_model",
-        "llm_temperature",
-        "llm_max_output_tokens",
-        "llm_reasoning_effort",
-        "llm_tool_choice",
-    }
-    memory_keys = llm_keys | {
-        "embedding_auth_mode",
-        "embedding_api_key",
-        "embedding_api_base",
-        "embedding_model",
-        "embedding_provider",
-        "embedding_codex_auth_file",
-        "embedding_codex_api_base",
-        "embedding_codex_model",
-        "memory_enabled",
-        "workspace_dir",
-    }
-    tool_keys = {"workspace_dir", "memory_enabled"}
-    skill_keys = {"workspace_dir"}
-    longbridge_keys = {
-        "longbridge_auth_mode",
-        "longbridge_oauth_client_id",
-        "longbridge_app_key",
-        "longbridge_app_secret",
-        "longbridge_access_token",
-        "longbridge_http_url",
-        "longbridge_quote_ws_url",
-    }
-
-    if llm_keys & patch.keys():
-        deps.get_llm_provider.cache_clear()
-        deps.get_memory_llm_provider.cache_clear()
-        try:
-            deps.clear_llm_provider_cache()
-        except Exception:
-            pass
-    if memory_keys & patch.keys():
-        deps.get_memory_manager.cache_clear()
-        deps.get_memory_manager_for_user.cache_clear()
-        deps.get_embedding_provider.cache_clear()
-    if tool_keys & patch.keys():
-        deps.get_tool_manager.cache_clear()
-        try:
-            deps.get_research_service.cache_clear()
-        except Exception:
-            pass
-        try:
-            deps.get_investment_lab_service.cache_clear()
-        except Exception:
-            pass
-    if skill_keys & patch.keys():
-        deps.get_skill_manager.cache_clear()
-    if "workspace_dir" in patch:
-        # 快速问答缓存使用工作空间数据库；刷新间隔则在每次请求中读取有效配置。
-        deps.get_watchlist_service.cache_clear()
-        deps.get_portfolio_service.cache_clear()
-        deps.get_research_quick_prompts_service.cache_clear()
-    if longbridge_keys & patch.keys():
-        try:
-            deps.get_fundamental_service().clear_cache()
-        except Exception:
-            pass
-        deps.get_fundamental_service.cache_clear()
-        try:
-            from app.core.market.longbridge_context import clear_context_cache
-
-            clear_context_cache()
-        except Exception:
-            pass
-        try:
-            from app.core.dashboard.service import clear_dashboard_cache
-
-            clear_dashboard_cache()
-        except Exception:
-            pass
-
-    # 任何配置变更都可能影响有效配置，统一清除 TTL 缓存。
-    try:
-        config_module.clear_effective_settings_cache()
-    except Exception:
-        pass
+def _refresh_runtime_caches(patch: dict[str, Any]) -> None:
+    """保留旧导出；业务服务直接使用公共失效入口。"""
+    invalidate_runtime(patch)
 
 
 @router.get("", response_model=AppConfig)
@@ -337,124 +284,23 @@ def get_config(current: CurrentUser = Depends(require_permissions("config:read")
 
 
 async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> AppConfig:
-    """更新并持久化配置。
-
-    Admins update the shared system config. Non-admin users update only their
-    personal provider/credential/channel/MCP overrides.
-    """
-    patch = {k: v for k, v in update.model_dump(exclude_unset=True).items() if v is not None}
-    user_scoped = not current.can("config:write")
-    if user_scoped:
-        disallowed = sorted(set(patch) - USER_CONFIG_KEYS)
-        if disallowed:
-            raise HTTPException(status_code=403, detail=f"Only personal config keys can be updated: {', '.join(disallowed)}")
-
-    user_patch = {key: value for key, value in patch.items() if user_scoped or key in ALWAYS_USER_CONFIG_KEYS}
-    system_patch = {} if user_scoped else {key: value for key, value in patch.items() if key not in ALWAYS_USER_CONFIG_KEYS}
-
-    stored = get_effective_config(current.id)
-    if "mcp_servers" in patch:
-        from app.core.tools.mcp.config import preserve_masked_mcp_secrets
-
-        patch["mcp_servers"] = preserve_masked_mcp_secrets(stored.get("mcp_servers"), patch["mcp_servers"])
-        if "mcp_servers" in user_patch:
-            user_patch["mcp_servers"] = patch["mcp_servers"]
-        if "mcp_servers" in system_patch:
-            system_patch["mcp_servers"] = patch["mcp_servers"]
-    merged = {**stored, **patch}
-
     try:
-        Settings(**merged)
+        settings = await persist_config_update(update, current)
+    except ConfigPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
-
-    settings = get_effective_settings(current.id)
-    if user_patch:
-        get_app_store().set_user_config_values(current.id, user_patch)
-        get_app_store().audit(current.id, "config.user_update", "user_config", {"keys": sorted(user_patch)})
-        # 用户个人配置写入后必须清除有效配置缓存，否则后续读取返回旧值。
-        config_module.clear_effective_settings_cache()
-        settings = get_effective_settings(current.id)
-        if any(key.startswith("longbridge_") for key in user_patch):
-            _refresh_runtime_caches(user_patch)
-        if (
-            {
-                "llm_provider",
-                "llm_auth_mode",
-                "llm_api_key",
-                "llm_api_base",
-                "llm_model",
-                "llm_codex_auth_file",
-                "llm_codex_api_base",
-                "llm_codex_model",
-                "llm_temperature",
-                "llm_max_output_tokens",
-                "llm_reasoning_effort",
-                "llm_tool_choice",
-                "embedding_auth_mode",
-                "embedding_api_key",
-                "embedding_api_base",
-                "embedding_model",
-                "embedding_provider",
-                "embedding_codex_auth_file",
-                "embedding_codex_api_base",
-                "embedding_codex_model",
-            }
-            & user_patch.keys()
-        ):
-            try:
-                from app import deps
-
-                deps.get_memory_manager_for_user.cache_clear()
-            except Exception:
-                pass
-        if {"mcp_servers", "mcp_tool_timeout_seconds"} & user_patch.keys():
-            try:
-                from app import deps
-
-                deps.get_mcp_manager_for_user.cache_clear()
-            except Exception:
-                pass
-    if system_patch:
-        get_app_store().set_config_values(system_patch)
-        get_app_store().audit(current.id, "config.update", "app_config", {"keys": sorted(system_patch)})
-        config_module._config_instance = None
-        settings = get_settings()
-        _refresh_runtime_caches(system_patch)
-
-    if "scheduler_enabled" in system_patch:
-        try:
-            from app.deps import get_scheduler_service
-
-            scheduler = get_scheduler_service()
-            if settings.scheduler_enabled:
-                await scheduler.start()
-            else:
-                await scheduler.stop()
-        except Exception:
-            # 调度器状态可在任务页体现；配置保存不因此失败。
-            pass
-    if "mcp_servers" in patch or "mcp_tool_timeout_seconds" in patch:
-        try:
-            from app.deps import get_mcp_manager, get_mcp_manager_for_user
-
-            manager = get_mcp_manager() if "mcp_servers" in system_patch else get_mcp_manager_for_user(current.id)
-            manager.set_tool_timeout_seconds(settings.mcp_tool_timeout_seconds)
-            if "mcp_servers" in patch:
-                await asyncio.to_thread(manager.reconnect_sync, settings.mcp_servers)
-        except Exception:
-            # 连接错误会体现在 /mcp/status 中；配置保存不因此失败。
-            pass
-    personal_keys = set(get_app_store().get_user_config(current.id).keys())
     return _settings_to_response(
-        get_effective_settings(current.id),
-        personal_keys=personal_keys,
+        settings,
+        personal_keys=set(get_app_store().get_user_config(current.id)),
         hide_inherited_personal=not current.can("config:write"),
     )
 
 
 @router.patch("", response_model=AppConfig)
-async def patch_config(update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))):
+async def patch_config(
+    update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))
+):
     """局部更新并持久化应用配置。"""
     return await _persist_config_update(update, current)
 
@@ -465,17 +311,23 @@ def longbridge_oauth_status(current: CurrentUser = Depends(require_permissions("
 
 
 @router.post("/longbridge/oauth/start", response_model=LongbridgeOAuthStatus)
-async def start_longbridge_oauth(current: CurrentUser = Depends(require_permissions("config:read"))):
+async def start_longbridge_oauth(
+    current: CurrentUser = Depends(require_permissions("config:read")),
+):
     return await longbridge_oauth_service.start(current)
 
 
 @router.delete("/longbridge/oauth/disconnect", response_model=LongbridgeOAuthStatus)
-async def disconnect_longbridge_oauth(current: CurrentUser = Depends(require_permissions("config:read"))):
+async def disconnect_longbridge_oauth(
+    current: CurrentUser = Depends(require_permissions("config:read")),
+):
     return await longbridge_oauth_service.disconnect(current)
 
 
 @router.put("", response_model=AppConfig)
-async def update_config(update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))):
+async def update_config(
+    update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))
+):
     """兼容旧前端：PUT 仍按局部更新处理。"""
     return await _persist_config_update(update, current)
 
@@ -509,8 +361,12 @@ async def test_connection(
 
             provider = create_llm_provider(settings)
             request = LLMRequest(
-                messages=[{"role": "user", "content": [{"type": "text", "text": "Reply with OK."}]}],
-                model=settings.llm_codex_model if settings.llm_auth_mode == "codex" else settings.llm_model,
+                messages=[
+                    {"role": "user", "content": [{"type": "text", "text": "Reply with OK."}]}
+                ],
+                model=settings.llm_codex_model
+                if settings.llm_auth_mode == "codex"
+                else settings.llm_model,
                 temperature=0,
                 max_tokens=8,
             )
@@ -522,7 +378,9 @@ async def test_connection(
             provider = create_embedding_provider_from_settings(settings)
             if provider is None:
                 raise ValueError("Embedding provider could not be initialized")
-            vector = await asyncio.wait_for(asyncio.to_thread(provider.embed, "connection check"), timeout=30)
+            vector = await asyncio.wait_for(
+                asyncio.to_thread(provider.embed, "connection check"), timeout=30
+            )
             if not vector:
                 raise ValueError("Embedding provider returned an empty vector")
             detail = f"Embedding 连接成功，向量维度 {len(vector)}"
@@ -535,13 +393,15 @@ async def test_connection(
             )
             detail = "Longbridge 行情连接成功"
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"{component} connection test failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"{component} connection test failed: {exc}"
+        ) from exc
 
     return ConnectionTestResponse(
         component=component,
         ok=True,
         detail=detail,
-        checked_at=datetime.now(timezone.utc).isoformat(),
+        checked_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -587,4 +447,6 @@ async def test_telegram(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return TelegramTestResponse(ok=True, chunks=int(result.get("chunks", 0) or 0), detail="测试消息已发送")
+    return TelegramTestResponse(
+        ok=True, chunks=int(result.get("chunks", 0) or 0), detail="测试消息已发送"
+    )

@@ -8,6 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_effective_settings
+from app.core.security import CurrentUser, require_permissions
 from app.core.tools.mcp.config import (
     LEGACY_SSE_TRANSPORT,
     STANDARD_HTTP_TRANSPORT,
@@ -15,8 +16,13 @@ from app.core.tools.mcp.config import (
     mask_mcp_server_config,
     normalize_transport,
 )
-from app.core.security import CurrentUser, require_permissions
-from app.schemas.mcp import MCPOAuthAuthorizeResponse, MCPServerStatus, MCPStatusResponse, MCPServerToolsResponse, MCPToolInfo
+from app.schemas.mcp import (
+    MCPOAuthAuthorizeResponse,
+    MCPServerStatus,
+    MCPServerToolsResponse,
+    MCPStatusResponse,
+    MCPToolInfo,
+)
 
 router = APIRouter()
 _PENDING_OAUTH_USERS: dict[tuple[str, str], str] = {}
@@ -43,7 +49,9 @@ def _remember_oauth_user(server_name: str, authorization_url: str, user_id: str)
         _PENDING_OAUTH_USERS[_oauth_pending_key(server_name)] = user_id
 
 
-async def _start_mcp_oauth_authorization(server_name: str, request: Request, current_user: CurrentUser) -> str:
+async def _start_mcp_oauth_authorization(
+    server_name: str, request: Request, current_user: CurrentUser
+) -> str:
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
         raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
@@ -65,7 +73,9 @@ async def _start_mcp_oauth_authorization(server_name: str, request: Request, cur
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=409, detail=f"MCP OAuth authorization failed: {exc}") from exc
+        raise HTTPException(
+            status_code=409, detail=f"MCP OAuth authorization failed: {exc}"
+        ) from exc
 
 
 def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
@@ -77,6 +87,7 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
     manager = None
     try:
         from app.deps import get_mcp_manager_for_user
+
         manager = get_mcp_manager_for_user(user.id)
     except Exception:
         pass
@@ -96,7 +107,9 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
 
         oauth_authorization_url = None
         if enabled and manager:
-            server_status, error_msg, tools_count, oauth_authorization_url = manager.get_server_state(name)
+            server_status, error_msg, tools_count, oauth_authorization_url = (
+                manager.get_server_state(name)
+            )
 
         # 检查服务器是否需要/使用 OAuth 授权码流程
         # 1. 配置中显式声明了 OAuth auth type
@@ -106,14 +119,22 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
         oauth_enabled = False
         if isinstance(auth, dict):
             auth_type = str(auth.get("type", "")).lower()
-            oauth_enabled = auth_type in {"oauth", "oauth2", "authorization_code", "oauth_browser", "oauth_authorization_code"}
+            oauth_enabled = auth_type in {
+                "oauth",
+                "oauth2",
+                "authorization_code",
+                "oauth_browser",
+                "oauth_authorization_code",
+            }
         if enabled and not oauth_enabled and manager:
             # 协议层发现的 OAuth：检查是否有持久化 token 或当前需要授权
-            if manager._token_store and manager._token_store.get_tokens(name):
-                oauth_enabled = True
-            elif manager._token_store and manager._token_store.get_client_info(name):
-                oauth_enabled = True
-            elif server_status == "auth_required":
+            if (
+                manager._token_store
+                and manager._token_store.get_tokens(name)
+                or manager._token_store
+                and manager._token_store.get_client_info(name)
+                or server_status == "auth_required"
+            ):
                 oauth_enabled = True
             elif transport in {STANDARD_HTTP_TRANSPORT, LEGACY_SSE_TRANSPORT}:
                 error_lower = str(error_msg or "").lower()
@@ -187,7 +208,9 @@ async def mcp_oauth_callback(
         if not user_id and not state:
             user_id = _PENDING_OAUTH_USERS.get(_oauth_pending_key(server_name))
         manager = get_mcp_manager_for_user(user_id) if user_id else get_mcp_manager()
-        await run_in_threadpool(manager.complete_oauth_callback_sync, server_name, code, state, error)
+        await run_in_threadpool(
+            manager.complete_oauth_callback_sync, server_name, code, state, error
+        )
         _PENDING_OAUTH_USERS.pop(pending_key, None)
         if user_id:
             _PENDING_OAUTH_USERS.pop(_oauth_pending_key(server_name), None)
@@ -235,7 +258,9 @@ def reconnect_mcp_servers(current_user: CurrentUser = Depends(require_permission
 
 
 @router.delete("/{server_name}/oauth")
-async def delete_mcp_oauth(server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:write"))):
+async def delete_mcp_oauth(
+    server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:write"))
+):
     """删除指定 MCP 服务器的 OAuth 令牌和客户端信息。"""
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
@@ -243,6 +268,7 @@ async def delete_mcp_oauth(server_name: str, current_user: CurrentUser = Depends
 
     try:
         from app.deps import get_mcp_manager_for_user
+
         manager = get_mcp_manager_for_user(current_user.id)
         await run_in_threadpool(manager.clear_oauth_credentials_sync, server_name)
     except Exception:
@@ -252,7 +278,9 @@ async def delete_mcp_oauth(server_name: str, current_user: CurrentUser = Depends
 
 
 @router.get("/{server_name}/tools", response_model=MCPServerToolsResponse)
-def get_mcp_server_tools(server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:read"))):
+def get_mcp_server_tools(
+    server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:read"))
+):
     """获取指定 MCP 服务器的工具列表。"""
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
@@ -264,6 +292,7 @@ def get_mcp_server_tools(server_name: str, current_user: CurrentUser = Depends(r
     manager = None
     try:
         from app.deps import get_mcp_manager_for_user
+
         manager = get_mcp_manager_for_user(current_user.id)
     except Exception:
         pass

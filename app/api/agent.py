@@ -10,13 +10,14 @@ import queue
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.agent.executor import AgentCancelledError
+from app.core.security import CurrentUser, require_permissions
 from app.core.session import ChatSessionNotFound
+from app.deps import get_memory_manager_for_user, get_session_store
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -26,8 +27,6 @@ from app.schemas import (
     ChatSessionSummary,
     ChatSessionUpdateRequest,
 )
-from app.deps import get_skill_manager, get_memory_manager_for_user, get_session_store
-from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 
 router = APIRouter()
 logger = logging.getLogger("stocks-assistant.agent.api")
@@ -35,21 +34,26 @@ logger = logging.getLogger("stocks-assistant.agent.api")
 # 后台记忆整理使用共享线程池，避免高频对话时无限创建线程。
 # 队列满时直接跳过（记忆整理是尽力而为的后台任务）。
 _memory_curator_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="memory-curator")
-_memory_curator_queue: queue.Queue = queue.Queue(maxsize=10)
+_memory_curator_slots = threading.BoundedSemaphore(13)  # 3 个执行中 + 10 个待执行
 
 
 def _schedule_memory_curate(
     session_id: str,
     user_message: str,
     assistant_response: str,
-    user_message_id: Optional[str] = None,
-    assistant_message_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    user_message_id: str | None = None,
+    assistant_message_id: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     from app.config import get_effective_settings
 
     settings = get_effective_settings(user_id)
     if not settings.memory_enabled or not settings.memory_auto_curate_enabled:
+        return
+
+    # ThreadPoolExecutor 自身队列无界，配额必须覆盖执行中和待执行任务。
+    if not _memory_curator_slots.acquire(blocking=False):
+        logger.debug("Memory curator queue full, skipping exchange for session %s", session_id)
         return
 
     def run_curator():
@@ -79,73 +83,21 @@ def _schedule_memory_curate(
             )
         except Exception as exc:
             logger.warning("Memory curator failed for session %s: %s", session_id, exc)
+        finally:
+            _memory_curator_slots.release()
 
-    # 入队；队列满时跳过（记忆整理是尽力而为的后台任务，不阻塞对话响应）。
     try:
-        _memory_curator_queue.put_nowait(run_curator)
-    except queue.Full:
-        logger.debug("Memory curator queue full, skipping exchange for session %s", session_id)
-        return
-
-    def _drain():
-        while True:
-            try:
-                task = _memory_curator_queue.get_nowait()
-            except queue.Empty:
-                break
-            _memory_curator_pool.submit(task)
-
-    _drain()
+        _memory_curator_pool.submit(run_curator)
+    except RuntimeError:
+        _memory_curator_slots.release()
+        logger.warning("Memory curator pool is unavailable", exc_info=True)
 
 
-def _build_agent(user_id: Optional[str] = None):
-    from app.core.agent.agent import Agent
-    from app.core.agent.models import LLMModel
-    from app.config import DEFAULT_SYSTEM_PROMPT, get_effective_settings
+def _build_agent(user_id: str | None = None):
+    """兼容既有调用方；聊天和调度使用同一个无状态工厂。"""
+    from app.core.agent.factory import create_agent
 
-    settings = get_effective_settings(user_id)
-    workspace_dir = user_workspace_dir(settings.workspace_dir, user_id) if user_id else settings.workspace_dir
-    from app.deps import create_llm_provider
-
-    llm = create_llm_provider(settings)
-    skill_mgr = get_skill_manager()
-    memory_mgr = get_memory_manager_for_user(user_id) if settings.memory_enabled else None
-
-    from app.core.tools.tool_manager import ToolManager
-    from pathlib import Path
-
-    tool_manager = ToolManager(workspace_dir=str(Path(workspace_dir).expanduser()), user_id=user_id)
-    tool_manager.load_builtin_tools(memory_manager=memory_mgr, user_id=user_id)
-    tools = tool_manager.get_all_tools()
-    if settings.mcp_servers:
-        try:
-            from app.deps import get_mcp_manager, get_mcp_manager_for_user
-
-            tools.extend((get_mcp_manager_for_user(user_id) if user_id else get_mcp_manager()).get_tools())
-        except Exception:
-            pass
-    from app.core.tools.permissions import filter_agent_tools
-
-    tools = filter_agent_tools(tools, settings)
-
-    model = LLMModel(model=settings.llm_model)
-    model.call = llm.call
-    model.call_stream = llm.call_stream
-
-    system_prompt = settings.system_prompt or DEFAULT_SYSTEM_PROMPT
-
-    return Agent(
-        system_prompt=system_prompt,
-        model=model,
-        tools=tools,
-        max_steps=settings.agent_max_steps,
-        max_context_tokens=settings.agent_max_context_tokens,
-        max_context_turns=settings.agent_max_context_turns,
-        memory_manager=memory_mgr,
-        workspace_dir=workspace_dir,
-        skill_manager=skill_mgr,
-        settings=settings,
-    )
+    return create_agent(user_id)
 
 
 def _is_agent_cancelled(exc: Exception) -> bool:
@@ -192,7 +144,7 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
             else:
                 history_messages = store.get_messages(request.session_id)
         except ChatSessionNotFound:
-            raise HTTPException(status_code=404, detail="Session not found")
+            raise HTTPException(status_code=404, detail="Session not found") from None
         return request.session_id, history_messages
 
     session = store.create_session(
@@ -204,7 +156,9 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
             role = msg.get("role")
             content = msg.get("content", "")
             if role in ("user", "assistant") and content:
-                history_messages.append(store.append_message(session["id"], role, content, {"source": "legacy_history"}))
+                history_messages.append(
+                    store.append_message(session["id"], role, content, {"source": "legacy_history"})
+                )
     return session["id"], history_messages
 
 
@@ -214,7 +168,7 @@ def _persist_exchange(
     assistant_response: str,
     was_empty: bool,
     *,
-    sources: Optional[list[dict]] = None,
+    sources: list[dict] | None = None,
 ) -> tuple[str, str]:
     store = get_session_store()
     user_msg = store.append_message(session_id, "user", user_message)
@@ -233,10 +187,10 @@ def _session_or_404(session_id: str) -> dict:
     try:
         return get_session_store().get_detail(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-def _start_trace(session_id: str, user_message: str, user_id: Optional[str] = None):
+def _start_trace(session_id: str, user_message: str, user_id: str | None = None):
     from app.config import get_effective_settings
 
     if not get_effective_settings(user_id).tracing_enabled:
@@ -245,7 +199,9 @@ def _start_trace(session_id: str, user_message: str, user_id: Optional[str] = No
         from app.core.tracing import TraceRecorder
         from app.deps import get_trace_store
 
-        return TraceRecorder.start(get_trace_store(), session_id=session_id, user_message=user_message)
+        return TraceRecorder.start(
+            get_trace_store(), session_id=session_id, user_message=user_message
+        )
     except Exception as exc:
         logger.warning("Failed to start trace run: %s", exc)
         return None
@@ -260,10 +216,10 @@ def _record_trace_event(recorder, event: dict) -> None:
 def _finish_trace(
     recorder,
     status: str,
-    user_message_id: Optional[str] = None,
-    assistant_message_id: Optional[str] = None,
+    user_message_id: str | None = None,
+    assistant_message_id: str | None = None,
     final_response: str = "",
-    error: Optional[str] = None,
+    error: str | None = None,
 ) -> None:
     if not recorder:
         return
@@ -276,8 +232,40 @@ def _finish_trace(
     )
 
 
+def _complete_exchange(
+    request: ChatRequest,
+    session_id: str,
+    response: str,
+    sources: list[dict],
+    history_messages: list[dict],
+    recorder,
+) -> str:
+    """落库成功后完成追踪和记忆整理，终止事件由传输层随后发送。"""
+    user_message_id, message_id = _persist_exchange(
+        session_id, request.message, response, was_empty=not history_messages, sources=sources
+    )
+    _finish_trace(
+        recorder,
+        status="done",
+        user_message_id=user_message_id,
+        assistant_message_id=message_id,
+        final_response=response,
+    )
+    _schedule_memory_curate(
+        session_id=session_id,
+        user_message=request.message,
+        assistant_response=response,
+        user_message_id=user_message_id,
+        assistant_message_id=message_id,
+        user_id=request.user_id,
+    )
+    return message_id
+
+
 @router.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def chat(
+    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
+):
     # Agent provider/tool 链是同步执行模型；普通 def 由 FastAPI 放入线程池，
     # 避免非流式长对话占住整个 ASGI 事件循环。
     recorder = None
@@ -293,27 +281,8 @@ def chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permi
             skill_filter=request.skill_filter,
             thinking_enabled=request.thinking_enabled,
         )
-        user_message_id, message_id = _persist_exchange(
-            session_id,
-            request.message,
-            response,
-            was_empty=len(history_messages) == 0,
-            sources=agent.last_sources,
-        )
-        _finish_trace(
-            recorder,
-            status="done",
-            user_message_id=user_message_id,
-            assistant_message_id=message_id,
-            final_response=response,
-        )
-        _schedule_memory_curate(
-            session_id=session_id,
-            user_message=request.message,
-            assistant_response=response,
-            user_message_id=user_message_id,
-            assistant_message_id=message_id,
-            user_id=current_user.id,
+        message_id = _complete_exchange(
+            request, session_id, response, agent.last_sources, history_messages, recorder
         )
         return ChatResponse(
             response=response,
@@ -325,11 +294,13 @@ def chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permi
         raise
     except Exception as e:
         _finish_trace(recorder, status="error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/stream")
-def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def stream_chat(
+    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
+):
     session_id, history_messages = _prepare_session(request, current_user)
     request.user_id = current_user.id
     recorder = _start_trace(session_id, request.message, current_user.id)
@@ -351,16 +322,23 @@ def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(requir
             if event_type == "reasoning_update":
                 if not reasoning_notice_sent:
                     reasoning_notice_sent = True
-                    event_queue.put({
-                        "type": "status_update",
-                        "timestamp": event.get("timestamp", time.time()),
-                        "data": {"message": "Model is analyzing the request."},
-                    })
+                    event_queue.put(
+                        {
+                            "type": "status_update",
+                            "timestamp": event.get("timestamp", time.time()),
+                            "data": {"message": "Model is analyzing the request."},
+                        }
+                    )
                 return
 
             if event_type == "subagent_event":
                 child_type = str((event.get("data") or {}).get("child_event_type") or "")
-                if child_type in {"reasoning_update", "llm_call_start", "llm_call_end", "llm_call_error"}:
+                if child_type in {
+                    "reasoning_update",
+                    "llm_call_start",
+                    "llm_call_end",
+                    "llm_call_error",
+                }:
                     return
 
             # The executor emits agent_end before the message is persisted.
@@ -384,53 +362,40 @@ def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(requir
                     cancel_event=cancel_event,
                     thinking_enabled=request.thinking_enabled,
                 )
-                user_message_id, message_id = _persist_exchange(
-                    session_id,
-                    request.message,
-                    response,
-                    was_empty=len(history_messages) == 0,
-                    sources=agent.last_sources,
+                message_id = _complete_exchange(
+                    request, session_id, response, agent.last_sources, history_messages, recorder
                 )
-                _finish_trace(
-                    recorder,
-                    status="done",
-                    user_message_id=user_message_id,
-                    assistant_message_id=message_id,
-                    final_response=response,
+                event_queue.put(
+                    {
+                        "type": "agent_end",
+                        "timestamp": time.time(),
+                        "data": {
+                            "final_response": response,
+                            "session_id": session_id,
+                            "message_id": message_id,
+                            "sources": agent.last_sources,
+                        },
+                    }
                 )
-                _schedule_memory_curate(
-                    session_id=session_id,
-                    user_message=request.message,
-                    assistant_response=response,
-                    user_message_id=user_message_id,
-                    assistant_message_id=message_id,
-                    user_id=current_user.id,
-                )
-                event_queue.put({
-                    "type": "agent_end",
-                    "timestamp": time.time(),
-                    "data": {
-                        "final_response": response,
-                        "session_id": session_id,
-                        "message_id": message_id,
-                        "sources": agent.last_sources,
-                    },
-                })
             except Exception as e:
                 if _is_agent_cancelled(e):
                     _finish_trace(recorder, status="cancelled", error=str(e))
-                    event_queue.put({
-                        "type": "agent_stopped",
-                        "timestamp": time.time(),
-                        "data": {"session_id": session_id},
-                    })
+                    event_queue.put(
+                        {
+                            "type": "agent_stopped",
+                            "timestamp": time.time(),
+                            "data": {"session_id": session_id},
+                        }
+                    )
                     return
                 _finish_trace(recorder, status="error", error=str(e))
-                event_queue.put({
-                    "type": "error",
-                    "timestamp": time.time(),
-                    "data": {"error": str(e)},
-                })
+                event_queue.put(
+                    {
+                        "type": "error",
+                        "timestamp": time.time(),
+                        "data": {"error": str(e)},
+                    }
+                )
             finally:
                 event_queue.put(done)
 
@@ -458,7 +423,7 @@ def stream_chat(request: ChatRequest, current_user: CurrentUser = Depends(requir
 
 @router.get("/sessions", response_model=ChatSessionListResponse)
 def list_sessions(
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     current_user: CurrentUser = Depends(require_permissions("chat:read")),
@@ -466,11 +431,16 @@ def list_sessions(
     store = get_session_store()
     effective_user_id = user_id if (user_id and current_user.is_admin) else current_user.id
     sessions = store.list_sessions(user_id=effective_user_id, limit=limit, offset=offset)
-    return ChatSessionListResponse(sessions=sessions, total=store.count_sessions(user_id=effective_user_id))
+    return ChatSessionListResponse(
+        sessions=sessions, total=store.count_sessions(user_id=effective_user_id)
+    )
 
 
 @router.post("/sessions", response_model=ChatSessionDetail)
-def create_session(request: ChatSessionCreateRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def create_session(
+    request: ChatSessionCreateRequest,
+    current_user: CurrentUser = Depends(require_permissions("chat:write")),
+):
     session = get_session_store().create_session(
         user_id=current_user.id,
         title=request.title or "新对话",
@@ -485,7 +455,9 @@ def delete_sessions(current_user: CurrentUser = Depends(require_permissions("cha
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSessionDetail)
-def get_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))):
+def get_session(
+    session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))
+):
     session = _session_or_404(session_id)
     _assert_session_owner(session, current_user)
     return session
@@ -501,32 +473,36 @@ def update_session(
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         return get_session_store().update_title(session_id, request.title)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def delete_session(
+    session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))
+):
     try:
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         get_session_store().delete_session(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
     return {"status": "ok"}
 
 
 @router.delete("/sessions/{session_id}/messages")
-def clear_session_messages(session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def clear_session_messages(
+    session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))
+):
     try:
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
     return {"status": "ok", "deleted": deleted}
 
 
 @router.delete("/history")
 def clear_history(
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
     current_user: CurrentUser = Depends(require_permissions("chat:write")),
 ):
     if not session_id:
@@ -538,5 +514,5 @@ def clear_history(
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
     return {"status": "ok", "deleted": deleted}

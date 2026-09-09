@@ -1,7 +1,7 @@
 """Portfolio API schemas."""
 
 from decimal import Decimal, InvalidOperation
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -9,7 +9,7 @@ PortfolioMarket = Literal["US", "A", "H"]
 PortfolioTransactionSide = Literal["buy", "sell", "adjust"]
 
 
-def _non_negative_decimal_text(value: Optional[str], field: str) -> Optional[str]:
+def _non_negative_decimal_text(value: str | None, field: str) -> str | None:
     if value in (None, ""):
         return None
     try:
@@ -45,13 +45,13 @@ class PortfolioItemBase(BaseModel):
     market: PortfolioMarket
     symbol: str = Field(min_length=1)
     name: str = ""
-    shares: Optional[str] = None
-    cost_price: Optional[str] = None
+    shares: str | None = None
+    cost_price: str | None = None
     note: str = ""
 
     @field_validator("shares", "cost_price")
     @classmethod
-    def valid_optional_amount(cls, value: Optional[str], info) -> Optional[str]:
+    def valid_optional_amount(cls, value: str | None, info) -> str | None:
         return _non_negative_decimal_text(value, info.field_name)
 
 
@@ -62,16 +62,16 @@ class PortfolioItemCreate(PortfolioItemBase):
 class PortfolioItemUpdate(BaseModel):
     """Update portfolio item request."""
 
-    market: Optional[PortfolioMarket] = None
-    symbol: Optional[str] = Field(default=None, min_length=1)
-    name: Optional[str] = None
-    shares: Optional[str] = None
-    cost_price: Optional[str] = None
-    note: Optional[str] = None
+    market: PortfolioMarket | None = None
+    symbol: str | None = Field(default=None, min_length=1)
+    name: str | None = None
+    shares: str | None = None
+    cost_price: str | None = None
+    note: str | None = None
 
     @field_validator("shares", "cost_price")
     @classmethod
-    def valid_optional_amount(cls, value: Optional[str], info) -> Optional[str]:
+    def valid_optional_amount(cls, value: str | None, info) -> str | None:
         return _non_negative_decimal_text(value, info.field_name)
 
 
@@ -80,13 +80,13 @@ class PortfolioItem(PortfolioItemBase):
 
     id: int
     currency: str = ""
-    pe_ttm_ratio: Optional[str] = None
-    current_price: Optional[str] = None
-    change_value: Optional[str] = None
-    change_rate: Optional[str] = None
-    stock_value: Optional[str] = None
-    position_ratio: Optional[str] = None
-    pnl_ratio: Optional[str] = None
+    pe_ttm_ratio: str | None = None
+    current_price: str | None = None
+    change_value: str | None = None
+    change_rate: str | None = None
+    stock_value: str | None = None
+    position_ratio: str | None = None
+    pnl_ratio: str | None = None
     valuation_price_source: Literal["live", "cost", "unavailable"] = "unavailable"
     created_at: str
     updated_at: str
@@ -98,10 +98,10 @@ class PortfolioListResponse(BaseModel):
     market: PortfolioMarket
     total_capital: str = "0"
     total_assets: str = "0"
-    cash_ratio: Optional[str] = None
+    cash_ratio: str | None = None
     items: list[PortfolioItem]
     total: int
-    quote_error: Optional[str] = None
+    quote_error: str | None = None
     valuation_complete: bool = True
     unpriced_symbols: list[str] = Field(default_factory=list)
 
@@ -133,7 +133,7 @@ class PortfolioTransaction(BaseModel):
     shares: str
     price: str
     amount: str
-    realized_pnl: Optional[str] = None
+    realized_pnl: str | None = None
     note: str = ""
     created_at: str
 
@@ -161,8 +161,8 @@ class PortfolioSearchResult(BaseModel):
     symbol: str
     name: str = ""
     currency: str = ""
-    last_done: Optional[str] = None
-    change_rate: Optional[str] = None
+    last_done: str | None = None
+    change_rate: str | None = None
 
 
 class PortfolioSearchResponse(BaseModel):

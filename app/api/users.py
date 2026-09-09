@@ -24,7 +24,9 @@ def list_users(_: CurrentUser = Depends(require_permissions("users:manage"))):
 
 
 @router.post("", response_model=UserPublic)
-def create_user(request: UserCreateRequest, current: CurrentUser = Depends(require_permissions("users:manage"))):
+def create_user(
+    request: UserCreateRequest, current: CurrentUser = Depends(require_permissions("users:manage"))
+):
     try:
         user = get_app_store().create_user(
             username=request.username,
@@ -65,7 +67,11 @@ def update_user(
 def list_roles(_: CurrentUser = Depends(require_permissions("roles:manage"))):
     store = get_app_store()
     roles = [RoleResponse(**role) for role in store.list_roles()]
-    return RoleListResponse(roles=roles, permissions=PERMISSION_DESCRIPTIONS, page_permissions=store.list_page_permissions())
+    return RoleListResponse(
+        roles=roles,
+        permissions=PERMISSION_DESCRIPTIONS,
+        page_permissions=store.list_page_permissions(),
+    )
 
 
 @router.put("/roles/{name}", response_model=RoleResponse)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.orm.base import AppBase
@@ -27,7 +27,9 @@ class AppConfig(AppBase):
 class UserConfig(AppBase):
     __tablename__ = "user_config"
 
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value_json: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
@@ -68,23 +70,33 @@ class Permission(AppBase):
 class RolePermission(AppBase):
     __tablename__ = "role_permissions"
 
-    role_id: Mapped[str] = mapped_column(Text, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
-    permission_key: Mapped[str] = mapped_column(Text, ForeignKey("permissions.key", ondelete="CASCADE"), primary_key=True)
+    role_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
+    )
+    permission_key: Mapped[str] = mapped_column(
+        Text, ForeignKey("permissions.key", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class PagePermission(AppBase):
     __tablename__ = "page_permissions"
 
     page: Mapped[str] = mapped_column(Text, primary_key=True)
-    permission_key: Mapped[str] = mapped_column(Text, ForeignKey("permissions.key", ondelete="RESTRICT"), nullable=False)
+    permission_key: Mapped[str] = mapped_column(
+        Text, ForeignKey("permissions.key", ondelete="RESTRICT"), nullable=False
+    )
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class UserRole(AppBase):
     __tablename__ = "user_roles"
 
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    role_id: Mapped[str] = mapped_column(Text, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    role_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class LoginSession(AppBase):
@@ -95,7 +107,9 @@ class LoginSession(AppBase):
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     device_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     last_seen_at: Mapped[str] = mapped_column(Text, nullable=False)
@@ -114,8 +128,12 @@ class RefreshToken(AppBase):
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    session_id: Mapped[str | None] = mapped_column(Text, ForeignKey("login_sessions.id", ondelete="CASCADE"))
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("login_sessions.id", ondelete="CASCADE")
+    )
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
@@ -139,7 +157,9 @@ class AuditEvent(AppBase):
 class MarketDashboardConfig(AppBase):
     __tablename__ = "market_dashboard_configs"
 
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -149,7 +169,9 @@ class SchedulerTask(AppBase):
     __table_args__ = (Index("idx_scheduler_tasks_user", "user_id"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     task_json: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     next_run_at: Mapped[str | None] = mapped_column(Text)
@@ -161,7 +183,9 @@ class SchedulerRun(AppBase):
     __table_args__ = (Index("idx_scheduler_runs_user_started", "user_id", "started_at"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     task_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     run_json: Mapped[str] = mapped_column(Text, nullable=False)
     started_at: Mapped[str] = mapped_column(Text, nullable=False)

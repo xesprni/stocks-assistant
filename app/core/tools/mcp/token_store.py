@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("stocks-assistant.mcp.token_store")
 
@@ -26,21 +26,19 @@ class MCPTokenStore:
         self._path = self._dir / "oauth_tokens.json"
         self._user_id = user_id or ""
         self._lock = threading.RLock()
-        self._cache: Optional[dict[str, Any]] = None
+        self._cache: dict[str, Any] | None = None
 
     def _load(self) -> dict[str, Any]:
         """Load all token entries from SQLite into a small process cache."""
         if self._cache is not None:
             return self._cache
         try:
-            from app.core.app_store import get_app_store
-
             # There is no list API because MCPManager only asks for configured
             # server names. Keep an empty cache and lazily fill per server.
             self._cache = {}
             return self._cache
         except Exception as e:
-            logger.warning(f"Failed to load MCP OAuth tokens: {e}")
+            logger.warning("Failed to load MCP OAuth tokens: %s", e)
         self._cache = {}
         return self._cache
 
@@ -70,10 +68,12 @@ class MCPTokenStore:
         if server_name not in data:
             from app.core.app_store import get_app_store
 
-            data[server_name] = get_app_store().get_mcp_oauth_entry(server_name, user_id=self._user_id)
+            data[server_name] = get_app_store().get_mcp_oauth_entry(
+                server_name, user_id=self._user_id
+            )
         return data.get(server_name, {})
 
-    def get_tokens(self, server_name: str) -> Optional[dict[str, Any]]:
+    def get_tokens(self, server_name: str) -> dict[str, Any] | None:
         """获取指定服务器的 OAuth 令牌。"""
         with self._lock:
             entry = self._entry(server_name)
@@ -88,7 +88,7 @@ class MCPTokenStore:
             entry["tokens"] = tokens
             self._save(data)
 
-    def get_client_info(self, server_name: str) -> Optional[dict[str, Any]]:
+    def get_client_info(self, server_name: str) -> dict[str, Any] | None:
         """获取指定服务器的 OAuth 客户端注册信息。"""
         with self._lock:
             entry = self._entry(server_name)
@@ -103,12 +103,16 @@ class MCPTokenStore:
             entry["client_info"] = client_info
             self._save(data)
 
-    def get_client_credentials_token(self, server_name: str) -> Optional[tuple[str, float]]:
+    def get_client_credentials_token(self, server_name: str) -> tuple[str, float] | None:
         """获取指定服务器的 Client Credentials 令牌和过期时间。"""
         with self._lock:
             entry = self._entry(server_name)
             cc = entry.get("client_credentials_token")
-            if cc and isinstance(cc.get("token"), str) and isinstance(cc.get("expires_at"), (int, float)):
+            if (
+                cc
+                and isinstance(cc.get("token"), str)
+                and isinstance(cc.get("expires_at"), (int, float))
+            ):
                 return (cc["token"], float(cc["expires_at"]))
             return None
 

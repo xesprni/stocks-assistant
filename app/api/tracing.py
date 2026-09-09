@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.session import ChatSessionNotFound
 from app.core.security import CurrentUser, require_permissions
+from app.core.session import ChatSessionNotFound
 from app.deps import get_session_store, get_trace_store
 from app.schemas.tracing import TraceSessionResponse
 

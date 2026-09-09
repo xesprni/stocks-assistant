@@ -39,7 +39,10 @@ def _linked_record_evidence(payload: Any, *, symbol: str, source_type: str) -> l
             evidence.append(
                 evidence_for_source(
                     source,
-                    excerpt=str(value.get("description") or value.get("summary") or "").strip()[:1000] or None,
+                    excerpt=str(value.get("description") or value.get("summary") or "").strip()[
+                        :1000
+                    ]
+                    or None,
                 )
             )
         for item in value.values():
@@ -52,11 +55,16 @@ def _linked_record_evidence(payload: Any, *, symbol: str, source_type: str) -> l
 
 class GetSecurityNewsTool(BaseTool):
     name = "get_security_news"
-    description = "Get recent Longbridge news for a stock symbol with source and timestamp metadata."
+    description = (
+        "Get recent Longbridge news for a stock symbol with source and timestamp metadata."
+    )
     params = {
         "type": "object",
         "properties": {
-            "symbol": {"type": "string", "description": "Security symbol such as AAPL.US or 700.HK."},
+            "symbol": {
+                "type": "string",
+                "description": "Security symbol such as AAPL.US or 700.HK.",
+            },
             "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
         },
         "required": ["symbol"],
@@ -80,8 +88,13 @@ class GetSecurityNewsTool(BaseTool):
             evidence = _linked_record_evidence(payload, symbol=symbol, source_type="news")
             return ToolResult.success(
                 payload,
-                ext_data=evidence_metadata(evidence) if evidence else longbridge_evidence(
-                    title=f"{symbol} recent news", data=payload, symbols=[symbol], source_type="news"
+                ext_data=evidence_metadata(evidence)
+                if evidence
+                else longbridge_evidence(
+                    title=f"{symbol} recent news",
+                    data=payload,
+                    symbols=[symbol],
+                    source_type="news",
                 ),
             )
         except Exception as exc:
@@ -97,7 +110,10 @@ class GetSecurityInsightsTool(BaseTool):
     params = {
         "type": "object",
         "properties": {
-            "symbol": {"type": "string", "description": "Security symbol such as AAPL.US or 700.HK."},
+            "symbol": {
+                "type": "string",
+                "description": "Security symbol such as AAPL.US or 700.HK.",
+            },
         },
         "required": ["symbol"],
     }
@@ -116,11 +132,18 @@ class GetSecurityInsightsTool(BaseTool):
 
                 self.service = get_fundamental_service()
             payload = self.service.get_security_insights(symbol, settings=self.settings)
-            evidence = _linked_record_evidence(payload, symbol=symbol, source_type="company_research")
+            evidence = _linked_record_evidence(
+                payload, symbol=symbol, source_type="company_research"
+            )
             return ToolResult.success(
                 payload,
-                ext_data=evidence_metadata(evidence) if evidence else longbridge_evidence(
-                    title=f"{symbol} company research data", data=payload, symbols=[symbol], source_type="company_research"
+                ext_data=evidence_metadata(evidence)
+                if evidence
+                else longbridge_evidence(
+                    title=f"{symbol} company research data",
+                    data=payload,
+                    symbols=[symbol],
+                    source_type="company_research",
                 ),
             )
         except Exception as exc:

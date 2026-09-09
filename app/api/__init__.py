@@ -19,28 +19,28 @@
 
 from fastapi import APIRouter
 
-from app.api.auth import router as auth_router
 from app.api.agent import router as agent_router
-from app.api.memory import router as memory_router
-from app.api.knowledge import router as knowledge_router
-from app.api.skills import router as skills_router
-from app.api.tools import router as tools_router
-from app.api.scheduler import router as scheduler_router
+from app.api.alerts import router as alerts_router
+from app.api.auth import router as auth_router
 from app.api.config import router as config_router
-from app.api.watchlist import router as watchlist_router
-from app.api.portfolio import router as portfolio_router
-from app.api.market import router as market_router
 from app.api.dashboard import router as dashboard_router
 from app.api.fundamentals import router as fundamentals_router
-from app.api.news import router as news_router
+from app.api.knowledge import router as knowledge_router
+from app.api.labs import router as labs_router
+from app.api.market import router as market_router
 from app.api.mcp import router as mcp_router
+from app.api.memory import router as memory_router
+from app.api.news import router as news_router
+from app.api.portfolio import router as portfolio_router
+from app.api.research import router as research_router
+from app.api.roles import router as roles_router
+from app.api.scheduler import router as scheduler_router
+from app.api.skills import router as skills_router
+from app.api.telemetry import router as telemetry_router
+from app.api.tools import router as tools_router
 from app.api.tracing import router as tracing_router
 from app.api.users import router as users_router
-from app.api.roles import router as roles_router
-from app.api.telemetry import router as telemetry_router
-from app.api.research import router as research_router
-from app.api.alerts import router as alerts_router
-from app.api.labs import router as labs_router
+from app.api.watchlist import router as watchlist_router
 
 router = APIRouter(prefix="/api/v1")
 

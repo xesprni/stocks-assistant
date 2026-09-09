@@ -4,15 +4,19 @@
 内置工具直接加载，自定义工具可从指定目录动态加载。
 """
 
-import importlib
-import importlib.util
-import os
-from pathlib import Path
-from typing import Dict, List, Optional
+from __future__ import annotations
 
+import importlib.util
 import logging
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.core.tools.base_tool import BaseTool
+from app.core.tools.builtin_registry import builtin_factories
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 logger = logging.getLogger("stocks-assistant.tools")
 
@@ -23,111 +27,50 @@ class ToolManager:
     管理所有已注册的工具类，支持内置工具加载和自定义目录扫描。
     """
 
-    def __init__(self, workspace_dir: Optional[str] = None, user_id: Optional[str] = None):
-        self.tool_classes: Dict[str, type] = {}  # 工具名称 -> 工具类映射
-        self.tool_configs: Dict[str, dict] = {}  # 工具名称 -> 工具配置映射
+    def __init__(self, workspace_dir: str | None = None, user_id: str | None = None):
+        self.tool_classes: dict[str, type] = {}  # 工具名称 -> 工具类映射
+        self.tool_configs: dict[str, dict] = {}  # 工具名称 -> 工具配置映射
         self.workspace_dir = workspace_dir
         self.user_id = user_id
         self.memory_manager = None
-        self.settings = None
+        self.settings: Settings | None = None
+        self._tool_factories: dict[type[BaseTool], Callable[[], BaseTool]] = {}
 
-    def load_builtin_tools(self, memory_manager=None, user_id: Optional[str] = None):
+    def load_builtin_tools(
+        self,
+        memory_manager=None,
+        user_id: str | None = None,
+        settings: Settings | None = None,
+    ) -> None:
         """加载所有内置工具
 
         内置工具包括：bash、web_search、web_fetch、read_file、write_file、
         financial_reports、market_data、portfolio_positions、portfolio、watchlist、memory_search、memory_get、scheduler。
         """
-        from app.core.tools.bash import BashTool
-        from app.core.tools.web_search import WebSearchTool
-        from app.core.tools.web_fetch import WebFetchTool
-        from app.core.tools.read_file import ReadFileTool
-        from app.core.tools.read_skill import ReadSkillTool
-        from app.core.tools.write_file import WriteFileTool
-        from app.core.tools.financial_reports import GetFinancialReportsTool
-        from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
-        from app.core.tools.research_context import GetResearchContextTool
-        from app.core.tools.investment_labs import GetInvestmentLabsTool
-        from app.core.tools.market_data import (
-            GetLongbridgeCapitalFlowTool,
-            GetLongbridgeCandlesticksTool,
-            GetLongbridgeDepthTool,
-            GetLongbridgeHistoryCandlesticksTool,
-            GetLongbridgeIntradayTool,
-            GetLongbridgeMarketStatusTool,
-            GetLongbridgeQuoteIndicatorsTool,
-            GetLongbridgeRealtimeQuotesTool,
-            GetLongbridgeTechnicalIndicatorsTool,
-            GetLongbridgeTradesTool,
-            GetLongbridgeTradingDaysTool,
-        )
-        from app.core.tools.portfolio_positions import GetPortfolioPositionsTool
-        from app.core.tools.portfolio import PortfolioTool
-        from app.core.tools.watchlist import WatchlistTool
-        from app.core.tools.delegate_agent import DelegateAgentTool
-        from app.core.tools.memory_search import MemorySearchTool
-        from app.core.tools.memory_get import MemoryGetTool
-        from app.core.tools.knowledge_search import KnowledgeSearchTool
-        from app.core.tools.knowledge_get import KnowledgeGetTool
-        from app.core.tools.scheduler.tool import SchedulerTool
-
-        # builtin = [BashTool, WebSearchTool, WebFetchTool, ReadFileTool, WriteFileTool]
-        builtin = [
-            BashTool,
-            WebSearchTool,
-            WebFetchTool,
-            ReadFileTool,
-            ReadSkillTool,
-            WriteFileTool,
-            GetFinancialReportsTool,
-            GetSecurityNewsTool,
-            GetSecurityInsightsTool,
-            GetResearchContextTool,
-            GetInvestmentLabsTool,
-            GetLongbridgeRealtimeQuotesTool,
-            GetLongbridgeHistoryCandlesticksTool,
-            GetLongbridgeCandlesticksTool,
-            GetLongbridgeIntradayTool,
-            GetLongbridgeCapitalFlowTool,
-            GetLongbridgeTradesTool,
-            GetLongbridgeDepthTool,
-            GetLongbridgeMarketStatusTool,
-            GetLongbridgeTradingDaysTool,
-            GetLongbridgeQuoteIndicatorsTool,
-            GetLongbridgeTechnicalIndicatorsTool,
-            GetPortfolioPositionsTool,
-            PortfolioTool,
-            WatchlistTool,
-            DelegateAgentTool,
-        ]
-
         if memory_manager:
             self.memory_manager = memory_manager
-            builtin.append(MemorySearchTool)
-            builtin.append(MemoryGetTool)
-            builtin.append(KnowledgeSearchTool)
-            builtin.append(KnowledgeGetTool)
         if user_id is not None:
             self.user_id = user_id
+        if settings is not None:
+            # 同一 Agent 的模型和工具必须共享配置快照，不能重新读取并混用新旧配置。
+            self.settings = settings
+        else:
             try:
-                from app.config import get_effective_settings
+                from app.config import get_effective_settings, get_settings
 
-                self.settings = get_effective_settings(user_id)
-            except Exception:
+                self.settings = (
+                    get_effective_settings(self.user_id)
+                    if self.user_id is not None
+                    else get_settings()
+                )
+            except Exception as exc:
+                logger.warning("Failed to load tool settings: %s", exc)
                 self.settings = None
 
-        for cls in builtin:
-            try:
-                inst = self._instantiate_tool(cls)
-                self.tool_classes[inst.name] = cls
-                logger.debug(f"Loaded tool: {inst.name}")
-            except Exception as e:
-                logger.warning(f"Failed to load tool {cls.__name__}: {e}")
-
-        try:
-            inst = self._instantiate_tool(SchedulerTool)
-            self.tool_classes[inst.name] = SchedulerTool
-        except Exception as e:
-            logger.warning(f"Failed to load SchedulerTool: {e}")
+        self._tool_factories.update(builtin_factories(self))
+        for cls in self._tool_factories:
+            self.tool_classes[cls.name] = cls
+            logger.debug("Loaded tool: %s", cls.name)
 
     def load_tools_from_directory(self, tools_dir: str):
         """从指定目录动态加载工具（扫描 .py 文件中的 BaseTool 子类）"""
@@ -146,22 +89,21 @@ class ToolManager:
                             inst = self._instantiate_tool(cls)
                             self.tool_classes[inst.name] = cls
                         except Exception as e:
-                            logger.warning(f"Failed to load tool from {py_file}: {e}")
+                            logger.warning("Failed to load tool from %s: %s", py_file, e)
 
-    def get_all_tools(self) -> List[BaseTool]:
+    def get_all_tools(self) -> list[BaseTool]:
         """获取所有已注册工具的实例列表"""
         tools = []
-        for name, cls in self.tool_classes.items():
+        for name in self.tool_classes:
             try:
-                inst = self._instantiate_tool(cls)
-                if name in self.tool_configs:
-                    inst.config = self.tool_configs[name]
-                tools.append(inst)
-            except Exception:
-                pass
+                inst = self.create_tool(name)
+                if inst is not None:
+                    tools.append(inst)
+            except Exception as exc:
+                logger.warning("Failed to create tool %s: %s", name, exc)
         return tools
 
-    def create_tool(self, name: str) -> Optional[BaseTool]:
+    def create_tool(self, name: str) -> BaseTool | None:
         tool_class = self.tool_classes.get(name)
         if tool_class:
             inst = self._instantiate_tool(tool_class)
@@ -170,62 +112,36 @@ class ToolManager:
             return inst
         return None
 
-    def get_tool(self, name: str) -> Optional[BaseTool]:
+    def get_tool(self, name: str) -> BaseTool | None:
         return self.create_tool(name)
 
+    def _schema_source(self, tool_class: type[BaseTool]) -> type[BaseTool] | BaseTool:
+        # 内置元数据为类属性；动态工具仍允许在构造函数中设置实例元数据。
+        return (
+            tool_class if tool_class in self._tool_factories else self._instantiate_tool(tool_class)
+        )
+
     def list_tools(self) -> dict:
-        result = {}
-        for name, tool_class in self.tool_classes.items():
-            inst = self._instantiate_tool(tool_class)
-            result[name] = {"description": inst.description, "parameters": inst.get_json_schema()}
-        return result
+        return {
+            name: {"description": tool.description, "parameters": tool.get_json_schema()}
+            for name, cls in self.tool_classes.items()
+            for tool in [self._schema_source(cls)]
+        }
 
     def get_tool_schemas_for_llm(self) -> list:
-        schemas = []
-        for name in self.tool_classes:
-            inst = self._instantiate_tool(self.tool_classes[name])
-            schemas.append({
+        return [
+            {
                 "type": "function",
                 "function": {
-                    "name": inst.name,
-                    "description": inst.description,
-                    "parameters": inst.params,
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.params,
                 },
-            })
-        return schemas
+            }
+            for cls in self.tool_classes.values()
+            for tool in [self._schema_source(cls)]
+        ]
 
-    def _instantiate_tool(self, tool_class: type) -> BaseTool:
-        class_name = getattr(tool_class, "__name__", "")
-        if class_name in {"ReadFileTool", "WriteFileTool"}:
-            return tool_class(workspace_dir=self.workspace_dir or ".")
-        if class_name == "BashTool" and self.workspace_dir:
-            return tool_class(config={"cwd": self.workspace_dir})
-        if class_name in {"MemorySearchTool", "MemoryGetTool", "KnowledgeSearchTool", "KnowledgeGetTool"}:
-            return tool_class(memory_manager=self.memory_manager, user_id=self.user_id)
-        if class_name == "GetFinancialReportsTool":
-            return tool_class(settings=self.settings)
-        if class_name in {"GetSecurityNewsTool", "GetSecurityInsightsTool"}:
-            return tool_class(settings=self.settings)
-        if class_name == "GetResearchContextTool":
-            # service 在真正执行工具时才创建，避免仅生成 schema 就触碰运行时工作区。
-            return tool_class(user_id=self.user_id)
-        if class_name == "GetInvestmentLabsTool":
-            return tool_class(user_id=self.user_id, settings=self.settings)
-        if class_name == "WebSearchTool":
-            return tool_class(
-                config={
-                    "api_url": getattr(self.settings, "search_api_url", "") if self.settings else "",
-                    "api_key": getattr(self.settings, "search_api_key", "") if self.settings else "",
-                }
-            )
-        if class_name in {"GetPortfolioPositionsTool", "PortfolioTool"}:
-            return tool_class(user_id=self.user_id, settings=self.settings)
-        if class_name == "WatchlistTool":
-            return tool_class(user_id=self.user_id, settings=self.settings)
-        if class_name.startswith("GetLongbridge") and class_name.endswith("Tool"):
-            return tool_class(user_id=self.user_id, settings=self.settings)
-        if class_name == "SchedulerTool":
-            from app.deps import get_scheduler_service
-
-            return tool_class(scheduler_service=get_scheduler_service(), user_id=self.user_id)
-        return tool_class()
+    def _instantiate_tool(self, tool_class: type[BaseTool]) -> BaseTool:
+        factory = self._tool_factories.get(tool_class)
+        return factory() if factory is not None else tool_class()

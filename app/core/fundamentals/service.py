@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-import threading
-import time
-from typing import Any, Optional
+from typing import Any
 
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.utils import canonical_symbol
-from app.core.watchlist.service import LongbridgeUnavailableError
-
 
 INSIGHTS_CACHE_TTL_SECONDS = 180
 INSIGHTS_CACHE_MAX_ENTRIES = 128
@@ -90,7 +89,11 @@ def _plain(value: Any) -> Any:
         except Exception:
             object_vars = {}
         data = (
-            {k: _plain(v) for k, v in object_vars.items() if not k.startswith("_") and not callable(v)}
+            {
+                k: _plain(v)
+                for k, v in object_vars.items()
+                if not k.startswith("_") and not callable(v)
+            }
             if isinstance(object_vars, Mapping)
             else {}
         )
@@ -137,7 +140,7 @@ def _string(value: Any) -> str:
     return str(value)
 
 
-def _optional_string(value: Any) -> Optional[str]:
+def _optional_string(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
@@ -148,7 +151,7 @@ def _period_key(value: dict[str, Any], fallback: str) -> str:
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class FundamentalService:
@@ -203,7 +206,9 @@ class FundamentalService:
                         raise
                 return quote_ctx
 
-        def section(fetcher, *, collection_keys: tuple[str, ...] = ("list", "items")) -> dict[str, Any]:
+        def section(
+            fetcher, *, collection_keys: tuple[str, ...] = ("list", "items")
+        ) -> dict[str, Any]:
             try:
                 return self._section_from_raw(fetcher(), collection_keys=collection_keys)
             except LongbridgeUnavailableError as exc:
@@ -220,16 +225,36 @@ class FundamentalService:
             "corporate_actions": self._error_section("not loaded"),
         }
         section_specs = {
-            "filings": (lambda: get_quote_ctx().filings(normalized_symbol), ("list", "items", "filings")),
-            "company": (lambda: get_fundamental_ctx().company(normalized_symbol), ("list", "items")),
-            "valuation": (lambda: get_fundamental_ctx().valuation(normalized_symbol), ("list", "items")),
-            "dividends": (lambda: get_fundamental_ctx().dividend(normalized_symbol), ("list", "items", "dividends")),
-            "institution_rating": (lambda: get_fundamental_ctx().institution_rating(normalized_symbol), ("list", "items")),
-            "corporate_actions": (lambda: get_fundamental_ctx().corp_action(normalized_symbol), ("items", "list", "actions")),
+            "filings": (
+                lambda: get_quote_ctx().filings(normalized_symbol),
+                ("list", "items", "filings"),
+            ),
+            "company": (
+                lambda: get_fundamental_ctx().company(normalized_symbol),
+                ("list", "items"),
+            ),
+            "valuation": (
+                lambda: get_fundamental_ctx().valuation(normalized_symbol),
+                ("list", "items"),
+            ),
+            "dividends": (
+                lambda: get_fundamental_ctx().dividend(normalized_symbol),
+                ("list", "items", "dividends"),
+            ),
+            "institution_rating": (
+                lambda: get_fundamental_ctx().institution_rating(normalized_symbol),
+                ("list", "items"),
+            ),
+            "corporate_actions": (
+                lambda: get_fundamental_ctx().corp_action(normalized_symbol),
+                ("items", "list", "actions"),
+            ),
         }
 
         # Longbridge 各板块相互独立，并发拉取能缩短 Dashboard 选中公司后的等待时间。
-        with ThreadPoolExecutor(max_workers=min(INSIGHTS_SECTION_WORKERS, len(section_specs))) as executor:
+        with ThreadPoolExecutor(
+            max_workers=min(INSIGHTS_SECTION_WORKERS, len(section_specs))
+        ) as executor:
             futures = {
                 executor.submit(section, fetcher, collection_keys=collection_keys): name
                 for name, (fetcher, collection_keys) in section_specs.items()
@@ -273,7 +298,9 @@ class FundamentalService:
             self._insights_cache[cache_key] = (expires_at, deepcopy(payload))
             if len(self._insights_cache) > INSIGHTS_CACHE_MAX_ENTRIES:
                 overflow = len(self._insights_cache) - INSIGHTS_CACHE_MAX_ENTRIES
-                for key, _ in sorted(self._insights_cache.items(), key=lambda item: item[1][0])[:overflow]:
+                for key, _ in sorted(self._insights_cache.items(), key=lambda item: item[1][0])[
+                    :overflow
+                ]:
                     self._insights_cache.pop(key, None)
 
     @staticmethod
@@ -287,7 +314,7 @@ class FundamentalService:
         self,
         symbol: str,
         kind: str = "All",
-        period: Optional[str] = None,
+        period: str | None = None,
         settings: Any = None,
     ) -> dict[str, Any]:
         normalized_symbol = canonical_symbol(symbol)
@@ -300,7 +327,9 @@ class FundamentalService:
 
         try:
             lb_kind = self._sdk_enum("FinancialReportKind", lb_kind_name)
-            lb_period = self._sdk_enum("FinancialReportPeriod", lb_period_name) if lb_period_name else None
+            lb_period = (
+                self._sdk_enum("FinancialReportPeriod", lb_period_name) if lb_period_name else None
+            )
             raw_response = ctx.financial_report(normalized_symbol, lb_kind, lb_period)
         except LongbridgeUnavailableError:
             raise
@@ -343,7 +372,9 @@ class FundamentalService:
         }
 
     @staticmethod
-    def _section_from_raw(raw: Any, *, collection_keys: tuple[str, ...] = ("list", "items")) -> dict[str, Any]:
+    def _section_from_raw(
+        raw: Any, *, collection_keys: tuple[str, ...] = ("list", "items")
+    ) -> dict[str, Any]:
         plain = _plain(raw)
         data: dict[str, Any] = {}
         items: list[Any] = []
@@ -369,7 +400,7 @@ class FundamentalService:
         }
 
     @staticmethod
-    def _sdk_enum(enum_name: str, member_name: Optional[str]) -> Any:
+    def _sdk_enum(enum_name: str, member_name: str | None) -> Any:
         if not member_name:
             return None
         try:
@@ -387,11 +418,13 @@ class FundamentalService:
         normalized = KIND_ALIASES.get(key, value)
         allowed = {"IncomeStatement", "BalanceSheet", "CashFlow", "All"}
         if normalized not in allowed:
-            raise ValueError("kind must be one of All, IncomeStatement, BalanceSheet, CashFlow, IS, BS, CF")
+            raise ValueError(
+                "kind must be one of All, IncomeStatement, BalanceSheet, CashFlow, IS, BS, CF"
+            )
         return normalized
 
     @staticmethod
-    def _normalize_period(period: Optional[str]) -> Optional[str]:
+    def _normalize_period(period: str | None) -> str | None:
         if not period:
             return None
         value = period.strip()
@@ -399,7 +432,9 @@ class FundamentalService:
         normalized = PERIOD_ALIASES.get(key, value)
         allowed = {"Annual", "SemiAnnual", "Q1", "Q2", "Q3", "ThreeQ", "QuarterlyFull"}
         if normalized not in allowed:
-            raise ValueError("period must be one of Annual, SemiAnnual, Q1, Q2, Q3, ThreeQ, QuarterlyFull")
+            raise ValueError(
+                "period must be one of Annual, SemiAnnual, Q1, Q2, Q3, ThreeQ, QuarterlyFull"
+            )
         return normalized
 
     def _map_statements(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -408,7 +443,9 @@ class FundamentalService:
             section = _as_dict(raw.get(code))
             if not section:
                 continue
-            table = self._map_section(code, [_as_dict(item) for item in _as_list(section.get("indicators"))])
+            table = self._map_section(
+                code, [_as_dict(item) for item in _as_list(section.get("indicators"))]
+            )
             if table["rows"]:
                 statements.append(table)
         return statements

@@ -15,7 +15,9 @@ def current_user(user_id: str = "user-1", permissions: set[str] | None = None) -
         username=user_id,
         display_name=user_id,
         roles=(),
-        permissions=frozenset(permissions or {"watchlist:read", "watchlist:write", "market:read", "portfolio:read"}),
+        permissions=frozenset(
+            permissions or {"watchlist:read", "watchlist:write", "market:read", "portfolio:read"}
+        ),
         is_active=True,
     )
 
@@ -153,7 +155,9 @@ class WatchlistApiTest(unittest.TestCase):
         self.assertEqual(response.json()["counts_by_category"]["US"], 1)
 
     def test_overview_quote_error_keeps_static_rows(self):
-        with self._patched_services(FakeWatchlistService([watchlist_item(2)]), FakeMarketService(fail=True)):
+        with self._patched_services(
+            FakeWatchlistService([watchlist_item(2)]), FakeMarketService(fail=True)
+        ):
             response = self.client.get("/api/v1/watchlist/overview")
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -218,7 +222,9 @@ class WatchlistApiTest(unittest.TestCase):
         self.assertEqual(watchlist_service.delete_calls, [(99, "user-1")])
         self.assertEqual(watchlist_service.reorder_calls, [([99, 100], "user-1")])
 
-    def _patched_services(self, watchlist_service: FakeWatchlistService, market_service: FakeMarketService):
+    def _patched_services(
+        self, watchlist_service: FakeWatchlistService, market_service: FakeMarketService
+    ):
         settings = FakeSettings(str(id(watchlist_service)))
         return patch.multiple(
             watchlist_api,

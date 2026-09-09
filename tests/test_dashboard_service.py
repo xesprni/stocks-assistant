@@ -9,7 +9,9 @@ class FakeUser:
     id = "user-1"
 
     def __init__(self, permissions=None):
-        self.permissions = set(permissions or {"config:read", "market:read", "watchlist:read", "portfolio:read"})
+        self.permissions = set(
+            permissions or {"config:read", "market:read", "watchlist:read", "portfolio:read"}
+        )
 
     def can(self, permission):
         return permission in self.permissions
@@ -34,7 +36,10 @@ class FakeMarketService:
         self.static_info_calls = 0
 
     def get_config(self, user_id=None):
-        return {"indices": [{"symbol": ".SPX.US", "name": "S&P 500", "enabled": True}], "refresh_interval": 60}
+        return {
+            "indices": [{"symbol": ".SPX.US", "name": "S&P 500", "enabled": True}],
+            "refresh_interval": 60,
+        }
 
     def get_index_quotes(self, user_id=None, settings=None):
         return [{"symbol": ".SPX.US", "name": "S&P 500", "category": "US", "last_done": "5000"}]
@@ -153,7 +158,9 @@ class DashboardServiceTest(unittest.TestCase):
                 (9, "-1.00%", 800),
             ]
         ]
-        service = DashboardService(FakeMarketService(quotes), FakeWatchlistService(items), FakePortfolioService())
+        service = DashboardService(
+            FakeMarketService(quotes), FakeWatchlistService(items), FakePortfolioService()
+        )
 
         payload = service.build(user=FakeUser(), settings=None)
         watchlist = payload["watchlist"]
@@ -168,20 +175,26 @@ class DashboardServiceTest(unittest.TestCase):
 
     def test_watchlist_quote_failure_keeps_static_rows(self):
         items = [watchlist_item(index) for index in range(3)]
-        service = DashboardService(FakeMarketService(fail_quotes=True), FakeWatchlistService(items), FakePortfolioService())
+        service = DashboardService(
+            FakeMarketService(fail_quotes=True), FakeWatchlistService(items), FakePortfolioService()
+        )
 
         payload = service.build(user=FakeUser(), settings=None)
         watchlist = payload["watchlist"]
 
         self.assertEqual(watchlist["total"], 3)
         self.assertIn("Longbridge credentials", watchlist["quote_error"])
-        self.assertEqual([row["symbol"] for row in watchlist["items"]], ["SYM0.US", "SYM1.US", "SYM2.US"])
+        self.assertEqual(
+            [row["symbol"] for row in watchlist["items"]], ["SYM0.US", "SYM1.US", "SYM2.US"]
+        )
 
     def test_watchlist_rows_preserve_management_metadata_for_overview(self):
         items = [watchlist_item(1)]
         items[0]["note"] = "track earnings"
         items[0]["name_cn"] = "测试股票"
-        service = DashboardService(FakeMarketService(), FakeWatchlistService(items), FakePortfolioService())
+        service = DashboardService(
+            FakeMarketService(), FakeWatchlistService(items), FakePortfolioService()
+        )
 
         payload = service.watchlist(user=FakeUser(), settings=None, mode="bootstrap")
         row = payload["items"][0]
@@ -210,7 +223,9 @@ class DashboardServiceTest(unittest.TestCase):
                 }
             ]
         )
-        service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
+        service = DashboardService(
+            market_service, FakeWatchlistService(items), FakePortfolioService()
+        )
 
         payload = service.watchlist(user=FakeUser(), settings=None)
         cached_payload = service.watchlist(user=FakeUser(), settings=None)
@@ -288,7 +303,9 @@ class DashboardServiceTest(unittest.TestCase):
         self.assertEqual(us["top_positions"][0]["symbol"], "MSFT.US")
 
     def test_missing_module_permission_marks_module_unavailable(self):
-        service = DashboardService(FakeMarketService(), FakeWatchlistService([]), FakePortfolioService())
+        service = DashboardService(
+            FakeMarketService(), FakeWatchlistService([]), FakePortfolioService()
+        )
         user = FakeUser({"config:read", "market:read"})
 
         payload = service.build(user=user, settings=None)
@@ -311,7 +328,9 @@ class DashboardServiceTest(unittest.TestCase):
                 }
             ]
         )
-        service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
+        service = DashboardService(
+            market_service, FakeWatchlistService(items), FakePortfolioService()
+        )
 
         payload = service.build(user=FakeUser(), settings=None, mode="bootstrap")
 
@@ -333,7 +352,9 @@ class DashboardServiceTest(unittest.TestCase):
             }
         ]
         market_service = FakeMarketService(quotes)
-        service = DashboardService(market_service, FakeWatchlistService(items), FakePortfolioService())
+        service = DashboardService(
+            market_service, FakeWatchlistService(items), FakePortfolioService()
+        )
         user = FakeUser()
 
         first = service.watchlist(user=user, settings=None)

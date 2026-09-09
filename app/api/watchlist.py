@@ -1,16 +1,15 @@
 """Watchlist API."""
 
 from functools import partial
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
-from app.deps import get_market_service, get_portfolio_service, get_watchlist_service
 from app.config import get_effective_settings
 from app.core.dashboard.service import DashboardService
-from app.core.watchlist.service import LongbridgeUnavailableError
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
+from app.deps import get_market_service, get_portfolio_service, get_watchlist_service
 from app.schemas.watchlist import (
     WatchlistCategory,
     WatchlistItem,
@@ -27,11 +26,13 @@ router = APIRouter()
 
 @router.get("", response_model=WatchlistListResponse)
 def list_watchlist(
-    category: Optional[WatchlistCategory] = None,
+    category: WatchlistCategory | None = None,
     current_user: CurrentUser = Depends(require_permissions("watchlist:read")),
 ):
     service = get_watchlist_service()
-    items = [WatchlistItem(**item) for item in service.list_items(category, user_id=current_user.id)]
+    items = [
+        WatchlistItem(**item) for item in service.list_items(category, user_id=current_user.id)
+    ]
     return WatchlistListResponse(items=items, total=len(items))
 
 
@@ -46,7 +47,12 @@ async def watchlist_overview(
         portfolio_service=get_portfolio_service(),
     )
     payload = await run_in_threadpool(
-        partial(service.watchlist, user=current_user, settings=get_effective_settings(current_user.id), mode="full")
+        partial(
+            service.watchlist,
+            user=current_user,
+            settings=get_effective_settings(current_user.id),
+            mode="full",
+        )
     )
     if not current_user.can("market:read"):
         payload = _strip_watchlist_quote_payload(payload)
@@ -69,7 +75,7 @@ def add_watchlist_item(
 @router.get("/search", response_model=WatchlistSearchResponse)
 def search_watchlist(
     q: str = Query(..., min_length=1),
-    category: Optional[WatchlistCategory] = None,
+    category: WatchlistCategory | None = None,
     limit: int = Query(10, ge=1, le=20),
     current_user: CurrentUser = Depends(require_permissions("watchlist:read")),
 ):
@@ -77,10 +83,15 @@ def search_watchlist(
     try:
         results = [
             WatchlistSearchResult(**item)
-            for item in service.search(query=q, category=category, limit=limit, settings=get_effective_settings(current_user.id))
+            for item in service.search(
+                query=q,
+                category=category,
+                limit=limit,
+                settings=get_effective_settings(current_user.id),
+            )
         ]
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return WatchlistSearchResponse(results=results, total=len(results))
 
 
@@ -93,7 +104,7 @@ def delete_watchlist_item(
     try:
         service.delete_item(item_id, user_id=current_user.id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Watchlist item not found")
+        raise HTTPException(status_code=404, detail="Watchlist item not found") from None
     return {"status": "ok"}
 
 
@@ -110,7 +121,17 @@ def reorder_watchlist(
 
 def _strip_watchlist_quote_payload(payload: dict) -> dict:
     """无行情权限时只返回本地管理字段，避免泄露或复用行情缓存。"""
-    quote_fields = ("last_done", "prev_close", "open", "high", "low", "volume", "turnover", "change_value", "change_rate")
+    quote_fields = (
+        "last_done",
+        "prev_close",
+        "open",
+        "high",
+        "low",
+        "volume",
+        "turnover",
+        "change_value",
+        "change_rate",
+    )
 
     def strip_row(row: dict) -> dict:
         next_row = dict(row)

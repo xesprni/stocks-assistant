@@ -1,19 +1,30 @@
 """统一公司研究工作区 API。"""
 
-from io import BytesIO
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from starlette.concurrency import run_in_threadpool
 
 from app.config import get_effective_settings
+from app.core.research.documents import ResearchDocumentService
 from app.core.research.quick_prompts import QuickPromptsUnavailableError
 from app.core.security import CurrentUser, require_permissions
-from app.deps import get_memory_manager_for_user, get_research_quick_prompts_service, get_research_service
+from app.deps import (
+    get_memory_manager_for_user,
+    get_research_quick_prompts_service,
+    get_research_service,
+)
 from app.schemas.research import (
-    DecisionCreate, DecisionResponse, DecisionUpdate, ResearchDocumentCreate, ResearchDocumentResponse,
-    ResearchEvidenceCreate, ResearchEvidenceResponse, SecurityWorkspaceSummary, ThesisSnapshotCreate, ThesisSnapshotResponse,
+    DecisionCreate,
+    DecisionResponse,
+    DecisionUpdate,
+    ResearchDocumentCreate,
+    ResearchDocumentResponse,
+    ResearchEvidenceCreate,
+    ResearchEvidenceResponse,
     ResearchQuickPromptsResponse,
+    SecurityWorkspaceSummary,
+    ThesisSnapshotCreate,
+    ThesisSnapshotResponse,
 )
 
 router = APIRouter()
@@ -21,7 +32,7 @@ router = APIRouter()
 
 @router.get("/quick-prompts", response_model=ResearchQuickPromptsResponse)
 def quick_prompts(
-    language: Optional[Literal["zh", "en"]] = Query(None),
+    language: Literal["zh", "en"] | None = Query(None),
     force_refresh: bool = Query(False),
     current_user: CurrentUser = Depends(require_permissions("chat:write")),
 ):
@@ -39,41 +50,10 @@ def quick_prompts(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-async def _index_latest_document(user_id: str, document: dict) -> None:
-    file_path = await run_in_threadpool(
-        get_research_service().materialize_document_version,
-        user_id,
-        document["id"],
-    )
-    manager = get_memory_manager_for_user(user_id)
-    await manager.index_file(file_path, source="knowledge", scope="user", user_id=user_id, metadata={"research_document_id": document["id"]})
-
-
 def _bad_request(exc: Exception) -> HTTPException:
     if isinstance(exc, KeyError):
         return HTTPException(status_code=404, detail="Research resource not found")
     return HTTPException(status_code=400, detail=str(exc))
-
-
-def _extract_uploaded_content(
-    raw: bytes,
-    filename: str,
-    content_type: Optional[str],
-    document_type: str,
-) -> tuple[str, list[str], str]:
-    """在线程池解析 PDF/文本，避免大文件逐页抽取阻塞事件循环。"""
-    if filename.lower().endswith(".pdf") or content_type == "application/pdf":
-        try:
-            from pypdf import PdfReader
-        except ImportError as exc:
-            raise ValueError("PDF parser is unavailable; install project dependencies with uv sync") from exc
-        reader = PdfReader(BytesIO(raw))
-        page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
-        if not any(page_texts):
-            raise ValueError("PDF has no extractable text; OCR is required for this scanned document")
-        content = "\n".join(page_texts)
-        return ("pdf" if document_type == "note" else document_type), page_texts, content
-    return document_type, [], raw.decode("utf-8")
 
 
 @router.get("/metrics")
@@ -85,7 +65,9 @@ def research_metrics(
 
 
 @router.get("/security/{symbol}/summary", response_model=SecurityWorkspaceSummary)
-def security_summary(symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def security_summary(
+    symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))
+):
     try:
         return get_research_service().security_summary(current_user.id, symbol)
     except (ValueError, KeyError) as exc:
@@ -93,7 +75,9 @@ def security_summary(symbol: str, current_user: CurrentUser = Depends(require_pe
 
 
 @router.get("/security/{symbol}/theses", response_model=list[ThesisSnapshotResponse])
-def list_theses(symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def list_theses(
+    symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))
+):
     try:
         return get_research_service().list_theses(current_user.id, symbol)
     except ValueError as exc:
@@ -101,7 +85,11 @@ def list_theses(symbol: str, current_user: CurrentUser = Depends(require_permiss
 
 
 @router.post("/security/{symbol}/theses", response_model=ThesisSnapshotResponse)
-def create_thesis(symbol: str, body: ThesisSnapshotCreate, current_user: CurrentUser = Depends(require_permissions("knowledge:write"))):
+def create_thesis(
+    symbol: str,
+    body: ThesisSnapshotCreate,
+    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
+):
     try:
         return get_research_service().create_thesis(current_user.id, symbol, body)
     except (ValueError, KeyError) as exc:
@@ -109,7 +97,11 @@ def create_thesis(symbol: str, body: ThesisSnapshotCreate, current_user: Current
 
 
 @router.get("/security/{symbol}/decisions", response_model=list[DecisionResponse])
-def list_decisions(symbol: str, limit: int = Query(50, ge=1, le=200), current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def list_decisions(
+    symbol: str,
+    limit: int = Query(50, ge=1, le=200),
+    current_user: CurrentUser = Depends(require_permissions("knowledge:read")),
+):
     try:
         return get_research_service().list_decisions(current_user.id, symbol, limit)
     except ValueError as exc:
@@ -117,7 +109,11 @@ def list_decisions(symbol: str, limit: int = Query(50, ge=1, le=200), current_us
 
 
 @router.post("/security/{symbol}/decisions", response_model=DecisionResponse)
-def create_decision(symbol: str, body: DecisionCreate, current_user: CurrentUser = Depends(require_permissions("knowledge:write"))):
+def create_decision(
+    symbol: str,
+    body: DecisionCreate,
+    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
+):
     try:
         return get_research_service().create_decision(current_user.id, symbol, body)
     except (ValueError, KeyError) as exc:
@@ -125,7 +121,9 @@ def create_decision(symbol: str, body: DecisionCreate, current_user: CurrentUser
 
 
 @router.get("/security/{symbol}/evidence", response_model=list[ResearchEvidenceResponse])
-def list_evidence(symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def list_evidence(
+    symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))
+):
     try:
         return get_research_service().list_evidence(current_user.id, symbol)
     except ValueError as exc:
@@ -133,7 +131,11 @@ def list_evidence(symbol: str, current_user: CurrentUser = Depends(require_permi
 
 
 @router.post("/security/{symbol}/evidence", response_model=ResearchEvidenceResponse)
-def save_evidence(symbol: str, body: ResearchEvidenceCreate, current_user: CurrentUser = Depends(require_permissions("knowledge:write"))):
+def save_evidence(
+    symbol: str,
+    body: ResearchEvidenceCreate,
+    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
+):
     try:
         return get_research_service().save_evidence(current_user.id, symbol, body)
     except ValueError as exc:
@@ -141,15 +143,23 @@ def save_evidence(symbol: str, body: ResearchEvidenceCreate, current_user: Curre
 
 
 @router.patch("/decisions/{decision_id}", response_model=DecisionResponse)
-def update_decision(decision_id: str, body: DecisionUpdate, current_user: CurrentUser = Depends(require_permissions("knowledge:write"))):
+def update_decision(
+    decision_id: str,
+    body: DecisionUpdate,
+    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
+):
     try:
-        return get_research_service().update_decision_outcome(current_user.id, decision_id, body.outcome)
+        return get_research_service().update_decision_outcome(
+            current_user.id, decision_id, body.outcome
+        )
     except KeyError as exc:
         raise _bad_request(exc) from exc
 
 
 @router.get("/security/{symbol}/documents", response_model=list[ResearchDocumentResponse])
-def list_documents(symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def list_documents(
+    symbol: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))
+):
     try:
         return get_research_service().list_documents(current_user.id, symbol)
     except ValueError as exc:
@@ -157,11 +167,14 @@ def list_documents(symbol: str, current_user: CurrentUser = Depends(require_perm
 
 
 @router.post("/security/{symbol}/documents", response_model=ResearchDocumentResponse)
-async def ingest_document(symbol: str, body: ResearchDocumentCreate, current_user: CurrentUser = Depends(require_permissions("knowledge:write"))):
+async def ingest_document(
+    symbol: str,
+    body: ResearchDocumentCreate,
+    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
+):
     try:
-        document = await run_in_threadpool(get_research_service().ingest_document, current_user.id, symbol, body)
-        await _index_latest_document(current_user.id, document)
-        return document
+        service = ResearchDocumentService(get_research_service(), get_memory_manager_for_user)
+        return await service.ingest(current_user.id, symbol, body)
     except (ValueError, KeyError) as exc:
         raise _bad_request(exc) from exc
 
@@ -172,9 +185,9 @@ async def upload_document(
     file: UploadFile = File(...),
     title: str = Form(""),
     document_type: str = Form("pdf"),
-    document_id: Optional[str] = Form(None),
-    source_url: Optional[str] = Form(None),
-    published_at: Optional[str] = Form(None),
+    document_id: str | None = Form(None),
+    source_url: str | None = Form(None),
+    published_at: str | None = Form(None),
     current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
 ):
     raw = await file.read(20 * 1024 * 1024 + 1)
@@ -182,26 +195,27 @@ async def upload_document(
         raise HTTPException(status_code=413, detail="Document exceeds 20 MB")
     filename = file.filename or "document"
     try:
-        document_type, page_texts, content = await run_in_threadpool(
-            _extract_uploaded_content,
+        service = ResearchDocumentService(get_research_service(), get_memory_manager_for_user)
+        return await service.upload(
+            current_user.id,
+            symbol,
             raw,
             filename,
             file.content_type,
-            document_type,
+            title=title,
+            document_type=document_type,
+            document_id=document_id,
+            source_url=source_url,
+            published_at=published_at,
         )
-        request = ResearchDocumentCreate(
-            document_id=document_id, title=title.strip() or filename, document_type=document_type,
-            content=content, source_url=source_url, published_at=published_at, page_texts=page_texts,
-        )
-        document = await run_in_threadpool(get_research_service().ingest_document, current_user.id, symbol, request)
-        await _index_latest_document(current_user.id, document)
-        return document
     except (ValueError, UnicodeError, KeyError) as exc:
         raise _bad_request(exc) from exc
 
 
 @router.get("/documents/{document_id}", response_model=ResearchDocumentResponse)
-def get_document(document_id: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+def get_document(
+    document_id: str, current_user: CurrentUser = Depends(require_permissions("knowledge:read"))
+):
     try:
         return get_research_service().get_document(current_user.id, document_id)
     except KeyError as exc:

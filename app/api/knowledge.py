@@ -11,7 +11,11 @@ from starlette.concurrency import run_in_threadpool
 from app.config import get_effective_settings
 from app.core.knowledge.service import KnowledgeService
 from app.core.security import CurrentUser, require_permissions, user_workspace_dir
-from app.schemas.knowledge import KnowledgeFileSaveRequest, KnowledgeSaveResponse, KnowledgeUrlSaveRequest
+from app.schemas.knowledge import (
+    KnowledgeFileSaveRequest,
+    KnowledgeSaveResponse,
+    KnowledgeUrlSaveRequest,
+)
 
 router = APIRouter()
 
@@ -48,7 +52,7 @@ def knowledge_tree(current_user: CurrentUser = Depends(require_permissions("know
         tree = service.list_tree()
         return {"tree": tree}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/read")
@@ -63,13 +67,13 @@ def read_knowledge_file(
             raise HTTPException(status_code=404, detail="File not found")
         return content
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="File not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/files", response_model=KnowledgeSaveResponse)
@@ -88,9 +92,9 @@ async def save_knowledge_file(
         await _index_saved_knowledge(current_user, result)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/url", response_model=KnowledgeSaveResponse)
@@ -109,9 +113,9 @@ async def save_knowledge_url(
         await _index_saved_knowledge(current_user, result)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/graph")
@@ -121,4 +125,4 @@ def knowledge_graph(current_user: CurrentUser = Depends(require_permissions("kno
         graph = service.build_graph()
         return graph
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

@@ -5,10 +5,10 @@
 - PRE_PROCESS: 可被 LLM 主动调用的工具（大多数工具）
 - POST_PROCESS: 在 Agent 执行完成后自动运行的工具
 """
-from enum import Enum
-from typing import Any, Optional
 
 import logging
+from enum import Enum
+from typing import Any
 
 logger = logging.getLogger("stocks-assistant.tools")
 
@@ -38,7 +38,7 @@ class BaseTool:
     name: str = "base_tool"
     description: str = "Base tool"
     params: dict = {}
-    model: Optional[Any] = None
+    model: Any | None = None
 
     @classmethod
     def get_json_schema(cls) -> dict:
@@ -48,7 +48,7 @@ class BaseTool:
         try:
             return self.execute(params)
         except Exception as e:
-            logger.error(f"Tool {self.name} error: {e}")
+            logger.error("Tool %s error: %s", self.name, e)
             return ToolResult.fail(str(e))
 
     def execute(self, params: dict) -> ToolResult:

@@ -4,12 +4,18 @@
 支持三种调度类型：cron 表达式、固定间隔、一次性执行。
 """
 
-from datetime import datetime
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.tools.scheduler.helpers import parse_schedule_expression, run_to_response, task_to_response
+from app.core.security import CurrentUser, require_permissions
+from app.core.tools.scheduler.helpers import (
+    parse_schedule_expression,
+    run_to_response,
+    task_to_response,
+)
+from app.deps import get_scheduler_service
 from app.schemas.scheduler import (
     TaskCreateRequest,
     TaskListResponse,
@@ -18,8 +24,6 @@ from app.schemas.scheduler import (
     TaskRunResponse,
     TaskUpdateRequest,
 )
-from app.deps import get_scheduler_service
-from app.core.security import CurrentUser, require_permissions
 
 router = APIRouter()
 
@@ -43,7 +47,10 @@ def list_tasks(current_user: CurrentUser = Depends(require_permissions("schedule
 
 
 @router.post("/tasks", response_model=TaskResponse)
-def create_task(request: TaskCreateRequest, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def create_task(
+    request: TaskCreateRequest,
+    current_user: CurrentUser = Depends(require_permissions("scheduler:write")),
+):
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task_id = str(uuid.uuid4())[:8]
@@ -73,11 +80,13 @@ def create_task(request: TaskCreateRequest, current_user: CurrentUser = Depends(
         task_store.add_task(task)
         return _task_to_response(task)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
+def get_task(
+    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))
+):
     service = get_scheduler_service()
     task = service.task_store.for_user(current_user.id).get_task(task_id)
     if not task:
@@ -123,9 +132,9 @@ def update_task(
     try:
         task_store.update_task(task_id, updates)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Task not found") from None
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     updated = task_store.get_task(task_id)
     if not updated:
@@ -134,16 +143,18 @@ def update_task(
 
 
 @router.post("/tasks/{task_id}/run", response_model=TaskRunResponse)
-async def run_task_now(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:run"))):
+async def run_task_now(
+    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:run"))
+):
     service = get_scheduler_service()
     try:
         if not service.task_store.for_user(current_user.id).get_task(task_id):
             raise ValueError("Task not found")
         run = await service.execute_task_now(task_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Task not found") from None
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _run_to_response(run)
 
 
@@ -157,7 +168,11 @@ def list_task_runs(
     task = service.task_store.for_user(current_user.id).get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    runs = service.run_store.for_user(current_user.id).list_runs(task_id=task_id, limit=limit) if service.run_store else []
+    runs = (
+        service.run_store.for_user(current_user.id).list_runs(task_id=task_id, limit=limit)
+        if service.run_store
+        else []
+    )
     return TaskRunListResponse(runs=[_run_to_response(run) for run in runs], total=len(runs))
 
 
@@ -167,22 +182,30 @@ def list_runs(
     current_user: CurrentUser = Depends(require_permissions("scheduler:read")),
 ):
     service = get_scheduler_service()
-    runs = service.run_store.for_user(current_user.id).list_runs(limit=limit) if service.run_store else []
+    runs = (
+        service.run_store.for_user(current_user.id).list_runs(limit=limit)
+        if service.run_store
+        else []
+    )
     return TaskRunListResponse(runs=[_run_to_response(run) for run in runs], total=len(runs))
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def delete_task(
+    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))
+):
     service = get_scheduler_service()
     try:
         service.task_store.for_user(current_user.id).delete_task(task_id)
         return {"status": "ok"}
     except ValueError:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Task not found") from None
 
 
 @router.post("/tasks/{task_id}/toggle")
-def toggle_task(task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))):
+def toggle_task(
+    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))
+):
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task = task_store.get_task(task_id)

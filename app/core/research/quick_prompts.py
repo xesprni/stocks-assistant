@@ -8,10 +8,11 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from app.config import Settings
 from app.core.agent.models import LLMRequest
@@ -37,7 +38,7 @@ class QuickPromptsUnavailableError(RuntimeError):
 
 
 def _iso(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
 
 
 def _error_message(language: str) -> str:
@@ -50,7 +51,8 @@ def _parse_prompts(response: dict[str, Any]) -> list[str]:
     content = response["choices"][0]["message"].get("content")
     if isinstance(content, list):
         content = "\n".join(
-            item.get("text", "") for item in content
+            item.get("text", "")
+            for item in content
             if isinstance(item, dict) and item.get("type") == "text"
         )
     if not isinstance(content, str):
@@ -134,7 +136,8 @@ class ResearchQuickPromptsService:
     def _read(self, key: tuple) -> dict | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM quick_prompts WHERE user_id=? AND language=? AND context_scope=?", key
+                "SELECT * FROM quick_prompts WHERE user_id=? AND language=? AND context_scope=?",
+                key,
             ).fetchone()
         return dict(row) if row else None
 
@@ -174,15 +177,24 @@ class ResearchQuickPromptsService:
             refreshed_by_peer = row is not None and row != observed
             if row and row["retry_after"] > now and (not force_refresh or refreshed_by_peer):
                 return self._result(row, interval, language, failed=True)
-            if row and row["generated_at"] is not None and now < row["generated_at"] + interval:
-                if not force_refresh or refreshed_by_peer:
-                    return self._result(row, interval, language)
+            if (
+                row
+                and row["generated_at"] is not None
+                and now < row["generated_at"] + interval
+                and (not force_refresh or refreshed_by_peer)
+            ):
+                return self._result(row, interval, language)
             try:
                 context = self._context(user_id, can_read_watchlist, can_read_portfolio)
-                context.update({"language": "English" if language == "en" else "简体中文", "as_of": _iso(now)})
+                context.update(
+                    {"language": "English" if language == "en" else "简体中文", "as_of": _iso(now)}
+                )
                 # 使用用户有效模型配置直接生成问题，不启用工具或创建聊天会话。
                 provider = self.llm_provider_factory(settings)
-                codex = settings.llm_provider == "openai_responses" and settings.llm_auth_mode == "codex"
+                codex = (
+                    settings.llm_provider == "openai_responses"
+                    and settings.llm_auth_mode == "codex"
+                )
                 request = LLMRequest(
                     system=_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": json.dumps(context, ensure_ascii=False)}],
@@ -201,11 +213,17 @@ class ResearchQuickPromptsService:
                         DO UPDATE SET prompts_json=excluded.prompts_json, generated_at=excluded.generated_at, retry_after=0""",
                         (*key, json.dumps(prompts, ensure_ascii=False), generated_at),
                     )
-                return self._result({"prompts_json": json.dumps(prompts), "generated_at": generated_at}, interval, language)
+                return self._result(
+                    {"prompts_json": json.dumps(prompts), "generated_at": generated_at},
+                    interval,
+                    language,
+                )
             except Exception as exc:
                 # 错误不覆盖成功结果、不延长缓存；短暂退避防止页面重挂载反复调用失败模型。
                 # Provider 异常可能携带 URL/凭据，不直接透传或记录异常正文。
-                logger.warning("Quick prompt generation failed for user %s (%s)", user_id, type(exc).__name__)
+                logger.warning(
+                    "Quick prompt generation failed for user %s (%s)", user_id, type(exc).__name__
+                )
                 with self._connect() as connection:
                     connection.execute(
                         """INSERT INTO quick_prompts(user_id, language, context_scope, retry_after)
@@ -245,12 +263,16 @@ class ResearchQuickPromptsService:
 
     def _context(self, user_id: str, can_read_watchlist: bool, can_read_portfolio: bool) -> dict:
         def symbols(items: list[dict]) -> list[str]:
-            return list(dict.fromkeys(str(item["symbol"])[:64] for item in items if item.get("symbol")))[:20]
+            return list(
+                dict.fromkeys(str(item["symbol"])[:64] for item in items if item.get("symbol"))
+            )[:20]
 
         context = {}
         # 只读取当前用户的本地标的代码，不拉取行情或发送持仓金额、凭据等无关信息。
         if can_read_watchlist and self.watchlist_service:
-            context["watchlist_symbols"] = symbols(self.watchlist_service.list_items(user_id=user_id))
+            context["watchlist_symbols"] = symbols(
+                self.watchlist_service.list_items(user_id=user_id)
+            )
         if can_read_portfolio and self.portfolio_service:
             rows = []
             for market in ("US", "A", "H"):

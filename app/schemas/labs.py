@@ -1,8 +1,8 @@
 """Portfolio、估值/同业与大中华市场实验室协议。"""
 
 import math
-from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -12,13 +12,13 @@ from app.schemas.portfolio import PortfolioMarket
 class PortfolioCashFlow(BaseModel):
     date: datetime
     amount: float
-    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
 
     @field_validator("date")
     @classmethod
     def valid_date(cls, value: datetime) -> datetime:
-        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-        if normalized > datetime.now(timezone.utc):
+        normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        if normalized > datetime.now(UTC):
             raise ValueError("cash-flow date cannot be in the future")
         return normalized
 
@@ -31,7 +31,7 @@ class PortfolioCashFlow(BaseModel):
 
     @field_validator("currency")
     @classmethod
-    def normalize_currency(cls, value: Optional[str]) -> Optional[str]:
+    def normalize_currency(cls, value: str | None) -> str | None:
         return value.strip().upper() if value else None
 
 
@@ -83,25 +83,29 @@ class PortfolioLabRequest(BaseModel):
         for currency, rate in value.items():
             key = currency.strip().upper()
             if len(key) != 3 or not key.isalpha() or not math.isfinite(rate) or rate <= 0:
-                raise ValueError("FX rates must map three-letter currencies to finite positive rates")
+                raise ValueError(
+                    "FX rates must map three-letter currencies to finite positive rates"
+                )
             normalized[key] = rate
         return normalized
 
     @model_validator(mode="after")
     def base_rate_is_one(self):
-        if self.base_currency in self.fx_rates and not math.isclose(self.fx_rates[self.base_currency], 1.0):
+        if self.base_currency in self.fx_rates and not math.isclose(
+            self.fx_rates[self.base_currency], 1.0
+        ):
             raise ValueError("base currency FX rate must equal 1")
         return self
 
 
 class ValuationModelCreate(BaseModel):
-    model_id: Optional[str] = None
+    model_id: str | None = None
     model_type: Literal["dcf", "reverse_dcf", "relative"] = "dcf"
     title: str = Field(min_length=1, max_length=200)
     assumptions: dict[str, Any] = Field(default_factory=dict)
     peer_symbols: list[str] = Field(default_factory=list, max_length=50)
     source_ids: list[str] = Field(default_factory=list, max_length=100)
-    thesis_snapshot_id: Optional[str] = None
+    thesis_snapshot_id: str | None = None
     reason: str = Field(default="", max_length=1000)
 
 
@@ -116,14 +120,18 @@ class ValuationModelResponse(BaseModel):
     peer_symbols: list[str]
     result: dict[str, Any]
     source_ids: list[str]
-    thesis_snapshot_id: Optional[str] = None
+    thesis_snapshot_id: str | None = None
     reason: str = ""
     created_at: str
 
 
 class PeerComparisonRequest(BaseModel):
     symbols: list[str] = Field(min_length=2, max_length=30)
-    metrics: list[str] = Field(default_factory=lambda: ["pe_ttm_ratio", "pb_ratio", "ps_ttm_ratio"], min_length=1, max_length=20)
+    metrics: list[str] = Field(
+        default_factory=lambda: ["pe_ttm_ratio", "pb_ratio", "ps_ttm_ratio"],
+        min_length=1,
+        max_length=20,
+    )
 
     @field_validator("symbols")
     @classmethod
@@ -144,7 +152,7 @@ class PeerComparisonRequest(BaseModel):
 
 class GreaterChinaRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=40)
-    paired_symbol: Optional[str] = Field(default=None, max_length=40)
+    paired_symbol: str | None = Field(default=None, max_length=40)
     china_related_us_listing: bool = False
 
 
@@ -193,24 +201,36 @@ class LabAIRun(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     steps: int = 0
     created_at: str
-    completed_at: Optional[str] = None
-    error: Optional[str] = None
+    completed_at: str | None = None
+    error: str | None = None
 
 
 class LabDataRequest(BaseModel):
     """AI 只能提供查询条件，身份与配置始终由后端绑定。"""
 
     model_config = ConfigDict(extra="forbid")
-    action: Literal["portfolio", "financial_reports", "security_insights", "quotes", "peers", "greater_china", "valuation_models"]
+    action: Literal[
+        "portfolio",
+        "financial_reports",
+        "security_insights",
+        "quotes",
+        "peers",
+        "greater_china",
+        "valuation_models",
+    ]
     symbol: str = Field(default="", max_length=40)
     symbols: list[str] = Field(default_factory=list, max_length=10)
     market: PortfolioMarket = "US"
     benchmark_symbol: str = Field(default="SPY.US", min_length=1, max_length=40)
     lookback_days: int = Field(default=252, ge=30, le=500)
-    paired_symbol: Optional[str] = Field(default=None, max_length=40)
+    paired_symbol: str | None = Field(default=None, max_length=40)
     china_related_us_listing: bool = False
     scenario_shocks: dict[str, float] = Field(default_factory=dict, max_length=100)
-    scenario_note: str = Field(default="", max_length=1000, description="Describe these hypothetical stress assumptions; they are not a market forecast")
+    scenario_note: str = Field(
+        default="",
+        max_length=1000,
+        description="Describe these hypothetical stress assumptions; they are not a market forecast",
+    )
 
     @model_validator(mode="after")
     def validate_scenario(self):
@@ -226,11 +246,18 @@ class LabValuationEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["source", "assumption"]
     note: str = Field(min_length=1, max_length=1000)
-    artifact_id: Optional[str] = None
-    path: Optional[str] = Field(default=None, max_length=500, description="JSON Pointer into the source artifact's data, e.g. /statements/0/rows/0/values/0/value")
-    scale: float = Field(default=1, description="Explicit unit conversion only: 1, 1000, 1e6, 1e9 or their reciprocals")
-    denominator_artifact_id: Optional[str] = None
-    denominator_path: Optional[str] = Field(default=None, max_length=500)
+    artifact_id: str | None = None
+    path: str | None = Field(
+        default=None,
+        max_length=500,
+        description="JSON Pointer into the source artifact's data, e.g. /statements/0/rows/0/values/0/value",
+    )
+    scale: float = Field(
+        default=1,
+        description="Explicit unit conversion only: 1, 1000, 1e6, 1e9 or their reciprocals",
+    )
+    denominator_artifact_id: str | None = None
+    denominator_path: str | None = Field(default=None, max_length=500)
 
 
 class LabAIValuationRequest(BaseModel):

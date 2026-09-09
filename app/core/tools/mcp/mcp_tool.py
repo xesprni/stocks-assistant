@@ -10,7 +10,7 @@ import asyncio
 import logging
 import shutil
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.mcp.config import (
@@ -44,7 +44,7 @@ class MCPToolAdapter(BaseTool):
         tool_name: str,
         tool_description: str,
         tool_schema: dict,
-        manager: "MCPManager",
+        manager: MCPManager,
     ):
         super().__init__()
         self.server_name = server_name
@@ -81,10 +81,10 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
 
     def __init__(
         self,
-        server_configs: Dict[str, Dict[str, Any]],
-        workspace_dir: Optional[str] = None,
+        server_configs: dict[str, dict[str, Any]],
+        workspace_dir: str | None = None,
         tool_timeout_seconds: float = 60.0,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ):
         # 对配置字典进行归一化处理
         self.server_configs = normalize_mcp_servers(server_configs)
@@ -93,37 +93,37 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         self._token_store = MCPTokenStore(workspace_dir, user_id=user_id) if workspace_dir else None
         self.user_id = user_id
         # 已发现工具映射：工具全名 -> MCPToolAdapter
-        self.tools: Dict[str, MCPToolAdapter] = {}
+        self.tools: dict[str, MCPToolAdapter] = {}
         # 已建立的客户端会话：服务器名 -> ClientSession
-        self._sessions: Dict[str, Any] = {}
+        self._sessions: dict[str, Any] = {}
         # 连接错误信息：服务器名 -> 错误描述
-        self._errors: Dict[str, str] = {}
+        self._errors: dict[str, str] = {}
         # 连接状态：服务器名 -> connecting/connected/disconnected/error/auth_required
-        self._states: Dict[str, str] = {}
+        self._states: dict[str, str] = {}
         # 各服务器异步连接任务
-        self._tasks: Dict[str, asyncio.Task] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
         # 各服务器连接超时监控任务
-        self._timeout_tasks: Dict[str, asyncio.Task] = {}
+        self._timeout_tasks: dict[str, asyncio.Task] = {}
         # 后台连接/重连调度 Future
-        self._background_futures: List[Any] = []
+        self._background_futures: list[Any] = []
         # 用于优雅关闭连接的停止事件
-        self._stop_events: Dict[str, asyncio.Event] = {}
+        self._stop_events: dict[str, asyncio.Event] = {}
         # OAuth Client Credentials 令牌缓存：服务器名 -> (token, 过期时间戳)
-        self._oauth_tokens: Dict[str, tuple[str, float]] = {}
+        self._oauth_tokens: dict[str, tuple[str, float]] = {}
         # OAuth Authorization Code 登录令牌：服务器名 -> OAuthToken
-        self._oauth_login_tokens: Dict[str, Any] = {}
+        self._oauth_login_tokens: dict[str, Any] = {}
         # OAuth 已注册客户端信息
-        self._oauth_client_infos: Dict[str, Any] = {}
+        self._oauth_client_infos: dict[str, Any] = {}
         # 待用户打开的 OAuth 授权 URL
-        self._oauth_authorization_urls: Dict[str, str] = {}
+        self._oauth_authorization_urls: dict[str, str] = {}
         # 等待 OAuth 授权 URL 就绪的 Future
-        self._oauth_authorization_ready: Dict[str, asyncio.Future] = {}
+        self._oauth_authorization_ready: dict[str, asyncio.Future] = {}
         # 等待 OAuth 回调的 Future
-        self._oauth_callback_futures: Dict[str, asyncio.Future] = {}
+        self._oauth_callback_futures: dict[str, asyncio.Future] = {}
         # 后台异步事件循环
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         # 运行事件循环的守护线程
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         # 保护共享状态的可重入锁
         self._lock = threading.RLock()
         # 启动时从磁盘恢复令牌
@@ -153,7 +153,7 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
             raise RuntimeError("failed to start MCP event loop")
         return self._loop
 
-    def _run_sync(self, coro, timeout: Optional[float] = None):
+    def _run_sync(self, coro, timeout: float | None = None):
         """在后台循环中运行异步协程，并同步等待结果（限时可选）。"""
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
@@ -175,18 +175,18 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
             try:
                 done.result()
             except Exception as exc:
-                logger.warning(f"{label} failed: {exc}")
+                logger.warning("%s failed: %s", label, exc)
 
         future.add_done_callback(log_result)
         return future
 
     # ------------------------------------------------------------------ public
 
-    def connect_all_sync(self, wait: bool = False, timeout: Optional[float] = None):
+    def connect_all_sync(self, wait: bool = False, timeout: float | None = None):
         """同步地对所有已配置的 MCP 服务器发起连接。wait=True 时限时等待连接就绪。"""
         return self._run_sync(self.connect_all(wait=wait, timeout=timeout), timeout=timeout)
 
-    def connect_all_background(self, wait: bool = False, timeout: Optional[float] = None):
+    def connect_all_background(self, wait: bool = False, timeout: float | None = None):
         """后台发起所有 MCP 服务器连接，不阻塞调用方。"""
         with self._lock:
             for name, config in self.server_configs.items():
@@ -199,9 +199,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
 
     def reconnect_sync(
         self,
-        server_configs: Dict[str, Dict[str, Any]],
+        server_configs: dict[str, dict[str, Any]],
         wait: bool = False,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ):
         """更新服务器配置并重新建立所有连接。"""
         self.server_configs = normalize_mcp_servers(server_configs)
@@ -209,9 +209,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
 
     def reconnect_background(
         self,
-        server_configs: Dict[str, Dict[str, Any]],
+        server_configs: dict[str, dict[str, Any]],
         wait: bool = False,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ):
         """后台更新服务器配置并重新连接，不阻塞调用方。"""
         self.server_configs = normalize_mcp_servers(server_configs)
@@ -233,7 +233,7 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
             if self._loop and self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)
 
-    def get_server_state(self, server_name: str) -> tuple[str, Optional[str], int, Optional[str]]:
+    def get_server_state(self, server_name: str) -> tuple[str, str | None, int, str | None]:
         """返回指定服务器的状态元组：(state, error_msg, tool_count, oauth_url)。"""
         with self._lock:
             prefix = f"mcp_{server_name}_"
@@ -245,7 +245,12 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 server_name,
                 "connected" if server_name in self._sessions else "disconnected",
             )
-            return state, self._errors.get(server_name), tools_count, self._oauth_authorization_urls.get(server_name)
+            return (
+                state,
+                self._errors.get(server_name),
+                tools_count,
+                self._oauth_authorization_urls.get(server_name),
+            )
 
     def call_tool_sync(self, server_name: str, tool_name: str, params: dict):
         """同步调用指定 MCP 服务器的工具并返回结果。"""
@@ -256,7 +261,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         """更新默认 MCP 工具调用超时，用于运行时配置热更新。"""
         self.tool_timeout_seconds = self._normalize_tool_timeout(timeout)
 
-    def start_oauth_authorization_sync(self, server_name: str, redirect_uri: str, timeout: float = 20) -> str:
+    def start_oauth_authorization_sync(
+        self, server_name: str, redirect_uri: str, timeout: float = 20
+    ) -> str:
         """为指定服务器启动 OAuth Authorization Code 授权流程，返回授权 URL。"""
         return self._run_sync(
             self.start_oauth_authorization(server_name, redirect_uri, timeout=timeout),
@@ -266,9 +273,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
     def complete_oauth_callback_sync(
         self,
         server_name: str,
-        code: Optional[str],
-        state: Optional[str],
-        error: Optional[str] = None,
+        code: str | None,
+        state: str | None,
+        error: str | None = None,
     ) -> None:
         """将 OAuth 回调参数注入持待的 Future，完成授权流程。"""
         return self._run_sync(self.complete_oauth_callback(server_name, code, state, error))
@@ -277,7 +284,7 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         """停止指定服务器并清除 OAuth 相关缓存和持久化数据。"""
         return self._run_sync(self.clear_oauth_credentials(server_name))
 
-    async def connect_all(self, wait: bool = False, timeout: Optional[float] = None):
+    async def connect_all(self, wait: bool = False, timeout: float | None = None):
         """异步关闭并重建所有 MCP 服务器连接。"""
         await self.close()
 
@@ -302,14 +309,14 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 with self._lock:
                     self._errors[server_name] = error
                     self._states[server_name] = "error"
-                logger.warning(f"Failed to connect MCP server '{server_name}': {error}")
+                logger.warning("Failed to connect MCP server '%s': %s", server_name, error)
 
     async def _connect_server(
         self,
         server_name: str,
         config: dict,
         wait: bool = False,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ):
         """为单个 MCP 服务器创建异步连接任务。
 
@@ -324,7 +331,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
             return
         stop_event = asyncio.Event()
         ready: asyncio.Future = asyncio.get_running_loop().create_future()
-        ready.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
+        ready.add_done_callback(
+            lambda future: future.exception() if not future.cancelled() else None
+        )
         task = asyncio.create_task(self._run_server(server_name, config, stop_event, ready))
         with self._lock:
             self._tasks[server_name] = task
@@ -335,14 +344,18 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         if wait:
             try:
                 await asyncio.wait_for(ready, timeout=connect_timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 with self._lock:
                     self._states[server_name] = "error"
-                    self._errors[server_name] = f"MCP connection timed out after {connect_timeout:.0f}s"
+                    self._errors[server_name] = (
+                        f"MCP connection timed out after {connect_timeout:.0f}s"
+                    )
                 task.cancel()
         else:
             # 默认异步连接：后台启动超时监联协程
-            timeout_task = asyncio.create_task(self._connection_timeout(server_name, ready, task, connect_timeout))
+            timeout_task = asyncio.create_task(
+                self._connection_timeout(server_name, ready, task, connect_timeout)
+            )
             with self._lock:
                 old_timeout_task = self._timeout_tasks.get(server_name)
                 if old_timeout_task and not old_timeout_task.done():
@@ -362,7 +375,7 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         if task:
             try:
                 await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=3)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
@@ -430,7 +443,7 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 authorization_ready.set_exception(RuntimeError(error))
             if not ready.done():
                 ready.set_exception(RuntimeError(error))
-            logger.warning(f"MCP connect error for '{server_name}': {error}")
+            logger.warning("MCP connect error for '%s': %s", server_name, error)
         finally:
             with self._lock:
                 self._sessions.pop(server_name, None)
@@ -445,8 +458,6 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         ready: asyncio.Future,
     ):
         """根据传输类型建立具体的 MCP 客户端连接并持续到 stop_event 被设置。"""
-        from mcp import ClientSession
-
         transport = normalize_transport(config.get("transport"), config)
         if transport == STANDARD_HTTP_TRANSPORT:
             # 标准可流式 HTTP 连接
@@ -454,34 +465,23 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
 
             headers = await self._build_http_headers(server_name, config)
             auth = self._build_oauth_authorization_provider(server_name, config, ready)
-            async with streamablehttp_client(config["url"], headers=headers or None, auth=auth) as (read, write, _get_session_id):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    await self._discover_tools(server_name, session)
-                    with self._lock:
-                        self._sessions[server_name] = session
-                        self._states[server_name] = "connected"
-                        self._errors.pop(server_name, None)
-                    if not ready.done():
-                        ready.set_result(None)
-                    await stop_event.wait()
+            async with streamablehttp_client(config["url"], headers=headers or None, auth=auth) as (
+                read,
+                write,
+                _get_session_id,
+            ):
+                await self._serve_session(server_name, read, write, stop_event, ready)
         elif transport == LEGACY_SSE_TRANSPORT:
             # 旧式 SSE 连接
             from mcp.client.sse import sse_client
 
             headers = await self._build_http_headers(server_name, config)
             auth = self._build_oauth_authorization_provider(server_name, config, ready)
-            async with sse_client(config["url"], headers=headers or None, auth=auth) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    await self._discover_tools(server_name, session)
-                    with self._lock:
-                        self._sessions[server_name] = session
-                        self._states[server_name] = "connected"
-                        self._errors.pop(server_name, None)
-                    if not ready.done():
-                        ready.set_result(None)
-                    await stop_event.wait()
+            async with sse_client(config["url"], headers=headers or None, auth=auth) as (
+                read,
+                write,
+            ):
+                await self._serve_session(server_name, read, write, stop_event, ready)
         elif transport == STDIO_TRANSPORT:
             # 本地进程标准输入输出连接
             from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -494,21 +494,36 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 cwd=config.get("cwd"),
             )
             async with stdio_client(server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    await self._discover_tools(server_name, session)
-                    with self._lock:
-                        self._sessions[server_name] = session
-                        self._states[server_name] = "connected"
-                        self._errors.pop(server_name, None)
-                    if not ready.done():
-                        ready.set_result(None)
-                    await stop_event.wait()
+                await self._serve_session(server_name, read, write, stop_event, ready)
         else:
             raise ValueError(f"unsupported MCP transport: {transport}")
 
+    async def _serve_session(
+        self,
+        server_name: str,
+        read: Any,
+        write: Any,
+        stop_event: asyncio.Event,
+        ready: asyncio.Future[None],
+    ) -> None:
+        """Keep all transports on the same initialized-session lifecycle."""
+        from mcp import ClientSession
+
+        # session 必须在 transport 上下文内退出；先完成工具发现，再公布连接就绪。
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            await self._discover_tools(server_name, session)
+            with self._lock:
+                self._sessions[server_name] = session
+                self._states[server_name] = "connected"
+                self._errors.pop(server_name, None)
+            if not ready.done():
+                ready.set_result(None)
+            await stop_event.wait()
+
     def _format_connect_error(self, exc: BaseException) -> str:
         """将连接异常转换为简洁的错误描述字符串，对常见情况返回可读提示。"""
+
         def collect_messages(error: BaseException, seen: set[int]) -> list[str]:
             if id(error) in seen:
                 return []
@@ -535,7 +550,9 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         if "no pending oauth login" in lower:
             return message
         if "jsonrpcmessage" in lower or "non-json" in lower or "field required" in lower:
-            return "MCP server returned a non JSON-RPC response. Check the MCP URL and authorization."
+            return (
+                "MCP server returned a non JSON-RPC response. Check the MCP URL and authorization."
+            )
         if "unhandled errors in a taskgroup" in lower:
             return "MCP connection failed before the OAuth authorization URL was returned. Check the MCP URL and server authorization settings."
         if len(message) > 500:
@@ -557,18 +574,20 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 server_name=server_name,
                 tool_name=tool.name,
                 tool_description=tool.description or "",
-                tool_schema={"inputSchema": tool.inputSchema} if hasattr(tool, 'inputSchema') else {},
+                tool_schema={"inputSchema": tool.inputSchema}
+                if hasattr(tool, "inputSchema")
+                else {},
                 manager=self,
             )
             discovered[adapter.name] = adapter
-            logger.debug(f"Discovered MCP tool: {adapter.name}")
+            logger.debug("Discovered MCP tool: %s", adapter.name)
 
         with self._lock:
             # 删除该服务器的旧工具，再写入新发现的工具
             for name in [name for name in self.tools if name.startswith(f"mcp_{server_name}_")]:
                 self.tools.pop(name, None)
             self.tools.update(discovered)
-        logger.info(f"Discovered {len(discovered)} MCP tool(s) from '{server_name}'")
+        logger.info("Discovered %s MCP tool(s) from '%s'", len(discovered), server_name)
 
     async def _call_tool(self, server_name: str, tool_name: str, params: dict):
         """异步调用指定服务器的工具，解析并返回文本内容或对象数据。"""
@@ -578,20 +597,22 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         timeout = self._get_tool_timeout(server_name)
         try:
             result = await asyncio.wait_for(session.call_tool(tool_name, params), timeout=timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise RuntimeError(
                 f"MCP tool '{tool_name}' on server '{server_name}' timed out after {timeout:g}s"
             ) from exc
         if getattr(result, "isError", False):
             detail = self._format_call_tool_error_result(result)
-            raise RuntimeError(f"MCP tool '{tool_name}' on server '{server_name}' returned an error: {detail}")
+            raise RuntimeError(
+                f"MCP tool '{tool_name}' on server '{server_name}' returned an error: {detail}"
+            )
         if hasattr(result, "content"):
             # 提取所有文本内容
             texts = [c.text for c in result.content if hasattr(c, "text")]
             if texts:
                 return "\n".join(texts)
-            # 醉匹内容字典列表
-            return [getattr(c, "model_dump", lambda: str(c))() for c in result.content]
+            # 无文本时保留结构化内容列表。
+            return [getattr(c, "model_dump", lambda c=c: str(c))() for c in result.content]
         if hasattr(result, "model_dump"):
             return result.model_dump()
         return str(result)
@@ -628,7 +649,7 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
         if tasks:
             try:
                 await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=3)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -654,6 +675,6 @@ class MCPManager(MCPOAuthMixin, MCPErrorFormatterMixin):
                 for name, config in self.server_configs.items()
             }
 
-    def get_tools(self) -> List[MCPToolAdapter]:
+    def get_tools(self) -> list[MCPToolAdapter]:
         with self._lock:
             return list(self.tools.values())

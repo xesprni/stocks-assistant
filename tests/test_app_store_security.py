@@ -43,7 +43,11 @@ class AppStoreSecurityTest(unittest.TestCase):
                         "transport": "streamable_http",
                         "url": "https://example.com/mcp",
                         "headers": {"Authorization": "Bearer server-token", "X-Plain": "visible"},
-                        "auth": {"type": "header", "name": "X-Api-Key", "value": "mcp-header-secret"},
+                        "auth": {
+                            "type": "header",
+                            "name": "X-Api-Key",
+                            "value": "mcp-header-secret",
+                        },
                     }
                 },
             }
@@ -67,7 +71,9 @@ class AppStoreSecurityTest(unittest.TestCase):
         self.assertEqual(config["telegram_bot_token"], "telegram-bot-secret")
         self.assertEqual(config["longbridge_access_token"], "lb-access-token")
         self.assertEqual(config["guardian_api_key"], "guardian-api-secret")
-        self.assertEqual(config["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token")
+        self.assertEqual(
+            config["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token"
+        )
         self.assertEqual(config["mcp_servers"]["remote"]["auth"]["value"], "mcp-header-secret")
 
     def test_mcp_oauth_tokens_are_encrypted_at_rest(self):
@@ -77,11 +83,15 @@ class AppStoreSecurityTest(unittest.TestCase):
         )
 
         with sqlite3.connect(self.db_path) as conn:
-            raw = conn.execute("SELECT entry_json FROM mcp_oauth_tokens WHERE server_name = 'remote'").fetchone()[0]
+            raw = conn.execute(
+                "SELECT entry_json FROM mcp_oauth_tokens WHERE server_name = 'remote'"
+            ).fetchone()[0]
 
         self.assertNotIn("oauth-access-secret", raw)
         self.assertNotIn("oauth-refresh-secret", raw)
-        self.assertEqual(self.store.get_mcp_oauth_entry("remote")["access_token"], "oauth-access-secret")
+        self.assertEqual(
+            self.store.get_mcp_oauth_entry("remote")["access_token"], "oauth-access-secret"
+        )
 
     def test_subagent_roles_are_stored_in_dedicated_table(self):
         roles = {
@@ -138,8 +148,12 @@ class AppStoreSecurityTest(unittest.TestCase):
         store = AppStore(legacy_db)
         with store.connect() as conn:
             user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
-            refresh_columns = {row[1] for row in conn.execute("PRAGMA table_info(refresh_tokens)").fetchall()}
-            indexes = {row[1] for row in conn.execute("PRAGMA index_list(refresh_tokens)").fetchall()}
+            refresh_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(refresh_tokens)").fetchall()
+            }
+            indexes = {
+                row[1] for row in conn.execute("PRAGMA index_list(refresh_tokens)").fetchall()
+            }
 
         self.assertIn("avatar_base64", user_columns)
         self.assertIn("session_id", refresh_columns)

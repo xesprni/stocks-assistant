@@ -9,7 +9,9 @@ from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvi
 class OpenAIResponsesProviderTest(unittest.TestCase):
     def test_stream_error_response_body_is_read_before_formatting(self):
         def handler(request):
-            return httpx.Response(400, json={"error": {"message": "bad stream request"}}, request=request)
+            return httpx.Response(
+                400, json={"error": {"message": "bad stream request"}}, request=request
+            )
 
         provider = OpenAICompatibleProvider(api_key="test-key", model="gpt-4o")
         provider.client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -29,10 +31,24 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
                     "role": "assistant",
                     "content": [
                         {"type": "text", "text": "I will call a tool."},
-                        {"type": "tool_use", "id": "call_123", "name": "get_quote", "input": {"symbol": "AAPL"}},
+                        {
+                            "type": "tool_use",
+                            "id": "call_123",
+                            "name": "get_quote",
+                            "input": {"symbol": "AAPL"},
+                        },
                     ],
                 },
-                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_123", "content": "{\"price\": 200}"}]},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_123",
+                            "content": '{"price": 200}',
+                        }
+                    ],
+                },
             ],
             tools=[
                 {
@@ -90,7 +106,13 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
                 messages=[],
                 temperature=0.3,
                 max_tokens=1200,
-                tools=[{"name": "read_file", "description": "Read file.", "parameters": {"type": "object"}}],
+                tools=[
+                    {
+                        "name": "read_file",
+                        "description": "Read file.",
+                        "parameters": {"type": "object"},
+                    }
+                ],
                 tool_choice="none",
             ),
             stream=True,
@@ -104,7 +126,10 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
         provider = OpenAIResponsesProvider(
             api_key="oauth-token",
             model="gpt-5.2-codex",
-            extra_headers={"ChatGPT-Account-Id": "workspace-123", "OpenAI-Beta": "responses=experimental"},
+            extra_headers={
+                "ChatGPT-Account-Id": "workspace-123",
+                "OpenAI-Beta": "responses=experimental",
+            },
             store_response=False,
         )
         payload = provider._build_payload(LLMRequest(messages=[]))
@@ -129,7 +154,7 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
                     "type": "function_call",
                     "call_id": "call_quote",
                     "name": "get_quote",
-                    "arguments": "{\"symbol\":\"AAPL\"}",
+                    "arguments": '{"symbol":"AAPL"}',
                 },
             ],
         }
@@ -141,7 +166,9 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
         self.assertEqual(choice["message"]["content"], "Looking this up.")
         self.assertEqual(choice["message"]["tool_calls"][0]["id"], "call_quote")
         self.assertEqual(choice["message"]["tool_calls"][0]["function"]["name"], "get_quote")
-        self.assertEqual(choice["message"]["tool_calls"][0]["function"]["arguments"], "{\"symbol\":\"AAPL\"}")
+        self.assertEqual(
+            choice["message"]["tool_calls"][0]["function"]["arguments"], '{"symbol":"AAPL"}'
+        )
 
     def test_stream_events_become_chat_chunks(self):
         provider = OpenAIResponsesProvider(api_key="test-key", model="gpt-5.2-codex")
@@ -155,20 +182,34 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
             {
                 "type": "response.output_item.added",
                 "output_index": 0,
-                "item": {"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": ""},
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "",
+                },
             },
             state,
         )
         arg_chunks = provider._stream_event_to_chat_chunks(
-            {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "{\"path\":\"x\"}"},
+            {
+                "type": "response.function_call_arguments.delta",
+                "output_index": 0,
+                "delta": '{"path":"x"}',
+            },
             state,
         )
         done_chunks = provider._stream_event_to_chat_chunks({"type": "response.completed"}, state)
 
         self.assertEqual(text_chunks[0]["choices"][0]["delta"]["content"], "Hello")
         self.assertEqual(call_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["id"], "call_1")
-        self.assertEqual(call_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"], "read_file")
-        self.assertEqual(arg_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"], "{\"path\":\"x\"}")
+        self.assertEqual(
+            call_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"], "read_file"
+        )
+        self.assertEqual(
+            arg_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            '{"path":"x"}',
+        )
         self.assertEqual(done_chunks[0]["choices"][0]["finish_reason"], "tool_calls")
 
 

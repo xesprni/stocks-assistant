@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import desc, func, select
 
@@ -47,7 +47,9 @@ class TraceRepository:
     def add_event(self, *, event_id: str, run_id: str, event: dict[str, Any]) -> str:
         with session_scope(self.session_factory) as session:
             seq = session.scalar(
-                select(func.coalesce(func.max(TraceEvent.seq), -1) + 1).where(TraceEvent.run_id == run_id)
+                select(func.coalesce(func.max(TraceEvent.seq), -1) + 1).where(
+                    TraceEvent.run_id == run_id
+                )
             )
             session.add(self._event_from_payload(event_id, run_id, int(seq or 0), event))
         return event_id
@@ -87,9 +89,13 @@ class TraceRepository:
                 for key, value in root_values.items():
                     setattr(root, key, value)
             seq = session.scalar(
-                select(func.coalesce(func.max(TraceEvent.seq), -1) + 1).where(TraceEvent.run_id == run_id)
+                select(func.coalesce(func.max(TraceEvent.seq), -1) + 1).where(
+                    TraceEvent.run_id == run_id
+                )
             )
-            session.add(self._event_from_payload(final_event_id, run_id, int(seq or 0), final_event))
+            session.add(
+                self._event_from_payload(final_event_id, run_id, int(seq or 0), final_event)
+            )
 
     def get_session_traces(self, session_id: str, limit: int = 20) -> dict[str, Any]:
         clean_limit = max(1, min(limit, 100))
@@ -113,7 +119,9 @@ class TraceRepository:
         return {"session_id": session_id, "runs": payload, "total": len(payload)}
 
     @staticmethod
-    def _event_from_payload(event_id: str, run_id: str, seq: int, event: dict[str, Any]) -> TraceEvent:
+    def _event_from_payload(
+        event_id: str, run_id: str, seq: int, event: dict[str, Any]
+    ) -> TraceEvent:
         return TraceEvent(
             id=event_id,
             run_id=run_id,

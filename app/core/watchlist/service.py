@@ -2,40 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
-from app.config import get_settings
+from app.core.market.errors import LongbridgeUnavailableError as LongbridgeUnavailableError
+from app.core.market.utils import change_rate as _change_rate
+from app.core.market.utils import change_value as _change_value
+from app.core.market.utils import stringify as _decimal_to_str
 from app.core.orm.repositories.watchlist import WatchlistRepository
 from app.core.portfolio.symbols import canonical_portfolio_symbol
 from app.schemas.watchlist import WatchlistCategory, WatchlistItemCreate
 
 
-class LongbridgeUnavailableError(RuntimeError):
-    """Raised when Longbridge SDK or credentials are unavailable."""
-
-
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
-
-
-def _decimal_to_str(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _change_rate(last_done: Any, prev_close: Any) -> Optional[str]:
-    try:
-        last_value = Decimal(str(last_done))
-        prev_value = Decimal(str(prev_close))
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-    if prev_value == 0:
-        return None
-    return f"{((last_value - prev_value) / prev_value * Decimal('100')):.2f}%"
 
 
 def _category_from_symbol(symbol: str) -> WatchlistCategory:
@@ -58,7 +40,9 @@ def _name_from_static(info: Any) -> str:
 class LongbridgeSearchClient:
     """Small adapter around Longbridge SDK quote APIs."""
 
-    def search(self, query: str, category: Optional[WatchlistCategory], limit: int, settings: Any = None) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, category: WatchlistCategory | None, limit: int, settings: Any = None
+    ) -> list[dict[str, Any]]:
         symbols = self._candidate_symbols(query, category)
         if not symbols:
             return []
@@ -87,12 +71,7 @@ class LongbridgeSearchClient:
             quote = quote_by_symbol.get(symbol)
             last_done = getattr(quote, "last_done", None) if quote else None
             prev_close = getattr(quote, "prev_close", None) if quote else None
-            change_value = None
-            if last_done is not None and prev_close is not None:
-                try:
-                    change_value = str(Decimal(str(last_done)) - Decimal(str(prev_close)))
-                except (InvalidOperation, TypeError, ValueError):
-                    change_value = None
+            change_value = _change_value(last_done, prev_close)
 
             results.append(
                 {
@@ -117,7 +96,7 @@ class LongbridgeSearchClient:
 
         return get_cached_context("QuoteContext", settings=settings)
 
-    def _candidate_symbols(self, query: str, category: Optional[WatchlistCategory]) -> list[str]:
+    def _candidate_symbols(self, query: str, category: WatchlistCategory | None) -> list[str]:
         normalized = query.strip().upper()
         if not normalized:
             return []
@@ -155,14 +134,16 @@ class WatchlistService:
         self.repository = repository or WatchlistRepository(self.db_path)
         self.longbridge = LongbridgeSearchClient()
 
-    def list_items(self, category: Optional[WatchlistCategory] = None, user_id: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_items(
+        self, category: WatchlistCategory | None = None, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         return self.repository.list_items(category=category, user_id=user_id)
 
-    def reorder_items(self, ordered_ids: list[int], user_id: Optional[str] = None) -> None:
+    def reorder_items(self, ordered_ids: list[int], user_id: str | None = None) -> None:
         """Update sort_order for each item according to the provided ID sequence."""
         self.repository.reorder_items(ordered_ids, user_id=user_id)
 
-    def add_item(self, item: WatchlistItemCreate, user_id: Optional[str] = None) -> dict[str, Any]:
+    def add_item(self, item: WatchlistItemCreate, user_id: str | None = None) -> dict[str, Any]:
         now = _now()
         payload = item.model_dump()
         payload["user_id"] = user_id or ""
@@ -176,14 +157,30 @@ class WatchlistService:
         if self.list_items(user_id=user_id):
             return []
         samples = [
-            WatchlistItemCreate(category="US", symbol="AAPL.US", name="Apple", currency="USD", note="[Sample] Company deep dive"),
-            WatchlistItemCreate(category="H", symbol="700.HK", name="Tencent", currency="HKD", note="[Sample] Earnings review"),
+            WatchlistItemCreate(
+                category="US",
+                symbol="AAPL.US",
+                name="Apple",
+                currency="USD",
+                note="[Sample] Company deep dive",
+            ),
+            WatchlistItemCreate(
+                category="H",
+                symbol="700.HK",
+                name="Tencent",
+                currency="HKD",
+                note="[Sample] Earnings review",
+            ),
         ]
         return [self.add_item(item, user_id=user_id) for item in samples]
 
-    def delete_item(self, item_id: int, user_id: Optional[str] = None) -> None:
+    def delete_item(self, item_id: int, user_id: str | None = None) -> None:
         if not self.repository.delete_item(item_id, user_id=user_id):
             raise KeyError(item_id)
 
-    def search(self, query: str, category: Optional[WatchlistCategory], limit: int, settings: Any = None) -> list[dict[str, Any]]:
-        return self.longbridge.search(query=query, category=category, limit=limit, settings=settings)
+    def search(
+        self, query: str, category: WatchlistCategory | None, limit: int, settings: Any = None
+    ) -> list[dict[str, Any]]:
+        return self.longbridge.search(
+            query=query, category=category, limit=limit, settings=settings
+        )

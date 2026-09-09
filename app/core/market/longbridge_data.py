@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any
 
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.technical_indicators import calculate_technical_indicators
 from app.core.market.utils import (
     canonical_symbol,
@@ -16,7 +18,6 @@ from app.core.market.utils import (
     stringify,
     timestamp,
 )
-from app.core.watchlist.service import LongbridgeUnavailableError
 
 
 class LongbridgeMarketDataMixin:
@@ -57,7 +58,7 @@ class LongbridgeMarketDataMixin:
         period: str,
         count: int = 200,
         adjust_type: str = "forward",
-        trade_sessions: Optional[str] = None,
+        trade_sessions: str | None = None,
         settings: Any = None,
     ) -> dict:
         """拉取近期 K 线数据。period 支持日/周/月及 Longbridge 分钟周期。"""
@@ -68,7 +69,9 @@ class LongbridgeMarketDataMixin:
         ctx = self._quote_context(settings=settings)
         try:
             if lb_trade_sessions is None:
-                raw = ctx.candlesticks(symbol, lb_period, min(max(int(count), 1), 1000), lb_adjust_type)
+                raw = ctx.candlesticks(
+                    symbol, lb_period, min(max(int(count), 1), 1000), lb_adjust_type
+                )
             else:
                 raw = ctx.candlesticks(
                     symbol,
@@ -94,10 +97,10 @@ class LongbridgeMarketDataMixin:
         self,
         symbol: str,
         period: str = "1D",
-        start: Optional[str] = None,
-        end: Optional[str] = None,
+        start: str | None = None,
+        end: str | None = None,
         adjust_type: str = "forward",
-        trade_sessions: Optional[str] = None,
+        trade_sessions: str | None = None,
         settings: Any = None,
     ) -> dict:
         """按日期区间拉取历史 K 线。start/end 使用 YYYY-MM-DD。"""
@@ -110,7 +113,9 @@ class LongbridgeMarketDataMixin:
         ctx = self._quote_context(settings=settings)
         try:
             if lb_trade_sessions is None:
-                raw = ctx.history_candlesticks_by_date(symbol, lb_period, lb_adjust_type, start_date, end_date)
+                raw = ctx.history_candlesticks_by_date(
+                    symbol, lb_period, lb_adjust_type, start_date, end_date
+                )
             else:
                 raw = ctx.history_candlesticks_by_date(
                     symbol,
@@ -138,8 +143,8 @@ class LongbridgeMarketDataMixin:
     def get_intraday(
         self,
         symbol: str,
-        since: Optional[int] = None,
-        trade_sessions: Optional[str] = None,
+        since: int | None = None,
+        trade_sessions: str | None = None,
         settings: Any = None,
     ) -> dict:
         """拉取今日分时数据。"""
@@ -147,7 +152,11 @@ class LongbridgeMarketDataMixin:
         lb_trade_sessions, trade_sessions_name = self._longbridge_trade_sessions(trade_sessions)
         ctx = self._quote_context(settings=settings)
         try:
-            raw = ctx.intraday(symbol) if lb_trade_sessions is None else ctx.intraday(symbol, lb_trade_sessions)
+            raw = (
+                ctx.intraday(symbol)
+                if lb_trade_sessions is None
+                else ctx.intraday(symbol, lb_trade_sessions)
+            )
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
 
@@ -254,7 +263,9 @@ class LongbridgeMarketDataMixin:
             "half_trading_days": [date_iso(item) for item in getattr(raw, "half_trading_days", [])],
         }
 
-    def get_quote_indicators(self, symbols: list[str], indexes: list[str], settings: Any = None) -> dict:
+    def get_quote_indicators(
+        self, symbols: list[str], indexes: list[str], settings: Any = None
+    ) -> dict:
         """拉取 Longbridge 支持的证券计算指标。"""
         normalized_symbols = normalize_symbols(symbols)
         if not normalized_symbols:
@@ -279,10 +290,10 @@ class LongbridgeMarketDataMixin:
         symbol: str,
         period: str = "1D",
         count: int = 300,
-        indicators: Optional[list[str]] = None,
+        indicators: list[str] | None = None,
         adjust_type: str = "forward",
-        trade_sessions: Optional[str] = None,
-        params: Optional[dict[str, Any]] = None,
+        trade_sessions: str | None = None,
+        params: dict[str, Any] | None = None,
         series_limit: int = 120,
         settings: Any = None,
     ) -> dict:
@@ -327,19 +338,19 @@ class LongbridgeMarketDataMixin:
     # 各市场主要指数，用于 market_temperature API 无数据时回退估算
     _FALLBACK_INDICES: dict[str, list[str]] = {
         "CN": [
-            "000001.SH",   # 上证综指
-            "000300.SH",   # 沪深300
-            "399001.SZ",   # 深证成指
-            "399006.SZ",   # 创业板指
+            "000001.SH",  # 上证综指
+            "000300.SH",  # 沪深300
+            "399001.SZ",  # 深证成指
+            "399006.SZ",  # 创业板指
         ],
         "HK": [
-            "HSI.HK",      # 恒生指数
-            "HSCEI.HK",    # 国企指数
+            "HSI.HK",  # 恒生指数
+            "HSCEI.HK",  # 国企指数
         ],
         "US": [
-            ".SPX.US",     # S&P 500
-            ".NDX.US",     # 纳斯达克100
-            ".DJI.US",     # 道琼斯
+            ".SPX.US",  # S&P 500
+            ".NDX.US",  # 纳斯达克100
+            ".DJI.US",  # 道琼斯
         ],
     }
 
@@ -359,7 +370,7 @@ class LongbridgeMarketDataMixin:
         ctx = self._quote_context(settings=settings)
 
         # 先尝试 Longbridge 官方市场温度接口
-        api_data: Optional[dict] = None
+        api_data: dict | None = None
         try:
             resp = ctx.market_temperature(lb_market)
             api_data = {
@@ -385,9 +396,7 @@ class LongbridgeMarketDataMixin:
         # 回退也失败时返回原始 API 数据（可能含 null 字段），保证响应结构一致
         if api_data is not None:
             return api_data
-        raise LongbridgeUnavailableError(
-            f"Market temperature data is not available for {market}"
-        )
+        raise LongbridgeUnavailableError(f"Market temperature data is not available for {market}")
 
     def _compute_fallback_temperature(self, market: str, settings: Any = None) -> dict:
         """基于主要指数涨跌幅估算市场温度（回退方案）。
@@ -397,28 +406,44 @@ class LongbridgeMarketDataMixin:
         """
         indices = self._FALLBACK_INDICES.get(market)
         if not indices:
-            return {"market": market, "temperature": None, "description": "",
-                    "valuation": None, "sentiment": None, "updated_at": None}
+            return {
+                "market": market,
+                "temperature": None,
+                "description": "",
+                "valuation": None,
+                "sentiment": None,
+                "updated_at": None,
+            }
 
         try:
             quotes_data = self.get_realtime_quotes(indices, settings=settings)
         except Exception:
-            return {"market": market, "temperature": None, "description": "",
-                    "valuation": None, "sentiment": None, "updated_at": None}
+            return {
+                "market": market,
+                "temperature": None,
+                "description": "",
+                "valuation": None,
+                "sentiment": None,
+                "updated_at": None,
+            }
 
         # 收集各指数涨跌幅（change_rate 格式如 "1.23%"）
         change_rates: list[float] = []
         for q in quotes_data.get("quotes", []):
             cr_str = q.get("change_rate")
             if cr_str:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     change_rates.append(float(str(cr_str).rstrip("%")))
-                except (TypeError, ValueError):
-                    pass
 
         if not change_rates:
-            return {"market": market, "temperature": None, "description": "",
-                    "valuation": None, "sentiment": None, "updated_at": None}
+            return {
+                "market": market,
+                "temperature": None,
+                "description": "",
+                "valuation": None,
+                "sentiment": None,
+                "updated_at": None,
+            }
 
         avg_cr = sum(change_rates) / len(change_rates)
 
@@ -517,7 +542,9 @@ class LongbridgeMarketDataMixin:
         }
         value = period_map.get(key)
         if value is None:
-            raise ValueError("period must be one of: 1D, 1W, 1M, 1Y, 1min, 5min, 15min, 30min, 60min")
+            raise ValueError(
+                "period must be one of: 1D, 1W, 1M, 1Y, 1min, 5min, 15min, 30min, 60min"
+            )
         return value, enum_name(value) or key
 
     def _longbridge_adjust_type(self, adjust_type: str):
@@ -535,7 +562,7 @@ class LongbridgeMarketDataMixin:
             raise ValueError("adjust_type must be forward or none")
         return value, enum_name(value) or key
 
-    def _longbridge_trade_sessions(self, trade_sessions: Optional[str]):
+    def _longbridge_trade_sessions(self, trade_sessions: str | None):
         if trade_sessions is None or str(trade_sessions).strip() == "":
             return None, None
         try:
@@ -607,7 +634,11 @@ class LongbridgeMarketDataMixin:
                 continue
             normalized = key.replace("_", "").replace("-", "").replace(" ", "").lower()
             member_name = members.get(key.lower()) or next(
-                (name for lower, name in members.items() if lower.replace("_", "").lower() == normalized),
+                (
+                    name
+                    for lower, name in members.items()
+                    if lower.replace("_", "").lower() == normalized
+                ),
                 None,
             )
             if member_name is None:
@@ -620,7 +651,7 @@ class LongbridgeMarketDataMixin:
         return values, names
 
     @staticmethod
-    def _parse_date(value: Any) -> Optional[date]:
+    def _parse_date(value: Any) -> date | None:
         if value is None or value == "":
             return None
         if isinstance(value, datetime):
@@ -648,12 +679,18 @@ class LongbridgeMarketDataMixin:
             "trade_status": enum_name(getattr(item, "trade_status", None)),
             "change_value": change_value(last_done, prev_close),
             "change_rate": change_rate(last_done, prev_close),
-            "pre_market_quote": self._serialize_prepost_quote(getattr(item, "pre_market_quote", None)),
-            "post_market_quote": self._serialize_prepost_quote(getattr(item, "post_market_quote", None)),
-            "overnight_quote": self._serialize_prepost_quote(getattr(item, "overnight_quote", None)),
+            "pre_market_quote": self._serialize_prepost_quote(
+                getattr(item, "pre_market_quote", None)
+            ),
+            "post_market_quote": self._serialize_prepost_quote(
+                getattr(item, "post_market_quote", None)
+            ),
+            "overnight_quote": self._serialize_prepost_quote(
+                getattr(item, "overnight_quote", None)
+            ),
         }
 
-    def _serialize_prepost_quote(self, item: Any) -> Optional[dict]:
+    def _serialize_prepost_quote(self, item: Any) -> dict | None:
         if item is None:
             return None
         last_done = getattr(item, "last_done", None)
@@ -682,7 +719,7 @@ class LongbridgeMarketDataMixin:
             "trade_session": enum_name(getattr(item, "trade_session", None)),
         }
 
-    def _fetch_prev_close(self, ctx: Any, symbol: str) -> Optional[str]:
+    def _fetch_prev_close(self, ctx: Any, symbol: str) -> str | None:
         """获取单个标的的昨收价，用于分时涨跌幅计算。失败时返回 None。"""
         try:
             quotes = list(ctx.quote([symbol]))

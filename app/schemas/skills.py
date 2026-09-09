@@ -1,31 +1,34 @@
 """技能系统 API Schema"""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class SkillInfo(BaseModel):
     """技能信息"""
+
     name: str  # 技能名称
     description: str  # 技能描述
     enabled: bool  # 是否启用
-    file_path: Optional[str] = None  # 技能文件路径
-    source: Optional[str] = None
-    clawhub_slug: Optional[str] = None
-    clawhub_version: Optional[str] = None
-    clawhub_owner: Optional[str] = None
-    clawhub_url: Optional[str] = None
+    file_path: str | None = None  # 技能文件路径
+    source: str | None = None
+    clawhub_slug: str | None = None
+    clawhub_version: str | None = None
+    clawhub_owner: str | None = None
+    clawhub_url: str | None = None
 
 
 class SkillListResponse(BaseModel):
     """技能列表响应"""
-    skills: List[SkillInfo]  # 技能列表
+
+    skills: list[SkillInfo]  # 技能列表
     total: int  # 总数
 
 
 class SkillToggleRequest(BaseModel):
     """技能启用/禁用请求"""
+
     enabled: bool  # 目标状态
 
 
@@ -34,29 +37,29 @@ class ClawHubSearchResult(BaseModel):
     name: str
     summary: str = ""
     description: str = ""
-    owner: Optional[str] = None
-    version: Optional[str] = None
-    updated_at: Optional[str] = None
-    canonical_url: Optional[str] = None
-    scan_status: Optional[str] = None
-    moderation_status: Optional[str] = None
+    owner: str | None = None
+    version: str | None = None
+    updated_at: str | None = None
+    canonical_url: str | None = None
+    scan_status: str | None = None
+    moderation_status: str | None = None
 
 
 class ClawHubSearchResponse(BaseModel):
-    results: List[ClawHubSearchResult]
+    results: list[ClawHubSearchResult]
     total: int
 
 
 class ClawHubSkillDetail(ClawHubSearchResult):
-    scan: Dict[str, Any] = Field(default_factory=dict)
+    scan: dict[str, Any] = Field(default_factory=dict)
     skill_md: str = ""
-    preview_error: Optional[str] = None
-    scan_error: Optional[str] = None
+    preview_error: str | None = None
+    scan_error: str | None = None
 
 
 class ClawHubInstallRequest(BaseModel):
-    version: Optional[str] = None
-    tag: Optional[str] = None
+    version: str | None = None
+    tag: str | None = None
 
 
 class ClawHubInstallResponse(BaseModel):

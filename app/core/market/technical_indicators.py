@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any, Optional
-
+from typing import Any
 
 SUPPORTED_INDICATORS = (
     "VOL",
@@ -62,8 +61,8 @@ _INDICATOR_ALIASES = {
 
 def calculate_technical_indicators(
     bars: list[Any],
-    indicators: Optional[list[str]] = None,
-    params: Optional[dict[str, Any]] = None,
+    indicators: list[str] | None = None,
+    params: dict[str, Any] | None = None,
     series_limit: int = 120,
 ) -> dict:
     """Calculate selected technical indicators from chronological OHLCV bars."""
@@ -111,12 +110,17 @@ def calculate_technical_indicators(
         ),
     }
 
-    series: dict[str, dict[str, list[Optional[float]]]] = {}
-    latest: dict[str, dict[str, Optional[float]]] = {}
+    series: dict[str, dict[str, list[float | None]]] = {}
+    latest: dict[str, dict[str, float | None]] = {}
     for indicator in requested:
         full_series = calculators[indicator]()
-        series[indicator] = {name: _round_series(values[-limit:]) for name, values in full_series.items()}
-        latest[indicator] = {name: _round_value(values[-1]) if values else None for name, values in full_series.items()}
+        series[indicator] = {
+            name: _round_series(values[-limit:]) for name, values in full_series.items()
+        }
+        latest[indicator] = {
+            name: _round_value(values[-1]) if values else None
+            for name, values in full_series.items()
+        }
 
     return {
         "requested_indicators": requested,
@@ -153,7 +157,7 @@ def _normalize_bars(bars: list[Any]) -> list[dict[str, Any]]:
     return records
 
 
-def _normalize_indicators(indicators: Optional[list[str]]) -> list[str]:
+def _normalize_indicators(indicators: list[str] | None) -> list[str]:
     if not indicators:
         return list(SUPPORTED_INDICATORS)
     normalized = []
@@ -173,8 +177,10 @@ def _normalize_indicators(indicators: Optional[list[str]]) -> list[str]:
     return normalized
 
 
-def _resolve_params(params: Optional[dict[str, Any]]) -> dict[str, Any]:
-    resolved = {key: value[:] if isinstance(value, list) else value for key, value in DEFAULT_PARAMS.items()}
+def _resolve_params(params: dict[str, Any] | None) -> dict[str, Any]:
+    resolved = {
+        key: value[:] if isinstance(value, list) else value for key, value in DEFAULT_PARAMS.items()
+    }
     if not params:
         return resolved
 
@@ -234,34 +240,43 @@ def _params_for_indicators(indicators: list[str], params: dict[str, Any]) -> dic
     return used
 
 
-def _calc_vol(volumes: list[float], periods: list[int]) -> dict[str, list[Optional[float]]]:
+def _calc_vol(volumes: list[float], periods: list[int]) -> dict[str, list[float | None]]:
     result = {"volume": [float(value) for value in volumes]}
     for period in periods:
         result[f"volume_ma{period}"] = _sma(volumes, period)
     return result
 
 
-def _calc_ma(closes: list[float], periods: list[int]) -> dict[str, list[Optional[float]]]:
+def _calc_ma(closes: list[float], periods: list[int]) -> dict[str, list[float | None]]:
     return {f"ma{period}": _sma(closes, period) for period in periods}
 
 
-def _calc_ema_group(closes: list[float], periods: list[int]) -> dict[str, list[Optional[float]]]:
+def _calc_ema_group(closes: list[float], periods: list[int]) -> dict[str, list[float | None]]:
     return {f"ema{period}": _ema(closes, period) for period in periods}
 
 
-def _calc_macd(closes: list[float], fast: int, slow: int, signal: int) -> dict[str, list[Optional[float]]]:
+def _calc_macd(
+    closes: list[float], fast: int, slow: int, signal: int
+) -> dict[str, list[float | None]]:
     ema_fast = _ema(closes, fast)
     ema_slow = _ema(closes, slow)
-    dif = [_none_if_missing(a, b, lambda x, y: x - y) for a, b in zip(ema_fast, ema_slow)]
+    dif = [
+        _none_if_missing(a, b, lambda x, y: x - y) for a, b in zip(ema_fast, ema_slow, strict=False)
+    ]
     dea = _ema([value or 0.0 for value in dif], signal)
-    macd = [_none_if_missing(dif_value, dea_value, lambda x, y: (x - y) * 2) for dif_value, dea_value in zip(dif, dea)]
+    macd = [
+        _none_if_missing(dif_value, dea_value, lambda x, y: (x - y) * 2)
+        for dif_value, dea_value in zip(dif, dea, strict=False)
+    ]
     return {"dif": dif, "dea": dea, "macd": macd}
 
 
-def _calc_kdj(highs: list[float], lows: list[float], closes: list[float], period: int) -> dict[str, list[Optional[float]]]:
-    k_values: list[Optional[float]] = [None] * len(closes)
-    d_values: list[Optional[float]] = [None] * len(closes)
-    j_values: list[Optional[float]] = [None] * len(closes)
+def _calc_kdj(
+    highs: list[float], lows: list[float], closes: list[float], period: int
+) -> dict[str, list[float | None]]:
+    k_values: list[float | None] = [None] * len(closes)
+    d_values: list[float | None] = [None] * len(closes)
+    j_values: list[float | None] = [None] * len(closes)
     prev_k = 50.0
     prev_d = 50.0
 
@@ -283,7 +298,7 @@ def _calc_kdj(highs: list[float], lows: list[float], closes: list[float], period
     return {"k": k_values, "d": d_values, "j": j_values}
 
 
-def _calc_rsi(closes: list[float], periods: list[int]) -> dict[str, list[Optional[float]]]:
+def _calc_rsi(closes: list[float], periods: list[int]) -> dict[str, list[float | None]]:
     result = {}
     gains = [0.0]
     losses = [0.0]
@@ -293,7 +308,7 @@ def _calc_rsi(closes: list[float], periods: list[int]) -> dict[str, list[Optiona
         losses.append(max(-change, 0.0))
 
     for period in periods:
-        values: list[Optional[float]] = [None] * len(closes)
+        values: list[float | None] = [None] * len(closes)
         if len(closes) <= period:
             result[f"rsi{period}"] = values
             continue
@@ -308,14 +323,22 @@ def _calc_rsi(closes: list[float], periods: list[int]) -> dict[str, list[Optiona
     return result
 
 
-def _calc_cci(highs: list[float], lows: list[float], closes: list[float], period: int) -> dict[str, list[Optional[float]]]:
-    typical_prices = [(high + low + close) / 3 for high, low, close in zip(highs, lows, closes)]
-    values: list[Optional[float]] = [None] * len(closes)
+def _calc_cci(
+    highs: list[float], lows: list[float], closes: list[float], period: int
+) -> dict[str, list[float | None]]:
+    typical_prices = [
+        (high + low + close) / 3 for high, low, close in zip(highs, lows, closes, strict=False)
+    ]
+    values: list[float | None] = [None] * len(closes)
     for index in range(period - 1, len(closes)):
         window = typical_prices[index - period + 1 : index + 1]
         mean = sum(window) / period
         mean_deviation = sum(abs(value - mean) for value in window) / period
-        values[index] = 0.0 if mean_deviation == 0 else (typical_prices[index] - mean) / (0.015 * mean_deviation)
+        values[index] = (
+            0.0
+            if mean_deviation == 0
+            else (typical_prices[index] - mean) / (0.015 * mean_deviation)
+        )
     return {f"cci{period}": values}
 
 
@@ -324,10 +347,10 @@ def _calc_wr(
     lows: list[float],
     closes: list[float],
     periods: list[int],
-) -> dict[str, list[Optional[float]]]:
+) -> dict[str, list[float | None]]:
     result = {}
     for period in periods:
-        values: list[Optional[float]] = [None] * len(closes)
+        values: list[float | None] = [None] * len(closes)
         for index in range(period - 1, len(closes)):
             high = max(highs[index - period + 1 : index + 1])
             low = min(lows[index - period + 1 : index + 1])
@@ -336,7 +359,9 @@ def _calc_wr(
     return result
 
 
-def _calc_dmi(highs: list[float], lows: list[float], closes: list[float], period: int) -> dict[str, list[Optional[float]]]:
+def _calc_dmi(
+    highs: list[float], lows: list[float], closes: list[float], period: int
+) -> dict[str, list[float | None]]:
     size = len(closes)
     tr = [0.0] * size
     plus_dm = [0.0] * size
@@ -356,9 +381,9 @@ def _calc_dmi(highs: list[float], lows: list[float], closes: list[float], period
     smooth_tr = _wilder_sum(tr, period)
     smooth_plus_dm = _wilder_sum(plus_dm, period)
     smooth_minus_dm = _wilder_sum(minus_dm, period)
-    pdi: list[Optional[float]] = [None] * size
-    mdi: list[Optional[float]] = [None] * size
-    dx: list[Optional[float]] = [None] * size
+    pdi: list[float | None] = [None] * size
+    mdi: list[float | None] = [None] * size
+    dx: list[float | None] = [None] * size
 
     for index in range(size):
         if smooth_tr[index] is None or smooth_tr[index] == 0:
@@ -368,7 +393,7 @@ def _calc_dmi(highs: list[float], lows: list[float], closes: list[float], period
         total = pdi[index] + mdi[index]
         dx[index] = 0.0 if total == 0 else abs(pdi[index] - mdi[index]) / total * 100
 
-    adx: list[Optional[float]] = [None] * size
+    adx: list[float | None] = [None] * size
     seed_index = period * 2 - 1
     if size > seed_index:
         seed_values = [value for value in dx[period : period + period] if value is not None]
@@ -377,7 +402,7 @@ def _calc_dmi(highs: list[float], lows: list[float], closes: list[float], period
             for index in range(seed_index + 1, size):
                 adx[index] = ((adx[index - 1] or 0.0) * (period - 1) + (dx[index] or 0.0)) / period
 
-    adxr: list[Optional[float]] = [None] * size
+    adxr: list[float | None] = [None] * size
     for index in range(seed_index + period, size):
         if adx[index] is not None and adx[index - period] is not None:
             adxr[index] = (adx[index] + adx[index - period]) / 2
@@ -385,22 +410,35 @@ def _calc_dmi(highs: list[float], lows: list[float], closes: list[float], period
     return {"pdi": pdi, "mdi": mdi, "adx": adx, "adxr": adxr}
 
 
-def _calc_osc(closes: list[float], period: int, signal_period: int) -> dict[str, list[Optional[float]]]:
+def _calc_osc(
+    closes: list[float], period: int, signal_period: int
+) -> dict[str, list[float | None]]:
     ma = _sma(closes, period)
-    osc = [_none_if_missing(close, ma_value, lambda x, y: x - y) for close, ma_value in zip(closes, ma)]
+    osc = [
+        _none_if_missing(close, ma_value, lambda x, y: x - y)
+        for close, ma_value in zip(closes, ma, strict=False)
+    ]
     osc_pct = [
         None if value is None or ma_value in (None, 0) else value / ma_value * 100
-        for value, ma_value in zip(osc, ma)
+        for value, ma_value in zip(osc, ma, strict=False)
     ]
     maosc = _sma_optional(osc, signal_period)
     return {"osc": osc, "osc_pct": osc_pct, "maosc": maosc}
 
 
-def _calc_boll(closes: list[float], period: int, multiplier: float) -> dict[str, list[Optional[float]]]:
+def _calc_boll(
+    closes: list[float], period: int, multiplier: float
+) -> dict[str, list[float | None]]:
     mid = _sma(closes, period)
     std = _rolling_std(closes, period)
-    upper = [_none_if_missing(mean, dev, lambda x, y: x + multiplier * y) for mean, dev in zip(mid, std)]
-    lower = [_none_if_missing(mean, dev, lambda x, y: x - multiplier * y) for mean, dev in zip(mid, std)]
+    upper = [
+        _none_if_missing(mean, dev, lambda x, y: x + multiplier * y)
+        for mean, dev in zip(mid, std, strict=False)
+    ]
+    lower = [
+        _none_if_missing(mean, dev, lambda x, y: x - multiplier * y)
+        for mean, dev in zip(mid, std, strict=False)
+    ]
     return {"mid": mid, "upper": upper, "lower": lower}
 
 
@@ -409,21 +447,27 @@ def _calc_bbiboll(
     ma_periods: list[int],
     std_period: int,
     multiplier: float,
-) -> dict[str, list[Optional[float]]]:
+) -> dict[str, list[float | None]]:
     ma_series = [_sma(closes, period) for period in ma_periods]
-    bbi: list[Optional[float]] = [None] * len(closes)
+    bbi: list[float | None] = [None] * len(closes)
     for index in range(len(closes)):
         values = [series[index] for series in ma_series]
         if all(value is not None for value in values):
             bbi[index] = sum(value or 0.0 for value in values) / len(values)
     std = _rolling_std(closes, std_period)
-    upper = [_none_if_missing(mean, dev, lambda x, y: x + multiplier * y) for mean, dev in zip(bbi, std)]
-    lower = [_none_if_missing(mean, dev, lambda x, y: x - multiplier * y) for mean, dev in zip(bbi, std)]
+    upper = [
+        _none_if_missing(mean, dev, lambda x, y: x + multiplier * y)
+        for mean, dev in zip(bbi, std, strict=False)
+    ]
+    lower = [
+        _none_if_missing(mean, dev, lambda x, y: x - multiplier * y)
+        for mean, dev in zip(bbi, std, strict=False)
+    ]
     return {"bbi": bbi, "upper": upper, "lower": lower}
 
 
-def _sma(values: list[float], period: int) -> list[Optional[float]]:
-    result: list[Optional[float]] = [None] * len(values)
+def _sma(values: list[float], period: int) -> list[float | None]:
+    result: list[float | None] = [None] * len(values)
     if period <= 0:
         return result
     running = 0.0
@@ -436,8 +480,8 @@ def _sma(values: list[float], period: int) -> list[Optional[float]]:
     return result
 
 
-def _sma_optional(values: list[Optional[float]], period: int) -> list[Optional[float]]:
-    result: list[Optional[float]] = [None] * len(values)
+def _sma_optional(values: list[float | None], period: int) -> list[float | None]:
+    result: list[float | None] = [None] * len(values)
     for index in range(period - 1, len(values)):
         window = values[index - period + 1 : index + 1]
         if all(value is not None for value in window):
@@ -445,20 +489,20 @@ def _sma_optional(values: list[Optional[float]], period: int) -> list[Optional[f
     return result
 
 
-def _ema(values: list[float], period: int) -> list[Optional[float]]:
-    result: list[Optional[float]] = []
+def _ema(values: list[float], period: int) -> list[float | None]:
+    result: list[float | None] = []
     if not values:
         return result
     alpha = 2 / (period + 1)
-    previous: Optional[float] = None
+    previous: float | None = None
     for value in values:
         previous = value if previous is None else (value - previous) * alpha + previous
         result.append(previous)
     return result
 
 
-def _rolling_std(values: list[float], period: int) -> list[Optional[float]]:
-    result: list[Optional[float]] = [None] * len(values)
+def _rolling_std(values: list[float], period: int) -> list[float | None]:
+    result: list[float | None] = [None] * len(values)
     for index in range(period - 1, len(values)):
         window = values[index - period + 1 : index + 1]
         mean = sum(window) / period
@@ -466,13 +510,15 @@ def _rolling_std(values: list[float], period: int) -> list[Optional[float]]:
     return result
 
 
-def _wilder_sum(values: list[float], period: int) -> list[Optional[float]]:
-    result: list[Optional[float]] = [None] * len(values)
+def _wilder_sum(values: list[float], period: int) -> list[float | None]:
+    result: list[float | None] = [None] * len(values)
     if len(values) <= period:
         return result
     result[period] = sum(values[1 : period + 1])
     for index in range(period + 1, len(values)):
-        result[index] = (result[index - 1] or 0.0) - (result[index - 1] or 0.0) / period + values[index]
+        result[index] = (
+            (result[index - 1] or 0.0) - (result[index - 1] or 0.0) / period + values[index]
+        )
     return result
 
 
@@ -485,7 +531,7 @@ def _rsi_value(avg_gain: float, avg_loss: float) -> float:
     return 100 - 100 / (1 + rs)
 
 
-def _none_if_missing(a: Optional[float], b: Optional[float], func) -> Optional[float]:
+def _none_if_missing(a: float | None, b: float | None, func) -> float | None:
     if a is None or b is None:
         return None
     return func(a, b)
@@ -497,7 +543,7 @@ def _field(item: Any, name: str) -> Any:
     return getattr(item, name, None)
 
 
-def _float_field(item: Any, name: str) -> Optional[float]:
+def _float_field(item: Any, name: str) -> float | None:
     value = _field(item, name)
     if value is None or value == "":
         return None
@@ -546,11 +592,11 @@ def _positive_float(value: Any, name: str) -> float:
     return number
 
 
-def _round_series(values: list[Optional[float]]) -> list[Optional[float]]:
+def _round_series(values: list[float | None]) -> list[float | None]:
     return [_round_value(value) for value in values]
 
 
-def _round_value(value: Optional[float]) -> Optional[float]:
+def _round_value(value: float | None) -> float | None:
     if value is None:
         return None
     rounded = round(float(value), 6)

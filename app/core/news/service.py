@@ -5,17 +5,17 @@ from __future__ import annotations
 import html
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from html.parser import HTMLParser
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 import httpx
 
-from app.core.agent.models import LLMRequest
 from app.config import get_settings
+from app.core.agent.models import LLMRequest
+from app.core.html_text import HTMLTextExtractor
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.utils import canonical_symbol
-from app.core.watchlist.service import LongbridgeUnavailableError
 
 GUARDIAN_ALLOWED_HOSTS = {"theguardian.com", "www.theguardian.com"}
 GUARDIAN_CONTENT_API_BASE = "https://content.guardianapis.com"
@@ -35,68 +35,24 @@ class GuardianTranslationError(RuntimeError):
     """LLM translation failed or returned no usable output."""
 
 
-class _HTMLTextExtractor(HTMLParser):
-    """Small stdlib HTML-to-text extractor for Guardian summaries and article body."""
-
-    block_tags = {
-        "article",
-        "blockquote",
-        "br",
-        "div",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "li",
-        "p",
-        "section",
-    }
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        tag = tag.lower()
-        if tag in {"script", "style", "noscript", "svg"}:
-            self._skip_depth += 1
-            return
-        if tag in self.block_tags:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
-            self._skip_depth -= 1
-            return
-        if tag in self.block_tags:
-            self.parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth:
-            return
-        text = data.strip()
-        if text:
-            self.parts.append(text)
-            self.parts.append(" ")
-
-    @property
-    def text(self) -> str:
-        raw = "".join(self.parts)
-        lines = [" ".join(line.split()) for line in raw.splitlines()]
-        compact: list[str] = []
-        blank = False
-        for line in lines:
-            if line:
-                compact.append(line)
-                blank = False
-            elif not blank and compact:
-                compact.append("")
-                blank = True
-        return "\n".join(compact).strip()
+class _HTMLTextExtractor(HTMLTextExtractor):
+    block_tags = frozenset(
+        [
+            "article",
+            "blockquote",
+            "br",
+            "div",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "li",
+            "p",
+            "section",
+        ]
+    )
 
 
 def normalize_news_symbol(symbol: str) -> str:
@@ -152,7 +108,7 @@ def _validate_guardian_url(parsed) -> None:
         raise ValueError("Only theguardian.com URLs are supported")
 
 
-def _to_int(value: Any) -> Optional[int]:
+def _to_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
@@ -161,7 +117,7 @@ def _to_int(value: Any) -> Optional[int]:
         return None
 
 
-def _published_at_iso(value: Any) -> Optional[str]:
+def _published_at_iso(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -171,7 +127,7 @@ def _published_at_iso(value: Any) -> Optional[str]:
     return str(value)
 
 
-def _published_at_ts(value: Any) -> Optional[int]:
+def _published_at_ts(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -181,7 +137,7 @@ def _published_at_ts(value: Any) -> Optional[int]:
     return None
 
 
-def _published_iso_and_ts(value: Any) -> tuple[Optional[str], Optional[int]]:
+def _published_iso_and_ts(value: Any) -> tuple[str | None, int | None]:
     if value is None:
         return None, None
     if isinstance(value, datetime):
@@ -289,7 +245,9 @@ def _news_item_to_dict(item: Any) -> dict[str, Any]:
 class NewsService:
     """Fetch symbol news and Guardian public/newswire content."""
 
-    def get_security_news(self, symbol: str, limit: int = 50, settings: Any = None) -> dict[str, Any]:
+    def get_security_news(
+        self, symbol: str, limit: int = 50, settings: Any = None
+    ) -> dict[str, Any]:
         normalized_symbol = normalize_news_symbol(symbol)
         ctx = self._content_context(settings=settings)
         try:
@@ -309,7 +267,9 @@ class NewsService:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
             raise GuardianUpstreamError("Guardian RSS response was not valid XML") from exc
-        channel = next((node for node in root.iter() if _xml_local_name(node.tag) == "channel"), root)
+        channel = next(
+            (node for node in root.iter() if _xml_local_name(node.tag) == "channel"), root
+        )
         feed_title = _xml_child_text(channel, "title")
         items = [
             self._guardian_rss_item_to_dict(item)
@@ -318,13 +278,21 @@ class NewsService:
         ]
         items.sort(key=lambda item: item.get("published_at_ts") or 0, reverse=True)
         items = items[:limit]
-        return {"url": url, "feed_url": feed_url, "title": feed_title, "items": items, "total": len(items)}
+        return {
+            "url": url,
+            "feed_url": feed_url,
+            "title": feed_title,
+            "items": items,
+            "total": len(items),
+        }
 
     def get_guardian_article(self, url: str, settings: Any = None) -> dict[str, Any]:
         settings = settings or get_settings()
         api_key = str(getattr(settings, "guardian_api_key", "") or "").strip()
         if not api_key:
-            raise GuardianConfigError("Guardian API key is not configured. Add it to Settings > Data Sources.")
+            raise GuardianConfigError(
+                "Guardian API key is not configured. Add it to Settings > Data Sources."
+            )
 
         web_url, path = normalize_guardian_article_url(url)
         api_url = f"{GUARDIAN_CONTENT_API_BASE}/{path}"
@@ -335,9 +303,13 @@ class NewsService:
         # Guardian 正文只能通过 Open Platform API 获取；密钥只在后端请求中使用，不返回给前端。
         with httpx.Client(timeout=20.0, follow_redirects=True) as client:
             try:
-                response = client.get(api_url, params=params, headers={"User-Agent": GUARDIAN_USER_AGENT})
+                response = client.get(
+                    api_url, params=params, headers={"User-Agent": GUARDIAN_USER_AGENT}
+                )
                 if response.status_code in {401, 403}:
-                    raise GuardianConfigError("Guardian API key was rejected by Guardian Open Platform")
+                    raise GuardianConfigError(
+                        "Guardian API key was rejected by Guardian Open Platform"
+                    )
                 response.raise_for_status()
             except GuardianConfigError:
                 raise
@@ -369,12 +341,16 @@ class NewsService:
             "body_text": _html_to_text(body_html),
         }
 
-    def translate_guardian_text(self, text: str, llm_provider: Any, target_language: str = "zh-CN") -> dict[str, Any]:
+    def translate_guardian_text(
+        self, text: str, llm_provider: Any, target_language: str = "zh-CN"
+    ) -> dict[str, Any]:
         source_text = str(text or "").strip()
         if not source_text:
             raise ValueError("Text is required")
         if len(source_text) > GUARDIAN_MAX_TRANSLATE_CHARS:
-            raise ValueError(f"Text is too long; limit is {GUARDIAN_MAX_TRANSLATE_CHARS} characters")
+            raise ValueError(
+                f"Text is too long; limit is {GUARDIAN_MAX_TRANSLATE_CHARS} characters"
+            )
         if not llm_provider:
             raise GuardianTranslationError("LLM provider is not available")
 

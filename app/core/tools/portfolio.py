@@ -4,35 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.portfolio.symbols import canonical_portfolio_symbol
-from app.core.watchlist.service import LongbridgeUnavailableError
-from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate
-
-
-PORTFOLIO_FIELDS = (
-    "id",
-    "market",
-    "symbol",
-    "name",
-    "shares",
-    "cost_price",
-    "currency",
-    "current_price",
-    "change_value",
-    "change_rate",
-    "pe_ttm_ratio",
-    "stock_value",
-    "position_ratio",
-    "pnl_ratio",
-    "note",
-    "created_at",
-    "updated_at",
+from app.core.tools.base_tool import BaseTool, ToolResult
+from app.core.tools.parameters import bounded_positive_int, optional_positive_int
+from app.core.tools.portfolio_output import PORTFOLIO_FIELDS as PORTFOLIO_FIELDS
+from app.core.tools.portfolio_output import (
+    portfolio_snapshot,
+    sanitize_portfolio_item,
+    sanitize_portfolio_list,
 )
+from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate
 
 
 class PortfolioTool(BaseTool):
@@ -70,14 +56,24 @@ class PortfolioTool(BaseTool):
                 "enum": ["US", "A", "H", "ALL"],
                 "description": "Portfolio market. US = US stocks, A = A-shares, H = Hong Kong, ALL is only valid for list.",
             },
-            "item_id": {"type": "integer", "description": "Portfolio item id for get/update/delete."},
+            "item_id": {
+                "type": "integer",
+                "description": "Portfolio item id for get/update/delete.",
+            },
             "id": {"type": "integer", "description": "Alias for item_id."},
             "symbol": {
                 "type": "string",
                 "description": "Symbol to select or create. For update/delete/get, this selects the existing holding.",
             },
-            "new_symbol": {"type": "string", "description": "Optional replacement symbol when action=update."},
-            "new_market": {"type": "string", "enum": ["US", "A", "H"], "description": "Optional replacement market when action=update."},
+            "new_symbol": {
+                "type": "string",
+                "description": "Optional replacement symbol when action=update.",
+            },
+            "new_market": {
+                "type": "string",
+                "enum": ["US", "A", "H"],
+                "description": "Optional replacement market when action=update.",
+            },
             "name": {"type": "string", "description": "Holding display name."},
             "shares": {"type": "string", "description": "Final share quantity to store."},
             "shares_delta": {
@@ -101,19 +97,24 @@ class PortfolioTool(BaseTool):
                 "description": "For adjust_shares, delete the holding if the resulting shares are zero.",
                 "default": False,
             },
-            "query": {"type": "string", "description": "Search query for Longbridge symbol lookup."},
+            "query": {
+                "type": "string",
+                "description": "Search query for Longbridge symbol lookup.",
+            },
             "q": {"type": "string", "description": "Alias for query."},
             "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
         },
         "required": ["action"],
     }
 
-    def __init__(self, portfolio_service: Any = None, user_id: Optional[str] = None, settings: Any = None):
+    def __init__(
+        self, portfolio_service: Any = None, user_id: str | None = None, settings: Any = None
+    ):
         self.portfolio_service = portfolio_service
         self.user_id = user_id
         self.settings = settings
 
-    def execute(self, params: Dict[str, Any]) -> ToolResult:
+    def execute(self, params: dict[str, Any]) -> ToolResult:
         service = self._get_portfolio_service()
         if service is None:
             return ToolResult.fail("Portfolio service not initialized")
@@ -152,7 +153,7 @@ class PortfolioTool(BaseTool):
         except Exception:
             return None
 
-    def _list(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _list(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         market = self._market(params.get("market") or "US", allow_all=True)
         markets = ["US", "A", "H"] if market == "ALL" else [market]
         results = [
@@ -161,32 +162,25 @@ class PortfolioTool(BaseTool):
             )
             for item_market in markets
         ]
-        return {
-            "source": "portfolio",
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "market": market,
-            "markets": results,
-            "total_positions": sum(int(item.get("total", 0) or 0) for item in results),
-            "quote_errors": [
-                {"market": item["market"], "error": item["quote_error"]}
-                for item in results
-                if item.get("quote_error")
-            ],
-        }
+        return {**portfolio_snapshot(results), "market": market}
 
-    def _get(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _get(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         item = self._find_item(service, params)
         return {"source": "portfolio", "item": self._sanitize_item(item)}
 
-    def _search(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _search(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         query = str(params.get("query") or params.get("q") or params.get("symbol") or "").strip()
         if not query:
             raise ValueError("query is required for search")
         market = self._market(params.get("market") or "US")
-        limit = self._bounded_int(params.get("limit"), default=10, minimum=1, maximum=20, name="limit")
+        limit = self._bounded_int(
+            params.get("limit"), default=10, minimum=1, maximum=20, name="limit"
+        )
         results = [
             self._sanitize_search_result(item)
-            for item in service.search(query=query, market=market, limit=limit, settings=self.settings)
+            for item in service.search(
+                query=query, market=market, limit=limit, settings=self.settings
+            )
         ]
         return {
             "source": "longbridge",
@@ -197,28 +191,36 @@ class PortfolioTool(BaseTool):
             "total": len(results),
         }
 
-    def _upsert(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _upsert(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         existing = self._try_find_item(service, params)
         if existing:
             item = self._update_existing(service, existing, params, allow_symbol_replacement=False)
             operation = "update"
         else:
-            item = service.add_item(PortfolioItemCreate(**self._create_payload(params)), user_id=self.user_id)
+            item = service.add_item(
+                PortfolioItemCreate(**self._create_payload(params)), user_id=self.user_id
+            )
             operation = "create"
         return {"status": "ok", "operation": operation, "item": self._sanitize_item(item)}
 
-    def _update(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _update(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         current = self._find_item(service, params)
         item = self._update_existing(service, current, params, allow_symbol_replacement=True)
         return {"status": "ok", "operation": "update", "item": self._sanitize_item(item)}
 
-    def _delete(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _delete(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         item = self._find_item(service, params)
         service.delete_item(int(item["id"]), user_id=self.user_id)
         return {"status": "ok", "operation": "delete", "deleted_item": self._sanitize_item(item)}
 
-    def _adjust_shares(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
-        delta = self._decimal(params.get("shares_delta") if params.get("shares_delta") is not None else params.get("delta"), "shares_delta", required=True)
+    def _adjust_shares(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+        delta = self._decimal(
+            params.get("shares_delta")
+            if params.get("shares_delta") is not None
+            else params.get("delta"),
+            "shares_delta",
+            required=True,
+        )
         if delta == 0:
             raise ValueError("shares_delta must not be zero")
 
@@ -236,7 +238,11 @@ class PortfolioTool(BaseTool):
             raise ValueError("shares_delta would make shares negative")
         if next_shares == 0 and self._bool(params.get("delete_when_zero")):
             service.delete_item(int(current["id"]), user_id=self.user_id)
-            return {"status": "ok", "operation": "delete", "deleted_item": self._sanitize_item(current)}
+            return {
+                "status": "ok",
+                "operation": "delete",
+                "deleted_item": self._sanitize_item(current),
+            }
 
         patch: dict[str, Any] = {"shares": self._decimal_text(next_shares)}
         next_cost = self._adjusted_cost_price(current, delta, next_shares, params)
@@ -244,22 +250,32 @@ class PortfolioTool(BaseTool):
             patch["cost_price"] = self._decimal_text(next_cost)
         if "note" in params:
             patch["note"] = str(params.get("note") or "")
-        item = service.update_item(int(current["id"]), PortfolioItemUpdate(**patch), user_id=self.user_id)
+        item = service.update_item(
+            int(current["id"]), PortfolioItemUpdate(**patch), user_id=self.user_id
+        )
         return {"status": "ok", "operation": "adjust_shares", "item": self._sanitize_item(item)}
 
-    def _set_total_capital(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
+    def _set_total_capital(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
         market = self._market(params.get("market") or "US")
-        amount = params.get("total_capital") if params.get("total_capital") is not None else params.get("cash")
+        amount = (
+            params.get("total_capital")
+            if params.get("total_capital") is not None
+            else params.get("cash")
+        )
         if amount is None or str(amount).strip() == "":
             raise ValueError("total_capital or cash is required")
         saved = service.save_settings(market, str(amount), user_id=self.user_id)
-        return {"status": "ok", "operation": "set_total_capital", "settings": self._sanitize_settings(saved)}
+        return {
+            "status": "ok",
+            "operation": "set_total_capital",
+            "settings": self._sanitize_settings(saved),
+        }
 
     def _update_existing(
         self,
         service: Any,
         current: dict[str, Any],
-        params: Dict[str, Any],
+        params: dict[str, Any],
         *,
         allow_symbol_replacement: bool,
     ) -> dict[str, Any]:
@@ -268,7 +284,9 @@ class PortfolioTool(BaseTool):
             patch["market"] = self._market(params.get("new_market"))
         if allow_symbol_replacement and params.get("new_symbol"):
             patch["symbol"] = str(params.get("new_symbol") or "").strip().upper()
-            patch.setdefault("market", self._market(params.get("new_market") or current.get("market")))
+            patch.setdefault(
+                "market", self._market(params.get("new_market") or current.get("market"))
+            )
         for field in ("name", "shares", "cost_price", "note"):
             if field not in params:
                 continue
@@ -279,9 +297,11 @@ class PortfolioTool(BaseTool):
                 patch[field] = "" if value is None and field in {"name", "note"} else value
         if not patch:
             return current
-        return service.update_item(int(current["id"]), PortfolioItemUpdate(**patch), user_id=self.user_id)
+        return service.update_item(
+            int(current["id"]), PortfolioItemUpdate(**patch), user_id=self.user_id
+        )
 
-    def _create_payload(self, params: Dict[str, Any]) -> dict[str, Any]:
+    def _create_payload(self, params: dict[str, Any]) -> dict[str, Any]:
         market = self._market(params.get("market"), required=True)
         symbol = str(params.get("symbol") or "").strip().upper()
         if not symbol:
@@ -298,8 +318,10 @@ class PortfolioTool(BaseTool):
             "note": str(params.get("note") or ""),
         }
 
-    def _find_item(self, service: Any, params: Dict[str, Any]) -> dict[str, Any]:
-        raw_item_id = params.get("item_id") if params.get("item_id") is not None else params.get("id")
+    def _find_item(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+        raw_item_id = (
+            params.get("item_id") if params.get("item_id") is not None else params.get("id")
+        )
         item_id = self._optional_int(raw_item_id, "item_id")
         if item_id is not None:
             return service.get_item(item_id, user_id=self.user_id)
@@ -315,20 +337,24 @@ class PortfolioTool(BaseTool):
             raise LookupError("Portfolio item not found")
         return candidates[0]
 
-    def _try_find_item(self, service: Any, params: Dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _try_find_item(self, service: Any, params: dict[str, Any]) -> dict[str, Any] | None:
         try:
             return self._find_item(service, params)
         except (KeyError, LookupError, ValueError):
             return None
 
-    def _find_symbol_matches(self, service: Any, symbol: str, market_value: Any) -> list[dict[str, Any]]:
+    def _find_symbol_matches(
+        self, service: Any, symbol: str, market_value: Any
+    ) -> list[dict[str, Any]]:
         markets = self._candidate_markets(symbol, market_value)
         matches: list[dict[str, Any]] = []
         for market in markets:
             canonical = self._canonical_symbol(symbol, market)
             for item in self._local_items(service, market):
                 item_symbol = str(item.get("symbol") or "").upper()
-                if item_symbol == canonical or ("." not in symbol and item_symbol.split(".", 1)[0] == symbol):
+                if item_symbol == canonical or (
+                    "." not in symbol and item_symbol.split(".", 1)[0] == symbol
+                ):
                     matches.append(item)
         return matches
 
@@ -344,8 +370,8 @@ class PortfolioTool(BaseTool):
         current: dict[str, Any],
         delta: Decimal,
         next_shares: Decimal,
-        params: Dict[str, Any],
-    ) -> Optional[Decimal]:
+        params: dict[str, Any],
+    ) -> Decimal | None:
         if params.get("cost_price") not in (None, "") and params.get("trade_price") in (None, ""):
             return self._decimal(params.get("cost_price"), "cost_price")
 
@@ -375,7 +401,7 @@ class PortfolioTool(BaseTool):
         return aliases.get(action, action)
 
     @staticmethod
-    def _market(value: Any, required: bool = False, allow_all: bool = False) -> Optional[str]:
+    def _market(value: Any, required: bool = False, allow_all: bool = False) -> str | None:
         if value is None or value == "":
             if required:
                 raise ValueError("market is required")
@@ -420,30 +446,15 @@ class PortfolioTool(BaseTool):
         return ["US", "A", "H"]
 
     @staticmethod
-    def _canonical_symbol(symbol: str, market: Optional[str] = None) -> str:
+    def _canonical_symbol(symbol: str, market: str | None = None) -> str:
         return canonical_portfolio_symbol(symbol, market)  # type: ignore[arg-type]
 
-    @staticmethod
-    def _optional_int(value: Any, name: str) -> Optional[int]:
-        if value is None or value == "":
-            return None
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{name} must be an integer") from exc
-        if parsed <= 0:
-            raise ValueError(f"{name} must be a positive integer")
-        return parsed
+    _optional_int = staticmethod(optional_positive_int)
 
-    @classmethod
-    def _bounded_int(cls, value: Any, default: int, minimum: int, maximum: int, name: str) -> int:
-        parsed = cls._optional_int(value, name)
-        if parsed is None:
-            return default
-        return max(minimum, min(parsed, maximum))
+    _bounded_int = staticmethod(bounded_positive_int)
 
     @staticmethod
-    def _decimal(value: Any, name: str, required: bool = False) -> Optional[Decimal]:
+    def _decimal(value: Any, name: str, required: bool = False) -> Decimal | None:
         if value is None or value == "":
             if required:
                 raise ValueError(f"{name} is required")
@@ -464,21 +475,9 @@ class PortfolioTool(BaseTool):
             return value
         return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
-    def _sanitize_portfolio_list(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "market": data.get("market"),
-            "total_capital": data.get("total_capital", "0"),
-            "total_assets": data.get("total_assets", "0"),
-            "cash_ratio": data.get("cash_ratio"),
-            "items": [self._sanitize_item(item) for item in data.get("items", [])],
-            "total": data.get("total", 0),
-            "quote_error": data.get("quote_error"),
-        }
+    _sanitize_portfolio_list = staticmethod(sanitize_portfolio_list)
 
-    @staticmethod
-    def _sanitize_item(item: dict[str, Any]) -> dict[str, Any]:
-        # 工具结果只暴露持仓业务字段，避免把内部用户标识混进 LLM 上下文。
-        return {field: item.get(field) for field in PORTFOLIO_FIELDS if field in item}
+    _sanitize_item = staticmethod(sanitize_portfolio_item)
 
     @staticmethod
     def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:

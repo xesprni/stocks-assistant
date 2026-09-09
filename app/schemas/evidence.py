@@ -1,6 +1,6 @@
 """研究证据与引用协议。"""
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,13 +12,13 @@ class SourceReference(BaseModel):
     source_type: str = "document"
     provider: str = ""
     title: str
-    url: Optional[str] = None
-    published_at: Optional[str] = None
-    as_of: Optional[str] = None
+    url: str | None = None
+    published_at: str | None = None
+    as_of: str | None = None
     fetched_at: str
     stale: bool = False
-    symbol: Optional[str] = None
-    locator: Optional[str] = None
+    symbol: str | None = None
+    locator: str | None = None
 
 
 class Evidence(BaseModel):
@@ -26,7 +26,7 @@ class Evidence(BaseModel):
 
     id: str
     source: SourceReference
-    excerpt: Optional[str] = None
+    excerpt: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -37,4 +37,3 @@ class ClaimCitation(BaseModel):
     claim: str = ""
     evidence_ids: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
-

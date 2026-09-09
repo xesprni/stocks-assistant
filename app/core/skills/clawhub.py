@@ -7,14 +7,14 @@ import re
 import shutil
 import stat
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
 import httpx
 
 from app.core.skills.manager import SkillManager
-
 
 CLAW_HUB_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
@@ -41,7 +41,7 @@ class ClawHubArchiveError(ClawHubError):
     status_code = 422
 
 
-def _first_string(data: Dict[str, Any], keys: Iterable[str]) -> Optional[str]:
+def _first_string(data: dict[str, Any], keys: Iterable[str]) -> str | None:
     for key in keys:
         value = data.get(key)
         if value is None:
@@ -55,7 +55,7 @@ def _first_string(data: Dict[str, Any], keys: Iterable[str]) -> Optional[str]:
     return None
 
 
-def _normalize_owner(value: Any) -> Optional[str]:
+def _normalize_owner(value: Any) -> str | None:
     if isinstance(value, str):
         return value.strip() or None
     if isinstance(value, dict):
@@ -63,7 +63,7 @@ def _normalize_owner(value: Any) -> Optional[str]:
     return None
 
 
-def _nested_version(value: Any) -> Optional[str]:
+def _nested_version(value: Any) -> str | None:
     if isinstance(value, dict):
         return _first_string(value, ("version", "tag", "name"))
     if isinstance(value, str):
@@ -71,7 +71,7 @@ def _nested_version(value: Any) -> Optional[str]:
     return None
 
 
-def _collection_from_response(payload: Any) -> List[Dict[str, Any]]:
+def _collection_from_response(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     if not isinstance(payload, dict):
@@ -87,7 +87,7 @@ def _collection_from_response(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _object_from_response(payload: Any) -> Dict[str, Any]:
+def _object_from_response(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     for key in ("skill", "item", "data"):
@@ -127,7 +127,7 @@ class ClawHubService:
         self.skill_manager = skill_manager
         self.timeout = timeout
 
-    def search(self, query: str, limit: int = 20) -> Dict[str, Any]:
+    def search(self, query: str, limit: int = 20) -> dict[str, Any]:
         query = query.strip()
         if not query:
             return {"results": [], "total": 0}
@@ -145,15 +145,15 @@ class ClawHubService:
         results = [item for item in results if item.get("slug")]
         return {"results": results, "total": len(results)}
 
-    def get_detail(self, slug: str) -> Dict[str, Any]:
+    def get_detail(self, slug: str) -> dict[str, Any]:
         self._validate_slug(slug)
         raw_payload = self._get_json(f"/api/v1/skills/{slug}")
         raw_detail = _object_from_response(raw_payload)
         detail = self._normalize_skill_item(raw_detail)
         detail["slug"] = detail.get("slug") or slug
 
-        scan: Dict[str, Any] = {}
-        scan_error: Optional[str] = None
+        scan: dict[str, Any] = {}
+        scan_error: str | None = None
         try:
             raw_scan = self._get_json(f"/api/v1/skills/{slug}/scan")
             if isinstance(raw_scan, dict):
@@ -162,7 +162,7 @@ class ClawHubService:
             scan_error = str(exc)
 
         skill_md = ""
-        preview_error: Optional[str] = None
+        preview_error: str | None = None
         try:
             skill_md = self._get_text(f"/api/v1/skills/{slug}/file", params={"path": "SKILL.md"})
         except ClawHubError as exc:
@@ -180,7 +180,9 @@ class ClawHubService:
         )
         return detail
 
-    def install(self, slug: str, version: Optional[str] = None, tag: Optional[str] = None) -> Dict[str, Any]:
+    def install(
+        self, slug: str, version: str | None = None, tag: str | None = None
+    ) -> dict[str, Any]:
         self._validate_slug(slug)
         target = self.skills_dir / slug
         if target.exists():
@@ -231,12 +233,11 @@ class ClawHubService:
             },
         }
 
-    def _normalize_skill_item(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_skill_item(self, raw: dict[str, Any]) -> dict[str, Any]:
         slug = _first_string(raw, ("slug", "skillSlug", "packageSlug", "id", "name"))
         owner = _normalize_owner(raw.get("owner") or raw.get("author") or raw.get("publisher"))
-        version = (
-            _nested_version(raw.get("version"))
-            or _first_string(raw, ("latestVersion", "latest_version", "tag"))
+        version = _nested_version(raw.get("version")) or _first_string(
+            raw, ("latestVersion", "latest_version", "tag")
         )
         canonical_url = _first_string(raw, ("canonicalUrl", "canonical_url", "url", "homepage"))
         if not canonical_url and slug:
@@ -244,18 +245,33 @@ class ClawHubService:
 
         return {
             "slug": slug,
-            "name": _first_string(raw, ("displayName", "display_name", "title", "name")) or slug or "",
-            "summary": _first_string(raw, ("summary", "description", "shortDescription", "short_description")) or "",
+            "name": _first_string(raw, ("displayName", "display_name", "title", "name"))
+            or slug
+            or "",
+            "summary": _first_string(
+                raw, ("summary", "description", "shortDescription", "short_description")
+            )
+            or "",
             "description": _first_string(raw, ("description", "summary", "readme")) or "",
             "owner": owner,
             "version": version,
-            "updated_at": _first_string(raw, ("updatedAt", "updated_at", "publishedAt", "published_at", "createdAt", "created_at")),
+            "updated_at": _first_string(
+                raw,
+                (
+                    "updatedAt",
+                    "updated_at",
+                    "publishedAt",
+                    "published_at",
+                    "createdAt",
+                    "created_at",
+                ),
+            ),
             "canonical_url": canonical_url,
             "scan_status": self._scan_status(raw),
             "moderation_status": self._moderation_status(raw),
         }
 
-    def _fetch_install_metadata(self, slug: str) -> Dict[str, Any]:
+    def _fetch_install_metadata(self, slug: str) -> dict[str, Any]:
         try:
             raw_detail = self._get_json(f"/api/v1/skills/{slug}")
             if isinstance(raw_detail, dict):
@@ -264,7 +280,9 @@ class ClawHubService:
             return {}
         return {}
 
-    def _download_archive(self, slug: str, version: Optional[str] = None, tag: Optional[str] = None) -> bytes:
+    def _download_archive(
+        self, slug: str, version: str | None = None, tag: str | None = None
+    ) -> bytes:
         params = {"slug": slug}
         if version:
             params["version"] = version
@@ -278,13 +296,17 @@ class ClawHubService:
                 content_type = response.headers.get("content-type", "")
                 if "application/json" in content_type:
                     payload = response.json()
-                    download_url = _first_string(payload, ("downloadUrl", "download_url", "url", "href"))
+                    download_url = _first_string(
+                        payload, ("downloadUrl", "download_url", "url", "href")
+                    )
                     if download_url:
                         response = client.get(self._absolute_url(download_url))
                         response.raise_for_status()
                 content = response.content
             except httpx.HTTPStatusError as exc:
-                raise ClawHubUpstreamError(f"ClawHub download failed with HTTP {exc.response.status_code}") from exc
+                raise ClawHubUpstreamError(
+                    f"ClawHub download failed with HTTP {exc.response.status_code}"
+                ) from exc
             except httpx.HTTPError as exc:
                 raise ClawHubUpstreamError(f"ClawHub download failed: {exc}") from exc
 
@@ -304,7 +326,7 @@ class ClawHubService:
                 temp_root = Path(tempfile.mkdtemp(prefix=f".{target.name}-", dir=self.skills_dir))
                 try:
                     for info, path in members:
-                        rel_parts = path.parts[len(strip_prefix):] if strip_prefix else path.parts
+                        rel_parts = path.parts[len(strip_prefix) :] if strip_prefix else path.parts
                         if not rel_parts:
                             continue
                         destination = temp_root.joinpath(*rel_parts)
@@ -325,8 +347,8 @@ class ClawHubService:
         except BadZipFile as exc:
             raise ClawHubArchiveError("Downloaded file is not a valid zip archive") from exc
 
-    def _validated_members(self, archive: ZipFile) -> List[Tuple[ZipInfo, PurePosixPath]]:
-        members: List[Tuple[ZipInfo, PurePosixPath]] = []
+    def _validated_members(self, archive: ZipFile) -> list[tuple[ZipInfo, PurePosixPath]]:
+        members: list[tuple[ZipInfo, PurePosixPath]] = []
         total_size = 0
         for info in archive.infolist():
             if _is_zip_symlink(info):
@@ -340,8 +362,10 @@ class ClawHubService:
             raise ClawHubArchiveError("Archive is empty")
         return members
 
-    def _skill_root_prefix(self, members: List[Tuple[ZipInfo, PurePosixPath]]) -> Tuple[str, ...]:
-        skill_files = [path for info, path in members if not info.is_dir() and path.name == "SKILL.md"]
+    def _skill_root_prefix(self, members: list[tuple[ZipInfo, PurePosixPath]]) -> tuple[str, ...]:
+        skill_files = [
+            path for info, path in members if not info.is_dir() and path.name == "SKILL.md"
+        ]
         if not skill_files:
             raise ClawHubArchiveError("Archive does not contain SKILL.md")
         root_skill_files = [path for path in skill_files if len(path.parts) == 1]
@@ -364,20 +388,22 @@ class ClawHubService:
                 return entry
         return None
 
-    def _get_json(self, path: str, params: Optional[Dict[str, str]] = None) -> Any:
+    def _get_json(self, path: str, params: dict[str, str] | None = None) -> Any:
         with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
             try:
                 response = client.get(self._api_url(path), params=params)
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as exc:
-                raise ClawHubUpstreamError(f"ClawHub request failed with HTTP {exc.response.status_code}") from exc
+                raise ClawHubUpstreamError(
+                    f"ClawHub request failed with HTTP {exc.response.status_code}"
+                ) from exc
             except httpx.HTTPError as exc:
                 raise ClawHubUpstreamError(f"ClawHub request failed: {exc}") from exc
             except ValueError as exc:
                 raise ClawHubUpstreamError("ClawHub returned invalid JSON") from exc
 
-    def _get_text(self, path: str, params: Optional[Dict[str, str]] = None) -> str:
+    def _get_text(self, path: str, params: dict[str, str] | None = None) -> str:
         with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
             try:
                 response = client.get(self._api_url(path), params=params)
@@ -396,7 +422,9 @@ class ClawHubService:
                                 return nested
                 return response.text
             except httpx.HTTPStatusError as exc:
-                raise ClawHubUpstreamError(f"ClawHub file preview failed with HTTP {exc.response.status_code}") from exc
+                raise ClawHubUpstreamError(
+                    f"ClawHub file preview failed with HTTP {exc.response.status_code}"
+                ) from exc
             except httpx.HTTPError as exc:
                 raise ClawHubUpstreamError(f"ClawHub file preview failed: {exc}") from exc
             except ValueError as exc:
@@ -410,10 +438,13 @@ class ClawHubService:
             return url
         return self._api_url(url)
 
-    def _scan_status(self, data: Any) -> Optional[str]:
+    def _scan_status(self, data: Any) -> str | None:
         if not isinstance(data, dict):
             return None
-        direct = _first_string(data, ("scanStatus", "scan_status", "status", "verdict", "risk", "riskLevel", "risk_level"))
+        direct = _first_string(
+            data,
+            ("scanStatus", "scan_status", "status", "verdict", "risk", "riskLevel", "risk_level"),
+        )
         if direct:
             return direct
         scan = data.get("scan")
@@ -424,25 +455,49 @@ class ClawHubService:
             return self._scan_status(security)
         return None
 
-    def _moderation_status(self, *sources: Any) -> Optional[str]:
+    def _moderation_status(self, *sources: Any) -> str | None:
         for source in sources:
             if not isinstance(source, dict):
                 continue
-            direct = _first_string(source, ("moderationStatus", "moderation_status", "moderation", "reviewStatus", "review_status"))
+            direct = _first_string(
+                source,
+                (
+                    "moderationStatus",
+                    "moderation_status",
+                    "moderation",
+                    "reviewStatus",
+                    "review_status",
+                ),
+            )
             if direct:
                 return direct
             moderation = source.get("moderation")
             if isinstance(moderation, dict):
-                nested = _first_string(moderation, ("status", "verdict", "risk", "riskLevel", "risk_level"))
+                nested = _first_string(
+                    moderation, ("status", "verdict", "risk", "riskLevel", "risk_level")
+                )
                 if nested:
                     return nested
                 if moderation.get("isPendingScan"):
                     return "pending"
-                if moderation.get("isMalwareBlocked") or moderation.get("isHiddenByMod") or moderation.get("isRemoved"):
+                if (
+                    moderation.get("isMalwareBlocked")
+                    or moderation.get("isHiddenByMod")
+                    or moderation.get("isRemoved")
+                ):
                     return "blocked"
                 if moderation.get("isSuspicious"):
                     return "suspicious"
-                if any(key in moderation for key in ("isPendingScan", "isMalwareBlocked", "isHiddenByMod", "isRemoved", "isSuspicious")):
+                if any(
+                    key in moderation
+                    for key in (
+                        "isPendingScan",
+                        "isMalwareBlocked",
+                        "isHiddenByMod",
+                        "isRemoved",
+                        "isSuspicious",
+                    )
+                ):
                     return "clear"
         return None
 

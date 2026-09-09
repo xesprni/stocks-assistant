@@ -52,7 +52,8 @@ class FakeWatchlistService:
         rows = [
             item
             for item in self.items
-            if (not user_id or item["user_id"] == user_id) and (not category or item["category"] == category)
+            if (not user_id or item["user_id"] == user_id)
+            and (not category or item["category"] == category)
         ]
         return [dict(item) for item in rows]
 
@@ -118,14 +119,18 @@ class WatchlistToolTest(unittest.TestCase):
         service = FakeWatchlistService()
         tool = WatchlistTool(watchlist_service=service, user_id="user-1")
 
-        created = tool.execute({"action": "add", "category": "US", "symbol": "aapl.us", "name": "Apple"})
+        created = tool.execute(
+            {"action": "add", "category": "US", "symbol": "aapl.us", "name": "Apple"}
+        )
         self.assertEqual(created.status, "success")
         self.assertEqual(created.result["item"]["symbol"], "AAPL.US")
         self.assertNotIn("user_id", created.result["item"])
         self.assertEqual(service.calls[-1][0], "add")
         self.assertEqual(service.calls[-1][1], "user-1")
 
-        updated = tool.execute({"action": "update", "symbol": "MSFT.US", "category": "A", "note": "watch thesis"})
+        updated = tool.execute(
+            {"action": "update", "symbol": "MSFT.US", "category": "A", "note": "watch thesis"}
+        )
         self.assertEqual(updated.status, "success")
         self.assertEqual(updated.result["item"]["category"], "A")
         self.assertEqual(updated.result["item"]["note"], "watch thesis")

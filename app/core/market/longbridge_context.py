@@ -6,12 +6,13 @@ QuoteContext 创建行情长连接，单账户只能创建一个；内容类 Con
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import threading
 from typing import Any
 
-from app.core.watchlist.service import LongbridgeUnavailableError
+from app.core.market.errors import LongbridgeUnavailableError
 
 # context_type -> credential_sig (HTTP Context 附加语言) -> context_instance
 _context_cache: dict[str, dict[str, Any]] = {}
@@ -182,7 +183,5 @@ def clear_context_cache() -> None:
     for ctx in old_contexts:
         close = getattr(ctx, "close", None)
         if callable(close):
-            try:
+            with contextlib.suppress(Exception):
                 close()
-            except Exception:
-                pass

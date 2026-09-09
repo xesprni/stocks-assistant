@@ -4,9 +4,9 @@
 避免重复初始化并统一组件间依赖关系。
 """
 
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
@@ -28,9 +28,13 @@ def _embedding_signature(settings: Settings) -> str:
         else (settings.embedding_api_base or settings.llm_api_base)
     )
     if settings.embedding_auth_mode == "codex":
-        credential_state = settings.embedding_codex_auth_file or settings.llm_codex_auth_file or "codex-default"
+        credential_state = (
+            settings.embedding_codex_auth_file or settings.llm_codex_auth_file or "codex-default"
+        )
     else:
-        credential_state = "configured" if (settings.embedding_api_key or settings.llm_api_key) else "missing"
+        credential_state = (
+            "configured" if (settings.embedding_api_key or settings.llm_api_key) else "missing"
+        )
     return ":".join(
         [
             settings.embedding_auth_mode or "api_key",
@@ -78,7 +82,14 @@ def get_memory_manager_for_user(user_id: str | None):
     from app.core.memory.manager import MemoryManager
 
     settings = get_effective_settings(user_id)
-    user_index = Path(settings.workspace_dir).expanduser() / "memory" / "users" / user_id / "long-term" / "index.db"
+    user_index = (
+        Path(settings.workspace_dir).expanduser()
+        / "memory"
+        / "users"
+        / user_id
+        / "long-term"
+        / "index.db"
+    )
     config = MemoryConfig(
         workspace_root=settings.workspace_dir,
         index_db_path=str(user_index),
@@ -106,7 +117,9 @@ def create_embedding_provider_from_settings(settings: Settings):
             from app.config import CODEX_OAUTH_API_BASE, EMBEDDING_DEFAULT_MODEL
             from app.core.llm.codex_auth import resolve_codex_oauth
 
-            credentials = resolve_codex_oauth(settings.embedding_codex_auth_file or settings.llm_codex_auth_file or None)
+            credentials = resolve_codex_oauth(
+                settings.embedding_codex_auth_file or settings.llm_codex_auth_file or None
+            )
             api_base = settings.embedding_codex_api_base.rstrip("/") or CODEX_OAUTH_API_BASE
             model = settings.embedding_codex_model or EMBEDDING_DEFAULT_MODEL
             return create_embedding_provider(
@@ -185,7 +198,7 @@ def create_llm_provider(settings: Settings):
     Provider 实例。Codex OAuth token 会定期刷新，TTL 300s 确保过期后重建。
     """
     sig = _llm_provider_signature(settings)
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     with _llm_provider_cache_lock:
         entry = _llm_provider_cache.get(sig)
         if entry is not None and entry[0] > now:
@@ -226,11 +239,19 @@ def clear_llm_provider_cache() -> None:
 
 def _create_llm_provider_impl(settings: Settings):
     """实际创建 LLM provider 的实现。"""
-    from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
     from app.config import CODEX_DEFAULT_MODEL, CODEX_OAUTH_API_BASE
+    from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
 
-    provider_cls = OpenAIResponsesProvider if settings.llm_provider == "openai_responses" else OpenAICompatibleProvider
-    default_model = CODEX_DEFAULT_MODEL if settings.llm_provider == "openai_responses" and not settings.llm_codex_model else settings.llm_codex_model
+    provider_cls = (
+        OpenAIResponsesProvider
+        if settings.llm_provider == "openai_responses"
+        else OpenAICompatibleProvider
+    )
+    default_model = (
+        CODEX_DEFAULT_MODEL
+        if settings.llm_provider == "openai_responses" and not settings.llm_codex_model
+        else settings.llm_codex_model
+    )
     if settings.llm_provider == "openai_responses" and settings.llm_auth_mode == "codex":
         from app.core.llm.codex_auth import resolve_codex_oauth
 
@@ -308,12 +329,12 @@ def get_scheduler_service():
     from app.core.tools.scheduler.service import SchedulerService
     from app.core.tools.scheduler.store import SQLiteRunStore, SQLiteTaskStore
 
-    settings = get_settings()
     store = SQLiteTaskStore()
     run_store = SQLiteRunStore()
 
     def execute_callback(task: dict):
         import logging
+
         from app.core.notifications import TelegramSender
 
         logger = logging.getLogger("stocks-assistant.scheduler")
@@ -327,7 +348,9 @@ def get_scheduler_service():
         if action_type == "send_message":
             result = str(action.get("content") or prompt)
         elif prompt:
-            result = _run_scheduled_agent(_build_scheduled_agent_prompt(prompt, task), user_id=task.get("user_id"))
+            result = _run_scheduled_agent(
+                _build_scheduled_agent_prompt(prompt, task), user_id=task.get("user_id")
+            )
         else:
             result = f"Scheduled task executed: {task.get('name', task.get('id'))}"
 
@@ -367,7 +390,7 @@ def _build_scheduled_agent_prompt(prompt: str, task: dict | None = None) -> str:
     started_at = _parse_execution_time(context.get("started_at")) or datetime.now().astimezone()
     due_at = _parse_execution_time(context.get("due_at"))
     local_now = started_at.astimezone()
-    utc_now = local_now.astimezone(timezone.utc)
+    utc_now = local_now.astimezone(UTC)
     timezone_name = local_now.tzname() or "local"
     trigger = str(context.get("trigger") or "schedule")
     task_name = str(task.get("name") or task.get("id") or "scheduled task")
@@ -401,61 +424,21 @@ def _parse_execution_time(value: object) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return parsed.astimezone() if parsed.tzinfo else parsed.astimezone()
+    return parsed.astimezone()
 
 
 def _run_scheduled_agent(prompt: str, user_id: str | None = None) -> str:
-    """Run a scheduled prompt through a fresh stateless Agent."""
-    from app.config import DEFAULT_SYSTEM_PROMPT
-    from app.core.agent.agent import Agent
-    from app.core.agent.models import LLMModel
+    """通过共享工厂执行一次不携带聊天历史的调度任务。"""
+    from app.core.agent.factory import create_agent
 
-    settings = get_effective_settings(user_id)
-    workspace_dir = settings.workspace_dir
-    if user_id:
-        from app.core.security import user_workspace_dir
-
-        workspace_dir = user_workspace_dir(settings.workspace_dir, user_id)
-    llm = create_llm_provider(settings)
-    model = LLMModel(model=settings.llm_model)
-    model.call = llm.call
-    model.call_stream = llm.call_stream
-
-    agent = Agent(
-        system_prompt=settings.system_prompt or DEFAULT_SYSTEM_PROMPT,
-        model=model,
-        tools=_get_agent_tools(settings, user_id=user_id),
-        max_steps=settings.agent_max_steps,
-        max_context_tokens=settings.agent_max_context_tokens,
-        max_context_turns=settings.agent_max_context_turns,
-        memory_manager=get_memory_manager_for_user(user_id) if settings.memory_enabled else None,
-        workspace_dir=workspace_dir,
-        skill_manager=get_skill_manager(),
-        settings=settings,
-    )
-    return agent.run_stream(user_message=prompt, clear_history=True)
+    return create_agent(user_id).run_stream(user_message=prompt, clear_history=True)
 
 
-def _get_agent_tools(settings, user_id: str | None = None):
-    """Return tools filtered by the main Agent permission settings."""
-    from app.core.tools.permissions import filter_agent_tools
+def _get_agent_tools(settings: Settings, user_id: str | None = None):
+    """兼容旧调用方，工具装配集中在 Agent 工厂。"""
+    from app.core.agent.factory import create_agent_tools
 
-    if user_id:
-        from app.core.security import user_workspace_dir
-        from app.core.tools.tool_manager import ToolManager
-
-        workspace_dir = user_workspace_dir(settings.workspace_dir, user_id)
-        manager = ToolManager(workspace_dir=str(Path(workspace_dir).expanduser()), user_id=user_id)
-        manager.load_builtin_tools(memory_manager=get_memory_manager_for_user(user_id) if settings.memory_enabled else None, user_id=user_id)
-        tools = manager.get_all_tools()
-    else:
-        tools = get_tool_manager().get_all_tools()
-    if settings.mcp_servers:
-        try:
-            tools.extend((get_mcp_manager_for_user(user_id) if user_id else get_mcp_manager()).get_tools())
-        except Exception:
-            pass
-    return filter_agent_tools(tools, settings)
+    return create_agent_tools(settings, user_id)
 
 
 def _format_scheduled_telegram_message(task: dict, body: str) -> str:
@@ -565,41 +548,64 @@ def get_trace_store():
     return TraceStore(workspace_dir=settings.workspace_dir)
 
 
-@lru_cache
+# MCP manager 持有线程和连接，必须显式关闭，不能只丢弃 lru_cache 引用。
+_mcp_managers: dict[str | None, Any] = {}
+_mcp_managers_lock = Lock()
+
+
 def get_mcp_manager():
-    """获取 MCP 管理器单例。
-
-    基于 config.json 中的 mcp_servers 配置初始化 MCPManager。
-    实际连接在 lifespan 中异步执行。
-    """
-    from app.core.tools.mcp.mcp_tool import MCPManager
-
-    settings = get_settings()
-    return MCPManager(
-        server_configs=settings.mcp_servers,
-        workspace_dir=settings.workspace_dir,
-        tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
-    )
+    """获取应用级 MCP manager。"""
+    return get_mcp_manager_for_user(None)
 
 
-@lru_cache
 def get_mcp_manager_for_user(user_id: str | None):
-    """Get an MCP manager for a user's effective MCP config."""
+    """获取当前用户的 MCP manager，冷启动也只创建一个实例。"""
+    import logging
+
     from app.core.security import user_workspace_dir
     from app.core.tools.mcp.mcp_tool import MCPManager
 
-    if not user_id:
-        return get_mcp_manager()
-    settings = get_effective_settings(user_id)
-    manager = MCPManager(
-        server_configs=settings.mcp_servers,
-        workspace_dir=user_workspace_dir(settings.workspace_dir, user_id),
-        tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
-        user_id=user_id,
-    )
-    if settings.mcp_servers:
+    with _mcp_managers_lock:
+        if user_id in _mcp_managers:
+            return _mcp_managers[user_id]
+        settings = get_effective_settings(user_id) if user_id else get_settings()
+        manager = MCPManager(
+            server_configs=settings.mcp_servers,
+            workspace_dir=user_workspace_dir(settings.workspace_dir, user_id)
+            if user_id
+            else settings.workspace_dir,
+            tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
+            user_id=user_id,
+        )
+        _mcp_managers[user_id] = manager
+        if user_id and settings.mcp_servers:
+            try:
+                manager.connect_all_background()
+            except Exception:
+                logging.getLogger("stocks-assistant.mcp").warning(
+                    "MCP background initialization failed", exc_info=True
+                )
+        return manager
+
+
+def close_mcp_managers(user_id: str | None = None, *, all_users: bool = True) -> None:
+    """移除并关闭指定范围，个人配置变更不打断其他用户的连接。"""
+    import logging
+
+    with _mcp_managers_lock:
+        if all_users:
+            managers = list(_mcp_managers.values())
+            _mcp_managers.clear()
+        else:
+            manager = _mcp_managers.pop(user_id, None)
+            managers = [manager] if manager is not None else []
+    for manager in managers:
         try:
-            manager.connect_all_background()
+            manager.close_sync()
         except Exception:
-            pass
-    return manager
+            logging.getLogger("stocks-assistant.mcp").warning("MCP cleanup failed", exc_info=True)
+
+
+# 兼容测试和旧集成中的缓存清理入口，同时确保连接与后台线程被释放。
+get_mcp_manager.cache_clear = close_mcp_managers
+get_mcp_manager_for_user.cache_clear = close_mcp_managers

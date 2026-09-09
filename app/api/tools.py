@@ -5,12 +5,12 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.schemas.tools import ToolListResponse, ToolExecuteRequest, ToolExecuteResponse
 from app.config import get_effective_settings
+from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 from app.core.tools.permissions import is_tool_allowed_for_agent, mcp_server_name_from_tool
 from app.core.tools.tool_manager import ToolManager
 from app.deps import get_mcp_manager_for_user, get_memory_manager_for_user
-from app.core.security import CurrentUser, require_permissions, user_workspace_dir
+from app.schemas.tools import ToolExecuteRequest, ToolExecuteResponse, ToolListResponse
 
 router = APIRouter()
 
@@ -18,7 +18,9 @@ router = APIRouter()
 def _tool_manager_for_user(current_user: CurrentUser, settings) -> ToolManager:
     workspace_dir = user_workspace_dir(settings.workspace_dir, current_user.id)
     manager = ToolManager(workspace_dir=workspace_dir, user_id=current_user.id)
-    memory_manager = get_memory_manager_for_user(current_user.id) if settings.memory_enabled else None
+    memory_manager = (
+        get_memory_manager_for_user(current_user.id) if settings.memory_enabled else None
+    )
     manager.load_builtin_tools(memory_manager=memory_manager, user_id=current_user.id)
     return manager
 
@@ -56,11 +58,19 @@ def execute_tool(
     mgr = _tool_manager_for_user(current_user, settings)
     tool = mgr.get_tool(name)
     if not tool and name.startswith("mcp_") and settings.mcp_servers:
-        tool = next((item for item in get_mcp_manager_for_user(current_user.id).get_tools() if item.name == name), None)
+        tool = next(
+            (
+                item
+                for item in get_mcp_manager_for_user(current_user.id).get_tools()
+                if item.name == name
+            ),
+            None,
+        )
     if not tool:
         raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
 
     import time
+
     start = time.time()
     result = tool.execute_tool(request.arguments)
     execution_time = time.time() - start

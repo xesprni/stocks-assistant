@@ -11,6 +11,7 @@ set -Eeuo pipefail
 #   REPO_REF=main
 #   APP_DIR=/opt/stocks-assistant
 #   APP_USER=stocks
+#   PYTHON_BIN=/usr/bin/python3.12
 #   BACKEND_PORT=8000
 #   DATA_DIR=/var/lib/stocks-assistant
 #   DB_PATH=/var/lib/stocks-assistant/stocks-assistant.db
@@ -23,6 +24,7 @@ set -Eeuo pipefail
 REPO_REF="${REPO_REF:-main}"
 APP_DIR="${APP_DIR:-/opt/stocks-assistant}"
 APP_USER="${APP_USER:-stocks}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 DATA_DIR="${DATA_DIR:-/var/lib/stocks-assistant}"
 DB_PATH="${DB_PATH:-$DATA_DIR/stocks-assistant.db}"
@@ -144,13 +146,32 @@ ensure_git_safe_directory() {
   git config --global --add safe.directory "$APP_DIR"
 }
 
+ensure_python() {
+  command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "Python interpreter not found: $PYTHON_BIN"
+  local interpreters=("$PYTHON_BIN")
+  local interpreter
+  if [[ -e "$APP_DIR/.venv" ]]; then
+    [[ -x "$APP_DIR/.venv/bin/python" ]] || die "Invalid existing virtual environment: $APP_DIR/.venv. Rebuild it with Python 3.12+."
+    interpreters+=("$APP_DIR/.venv/bin/python")
+  fi
+  # 在源码切换和依赖安装前检查旧环境，避免留下半更新部署。
+  for interpreter in "${interpreters[@]}"; do
+    "$interpreter" - <<'PYTHON' || die "Python 3.12+ is required. Set PYTHON_BIN and rebuild any older $APP_DIR/.venv before updating."
+import sys
+if sys.version_info < (3, 12):
+    raise SystemExit(f"Unsupported Python {sys.version.split()[0]}: {sys.executable}")
+print(f"Python {sys.version.split()[0]}: {sys.executable}")
+PYTHON
+  done
+}
+
 validate_deployment() {
+  ensure_python
   [[ -d "$APP_DIR/.git" ]] || die "$APP_DIR is not a git checkout. Run deploy_vps.sh first or set APP_DIR."
   [[ -f "$APP_DIR/pyproject.toml" ]] || die "$APP_DIR does not look like the Stocks Assistant repository."
   command -v git >/dev/null 2>&1 || die "git is required."
   ensure_git_safe_directory
   command -v curl >/dev/null 2>&1 || die "curl is required."
-  command -v python3 >/dev/null 2>&1 || die "python3 is required."
   command -v npm >/dev/null 2>&1 || die "npm is required."
   command -v systemctl >/dev/null 2>&1 || die "systemctl is required."
   if ! systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
@@ -188,7 +209,7 @@ backup_database() {
   DB_BACKUP_PATH="$BACKUP_DIR/stocks-assistant-$(date '+%Y%m%d-%H%M%S').db"
 
   log "Backing up SQLite database to $DB_BACKUP_PATH"
-  python3 - "$DB_PATH" "$DB_BACKUP_PATH" <<'PY'
+  "$PYTHON_BIN" - "$DB_PATH" "$DB_BACKUP_PATH" <<'PY'
 import sqlite3
 import sys
 
@@ -229,7 +250,7 @@ update_source() {
 install_backend_dependencies() {
   log "Installing backend dependencies"
   if [[ ! -x "$APP_DIR/.venv/bin/python" ]]; then
-    python3 -m venv "$APP_DIR/.venv"
+    "$PYTHON_BIN" -m venv "$APP_DIR/.venv"
   fi
   "$APP_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
   "$APP_DIR/.venv/bin/python" -m pip install -e "$APP_DIR"
@@ -321,4 +342,6 @@ main() {
   print_summary
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

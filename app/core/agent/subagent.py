@@ -5,9 +5,10 @@ from __future__ import annotations
 import copy
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 from app.config import get_settings
 from app.core.agent.agent import Agent
@@ -28,7 +29,7 @@ class PreparedSubAgentTask:
     tools: list[BaseTool]
     tool_names: list[str]
     max_steps: int
-    skill_filter: Optional[list[str]]
+    skill_filter: list[str] | None
 
 
 class SubAgentRunner:
@@ -37,8 +38,8 @@ class SubAgentRunner:
     def __init__(
         self,
         parent_agent: Agent,
-        event_emitter: Optional[Callable[[str, dict[str, Any]], None]] = None,
-        parent_tool_call_id: Optional[str] = None,
+        event_emitter: Callable[[str, dict[str, Any]], None] | None = None,
+        parent_tool_call_id: str | None = None,
     ):
         self.parent_agent = parent_agent
         self.event_emitter = event_emitter
@@ -66,18 +67,25 @@ class SubAgentRunner:
         prepared = [self._prepare_task(index, item) for index, item in enumerate(raw_tasks)]
         batch_id = f"subagents_{uuid.uuid4().hex[:12]}"
 
-        self._emit("subagent_batch_start", {
-            "batch_id": batch_id,
-            "task_count": len(prepared),
-            "roles": [task.role_name for task in prepared],
-            "parent_tool_call_id": self.parent_tool_call_id,
-        })
+        self._emit(
+            "subagent_batch_start",
+            {
+                "batch_id": batch_id,
+                "task_count": len(prepared),
+                "roles": [task.role_name for task in prepared],
+                "parent_tool_call_id": self.parent_tool_call_id,
+            },
+        )
 
         started = time.time()
         # as_completed 按完成顺序返回；用原始 index 回填，确保结果仍按请求顺序输出。
-        results: list[Optional[dict[str, Any]]] = [None] * len(prepared)
-        with ThreadPoolExecutor(max_workers=min(max_parallel, len(prepared)), thread_name_prefix="subagent") as executor:
-            future_map = {executor.submit(self._run_one, batch_id, task): task.index for task in prepared}
+        results: list[dict[str, Any] | None] = [None] * len(prepared)
+        with ThreadPoolExecutor(
+            max_workers=min(max_parallel, len(prepared)), thread_name_prefix="subagent"
+        ) as executor:
+            future_map = {
+                executor.submit(self._run_one, batch_id, task): task.index for task in prepared
+            }
             for future in as_completed(future_map):
                 index = future_map[future]
                 try:
@@ -94,15 +102,22 @@ class SubAgentRunner:
                     }
 
         final_results = [result for result in results if result is not None]
-        status = "success" if all(result.get("status") == "success" for result in final_results) else "partial_error"
+        status = (
+            "success"
+            if all(result.get("status") == "success" for result in final_results)
+            else "partial_error"
+        )
         duration_ms = (time.time() - started) * 1000
-        self._emit("subagent_batch_end", {
-            "batch_id": batch_id,
-            "status": status,
-            "duration_ms": duration_ms,
-            "result_count": len(final_results),
-            "parent_tool_call_id": self.parent_tool_call_id,
-        })
+        self._emit(
+            "subagent_batch_end",
+            {
+                "batch_id": batch_id,
+                "status": status,
+                "duration_ms": duration_ms,
+                "result_count": len(final_results),
+                "parent_tool_call_id": self.parent_tool_call_id,
+            },
+        )
         return {
             "batch_id": batch_id,
             "status": status,
@@ -123,13 +138,17 @@ class SubAgentRunner:
         role = roles.get(role_name)
         if not role_name or not isinstance(role, dict):
             available = ", ".join(sorted(roles.keys())) or "(none)"
-            raise SubAgentValidationError(f"Unknown sub-agent role: {role_name or '(empty)'}. Available: {available}")
+            raise SubAgentValidationError(
+                f"Unknown sub-agent role: {role_name or '(empty)'}. Available: {available}"
+            )
 
         available_tools = {tool.name: tool for tool in getattr(self.parent_agent, "tools", [])}
         requested_tools = self._coerce_tool_names(item.get("tools"))
         role_allowlist = self._coerce_tool_names(role.get("tool_allowlist"), allow_none=False)
         role_allowed = set(role_allowlist)
-        dangerous_tools = set(str(name) for name in (self.settings.multi_agent_dangerous_tools or []))
+        dangerous_tools = set(
+            str(name) for name in (self.settings.multi_agent_dangerous_tools or [])
+        )
         allow_dangerous = bool(role.get("allow_dangerous_tools", False))
         allow_all_mcp_tools = bool(role.get("allow_all_mcp_tools", False))
 
@@ -137,10 +156,16 @@ class SubAgentRunner:
         if requested_tools is None:
             selected_names = [name for name in role_allowlist if name in available_tools]
             if allow_all_mcp_tools:
-                selected_names = list(dict.fromkeys([
-                    *selected_names,
-                    *sorted(name for name in available_tools if self._is_mcp_tool_name(name)),
-                ]))
+                selected_names = list(
+                    dict.fromkeys(
+                        [
+                            *selected_names,
+                            *sorted(
+                                name for name in available_tools if self._is_mcp_tool_name(name)
+                            ),
+                        ]
+                    )
+                )
         else:
             selected_names = requested_tools
 
@@ -149,8 +174,10 @@ class SubAgentRunner:
             raise SubAgentValidationError(f"Unknown tool(s) for sub-agent: {', '.join(unknown)}")
 
         not_allowed = [
-            name for name in selected_names
-            if name not in role_allowed and not (allow_all_mcp_tools and self._is_mcp_tool_name(name))
+            name
+            for name in selected_names
+            if name not in role_allowed
+            and not (allow_all_mcp_tools and self._is_mcp_tool_name(name))
         ]
         if not_allowed:
             raise SubAgentValidationError(
@@ -166,7 +193,9 @@ class SubAgentRunner:
                 f"Dangerous tool(s) are disabled for role {role_name}: {', '.join(dangerous)}"
             )
 
-        role_max_steps = self._as_positive_int(role.get("max_steps"), self.settings.multi_agent_default_max_steps)
+        role_max_steps = self._as_positive_int(
+            role.get("max_steps"), self.settings.multi_agent_default_max_steps
+        )
         requested_steps = self._as_positive_int(item.get("max_steps"), role_max_steps)
         max_steps = max(1, min(requested_steps, role_max_steps))
         skill_filter = self._coerce_string_list(item.get("skill_filter"))
@@ -188,14 +217,17 @@ class SubAgentRunner:
 
     def _run_one(self, batch_id: str, task: PreparedSubAgentTask) -> dict[str, Any]:
         started = time.time()
-        self._emit("subagent_start", {
-            "batch_id": batch_id,
-            "task_id": task.task_id,
-            "role": task.role_name,
-            "task": task.task,
-            "tools": task.tool_names,
-            "max_steps": task.max_steps,
-        })
+        self._emit(
+            "subagent_start",
+            {
+                "batch_id": batch_id,
+                "task_id": task.task_id,
+                "role": task.role_name,
+                "task": task.task,
+                "tools": task.tool_names,
+                "max_steps": task.max_steps,
+            },
+        )
 
         status = "success"
         final_response = ""
@@ -234,27 +266,33 @@ class SubAgentRunner:
         }
         if error:
             result["error"] = error
-        self._emit("subagent_end", {
-            "batch_id": batch_id,
-            "task_id": task.task_id,
-            "role": task.role_name,
-            "status": status,
-            "duration_ms": duration_ms,
-            "final_response": final_response,
-            "error": error,
-        })
+        self._emit(
+            "subagent_end",
+            {
+                "batch_id": batch_id,
+                "task_id": task.task_id,
+                "role": task.role_name,
+                "status": status,
+                "duration_ms": duration_ms,
+                "final_response": final_response,
+                "error": error,
+            },
+        )
         return result
 
     def _child_event_wrapper(self, batch_id: str, task: PreparedSubAgentTask):
         def on_child_event(event: dict[str, Any]) -> None:
-            self._emit("subagent_event", {
-                "batch_id": batch_id,
-                "task_id": task.task_id,
-                "role": task.role_name,
-                "child_event_type": event.get("type"),
-                "child_timestamp": event.get("timestamp"),
-                "child_data": event.get("data") or {},
-            })
+            self._emit(
+                "subagent_event",
+                {
+                    "batch_id": batch_id,
+                    "task_id": task.task_id,
+                    "role": task.role_name,
+                    "child_event_type": event.get("type"),
+                    "child_timestamp": event.get("timestamp"),
+                    "child_data": event.get("data") or {},
+                },
+            )
 
         return on_child_event
 
@@ -285,7 +323,7 @@ class SubAgentRunner:
         return cloned
 
     @staticmethod
-    def _coerce_tool_names(value: Any, allow_none: bool = True) -> Optional[list[str]]:
+    def _coerce_tool_names(value: Any, allow_none: bool = True) -> list[str] | None:
         if value is None:
             return None if allow_none else []
         if not isinstance(value, list):
@@ -302,7 +340,7 @@ class SubAgentRunner:
         return str(name).startswith("mcp_")
 
     @staticmethod
-    def _coerce_string_list(value: Any) -> Optional[list[str]]:
+    def _coerce_string_list(value: Any) -> list[str] | None:
         if value is None:
             return None
         if not isinstance(value, list):

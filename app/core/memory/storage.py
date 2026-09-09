@@ -12,15 +12,18 @@
 
 import hashlib
 import json
+import re
 import sqlite3
 import threading
-from functools import wraps
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # 向量搜索候选集上限。超过此数量的 embedding 不会被加载到内存参与相似度计算，
 # 防止大规模记忆库导致 O(n) 扫描和内存压力。实际结果仍按 limit 截断。
+from app.core.memory.search_filters import scope_filter
+
 VECTOR_SEARCH_MAX_CANDIDATES = 5000
 
 
@@ -38,29 +41,31 @@ def _locked(method):
 @dataclass
 class MemoryChunk:
     """记忆块数据结构"""
+
     id: str  # 块唯一标识（MD5 哈希）
-    user_id: Optional[str]  # 用户 ID（为空表示共享）
+    user_id: str | None  # 用户 ID（为空表示共享）
     scope: str  # 作用域：shared / user / session
     source: str  # 来源：memory / knowledge / session
     path: str  # 文件相对路径
     start_line: int  # 起始行号
     end_line: int  # 结束行号
     text: str  # 块文本内容
-    embedding: Optional[List[float]]  # 向量嵌入
+    embedding: list[float] | None  # 向量嵌入
     hash: str  # 内容哈希（用于变更检测）
-    metadata: Optional[Dict[str, Any]] = None  # 额外元数据
+    metadata: dict[str, Any] | None = None  # 额外元数据
 
 
 @dataclass
 class SearchResult:
     """搜索结果"""
+
     path: str  # 文件路径
     start_line: int  # 起始行号
     end_line: int  # 结束行号
     score: float  # 相关度分数（0-1）
     snippet: str  # 内容摘要
     source: str  # 来源标识
-    user_id: Optional[str] = None  # 用户 ID
+    user_id: str | None = None  # 用户 ID
 
 
 class MemoryStorage:
@@ -72,9 +77,10 @@ class MemoryStorage:
     - 增量文件同步（基于内容哈希）
     - 自动数据库完整性检查和恢复
     """
+
     def __init__(self, db_path: Path):
         self.db_path = db_path
-        self.conn: Optional[sqlite3.Connection] = None
+        self.conn: sqlite3.Connection | None = None
         self.fts5_available = False
         self._lock = threading.RLock()
         self._init_db()
@@ -96,7 +102,7 @@ class MemoryStorage:
             self.fts5_available = self._check_fts5()
             try:
                 result = self.conn.execute("PRAGMA integrity_check").fetchone()
-                if result[0] != 'ok':
+                if result[0] != "ok":
                     self.conn.close()
                     self.db_path.unlink(missing_ok=True)
                     self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -110,7 +116,7 @@ class MemoryStorage:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA busy_timeout=15000")
         except Exception as e:
-            raise RuntimeError(f"Database init failed: {e}")
+            raise RuntimeError(f"Database init failed: {e}") from e
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS chunks (
@@ -131,9 +137,15 @@ class MemoryStorage:
                     text, id UNINDEXED, user_id UNINDEXED, path UNINDEXED,
                     source UNINDEXED, scope UNINDEXED, content='chunks', content_rowid='rowid')
             """)
-            self.conn.execute("CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text,id,user_id,path,source,scope) VALUES(new.rowid,new.text,new.id,new.user_id,new.path,new.source,new.scope); END")
-            self.conn.execute("CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN DELETE FROM chunks_fts WHERE rowid=old.rowid; END")
-            self.conn.execute("CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN UPDATE chunks_fts SET text=new.text,id=new.id,user_id=new.user_id,path=new.path,source=new.source,scope=new.scope WHERE rowid=new.rowid; END")
+            self.conn.execute(
+                "CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text,id,user_id,path,source,scope) VALUES(new.rowid,new.text,new.id,new.user_id,new.path,new.source,new.scope); END"
+            )
+            self.conn.execute(
+                "CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN DELETE FROM chunks_fts WHERE rowid=old.rowid; END"
+            )
+            self.conn.execute(
+                "CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN UPDATE chunks_fts SET text=new.text,id=new.id,user_id=new.user_id,path=new.path,source=new.source,scope=new.scope WHERE rowid=new.rowid; END"
+            )
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS files (
@@ -144,19 +156,33 @@ class MemoryStorage:
         self.conn.commit()
 
     @_locked
-    def save_chunks_batch(self, chunks: List[MemoryChunk]):
+    def save_chunks_batch(self, chunks: list[MemoryChunk]):
         """批量保存记忆块（INSERT OR REPLACE）"""
         self.conn.executemany(
             "INSERT OR REPLACE INTO chunks (id,user_id,scope,source,path,start_line,end_line,text,embedding,hash,metadata,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,strftime('%s','now'))",
-            [(c.id, c.user_id, c.scope, c.source, c.path, c.start_line, c.end_line, c.text,
-              json.dumps(c.embedding) if c.embedding else None, c.hash,
-              json.dumps(c.metadata) if c.metadata else None) for c in chunks])
+            [
+                (
+                    c.id,
+                    c.user_id,
+                    c.scope,
+                    c.source,
+                    c.path,
+                    c.start_line,
+                    c.end_line,
+                    c.text,
+                    json.dumps(c.embedding) if c.embedding else None,
+                    c.hash,
+                    json.dumps(c.metadata) if c.metadata else None,
+                )
+                for c in chunks
+            ],
+        )
         self.conn.commit()
 
     @_locked
     def replace_file_chunks(
         self,
-        chunks: List[MemoryChunk],
+        chunks: list[MemoryChunk],
         *,
         path: str,
         source: str,
@@ -212,15 +238,18 @@ class MemoryStorage:
         return cursor.rowcount
 
     @_locked
-    def delete_indexed_file(self, path: str) -> Dict[str, int]:
+    def delete_indexed_file(self, path: str) -> dict[str, int]:
         """Delete both chunks and file metadata for a path."""
         chunk_cursor = self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
         file_cursor = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
         self.conn.commit()
-        return {"deleted_chunks": chunk_cursor.rowcount, "deleted_index_files": file_cursor.rowcount}
+        return {
+            "deleted_chunks": chunk_cursor.rowcount,
+            "deleted_index_files": file_cursor.rowcount,
+        }
 
     @_locked
-    def list_indexed_files(self, source: Optional[str] = None) -> List[dict]:
+    def list_indexed_files(self, source: str | None = None) -> list[dict]:
         """List files tracked in the memory index."""
         if source:
             rows = self.conn.execute(
@@ -234,27 +263,33 @@ class MemoryStorage:
         return [dict(row) for row in rows]
 
     @_locked
-    def get_chunks_by_path(self, path: str) -> List[sqlite3.Row]:
+    def get_chunks_by_path(self, path: str) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM chunks WHERE path = ? ORDER BY start_line ASC",
             (path,),
         ).fetchall()
 
     @_locked
-    def get_file_hash(self, path: str) -> Optional[str]:
+    def get_file_hash(self, path: str) -> str | None:
         """获取已存储的文件内容哈希（用于增量同步）"""
         row = self.conn.execute("SELECT hash FROM files WHERE path = ?", (path,)).fetchone()
-        return row['hash'] if row else None
+        return row["hash"] if row else None
 
     @_locked
     def update_file_metadata(self, path: str, source: str, file_hash: str, mtime: int, size: int):
         self.conn.execute(
             "INSERT OR REPLACE INTO files (path,source,hash,mtime,size,updated_at) VALUES (?,?,?,?,?,strftime('%s','now'))",
-            (path, source, file_hash, mtime, size))
+            (path, source, file_hash, mtime, size),
+        )
         self.conn.commit()
 
-    def search_vector(self, query_embedding: List[float], user_id: Optional[str] = None,
-                      scopes: List[str] = None, limit: int = 10) -> List[SearchResult]:
+    def search_vector(
+        self,
+        query_embedding: list[float],
+        user_id: str | None = None,
+        scopes: list[str] = None,
+        limit: int = 10,
+    ) -> list[SearchResult]:
         """向量搜索：基于余弦相似度的语义搜索
 
         先从数据库加载所有有嵌入的块，再在 Python 中计算相似度排序。
@@ -262,98 +297,82 @@ class MemoryStorage:
         导致 O(n) 扫描和内存压力。（适合中小规模数据，大规模场景可替换为
         专用向量数据库）
         """
-        if scopes is None:
-            scopes = ["shared"]
-            if user_id:
-                scopes.append("user")
-        scope_ph = ','.join('?' * len(scopes))
-        params = list(scopes)
-        if user_id:
-            q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND (scope='shared' OR user_id=?) AND embedding IS NOT NULL LIMIT ?"
-            params.extend([user_id, VECTOR_SEARCH_MAX_CANDIDATES])
-        else:
-            q = f"SELECT * FROM chunks WHERE scope IN ({scope_ph}) AND embedding IS NOT NULL LIMIT ?"
-            params.append(VECTOR_SEARCH_MAX_CANDIDATES)
+        predicate, scope_params = scope_filter(user_id, scopes)
+        q = f"SELECT * FROM chunks WHERE {predicate} AND embedding IS NOT NULL LIMIT ?"
+        params = [*scope_params, VECTOR_SEARCH_MAX_CANDIDATES]
         # 共享连接只在读取候选行时加锁；最多 5000 个向量的余弦计算在锁外
         # 完成，避免一次检索长时间阻塞记忆写入和文件索引更新。
         with self._lock:
             rows = self.conn.execute(q, params).fetchall()
         results = []
         for row in rows:
-            emb = json.loads(row['embedding'])
+            emb = json.loads(row["embedding"])
             sim = self._cosine_sim(query_embedding, emb)
             if sim > 0:
                 results.append((sim, row))
         results.sort(key=lambda x: x[0], reverse=True)
-        return [SearchResult(path=r['path'], start_line=r['start_line'], end_line=r['end_line'],
-                             score=s, snippet=self._truncate(r['text'], 500), source=r['source'],
-                             user_id=r['user_id']) for s, r in results[:limit]]
+        return [self._search_result(row, score) for score, row in results[:limit]]
 
     @_locked
-    def search_keyword(self, query: str, user_id: Optional[str] = None,
-                       scopes: List[str] = None, limit: int = 10) -> List[SearchResult]:
+    def search_keyword(
+        self, query: str, user_id: str | None = None, scopes: list[str] = None, limit: int = 10
+    ) -> list[SearchResult]:
         """关键词搜索：FTS5 全文搜索 + CJK 词汇 LIKE 匹配
 
         优先使用 FTS5（支持英文和分词），回退到 CJK 词汇 LIKE 匹配。
         """
-        if scopes is None:
-            scopes = ["shared"]
-            if user_id:
-                scopes.append("user")
         if self.fts5_available:
             fts_results = self._search_fts5(query, user_id, scopes, limit)
             if fts_results:
                 return fts_results
-        import re
-        cjk_words = re.findall(r'[一-鿿]{2,}', query)
+        cjk_words = re.findall(r"[一-鿿]{2,}", query)
         if not cjk_words:
             return []
-        scope_ph = ','.join('?' * len(scopes))
-        like_parts = ["text LIKE ?" for _ in cjk_words]
-        params = [f'%{w}%' for w in cjk_words] + list(scopes)
-        where = ' OR '.join(like_parts)
-        if user_id:
-            q = f"SELECT * FROM chunks WHERE ({where}) AND scope IN ({scope_ph}) AND (scope='shared' OR user_id=?) LIMIT ?"
-            params += [user_id, limit]
-        else:
-            q = f"SELECT * FROM chunks WHERE ({where}) AND scope IN ({scope_ph}) LIMIT ?"
-            params.append(limit)
+        predicate, scope_params = scope_filter(user_id, scopes)
+        where = " OR ".join("text LIKE ?" for _ in cjk_words)
+        q = f"SELECT * FROM chunks WHERE ({where}) AND {predicate} LIMIT ?"
+        params = [*(f"%{word}%" for word in cjk_words), *scope_params, limit]
         try:
             rows = self.conn.execute(q, params).fetchall()
-            return [SearchResult(path=r['path'], start_line=r['start_line'], end_line=r['end_line'],
-                                 score=0.5, snippet=self._truncate(r['text'], 500), source=r['source'],
-                                 user_id=r['user_id']) for r in rows]
-        except Exception:
+            return [self._search_result(row, 0.5) for row in rows]
+        except sqlite3.Error:
             return []
 
     def _search_fts5(self, query: str, user_id, scopes, limit):
-        import re
-        tokens = re.findall(r'[A-Za-z0-9_]+', query)
+        tokens = re.findall(r"[A-Za-z0-9_]+", query)
         if not tokens:
             return []
-        fts_query = ' OR '.join(f'"{t}"' for t in tokens)
-        scope_ph = ','.join('?' * len(scopes))
-        params = [fts_query] + list(scopes)
-        if user_id:
-            sql = f"SELECT chunks.*, bm25(chunks_fts) as rank FROM chunks_fts JOIN chunks ON chunks.id=chunks_fts.id WHERE chunks_fts MATCH ? AND chunks.scope IN ({scope_ph}) AND (chunks.scope='shared' OR chunks.user_id=?) ORDER BY rank LIMIT ?"
-            params += [user_id, limit]
-        else:
-            sql = f"SELECT chunks.*, bm25(chunks_fts) as rank FROM chunks_fts JOIN chunks ON chunks.id=chunks_fts.id WHERE chunks_fts MATCH ? AND chunks.scope IN ({scope_ph}) ORDER BY rank LIMIT ?"
-            params.append(limit)
+        fts_query = " OR ".join(f'"{t}"' for t in tokens)
+        predicate, scope_params = scope_filter(user_id, scopes, qualified=True)
+        sql = (
+            "SELECT chunks.*, bm25(chunks_fts) as rank FROM chunks_fts "
+            "JOIN chunks ON chunks.id=chunks_fts.id "
+            f"WHERE chunks_fts MATCH ? AND {predicate} ORDER BY rank LIMIT ?"
+        )
         try:
-            rows = self.conn.execute(sql, params).fetchall()
-            return [SearchResult(path=r['path'], start_line=r['start_line'], end_line=r['end_line'],
-                                 score=1 / (1 + max(0, r['rank'])), snippet=self._truncate(r['text'], 500),
-                                 source=r['source'], user_id=r['user_id']) for r in rows]
-        except Exception:
+            rows = self.conn.execute(sql, [fts_query, *scope_params, limit]).fetchall()
+            return [self._search_result(row, 1 / (1 + max(0, row["rank"]))) for row in rows]
+        except sqlite3.Error:
             return []
 
+    @staticmethod
+    def _search_result(row: sqlite3.Row, score: float) -> SearchResult:
+        return SearchResult(
+            path=row["path"],
+            start_line=row["start_line"],
+            end_line=row["end_line"],
+            score=score,
+            snippet=MemoryStorage._truncate(row["text"], 500),
+            source=row["source"],
+            user_id=row["user_id"],
+        )
+
     @_locked
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """获取存储统计信息"""
         return {
-            'chunks': self.conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()['c'],
-            'files': self.conn.execute("SELECT COUNT(*) as c FROM files").fetchone()['c'],
+            "chunks": self.conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"],
+            "files": self.conn.execute("SELECT COUNT(*) as c FROM files").fetchone()["c"],
         }
 
     @_locked
@@ -367,10 +386,10 @@ class MemoryStorage:
                 pass
 
     @staticmethod
-    def _cosine_sim(v1: List[float], v2: List[float]) -> float:
+    def _cosine_sim(v1: list[float], v2: list[float]) -> float:
         if len(v1) != len(v2):
             return 0.0
-        dot = sum(a * b for a, b in zip(v1, v2))
+        dot = sum(a * b for a, b in zip(v1, v2, strict=True))
         n1 = sum(a * a for a in v1) ** 0.5
         n2 = sum(b * b for b in v2) ** 0.5
         return dot / (n1 * n2) if n1 and n2 else 0.0
@@ -381,4 +400,4 @@ class MemoryStorage:
 
     @staticmethod
     def compute_hash(content: str) -> str:
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()

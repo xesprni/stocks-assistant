@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,9 +11,14 @@ from fastapi.testclient import TestClient
 
 import app.config as config_module
 import app.core.app_store as app_store_module
-from app.core.tracing import TraceStore
 from app.core.app_store import APP_DB_ENV, reset_app_store_for_tests
-from app.core.security import create_access_token, hash_password, hash_refresh_token, verify_password
+from app.core.security import (
+    create_access_token,
+    hash_password,
+    hash_refresh_token,
+    verify_password,
+)
+from app.core.tracing import TraceStore
 from app.deps import get_session_store, get_trace_store
 from app.main import app
 
@@ -94,7 +99,9 @@ class AuthSecurityTest(unittest.TestCase):
 
     def test_dev_login_creates_local_admin_when_enabled(self):
         with patch.dict(os.environ, {"STOCKS_ASSISTANT_DEV_AUTH": "1"}):
-            response = self.client.post("/api/v1/auth/dev-login", headers={"X-Device-Id": "dev-browser"})
+            response = self.client.post(
+                "/api/v1/auth/dev-login", headers={"X-Device-Id": "dev-browser"}
+            )
 
         self.assertEqual(response.status_code, 200, response.text)
         tokens = response.json()
@@ -104,14 +111,19 @@ class AuthSecurityTest(unittest.TestCase):
 
         protected = self.client.get(
             "/api/v1/config",
-            headers={"Authorization": f"Bearer {tokens['access_token']}", "X-Device-Id": "dev-browser"},
+            headers={
+                "Authorization": f"Bearer {tokens['access_token']}",
+                "X-Device-Id": "dev-browser",
+            },
         )
         self.assertEqual(protected.status_code, 200, protected.text)
 
     def test_refresh_token_rotation_revokes_previous_token(self):
         tokens = self.setup_admin()
 
-        rotated = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        rotated = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
         self.assertEqual(rotated.status_code, 200, rotated.text)
         next_refresh = rotated.json()["refresh_token"]
 
@@ -119,12 +131,16 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertIsNotNone(old_record)
         self.assertIsNotNone(old_record["revoked_at"])
 
-        replay = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        replay = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
         self.assertEqual(replay.status_code, 401)
 
         logout = self.client.post("/api/v1/auth/logout", json={"refresh_token": next_refresh})
         self.assertEqual(logout.status_code, 200)
-        after_logout = self.client.post("/api/v1/auth/refresh", json={"refresh_token": next_refresh})
+        after_logout = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": next_refresh}
+        )
         self.assertEqual(after_logout.status_code, 401)
 
     def test_profile_update_stores_avatar_data_url(self):
@@ -178,18 +194,27 @@ class AuthSecurityTest(unittest.TestCase):
 
         blocked = self.client.get("/api/v1/auth/me", headers=headers)
         self.assertEqual(blocked.status_code, 401)
-        refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        refresh = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
         self.assertEqual(refresh.status_code, 401)
 
     def test_same_device_relogin_is_listed_as_one_device(self):
         response = self.client.post(
             "/api/v1/auth/setup",
-            json={"username": "admin", "password": "Password123!", "display_name": "Admin", "device_id": "browser-1"},
+            json={
+                "username": "admin",
+                "password": "Password123!",
+                "display_name": "Admin",
+                "device_id": "browser-1",
+            },
         )
         self.assertEqual(response.status_code, 200, response.text)
         first_tokens = response.json()
 
-        logout = self.client.post("/api/v1/auth/logout", json={"refresh_token": first_tokens["refresh_token"]})
+        logout = self.client.post(
+            "/api/v1/auth/logout", json={"refresh_token": first_tokens["refresh_token"]}
+        )
         self.assertEqual(logout.status_code, 200, logout.text)
 
         second = self.client.post(
@@ -211,7 +236,9 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertTrue(sessions[0]["is_current"])
 
         old_record = next(record for record in sessions[0]["records"] if not record["is_current"])
-        deleted = self.client.delete(f"/api/v1/auth/sessions/browser-1/records/{old_record['id']}", headers=headers)
+        deleted = self.client.delete(
+            f"/api/v1/auth/sessions/browser-1/records/{old_record['id']}", headers=headers
+        )
         self.assertEqual(deleted.status_code, 200, deleted.text)
         self.assertFalse(deleted.json()["deleted_current"])
 
@@ -221,7 +248,9 @@ class AuthSecurityTest(unittest.TestCase):
 
     def test_revoke_others_is_scoped_to_normal_user_and_invalidates_tokens(self):
         admin = self.setup_admin()
-        self.store.create_user(username="trader", password_hash=hash_password("Password123!"), role_names=["user"])
+        self.store.create_user(
+            username="trader", password_hash=hash_password("Password123!"), role_names=["user"]
+        )
         current = self.login_device("trader", "shared-browser")
         other = self.login_device("trader", "other-browser")
         admin_other = self.login_device("admin", "other-browser")
@@ -229,23 +258,36 @@ class AuthSecurityTest(unittest.TestCase):
         response = self.client.post(
             f"/api/v1/auth/sessions/revoke-others?user_id={admin['user']['id']}",
             json={"user_id": admin["user"]["id"], "device_id": "other-browser"},
-            headers={"Authorization": f"Bearer {current['access_token']}", "X-Device-Id": "other-browser"},
+            headers={
+                "Authorization": f"Bearer {current['access_token']}",
+                "X-Device-Id": "other-browser",
+            },
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1})
+        self.assertEqual(
+            response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1}
+        )
         for tokens in (admin, admin_other, current):
-            checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
+            checked = self.client.get(
+                "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+            )
             self.assertEqual(checked.status_code, 200, checked.text)
-        other_access = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {other['access_token']}"})
+        other_access = self.client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {other['access_token']}"}
+        )
         self.assertEqual(other_access.status_code, 401)
-        other_refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": other["refresh_token"]})
+        other_refresh = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": other["refresh_token"]}
+        )
         self.assertEqual(other_refresh.status_code, 401)
 
     def test_admin_revoke_others_does_not_affect_other_users(self):
         admin = self.setup_admin()
         self.login_device("admin", "other-browser")
-        user = self.store.create_user(username="trader", password_hash=hash_password("Password123!"), role_names=["user"])
+        user = self.store.create_user(
+            username="trader", password_hash=hash_password("Password123!"), role_names=["user"]
+        )
         trader = self.login_device("trader", "other-browser")
 
         response = self.client.post(
@@ -254,8 +296,12 @@ class AuthSecurityTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1})
-        checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {trader['access_token']}"})
+        self.assertEqual(
+            response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1}
+        )
+        checked = self.client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {trader['access_token']}"}
+        )
         self.assertEqual(checked.status_code, 200, checked.text)
 
     def test_revoke_others_preserves_all_current_device_records_and_is_idempotent(self):
@@ -276,19 +322,29 @@ class AuthSecurityTest(unittest.TestCase):
         second = self.client.post("/api/v1/auth/sessions/revoke-others", headers=headers)
 
         self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(first.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 2})
+        self.assertEqual(
+            first.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 2}
+        )
         self.assertEqual(second.status_code, 200, second.text)
-        self.assertEqual(second.json(), {"status": "ok", "revoked_devices": 0, "revoked_sessions": 0})
+        self.assertEqual(
+            second.json(), {"status": "ok", "revoked_devices": 0, "revoked_sessions": 0}
+        )
         for tokens in (current, current_second):
-            checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
+            checked = self.client.get(
+                "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+            )
             self.assertEqual(checked.status_code, 200, checked.text)
-            refreshed = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+            refreshed = self.client.post(
+                "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+            )
             self.assertEqual(refreshed.status_code, 200, refreshed.text)
         for tokens in (other, other_second):
             record = self.store.get_refresh_token(hash_refresh_token(tokens["refresh_token"]))
             self.assertIsNotNone(record["revoked_at"])
         with self.store.connect() as conn:
-            audits = conn.execute("SELECT * FROM audit_events WHERE action = 'auth.sessions_revoke_others'").fetchall()
+            audits = conn.execute(
+                "SELECT * FROM audit_events WHERE action = 'auth.sessions_revoke_others'"
+            ).fetchall()
         self.assertEqual(len(audits), 2)
         details = [json.loads(item["detail_json"]) for item in audits]
         self.assertEqual({item["user_id"] for item in audits}, {current["user"]["id"]})
@@ -303,11 +359,17 @@ class AuthSecurityTest(unittest.TestCase):
         offline = self.login_device("admin", "offline-browser")
         expired = self.login_device("admin", "expired-browser")
         revoked = self.login_device("admin", "revoked-browser")
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(microsecond=0).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(hours=1)).replace(microsecond=0).isoformat()
         self.client.post("/api/v1/auth/logout", json={"refresh_token": revoked["refresh_token"]})
         with self.store.connect() as conn:
-            conn.execute("UPDATE login_sessions SET expires_at = ? WHERE device_id = 'expired-browser'", (old_time,))
-            conn.execute("UPDATE login_sessions SET last_seen_at = ? WHERE device_id = 'offline-browser'", (old_time,))
+            conn.execute(
+                "UPDATE login_sessions SET expires_at = ? WHERE device_id = 'expired-browser'",
+                (old_time,),
+            )
+            conn.execute(
+                "UPDATE login_sessions SET last_seen_at = ? WHERE device_id = 'offline-browser'",
+                (old_time,),
+            )
             conn.execute(
                 "UPDATE refresh_tokens SET expires_at = ? WHERE token_hash = ?",
                 (old_time, hash_refresh_token(offline["refresh_token"])),
@@ -315,12 +377,17 @@ class AuthSecurityTest(unittest.TestCase):
             conn.commit()
 
         response = self.client.post(
-            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+            "/api/v1/auth/sessions/revoke-others",
+            headers={"Authorization": f"Bearer {current['access_token']}"},
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1})
-        offline_access = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {offline['access_token']}"})
+        self.assertEqual(
+            response.json(), {"status": "ok", "revoked_devices": 1, "revoked_sessions": 1}
+        )
+        offline_access = self.client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {offline['access_token']}"}
+        )
         self.assertEqual(offline_access.status_code, 401)
         expired_record = self.store.get_refresh_token(hash_refresh_token(expired["refresh_token"]))
         self.assertIsNone(self.store.get_login_session(expired_record["session_id"])["revoked_at"])
@@ -356,13 +423,19 @@ class AuthSecurityTest(unittest.TestCase):
 
         current_record = self.store.get_refresh_token(hash_refresh_token(current["refresh_token"]))
         with self.store.connect() as conn:
-            conn.execute("UPDATE login_sessions SET device_id = '' WHERE id = ?", (current_record["session_id"],))
+            conn.execute(
+                "UPDATE login_sessions SET device_id = '' WHERE id = ?",
+                (current_record["session_id"],),
+            )
             conn.commit()
         missing_device = self.client.post(
-            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+            "/api/v1/auth/sessions/revoke-others",
+            headers={"Authorization": f"Bearer {current['access_token']}"},
         )
         self.assertEqual(missing_device.status_code, 409, missing_device.text)
-        self.assertTrue(all(not item["revoked_at"] for item in self.store.list_login_sessions(user["id"])))
+        self.assertTrue(
+            all(not item["revoked_at"] for item in self.store.list_login_sessions(user["id"]))
+        )
 
     def test_revoke_others_rejects_invalid_expired_and_revoked_tokens(self):
         current = self.setup_admin()
@@ -373,23 +446,31 @@ class AuthSecurityTest(unittest.TestCase):
             expired_token = create_access_token(user, session_id=record["session_id"])
         for token in ("invalid-token", expired_token):
             response = self.client.post(
-                "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {token}"},
+                "/api/v1/auth/sessions/revoke-others",
+                headers={"Authorization": f"Bearer {token}"},
             )
             self.assertEqual(response.status_code, 401, response.text)
-        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+        expired_at = (datetime.now(UTC) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
         with self.store.connect() as conn:
-            conn.execute("UPDATE login_sessions SET expires_at = ? WHERE id = ?", (expired_at, record["session_id"]))
+            conn.execute(
+                "UPDATE login_sessions SET expires_at = ? WHERE id = ?",
+                (expired_at, record["session_id"]),
+            )
             conn.commit()
         expired_session = self.client.post(
-            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+            "/api/v1/auth/sessions/revoke-others",
+            headers={"Authorization": f"Bearer {current['access_token']}"},
         )
         self.assertEqual(expired_session.status_code, 401, expired_session.text)
         self.store.revoke_login_session(record["session_id"])
         revoked = self.client.post(
-            "/api/v1/auth/sessions/revoke-others", headers={"Authorization": f"Bearer {current['access_token']}"},
+            "/api/v1/auth/sessions/revoke-others",
+            headers={"Authorization": f"Bearer {current['access_token']}"},
         )
         self.assertEqual(revoked.status_code, 401, revoked.text)
-        checked = self.client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {other['access_token']}"})
+        checked = self.client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {other['access_token']}"}
+        )
         self.assertEqual(checked.status_code, 200, checked.text)
 
     def test_admin_lists_all_user_login_devices(self):
@@ -423,7 +504,9 @@ class AuthSecurityTest(unittest.TestCase):
 
         user_list = self.client.get("/api/v1/auth/sessions", headers=user_headers)
         self.assertEqual(user_list.status_code, 200, user_list.text)
-        self.assertEqual({session["username"] for session in user_list.json()["sessions"]}, {"trader"})
+        self.assertEqual(
+            {session["username"] for session in user_list.json()["sessions"]}, {"trader"}
+        )
 
         deleted = self.client.delete(
             f"/api/v1/auth/sessions/trader-laptop/device?user_id={trader_user_id}",
@@ -437,17 +520,28 @@ class AuthSecurityTest(unittest.TestCase):
 
         admin_list_after_delete = self.client.get("/api/v1/auth/sessions", headers=admin_headers)
         self.assertEqual(admin_list_after_delete.status_code, 200, admin_list_after_delete.text)
-        self.assertNotIn("trader", {session["username"] for session in admin_list_after_delete.json()["sessions"]})
+        self.assertNotIn(
+            "trader",
+            {session["username"] for session in admin_list_after_delete.json()["sessions"]},
+        )
 
     def test_device_heartbeat_updates_online_status(self):
         tokens = self.client.post(
             "/api/v1/auth/setup",
-            json={"username": "admin", "password": "Password123!", "display_name": "Admin", "device_id": "browser-1"},
+            json={
+                "username": "admin",
+                "password": "Password123!",
+                "display_name": "Admin",
+                "device_id": "browser-1",
+            },
         ).json()
         headers = {"Authorization": f"Bearer {tokens['access_token']}", "X-Device-Id": "browser-1"}
-        old_seen = (datetime.now(timezone.utc) - timedelta(minutes=10)).replace(microsecond=0).isoformat()
+        old_seen = (datetime.now(UTC) - timedelta(minutes=10)).replace(microsecond=0).isoformat()
         with self.store.connect() as conn:
-            conn.execute("UPDATE login_sessions SET last_seen_at = ? WHERE device_id = ?", (old_seen, "browser-1"))
+            conn.execute(
+                "UPDATE login_sessions SET last_seen_at = ? WHERE device_id = ?",
+                (old_seen, "browser-1"),
+            )
             conn.commit()
 
         before = self.client.get("/api/v1/auth/sessions", headers=headers)
@@ -474,7 +568,11 @@ class AuthSecurityTest(unittest.TestCase):
             role_names=["user"],
         )
         token = create_access_token(user)
-        headers = {"Authorization": f"Bearer {token}", "X-Device-Id": "legacy-browser", "user-agent": "Legacy Browser"}
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Device-Id": "legacy-browser",
+            "user-agent": "Legacy Browser",
+        }
 
         heartbeat = self.client.post("/api/v1/auth/device/heartbeat", headers=headers)
         self.assertEqual(heartbeat.status_code, 200, heartbeat.text)
@@ -497,7 +595,7 @@ class AuthSecurityTest(unittest.TestCase):
         tokens = self.setup_admin()
         record = self.store.get_refresh_token(hash_refresh_token(tokens["refresh_token"]))
         self.assertIsNotNone(record)
-        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+        expired_at = (datetime.now(UTC) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
         with self.store.connect() as conn:
             conn.execute(
                 "UPDATE login_sessions SET expires_at = ? WHERE id = ?",
@@ -505,7 +603,9 @@ class AuthSecurityTest(unittest.TestCase):
             )
             conn.commit()
 
-        refreshed = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        refreshed = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
         self.assertEqual(refreshed.status_code, 401)
         self.assertIn("expired", refreshed.json()["detail"].lower())
 
@@ -525,7 +625,9 @@ class AuthSecurityTest(unittest.TestCase):
 
         old_access = self.client.get("/api/v1/auth/me", headers=first_headers)
         self.assertEqual(old_access.status_code, 401)
-        old_refresh = self.client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+        old_refresh = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
         self.assertEqual(old_refresh.status_code, 401)
 
         listed = self.client.get("/api/v1/auth/sessions", headers=second_headers)
@@ -556,7 +658,9 @@ class AuthSecurityTest(unittest.TestCase):
             headers=admin_headers,
         )
         self.assertEqual(created.status_code, 200, created.text)
-        login = self.client.post("/api/v1/auth/login", json={"username": "limited", "password": "Password123!"})
+        login = self.client.post(
+            "/api/v1/auth/login", json={"username": "limited", "password": "Password123!"}
+        )
         self.assertEqual(login.status_code, 200, login.text)
         user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -583,7 +687,9 @@ class AuthSecurityTest(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 200, created.text)
 
-        login = self.client.post("/api/v1/auth/login", json={"username": "viewer", "password": "Password123!"})
+        login = self.client.post(
+            "/api/v1/auth/login", json={"username": "viewer", "password": "Password123!"}
+        )
         self.assertEqual(login.status_code, 200, login.text)
         viewer_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -621,7 +727,11 @@ class AuthSecurityTest(unittest.TestCase):
 
         updated_role = self.client.put(
             "/api/v1/roles/readonly",
-            json={"name": "readonly", "description": "Narrow read-only role", "permissions": ["config:read"]},
+            json={
+                "name": "readonly",
+                "description": "Narrow read-only role",
+                "permissions": ["config:read"],
+            },
             headers=admin_headers,
         )
         self.assertEqual(updated_role.status_code, 200, updated_role.text)
@@ -641,13 +751,17 @@ class AuthSecurityTest(unittest.TestCase):
 
         first = self.client.post("/api/v1/agent/sessions", json={"title": "First"}, headers=headers)
         self.assertEqual(first.status_code, 200, first.text)
-        second = self.client.post("/api/v1/agent/sessions", json={"title": "Second"}, headers=headers)
+        second = self.client.post(
+            "/api/v1/agent/sessions", json={"title": "Second"}, headers=headers
+        )
         self.assertEqual(second.status_code, 200, second.text)
 
         session_id = first.json()["id"]
         trace_store = TraceStore(str(self.workspace))
         run = trace_store.create_run(session_id=session_id, user_message="trace me")
-        trace_store.add_event(run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"])
+        trace_store.add_event(
+            run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"]
+        )
         self.assertEqual(len(trace_store.get_session_traces(session_id=session_id)["runs"]), 1)
 
         cleared = self.client.delete("/api/v1/agent/sessions", headers=headers)
@@ -676,7 +790,9 @@ class AuthSecurityTest(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 200, created.text)
 
-        login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "Password123!"})
+        login = self.client.post(
+            "/api/v1/auth/login", json={"username": "trader", "password": "Password123!"}
+        )
         self.assertEqual(login.status_code, 200, login.text)
         user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -693,7 +809,9 @@ class AuthSecurityTest(unittest.TestCase):
             headers=user_headers,
         )
         self.assertEqual(unchanged.status_code, 400, unchanged.text)
-        self.assertEqual(unchanged.json()["detail"], "New password must be different from current password")
+        self.assertEqual(
+            unchanged.json()["detail"], "New password must be different from current password"
+        )
 
         changed = self.client.patch(
             "/api/v1/auth/me/password",
@@ -704,12 +822,18 @@ class AuthSecurityTest(unittest.TestCase):
 
         still_signed_in = self.client.get("/api/v1/auth/me", headers=user_headers)
         self.assertEqual(still_signed_in.status_code, 200, still_signed_in.text)
-        refreshed = self.client.post("/api/v1/auth/refresh", json={"refresh_token": login.json()["refresh_token"]})
+        refreshed = self.client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": login.json()["refresh_token"]}
+        )
         self.assertEqual(refreshed.status_code, 200, refreshed.text)
 
-        old_login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "Password123!"})
+        old_login = self.client.post(
+            "/api/v1/auth/login", json={"username": "trader", "password": "Password123!"}
+        )
         self.assertEqual(old_login.status_code, 401)
-        new_login = self.client.post("/api/v1/auth/login", json={"username": "trader", "password": "NewPassword123!"})
+        new_login = self.client.post(
+            "/api/v1/auth/login", json={"username": "trader", "password": "NewPassword123!"}
+        )
         self.assertEqual(new_login.status_code, 200, new_login.text)
 
     def test_user_config_hides_inherited_defaults_and_saves_personal_mcp_capabilities(self):
@@ -745,7 +869,9 @@ class AuthSecurityTest(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 200, created.text)
         user_id = created.json()["id"]
-        login = self.client.post("/api/v1/auth/login", json={"username": "personal", "password": "Password123!"})
+        login = self.client.post(
+            "/api/v1/auth/login", json={"username": "personal", "password": "Password123!"}
+        )
         self.assertEqual(login.status_code, 200, login.text)
         user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -810,7 +936,10 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertEqual(personal_config["agent_max_steps"], 7)
         self.assertFalse(personal_config["multi_agent_enabled"])
         self.assertFalse(personal_config["memory_auto_curate_enabled"])
-        self.assertEqual(personal_config["mcp_servers"]["mine"]["headers"]["Authorization"], "Bearer personal-token")
+        self.assertEqual(
+            personal_config["mcp_servers"]["mine"]["headers"]["Authorization"],
+            "Bearer personal-token",
+        )
         self.assertEqual(personal_config["guardian_api_key"], "guardian-personal-secret")
 
         denied = self.client.patch(
@@ -833,7 +962,11 @@ class AuthSecurityTest(unittest.TestCase):
                         "transport": "streamable_http",
                         "url": "https://example.com/mcp",
                         "headers": {"Authorization": "Bearer server-token"},
-                        "auth": {"type": "header", "name": "X-Api-Key", "value": "mcp-header-secret"},
+                        "auth": {
+                            "type": "header",
+                            "name": "X-Api-Key",
+                            "value": "mcp-header-secret",
+                        },
                     }
                 },
             }
@@ -848,13 +981,22 @@ class AuthSecurityTest(unittest.TestCase):
         body = response.json()
         serialized = json.dumps(body, ensure_ascii=False)
 
-        for secret in ("sk-live-secret", "telegram-bot-secret", "lb-access-token", "guardian-api-secret", "Bearer server-token", "mcp-header-secret"):
+        for secret in (
+            "sk-live-secret",
+            "telegram-bot-secret",
+            "lb-access-token",
+            "guardian-api-secret",
+            "Bearer server-token",
+            "mcp-header-secret",
+        ):
             self.assertNotIn(secret, serialized)
         self.assertTrue(body["has_llm_api_key"])
         self.assertTrue(body["has_telegram_bot_token"])
         self.assertTrue(body["has_longbridge_access_token"])
         self.assertTrue(body["has_guardian_api_key"])
-        self.assertNotEqual(body["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token")
+        self.assertNotEqual(
+            body["mcp_servers"]["remote"]["headers"]["Authorization"], "Bearer server-token"
+        )
 
         patched = self.client.patch(
             "/api/v1/config",

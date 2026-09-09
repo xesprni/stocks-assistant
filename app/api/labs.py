@@ -1,7 +1,6 @@
 """Portfolio、估值/同业与大中华市场实验室 API。"""
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -12,8 +11,14 @@ from app.core.labs.ai_service import LAB_PERMISSIONS, LabAIService
 from app.core.security import CurrentUser, get_current_user, require_permissions
 from app.deps import get_investment_lab_service
 from app.schemas.labs import (
-    GreaterChinaRequest, LabAIRequest, LabAIRun, LabKind, PeerComparisonRequest, PortfolioLabRequest,
-    ValuationModelCreate, ValuationModelResponse,
+    GreaterChinaRequest,
+    LabAIRequest,
+    LabAIRun,
+    LabKind,
+    PeerComparisonRequest,
+    PortfolioLabRequest,
+    ValuationModelCreate,
+    ValuationModelResponse,
 )
 
 router = APIRouter()
@@ -29,7 +34,10 @@ async def run_ai_lab(body: LabAIRequest, current_user: CurrentUser = Depends(get
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
         # Provider 初始化错误可能包含配置内容，API 只给可操作提示。
-        raise HTTPException(status_code=503, detail="AI model is unavailable. Check your model configuration and connection.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="AI model is unavailable. Check your model configuration and connection.",
+        ) from exc
 
     async def events():
         stream = service.stream(current_user, body, settings, provider)
@@ -40,14 +48,20 @@ async def run_ai_lab(body: LabAIRequest, current_user: CurrentUser = Depends(get
             # 显式关闭内层生成器，浏览器 abort/disconnect 立即标记取消并阻止后续工具步骤。
             await stream.aclose()
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive",
-    })
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/ai/runs", response_model=list[LabAIRun])
 def list_ai_runs(
-    lab: Optional[LabKind] = None,
+    lab: LabKind | None = None,
     limit: int = Query(default=20, ge=1, le=50),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -59,7 +73,11 @@ def list_ai_runs(
             raise HTTPException(status_code=403, detail=str(exc)) from exc
     elif not any(current_user.can(permission) for permission in LAB_PERMISSIONS.values()):
         raise HTTPException(status_code=403, detail="Missing permission to read Labs")
-    return [run for run in service.store.list(current_user.id, lab, limit) if current_user.can(LAB_PERMISSIONS[run["lab"]])]
+    return [
+        run
+        for run in service.store.list(current_user.id, lab, limit)
+        if current_user.can(LAB_PERMISSIONS[run["lab"]])
+    ]
 
 
 @router.get("/ai/runs/{run_id}", response_model=LabAIRun)
@@ -93,7 +111,7 @@ async def analyze_portfolio(
 
 @router.get("/valuation/models", response_model=list[ValuationModelResponse])
 def list_valuation_models(
-    symbol: Optional[str] = None,
+    symbol: str | None = None,
     current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
 ):
     try:
@@ -123,7 +141,9 @@ async def compare_peers(
 ):
     try:
         return await run_in_threadpool(
-            get_investment_lab_service().compare_peers, body, settings=get_effective_settings(current_user.id)
+            get_investment_lab_service().compare_peers,
+            body,
+            settings=get_effective_settings(current_user.id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -136,7 +156,9 @@ async def greater_china_context(
 ):
     try:
         return await run_in_threadpool(
-            get_investment_lab_service().greater_china_context, body, settings=get_effective_settings(current_user.id)
+            get_investment_lab_service().greater_china_context,
+            body,
+            settings=get_effective_settings(current_user.id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -32,9 +32,8 @@ class UserWorkspaceTest(unittest.TestCase):
             self.assertIn(str(workspace_path), result.result["output"])
 
     def test_user_workspace_dir_rejects_path_like_user_id(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                user_workspace_dir(tmp, "../outside")
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            user_workspace_dir(tmp, "../outside")
 
 
 class ToolApiWorkspaceIsolationTest(unittest.TestCase):
@@ -45,7 +44,9 @@ class ToolApiWorkspaceIsolationTest(unittest.TestCase):
         self.workspace = Path(self.tmp.name) / "workspace"
         os.environ[APP_DB_ENV] = str(self.db_path)
         self.store = reset_app_store_for_tests(self.db_path)
-        self.store.set_config_values({"workspace_dir": str(self.workspace), "memory_enabled": False})
+        self.store.set_config_values(
+            {"workspace_dir": str(self.workspace), "memory_enabled": False}
+        )
         config_module._config_instance = None
         get_memory_manager_for_user.cache_clear()
         get_mcp_manager_for_user.cache_clear()
@@ -87,12 +88,20 @@ class ToolApiWorkspaceIsolationTest(unittest.TestCase):
 
         written = self.client.post(
             "/api/v1/tools/write_file/execute",
-            json={"arguments": {"path": "direct-tool-marker.txt", "content": "owned by user workspace"}},
+            json={
+                "arguments": {
+                    "path": "direct-tool-marker.txt",
+                    "content": "owned by user workspace",
+                }
+            },
             headers=headers,
         )
         self.assertEqual(written.status_code, 200, written.text)
         self.assertEqual(written.json()["status"], "success")
-        self.assertEqual((user_workspace / "direct-tool-marker.txt").read_text(encoding="utf-8"), "owned by user workspace")
+        self.assertEqual(
+            (user_workspace / "direct-tool-marker.txt").read_text(encoding="utf-8"),
+            "owned by user workspace",
+        )
 
 
 if __name__ == "__main__":

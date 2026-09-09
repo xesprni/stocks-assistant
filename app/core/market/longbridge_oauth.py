@@ -15,9 +15,10 @@ import re
 import socket
 import threading
 import time
-from concurrent.futures import Future, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,10 @@ def _token_path(client_id: str) -> Path:
 
 
 def _safe_token_path(path: Path) -> bool:
-    return not any(item.is_symlink() for item in (path, path.parent, path.parent.parent, path.parent.parent.parent))
+    return not any(
+        item.is_symlink()
+        for item in (path, path.parent, path.parent.parent, path.parent.parent.parent)
+    )
 
 
 def _read_token(client_id: str) -> dict[str, Any]:
@@ -118,7 +122,9 @@ async def _restore_oauth(client_id: str):
     def refuse_authorization(_url):
         loop.call_soon_threadsafe(lambda: asyncio.create_task(_abort_callback(callback_url)))
 
-    future = asyncio.ensure_future(OAuthBuilder(client_id, callback_port=port).build_async(refuse_authorization))
+    future = asyncio.ensure_future(
+        OAuthBuilder(client_id, callback_port=port).build_async(refuse_authorization)
+    )
     # 普通行情请求只能恢复/刷新已授权 Token，不能隐式启动浏览器授权。
     try:
         return await future
@@ -139,7 +145,10 @@ async def _abort_callback(callback_url: str | None) -> None:
     async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
         for attempt in range(3):
             try:
-                await client.get(callback_url.replace("localhost", "127.0.0.1"), params={"error": "access_denied"})
+                await client.get(
+                    callback_url.replace("localhost", "127.0.0.1"),
+                    params={"error": "access_denied"},
+                )
                 return
             except httpx.HTTPError:
                 if attempt < 2:
@@ -214,12 +223,17 @@ class LongbridgeOAuthService:
 
     @staticmethod
     def _key(current: CurrentUser) -> tuple[str, str]:
-        return (str(get_app_store().db_path), "system" if current.can("config:write") else current.id)
+        return (
+            str(get_app_store().db_path),
+            "system" if current.can("config:write") else current.id,
+        )
 
     @staticmethod
     def _stored(current: CurrentUser) -> dict[str, Any]:
         store = get_app_store()
-        return store.get_config() if current.can("config:write") else store.get_user_config(current.id)
+        return (
+            store.get_config() if current.can("config:write") else store.get_user_config(current.id)
+        )
 
     def status(self, current: CurrentUser) -> LongbridgeOAuthStatus:
         stored = self._stored(current)
@@ -232,14 +246,27 @@ class LongbridgeOAuthService:
 
         connected = oauth_connected(SimpleNamespace(longbridge_oauth_client_id=client_id))
         session = self._sessions.get(self._key(current))
-        pending = session is not None and session.error is None and session.task is not None and not session.task.done()
+        pending = (
+            session is not None
+            and session.error is None
+            and session.task is not None
+            and not session.task.done()
+        )
         expires_at = session.expires_at if pending else token.get("expires_at")
         try:
-            expiry = datetime.fromtimestamp(float(expires_at), timezone.utc).isoformat() if expires_at else None
+            expiry = (
+                datetime.fromtimestamp(float(expires_at), UTC).isoformat() if expires_at else None
+            )
         except (ValueError, TypeError, OverflowError):
             expiry = None
         return LongbridgeOAuthStatus(
-            status="pending" if pending else "error" if session and session.error else "connected" if connected else "disconnected",
+            status="pending"
+            if pending
+            else "error"
+            if session and session.error
+            else "connected"
+            if connected
+            else "disconnected",
             auth_mode=effective.longbridge_auth_mode,
             client_id=client_id,
             authorization_url=session.authorization_url if pending else None,
@@ -261,7 +288,7 @@ class LongbridgeOAuthService:
         session.task = asyncio.create_task(self._authorize(key, session))
         try:
             await asyncio.wait_for(session.ready.wait(), timeout=25)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             session.error = "长桥授权启动超时，请稍后重试"
             session.cancelled = True
             await _abort_callback(session.callback_url)
@@ -276,13 +303,16 @@ class LongbridgeOAuthService:
             port = _available_port()
             session.callback_url = f"http://localhost:{port}/callback"
             async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-                response = await client.post(REGISTER_URL, json={
-                    "redirect_uris": [session.callback_url],
-                    "token_endpoint_auth_method": "none",
-                    "grant_types": ["authorization_code", "refresh_token"],
-                    "response_types": ["code"],
-                    "client_name": "Stocks Assistant",
-                })
+                response = await client.post(
+                    REGISTER_URL,
+                    json={
+                        "redirect_uris": [session.callback_url],
+                        "token_endpoint_auth_method": "none",
+                        "grant_types": ["authorization_code", "refresh_token"],
+                        "response_types": ["code"],
+                        "client_name": "Stocks Assistant",
+                    },
+                )
                 response.raise_for_status()
                 client_id = str(response.json().get("client_id") or "")
             if session.cancelled:
@@ -297,10 +327,13 @@ class LongbridgeOAuthService:
                     session.ready.set()
                     if session.cancelled:
                         asyncio.create_task(_abort_callback(session.callback_url))
+
                 loop.call_soon_threadsafe(publish)
 
             # SDK 负责 state 校验、code 交换及刷新，并自带 300 秒回调超时。
-            session.oauth_future = asyncio.ensure_future(OAuthBuilder(client_id, callback_port=port).build_async(on_open_url))
+            session.oauth_future = asyncio.ensure_future(
+                OAuthBuilder(client_id, callback_port=port).build_async(on_open_url)
+            )
             oauth = await asyncio.shield(session.oauth_future)
             if self._sessions.get(key) is not session or session.cancelled:
                 return
@@ -312,7 +345,11 @@ class LongbridgeOAuthService:
 
             if not to_current_user(user).can("config:read"):
                 raise LongbridgeUnavailableError("配置权限已改变")
-            old = session.store.get_config() if key[1] == "system" else session.store.get_user_config(session.actor.id)
+            old = (
+                session.store.get_config()
+                if key[1] == "system"
+                else session.store.get_user_config(session.actor.id)
+            )
             patch = {"longbridge_auth_mode": "oauth", "longbridge_oauth_client_id": client_id}
             if key[1] == "system":
                 if not to_current_user(user).can("config:write"):
@@ -320,7 +357,12 @@ class LongbridgeOAuthService:
                 session.store.set_config_values(patch)
             else:
                 session.store.set_user_config_values(session.actor.id, patch)
-            session.store.audit(session.actor.id, "longbridge.oauth_connect", "config", {"scope": "system" if key[1] == "system" else "personal"})
+            session.store.audit(
+                session.actor.id,
+                "longbridge.oauth_connect",
+                "config",
+                {"scope": "system" if key[1] == "system" else "personal"},
+            )
             with _handles_lock:
                 _handles[client_id] = oauth
             committed = True
@@ -352,25 +394,32 @@ class LongbridgeOAuthService:
         stored = self._stored(current)
         if not stored.get("longbridge_oauth_client_id"):
             return self.status(current)
-        patch = {"longbridge_oauth_client_id": "", "longbridge_auth_mode": stored.get("longbridge_auth_mode", "apikey")}
+        patch = {
+            "longbridge_oauth_client_id": "",
+            "longbridge_auth_mode": stored.get("longbridge_auth_mode", "apikey"),
+        }
         store = get_app_store()
         if current.can("config:write"):
             store.set_config_values(patch)
         else:
             store.set_user_config_values(current.id, patch)
-        store.audit(current.id, "longbridge.oauth_disconnect", "config", {"scope": "system" if current.can("config:write") else "personal"})
+        store.audit(
+            current.id,
+            "longbridge.oauth_disconnect",
+            "config",
+            {"scope": "system" if current.can("config:write") else "personal"},
+        )
         _refresh_caches()
         _forget_client(str(stored.get("longbridge_oauth_client_id") or ""))
         return self.status(current)
 
 
 def _refresh_caches() -> None:
-    import app.config as config_module
-    from app.api.config import _refresh_runtime_caches
+    from app.config import reset_settings_cache
+    from app.core.configuration.runtime import invalidate_runtime
 
-    config_module._config_instance = None
-    config_module.clear_effective_settings_cache()
-    _refresh_runtime_caches({"longbridge_oauth_client_id": ""})
+    reset_settings_cache()
+    invalidate_runtime({"longbridge_oauth_client_id": ""})
 
 
 longbridge_oauth_service = LongbridgeOAuthService()

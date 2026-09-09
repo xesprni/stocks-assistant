@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Optional
+from typing import Any
 
 SYMBOL_ALIASES = {
     # Longbridge 对部分指数会返回带前导点的 symbol，配置和结果统一归一成无前导点格式。
@@ -25,7 +25,7 @@ def canonical_symbol(symbol: Any) -> str:
     return normalized
 
 
-def normalize_symbol_map(symbol_map: Optional[dict]) -> dict:
+def normalize_symbol_map(symbol_map: dict | None) -> dict:
     if not symbol_map:
         return {}
     return {canonical_symbol(symbol): value for symbol, value in symbol_map.items()}
@@ -43,20 +43,20 @@ def normalize_symbols(symbols: list[str]) -> list[str]:
     return normalized_symbols
 
 
-def stringify(value: Any) -> Optional[str]:
+def stringify(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
 
 
-def enum_name(value: Any) -> Optional[str]:
+def enum_name(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
     return text.split(".", 1)[1] if "." in text else text
 
 
-def timestamp(value: Any) -> Optional[int]:
+def timestamp(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -66,7 +66,7 @@ def timestamp(value: Any) -> Optional[int]:
     return None
 
 
-def date_iso(value: Any) -> Optional[str]:
+def date_iso(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, (date, datetime)):
@@ -74,14 +74,14 @@ def date_iso(value: Any) -> Optional[str]:
     return str(value)
 
 
-def change_value(last_done: Any, prev_close: Any) -> Optional[str]:
+def change_value(last_done: Any, prev_close: Any) -> str | None:
     try:
         return str(Decimal(str(last_done)) - Decimal(str(prev_close)))
     except (InvalidOperation, TypeError, ValueError):
         return None
 
 
-def change_rate(last_done: Any, prev_close: Any) -> Optional[str]:
+def change_rate(last_done: Any, prev_close: Any) -> str | None:
     try:
         last = Decimal(str(last_done))
         prev = Decimal(str(prev_close))

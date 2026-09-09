@@ -3,22 +3,28 @@
 通过 HTTP API 执行网页搜索，返回搜索结果摘要和来源元数据。
 """
 
+import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
 from app.core.tools.base_tool import BaseTool, ToolResult
-from app.core.tools.evidence import evidence_for_source, evidence_metadata, source_reference, utc_now_iso
-
-import logging
+from app.core.tools.evidence import (
+    evidence_for_source,
+    evidence_metadata,
+    source_reference,
+    utc_now_iso,
+)
 
 logger = logging.getLogger("stocks-assistant.tools.web_search")
 
 
 class WebSearchTool(BaseTool):
     name: str = "web_search"
-    description: str = "Search the web for real-time information. Returns titles, URLs, and snippets."
+    description: str = (
+        "Search the web for real-time information. Returns titles, URLs, and snippets."
+    )
     params: dict = {
         "type": "object",
         "properties": {
@@ -32,13 +38,17 @@ class WebSearchTool(BaseTool):
         super().__init__()
         self.config = config or {}
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         query = args.get("query", "").strip()
         if not query:
             return ToolResult.fail("Error: query is required")
         count = min(max(args.get("count", 10), 1), 50)
         # SQLite 中的用户有效配置优先；环境变量仅保留给旧部署做兼容回退。
-        api_url = str(self.config.get("api_url") or os.environ.get("SEARCH_API_URL") or "https://api.bocha.cn/v1/web-search")
+        api_url = str(
+            self.config.get("api_url")
+            or os.environ.get("SEARCH_API_URL")
+            or "https://api.bocha.cn/v1/web-search"
+        )
         api_key = str(
             self.config.get("api_key")
             or os.environ.get("SEARCH_API_KEY")
@@ -57,7 +67,11 @@ class WebSearchTool(BaseTool):
             data = resp.json()
             pages = data.get("data", {}).get("webPages", {}).get("value", [])
             results = [
-                {"title": p.get("name", ""), "url": p.get("url", ""), "snippet": p.get("snippet", "")}
+                {
+                    "title": p.get("name", ""),
+                    "url": p.get("url", ""),
+                    "snippet": p.get("snippet", ""),
+                }
                 for p in pages
             ]
             fetched_at = utc_now_iso()
@@ -72,7 +86,12 @@ class WebSearchTool(BaseTool):
                 )
                 evidence.append(evidence_for_source(source, excerpt=item["snippet"] or None))
             return ToolResult.success(
-                {"query": query, "count": len(results), "results": results, "fetched_at": fetched_at},
+                {
+                    "query": query,
+                    "count": len(results),
+                    "results": results,
+                    "fetched_at": fetched_at,
+                },
                 ext_data=evidence_metadata(evidence),
             )
         except httpx.HTTPStatusError as e:

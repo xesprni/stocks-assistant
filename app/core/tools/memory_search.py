@@ -6,11 +6,9 @@
 
 import asyncio
 import concurrent.futures
-from typing import Optional
+import logging
 
 from app.core.tools.base_tool import BaseTool, ToolResult
-
-import logging
 
 logger = logging.getLogger("stocks-assistant.tools.memory_search")
 
@@ -31,13 +29,21 @@ class MemorySearchTool(BaseTool):
                 "type": "string",
                 "description": "Targeted search query describing the user-specific fact, preference, prior decision, or context needed",
             },
-            "max_results": {"type": "integer", "description": "Max results (default: 10)", "default": 10},
-            "min_score": {"type": "number", "description": "Min score 0-1 (default: 0.1)", "default": 0.1},
+            "max_results": {
+                "type": "integer",
+                "description": "Max results (default: 10)",
+                "default": 10,
+            },
+            "min_score": {
+                "type": "number",
+                "description": "Min score 0-1 (default: 0.1)",
+                "default": 0.1,
+            },
         },
         "required": ["query"],
     }
 
-    def __init__(self, memory_manager=None, user_id: Optional[str] = None):
+    def __init__(self, memory_manager=None, user_id: str | None = None):
         super().__init__()
         self.memory_manager = memory_manager
         self.user_id = user_id
@@ -46,8 +52,8 @@ class MemorySearchTool(BaseTool):
         if self.memory_manager:
             return self.memory_manager
         # Try to get from agent context
-        ctx = getattr(self, 'context', None)
-        if ctx and hasattr(ctx, 'memory_manager'):
+        ctx = getattr(self, "context", None)
+        if ctx and hasattr(ctx, "memory_manager"):
             return ctx.memory_manager
         return None
 
@@ -60,12 +66,15 @@ class MemorySearchTool(BaseTool):
             return ToolResult.fail("Error: query is required")
         try:
             loop = _get_or_create_loop()
-            results = loop.run_until_complete(mgr.search(
-                query=query, user_id=self.user_id,
-                max_results=args.get("max_results", 10),
-                min_score=args.get("min_score", 0.1),
-                include_shared=self.user_id is None,
-            ))
+            results = loop.run_until_complete(
+                mgr.search(
+                    query=query,
+                    user_id=self.user_id,
+                    max_results=args.get("max_results", 10),
+                    min_score=args.get("min_score", 0.1),
+                    include_shared=self.user_id is None,
+                )
+            )
             if not results:
                 return ToolResult.success(f"No memories found for '{query}'")
             output = [f"Found {len(results)} memories:\n"]
@@ -82,7 +91,6 @@ def _get_or_create_loop():
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            import threading
             result = [None]
             exc = [None]
 

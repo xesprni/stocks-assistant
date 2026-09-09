@@ -5,19 +5,29 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.orm.repositories.portfolio import PortfolioRepository
 from app.core.portfolio.symbols import canonical_portfolio_symbol
-from app.core.watchlist.service import LongbridgeSearchClient, LongbridgeUnavailableError
-from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate, PortfolioMarket, PortfolioSellRequest
+from app.core.portfolio.valuation import money as _money
+from app.core.portfolio.valuation import pnl_ratio as _pnl_ratio
+from app.core.portfolio.valuation import position_ratio as _position_ratio
+from app.core.portfolio.valuation import ratio as _ratio
+from app.core.watchlist.service import LongbridgeSearchClient
+from app.schemas.portfolio import (
+    PortfolioItemCreate,
+    PortfolioItemUpdate,
+    PortfolioMarket,
+    PortfolioSellRequest,
+)
 
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _decimal(value: Any) -> Optional[Decimal]:
+def _decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     text = str(value).replace(",", "").strip()
@@ -30,31 +40,19 @@ def _decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-def _decimal_text(value: Any) -> Optional[str]:
+def _decimal_text(value: Any) -> str | None:
     number = _decimal(value)
     if number is None:
         return None
     return format(number.normalize(), "f")
 
 
-def _non_negative_decimal(value: Any) -> Optional[Decimal]:
+def _non_negative_decimal(value: Any) -> Decimal | None:
     number = _decimal(value)
     return number if number is not None and number >= 0 else None
 
 
-def _money(value: Optional[Decimal]) -> Optional[str]:
-    if value is None:
-        return None
-    return format(value.quantize(Decimal("0.01")), "f")
-
-
-def _ratio(value: Optional[Decimal]) -> Optional[str]:
-    if value is None:
-        return None
-    return f"{value.quantize(Decimal('0.01'))}%"
-
-
-def _change_value(last_done: Any, prev_close: Any) -> Optional[str]:
+def _change_value(last_done: Any, prev_close: Any) -> str | None:
     last = _decimal(last_done)
     prev = _decimal(prev_close)
     if last is None or prev is None:
@@ -62,7 +60,7 @@ def _change_value(last_done: Any, prev_close: Any) -> Optional[str]:
     return _money(last - prev)
 
 
-def _change_rate(last_done: Any, prev_close: Any) -> Optional[str]:
+def _change_rate(last_done: Any, prev_close: Any) -> str | None:
     last = _decimal(last_done)
     prev = _decimal(prev_close)
     if last is None or prev in (None, Decimal("0")):
@@ -70,7 +68,7 @@ def _change_rate(last_done: Any, prev_close: Any) -> Optional[str]:
     return _ratio((last - prev) / prev * Decimal("100"))
 
 
-def _canonical_symbol(symbol: str, market: Optional[PortfolioMarket] = None) -> str:
+def _canonical_symbol(symbol: str, market: PortfolioMarket | None = None) -> str:
     return canonical_portfolio_symbol(symbol, market)
 
 
@@ -89,15 +87,23 @@ class PortfolioService:
         self.repository = repository or PortfolioRepository(self.db_path)
         self.longbridge = LongbridgeSearchClient()
 
-    def list_items(self, market: PortfolioMarket, user_id: Optional[str] = None, settings: Any = None) -> dict[str, Any]:
+    def list_items(
+        self, market: PortfolioMarket, user_id: str | None = None, settings: Any = None
+    ) -> dict[str, Any]:
         cash_amount = self.get_settings(market, user_id=user_id)["total_capital"]
         rows = self.repository.list_items(market, user_id=user_id)
 
         quote_error = None
         try:
-            items, total_assets, cash_ratio, unpriced_symbols = self._enrich_items(rows, cash_amount, settings=settings)
+            items, total_assets, cash_ratio, unpriced_symbols = self._enrich_items(
+                rows, cash_amount, settings=settings
+            )
             if unpriced_symbols:
-                quote_error = "Missing live quotes for " + ", ".join(unpriced_symbols) + "; cost basis was used for valuation."
+                quote_error = (
+                    "Missing live quotes for "
+                    + ", ".join(unpriced_symbols)
+                    + "; cost basis was used for valuation."
+                )
         except LongbridgeUnavailableError as exc:
             # 行情不可用时仍返回本地持仓，前端可以展示静态数据并提示 quote_error。
             quote_error = str(exc)
@@ -116,25 +122,31 @@ class PortfolioService:
             "unpriced_symbols": unpriced_symbols,
         }
 
-    def get_settings(self, market: PortfolioMarket, user_id: Optional[str] = None) -> dict[str, str]:
+    def get_settings(self, market: PortfolioMarket, user_id: str | None = None) -> dict[str, str]:
         row = self.repository.get_settings(market, user_id=user_id)
         if row:
             return row
         return {"market": market, "user_id": user_id or "", "total_capital": "0"}
 
-    def save_settings(self, market: PortfolioMarket, total_capital: str, user_id: Optional[str] = None) -> dict[str, str]:
+    def save_settings(
+        self, market: PortfolioMarket, total_capital: str, user_id: str | None = None
+    ) -> dict[str, str]:
         number = _decimal(total_capital)
         if number is None or not number.is_finite() or number < 0:
             raise ValueError("total_capital must be a finite non-negative number")
         value = _decimal_text(number) or "0"
         return self.repository.save_settings(market, value, user_id, _now())
 
-    def list_transactions(self, market: PortfolioMarket, user_id: Optional[str] = None, limit: int = 100) -> dict[str, Any]:
+    def list_transactions(
+        self, market: PortfolioMarket, user_id: str | None = None, limit: int = 100
+    ) -> dict[str, Any]:
         normalized_limit = min(max(int(limit), 1), 200)
-        transactions = self.repository.list_transactions(market, user_id=user_id, limit=normalized_limit)
+        transactions = self.repository.list_transactions(
+            market, user_id=user_id, limit=normalized_limit
+        )
         return {"market": market, "transactions": transactions, "total": len(transactions)}
 
-    def add_item(self, item: PortfolioItemCreate, user_id: Optional[str] = None) -> dict[str, Any]:
+    def add_item(self, item: PortfolioItemCreate, user_id: str | None = None) -> dict[str, Any]:
         now = _now()
         payload = item.model_dump()
         payload["user_id"] = user_id or ""
@@ -147,7 +159,9 @@ class PortfolioService:
 
     def seed_sample_items(self, user_id: str) -> list[dict[str, Any]]:
         """仅为空组合创建显式标记的教学持仓，不请求行情也不覆盖真实数据。"""
-        existing = sum((self.repository.list_items(market, user_id=user_id) for market in ("US", "A", "H")), [])
+        existing = sum(
+            (self.repository.list_items(market, user_id=user_id) for market in ("US", "A", "H")), []
+        )
         if existing:
             return []
         samples = [
@@ -170,7 +184,9 @@ class PortfolioService:
         ]
         return [self.add_item(item, user_id=user_id) for item in samples]
 
-    def update_item(self, item_id: int, item: PortfolioItemUpdate, user_id: Optional[str] = None) -> dict[str, Any]:
+    def update_item(
+        self, item_id: int, item: PortfolioItemUpdate, user_id: str | None = None
+    ) -> dict[str, Any]:
         patch = item.model_dump(exclude_unset=True)
         if not patch:
             return self.get_item(item_id, user_id=user_id)
@@ -190,9 +206,13 @@ class PortfolioService:
 
         # patch 字段来自 Pydantic schema 的白名单，动态拼接只覆盖请求中出现的列。
         patch["updated_at"] = _now()
-        return self._empty_enriched_item(self.repository.update_item(item_id, patch, user_id=user_id))
+        return self._empty_enriched_item(
+            self.repository.update_item(item_id, patch, user_id=user_id)
+        )
 
-    def sell_item(self, item_id: int, request: PortfolioSellRequest, user_id: Optional[str] = None) -> dict[str, Any]:
+    def sell_item(
+        self, item_id: int, request: PortfolioSellRequest, user_id: str | None = None
+    ) -> dict[str, Any]:
         current = self.repository.get_item(item_id, user_id=user_id)
         shares_to_sell = _decimal(request.shares)
         sell_price = _decimal(request.price)
@@ -207,7 +227,9 @@ class PortfolioService:
 
         amount = shares_to_sell * sell_price
         cost_price = _decimal(current.get("cost_price"))
-        realized_pnl = (sell_price - cost_price) * shares_to_sell if cost_price is not None else None
+        realized_pnl = (
+            (sell_price - cost_price) * shares_to_sell if cost_price is not None else None
+        )
         market = current["market"]
         cash = _decimal(self.get_settings(market, user_id=user_id)["total_capital"]) or Decimal("0")
         remaining_shares = current_shares - shares_to_sell
@@ -240,16 +262,20 @@ class PortfolioService:
             "total_capital": setting["total_capital"],
         }
 
-    def get_item(self, item_id: int, user_id: Optional[str] = None) -> dict[str, Any]:
+    def get_item(self, item_id: int, user_id: str | None = None) -> dict[str, Any]:
         return self._empty_enriched_item(self.repository.get_item(item_id, user_id=user_id))
 
-    def delete_item(self, item_id: int, user_id: Optional[str] = None) -> None:
+    def delete_item(self, item_id: int, user_id: str | None = None) -> None:
         if not self.repository.delete_item(item_id, user_id=user_id):
             raise KeyError(item_id)
 
-    def search(self, query: str, market: PortfolioMarket, limit: int, settings: Any = None) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, market: PortfolioMarket, limit: int, settings: Any = None
+    ) -> list[dict[str, Any]]:
         results = []
-        for item in self.longbridge.search(query=query, category=market, limit=limit, settings=settings):
+        for item in self.longbridge.search(
+            query=query, category=market, limit=limit, settings=settings
+        ):
             if item.get("category") not in ("US", "A", "H"):
                 continue
             results.append(
@@ -269,7 +295,7 @@ class PortfolioService:
         rows: list[dict[str, Any]],
         cash_amount: str,
         settings: Any = None,
-    ) -> tuple[list[dict[str, Any]], str, Optional[str], list[str]]:
+    ) -> tuple[list[dict[str, Any]], str, str | None, list[str]]:
         if not rows:
             cash = _decimal(cash_amount) or Decimal("0")
             return [], _money(cash) or "0.00", _ratio(Decimal("100")) if cash > 0 else None, []
@@ -277,10 +303,13 @@ class PortfolioService:
         symbols = [row["symbol"] for row in rows]
         quotes, calc_indexes = self._fetch_live_data(symbols, settings=settings)
         unpriced_symbols = [
-            symbol for symbol in symbols
+            symbol
+            for symbol in symbols
             if _non_negative_decimal(quotes.get(symbol, {}).get("last_done")) is None
         ]
-        enriched, total_assets, cash_ratio = self._build_enriched_items(rows, cash_amount, quotes, calc_indexes)
+        enriched, total_assets, cash_ratio = self._build_enriched_items(
+            rows, cash_amount, quotes, calc_indexes
+        )
         return enriched, total_assets, cash_ratio, unpriced_symbols
 
     def _build_enriched_items(
@@ -289,27 +318,27 @@ class PortfolioService:
         cash_amount: str,
         quotes: dict[str, dict[str, Any]],
         calc_indexes: dict[str, dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], str, Optional[str]]:
+    ) -> tuple[list[dict[str, Any]], str, str | None]:
         cash_value = _decimal(cash_amount) or Decimal("0")
-        row_values: dict[str, Optional[Decimal]] = {}
+        row_values: dict[str, Decimal | None] = {}
         total_market_value = Decimal("0")
         # 先算出总市值和总资产，再回填每只股票的仓位占比，避免边遍历边依赖未完成的总数。
         for row in rows:
             quote = quotes.get(row["symbol"], {})
             shares = _non_negative_decimal(row.get("shares"))
             live_price = _non_negative_decimal(quote.get("last_done"))
-            price = live_price if live_price is not None else _non_negative_decimal(row.get("cost_price"))
+            price = (
+                live_price
+                if live_price is not None
+                else _non_negative_decimal(row.get("cost_price"))
+            )
             stock_value = shares * price if shares is not None and price is not None else None
             row_values[row["symbol"]] = stock_value
             if stock_value is not None:
                 total_market_value += stock_value
 
         total_assets_value = cash_value + total_market_value
-        cash_ratio = (
-            _ratio(cash_value / total_assets_value * Decimal("100"))
-            if total_assets_value > 0
-            else None
-        )
+        cash_ratio = _ratio(_position_ratio(cash_value, total_assets_value))
         enriched = []
         for row in rows:
             symbol = row["symbol"]
@@ -321,16 +350,8 @@ class PortfolioService:
             price = _non_negative_decimal(current_price)
             valuation_price = price if price is not None else cost_price
             stock_value = row_values.get(symbol)
-            position_ratio = (
-                stock_value / total_assets_value * Decimal("100")
-                if stock_value is not None and total_assets_value > 0
-                else None
-            )
-            pnl_ratio = (
-                (price - cost_price) / cost_price * Decimal("100")
-                if price is not None and cost_price not in (None, Decimal("0"))
-                else None
-            )
+            position_ratio = _position_ratio(stock_value, total_assets_value)
+            pnl_ratio = _pnl_ratio(price, cost_price)
             enriched.append(
                 {
                     **row,
@@ -346,7 +367,11 @@ class PortfolioService:
                     "stock_value": _money(stock_value),
                     "position_ratio": _ratio(position_ratio),
                     "pnl_ratio": _ratio(pnl_ratio),
-                    "valuation_price_source": "live" if price is not None else "cost" if valuation_price is not None else "unavailable",
+                    "valuation_price_source": "live"
+                    if price is not None
+                    else "cost"
+                    if valuation_price is not None
+                    else "unavailable",
                 }
             )
         return enriched, _money(total_assets_value) or "0.00", cash_ratio
@@ -370,7 +395,7 @@ class PortfolioService:
         }
 
     @staticmethod
-    def _validated_optional_amount(value: Any, field: str) -> Optional[str]:
+    def _validated_optional_amount(value: Any, field: str) -> str | None:
         if value in (None, ""):
             return None
         number = _decimal(value)
@@ -378,7 +403,9 @@ class PortfolioService:
             raise ValueError(f"{field} must be a finite non-negative number")
         return _decimal_text(number)
 
-    def _fetch_live_data(self, symbols: list[str], settings: Any = None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    def _fetch_live_data(
+        self, symbols: list[str], settings: Any = None
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
         try:
             from longbridge.openapi import CalcIndex
         except ImportError as exc:

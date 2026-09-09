@@ -1,7 +1,11 @@
 import unittest
 from types import SimpleNamespace
 
-from app.core.tools.permissions import filter_agent_tools, is_tool_allowed_for_agent, mcp_server_name_from_tool
+from app.core.tools.permissions import (
+    filter_agent_tools,
+    is_tool_allowed_for_agent,
+    mcp_server_name_from_tool,
+)
 
 
 class ToolPermissionTest(unittest.TestCase):
@@ -17,7 +21,10 @@ class ToolPermissionTest(unittest.TestCase):
             SimpleNamespace(name="mcp_demo_other"),
         ]
 
-        self.assertEqual([tool.name for tool in filter_agent_tools(tools, settings)], ["read_file", "mcp_demo_specific"])
+        self.assertEqual(
+            [tool.name for tool in filter_agent_tools(tools, settings)],
+            ["read_file", "mcp_demo_specific"],
+        )
         self.assertTrue(is_tool_allowed_for_agent("read_file", settings))
         self.assertFalse(is_tool_allowed_for_agent("write_file", settings))
 

@@ -18,7 +18,6 @@ from app.core.app_store import APP_DB_ENV, AppStore, reset_app_store_for_tests
 from app.core.security import CurrentUser, get_current_user
 from app.schemas.config import ConfigUpdate
 
-
 FIELD = "research_quick_prompts_refresh_seconds"
 
 
@@ -82,14 +81,22 @@ class ResearchQuickPromptsConfigTest(unittest.TestCase):
 
     def test_system_default_and_personal_override_are_persisted_and_isolated(self):
         self._update(self.admin, 7200)
-        self.assertEqual(get_effective_settings(self.alice.id).research_quick_prompts_refresh_seconds, 7200)
-        self.assertEqual(get_effective_settings(self.bob.id).research_quick_prompts_refresh_seconds, 7200)
+        self.assertEqual(
+            get_effective_settings(self.alice.id).research_quick_prompts_refresh_seconds, 7200
+        )
+        self.assertEqual(
+            get_effective_settings(self.bob.id).research_quick_prompts_refresh_seconds, 7200
+        )
 
         personal = self._update(self.alice, 900)
         self.assertIn(FIELD, personal["personal_config_keys"])
         self._update(self.admin, 10800)
-        self.assertEqual(get_effective_settings(self.alice.id).research_quick_prompts_refresh_seconds, 900)
-        self.assertEqual(get_effective_settings(self.bob.id).research_quick_prompts_refresh_seconds, 10800)
+        self.assertEqual(
+            get_effective_settings(self.alice.id).research_quick_prompts_refresh_seconds, 900
+        )
+        self.assertEqual(
+            get_effective_settings(self.bob.id).research_quick_prompts_refresh_seconds, 10800
+        )
 
         reopened = AppStore(self.root / "app.db")
         self.assertEqual(reopened.get_config()[FIELD], 10800)

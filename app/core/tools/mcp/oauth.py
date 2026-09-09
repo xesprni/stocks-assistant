@@ -5,9 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
-from app.core.tools.mcp.config import LEGACY_SSE_TRANSPORT, STANDARD_HTTP_TRANSPORT, build_http_headers, normalize_transport
+from app.core.tools.mcp.config import (
+    LEGACY_SSE_TRANSPORT,
+    STANDARD_HTTP_TRANSPORT,
+    build_http_headers,
+    normalize_transport,
+)
 
 logger = logging.getLogger("stocks-assistant.mcp")
 
@@ -34,18 +39,26 @@ class MCPOAuthMixin:
                     try:
                         self._oauth_login_tokens[server_name] = OAuthToken(**tokens_data)
                     except Exception as e:
-                        logger.warning(f"Failed to restore OAuth tokens for '{server_name}': {e}")
+                        logger.warning(
+                            "Failed to restore OAuth tokens for '%s': %s", server_name, e
+                        )
 
                 client_info_data = self._token_store.get_client_info(server_name)
                 if client_info_data:
                     try:
-                        self._oauth_client_infos[server_name] = OAuthClientInformationFull(**client_info_data)
+                        self._oauth_client_infos[server_name] = OAuthClientInformationFull(
+                            **client_info_data
+                        )
                     except Exception as e:
-                        logger.warning(f"Failed to restore OAuth client info for '{server_name}': {e}")
+                        logger.warning(
+                            "Failed to restore OAuth client info for '%s': %s", server_name, e
+                        )
         except Exception as e:
-            logger.warning(f"Failed to restore MCP OAuth tokens: {e}")
+            logger.warning("Failed to restore MCP OAuth tokens: %s", e)
 
-    async def start_oauth_authorization(self, server_name: str, redirect_uri: str, timeout: float = 20) -> str:
+    async def start_oauth_authorization(
+        self, server_name: str, redirect_uri: str, timeout: float = 20
+    ) -> str:
         """启动 OAuth Authorization Code 授权流程，返回用户需要访问的授权 URL。"""
         config = self.server_configs.get(server_name)
         if not config:
@@ -75,10 +88,14 @@ class MCPOAuthMixin:
             "type": "oauth_authorization_code",
             "redirect_uri": redirect_uri,
         }
-        oauth_config["connect_timeout"] = max(float(oauth_config.get("connect_timeout", 10)), timeout)
+        oauth_config["connect_timeout"] = max(
+            float(oauth_config.get("connect_timeout", 10)), timeout
+        )
 
         try:
-            await self._connect_server(server_name, oauth_config, wait=False, timeout=oauth_config["connect_timeout"])
+            await self._connect_server(
+                server_name, oauth_config, wait=False, timeout=oauth_config["connect_timeout"]
+            )
         except Exception as exc:
             error = self._format_connect_error(exc)
             with self._lock:
@@ -88,7 +105,7 @@ class MCPOAuthMixin:
 
         try:
             return await asyncio.wait_for(authorization_ready, timeout=timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             with self._lock:
                 error = self._errors.get(server_name)
             if error:
@@ -104,9 +121,9 @@ class MCPOAuthMixin:
     async def complete_oauth_callback(
         self,
         server_name: str,
-        code: Optional[str],
-        state: Optional[str],
-        error: Optional[str] = None,
+        code: str | None,
+        state: str | None,
+        error: str | None = None,
     ) -> None:
         """将收到的 OAuth 授权回调参数传递给当前持待的 Future。"""
         future = self._oauth_callback_futures.get(server_name)
@@ -154,7 +171,9 @@ class MCPOAuthMixin:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def _build_oauth_authorization_provider(self, server_name: str, config: dict, ready: asyncio.Future):
+    def _build_oauth_authorization_provider(
+        self, server_name: str, config: dict, ready: asyncio.Future
+    ):
         """构建适用于 Authorization Code 流程的 OAuthClientProvider。"""
         auth = config.get("auth")
         if isinstance(auth, Mapping):
@@ -185,10 +204,14 @@ class MCPOAuthMixin:
             async def get_client_info(storage_self) -> OAuthClientInformationFull | None:
                 return self._oauth_client_infos.get(server_name)
 
-            async def set_client_info(storage_self, client_info: OAuthClientInformationFull) -> None:
+            async def set_client_info(
+                storage_self, client_info: OAuthClientInformationFull
+            ) -> None:
                 self._oauth_client_infos[server_name] = client_info
                 if self._token_store:
-                    self._token_store.set_client_info(server_name, client_info.model_dump(exclude_none=True))
+                    self._token_store.set_client_info(
+                        server_name, client_info.model_dump(exclude_none=True)
+                    )
 
         redirect_uri = auth.get("redirect_uri") or config.get("redirect_uri")
         if not isinstance(redirect_uri, str) or not redirect_uri:
@@ -201,11 +224,15 @@ class MCPOAuthMixin:
             """收到授权 URL 后更新内部状态并解除 authorization_ready 封锁。"""
             callback_future = self._oauth_callback_futures.get(server_name)
             if not callback_future or callback_future.done():
-                self._oauth_callback_futures[server_name] = asyncio.get_running_loop().create_future()
+                self._oauth_callback_futures[server_name] = (
+                    asyncio.get_running_loop().create_future()
+                )
             with self._lock:
                 self._oauth_authorization_urls[server_name] = authorization_url
                 self._states[server_name] = "auth_required"
-                self._errors[server_name] = "OAuth authorization required. Open the login URL to continue."
+                self._errors[server_name] = (
+                    "OAuth authorization required. Open the login URL to continue."
+                )
             authorization_ready = self._oauth_authorization_ready.get(server_name)
             if authorization_ready and not authorization_ready.done():
                 authorization_ready.set_result(authorization_url)
@@ -222,7 +249,9 @@ class MCPOAuthMixin:
 
         metadata = OAuthClientMetadata(
             redirect_uris=[redirect_uri],
-            client_name=str(auth.get("client_name") or config.get("client_name") or "Stocks Assistant"),
+            client_name=str(
+                auth.get("client_name") or config.get("client_name") or "Stocks Assistant"
+            ),
             client_uri=auth.get("client_uri") or config.get("client_uri"),
             scope=auth.get("scope") if isinstance(auth.get("scope"), str) else None,
         )
@@ -234,7 +263,9 @@ class MCPOAuthMixin:
             redirect_handler=redirect_handler,
             callback_handler=callback_handler,
             timeout=timeout,
-            client_metadata_url=client_metadata_url if isinstance(client_metadata_url, str) else None,
+            client_metadata_url=client_metadata_url
+            if isinstance(client_metadata_url, str)
+            else None,
         )
 
     def _default_oauth_redirect_uri(self, server_name: str) -> str:
@@ -274,7 +305,9 @@ class MCPOAuthMixin:
             if isinstance(value, str) and value:
                 data[key] = value
 
-        token_endpoint_auth_method = str(auth.get("token_endpoint_auth_method", "client_secret_post"))
+        token_endpoint_auth_method = str(
+            auth.get("token_endpoint_auth_method", "client_secret_post")
+        )
         request_auth = None
         if token_endpoint_auth_method == "client_secret_basic":
             # HTTP Basic Auth 方式
@@ -293,7 +326,9 @@ class MCPOAuthMixin:
                 auth=request_auth,
             )
         if response.status_code >= 400:
-            raise RuntimeError(f"OAuth token request failed with HTTP {response.status_code}: {response.text[:200]}")
+            raise RuntimeError(
+                f"OAuth token request failed with HTTP {response.status_code}: {response.text[:200]}"
+            )
         payload = response.json()
         token = payload.get("access_token")
         if not isinstance(token, str) or not token:

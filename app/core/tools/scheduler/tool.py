@@ -1,10 +1,11 @@
 """Agent-facing scheduler management tool."""
 
 import asyncio
-from datetime import datetime, timedelta
+import logging
 import threading
-from typing import Any, Optional
 import uuid
+from datetime import datetime, timedelta
+from typing import Any
 
 from croniter import croniter
 
@@ -15,8 +16,6 @@ from app.core.tools.scheduler.helpers import (
     run_to_response,
     task_to_response,
 )
-
-import logging
 
 logger = logging.getLogger("stocks-assistant.scheduler")
 
@@ -57,7 +56,10 @@ class SchedulerTool(BaseTool):
             "metadata": {"type": "object"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 200},
             "enabled_only": {"type": "boolean"},
-            "message": {"type": "string", "description": "Legacy alias for a send_message scheduled task."},
+            "message": {
+                "type": "string",
+                "description": "Legacy alias for a send_message scheduled task.",
+            },
             "ai_task": {"type": "string", "description": "Legacy alias for prompt."},
             "schedule_type": {"type": "string", "enum": ["cron", "interval", "once"]},
             "schedule_value": {"type": "string"},
@@ -65,12 +67,18 @@ class SchedulerTool(BaseTool):
         "required": ["action"],
     }
 
-    def __init__(self, scheduler_service=None, task_store=None, run_store=None, user_id: Optional[str] = None):
+    def __init__(
+        self, scheduler_service=None, task_store=None, run_store=None, user_id: str | None = None
+    ):
         super().__init__()
         self.scheduler_service = scheduler_service
         self.user_id = user_id
-        self.task_store = self._scope_store(task_store or getattr(scheduler_service, "task_store", None), user_id)
-        self.run_store = self._scope_store(run_store or getattr(scheduler_service, "run_store", None), user_id)
+        self.task_store = self._scope_store(
+            task_store or getattr(scheduler_service, "task_store", None), user_id
+        )
+        self.run_store = self._scope_store(
+            run_store or getattr(scheduler_service, "run_store", None), user_id
+        )
 
     def execute(self, params: dict) -> ToolResult:
         action = params.get("action")
@@ -259,7 +267,7 @@ class SchedulerTool(BaseTool):
         self.task_store.enable_task(task_id, False)
         return {"status": "ok", "enabled": False}
 
-    def _calculate_next(self, task: dict, from_time: datetime) -> Optional[datetime]:
+    def _calculate_next(self, task: dict, from_time: datetime) -> datetime | None:
         if self.scheduler_service and hasattr(self.scheduler_service, "_calculate_next"):
             return self.scheduler_service._calculate_next(task, from_time)
 
@@ -281,14 +289,18 @@ class SchedulerTool(BaseTool):
                 return None
         return None
 
-    def _schedule_from_params(self, p: dict, required: bool) -> Optional[dict[str, Any]]:
+    def _schedule_from_params(self, p: dict, required: bool) -> dict[str, Any] | None:
         has_schedule = "schedule" in p and p.get("schedule") is not None
-        has_legacy_schedule = p.get("schedule_type") is not None or p.get("schedule_value") is not None
+        has_legacy_schedule = (
+            p.get("schedule_type") is not None or p.get("schedule_value") is not None
+        )
 
         if has_schedule:
             return parse_schedule_expression(str(p["schedule"]))
         if has_legacy_schedule:
-            schedule = parse_schedule_components(str(p.get("schedule_type") or ""), str(p.get("schedule_value") or ""))
+            schedule = parse_schedule_components(
+                str(p.get("schedule_type") or ""), str(p.get("schedule_value") or "")
+            )
             if required and not schedule:
                 raise ValueError("Invalid schedule_type/schedule_value")
             return schedule
@@ -296,7 +308,7 @@ class SchedulerTool(BaseTool):
             raise ValueError("Missing schedule")
         return None
 
-    def _metadata_from_params(self, p: dict, base: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _metadata_from_params(self, p: dict, base: dict[str, Any] | None = None) -> dict[str, Any]:
         metadata = dict(base or {})
         if isinstance(p.get("metadata"), dict):
             metadata.update(p["metadata"])
@@ -311,14 +323,14 @@ class SchedulerTool(BaseTool):
         return task_id
 
     @staticmethod
-    def _optional_str(value: Any) -> Optional[str]:
+    def _optional_str(value: Any) -> str | None:
         if value is None:
             return None
         text = str(value).strip()
         return text or None
 
     @staticmethod
-    def _scope_store(store, user_id: Optional[str]):
+    def _scope_store(store, user_id: str | None):
         if store is not None and user_id and hasattr(store, "for_user"):
             return store.for_user(user_id)
         return store

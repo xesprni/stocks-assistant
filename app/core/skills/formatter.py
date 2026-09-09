@@ -6,12 +6,10 @@
 默认只披露 skill 名称、描述和位置；完整内容通过 read_skill 工具按需读取。
 """
 
-from typing import Dict, List
-
 from app.core.skills.types import Skill, SkillEntry
 
 
-def format_skills_for_prompt(skills: List[Skill], include_content: bool = False) -> str:
+def format_skills_for_prompt(skills: list[Skill], include_content: bool = False) -> str:
     visible = [s for s in skills if not s.disable_model_invocation]
     if not visible:
         return ""
@@ -21,9 +19,9 @@ def format_skills_for_prompt(skills: List[Skill], include_content: bool = False)
         lines.append(f"    <name>{_esc(skill.name)}</name>")
         lines.append(f"    <description>{_esc(skill.description)}</description>")
         if include_content and skill.content:
-            lines.append(f"    <content>")
+            lines.append("    <content>")
             lines.append(f"      {_esc(skill.content)}")
-            lines.append(f"    </content>")
+            lines.append("    </content>")
         else:
             lines.append(f"    <location>{_esc(skill.file_path)}</location>")
         lines.append("  </skill>")
@@ -37,18 +35,19 @@ def format_skills_for_prompt(skills: List[Skill], include_content: bool = False)
     return "\n".join(lines)
 
 
-def format_skill_entries_for_prompt(entries: List[SkillEntry]) -> str:
+def format_skill_entries_for_prompt(entries: list[SkillEntry]) -> str:
     return format_skills_for_prompt([e.skill for e in entries], include_content=False)
 
 
 def format_unavailable_skills_for_prompt(
-    entries: List[SkillEntry],
-    missing_map: Dict[str, Dict[str, List[str]]],
+    entries: list[SkillEntry],
+    missing_map: dict[str, dict[str, list[str]]],
 ) -> str:
     if not entries:
         return ""
     lines = [
-        "", "<unavailable_skills>",
+        "",
+        "<unavailable_skills>",
         "The following skills are installed but not yet ready.",
     ]
     for entry in entries:
@@ -58,11 +57,15 @@ def format_unavailable_skills_for_prompt(
         lines.append("  <skill>")
         lines.append(f"    <name>{_esc(skill.name)}</name>")
         lines.append(f"    <description>{_esc(skill.description)}</description>")
-        lines.append(f"    <missing>{_esc('; '.join(missing_parts) if missing_parts else 'unknown')}</missing>")
+        lines.append(
+            f"    <missing>{_esc('; '.join(missing_parts) if missing_parts else 'unknown')}</missing>"
+        )
         lines.append("  </skill>")
     lines.append("</unavailable_skills>")
     return "\n".join(lines)
 
 
 def _esc(text: str) -> str:
-    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+    return (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    )

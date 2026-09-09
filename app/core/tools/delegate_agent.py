@@ -1,6 +1,6 @@
 """Delegate work to configured sub-agents."""
 
-from typing import Any, Dict
+from typing import Any
 
 from app.core.agent.subagent import SubAgentRunner, SubAgentValidationError
 from app.core.tools.base_tool import BaseTool, ToolResult
@@ -29,7 +29,10 @@ class DelegateAgentTool(BaseTool):
                             "description": "Requested tool names, narrowed by the role allowlist and all-MCP policy.",
                             "items": {"type": "string"},
                         },
-                        "max_steps": {"type": "integer", "description": "Optional max turns for this child agent"},
+                        "max_steps": {
+                            "type": "integer",
+                            "description": "Optional max turns for this child agent",
+                        },
                         "skill_filter": {
                             "type": "array",
                             "description": "Optional skill names visible to this child agent",
@@ -43,7 +46,7 @@ class DelegateAgentTool(BaseTool):
         "required": ["tasks"],
     }
 
-    def execute(self, params: Dict[str, Any]) -> ToolResult:
+    def execute(self, params: dict[str, Any]) -> ToolResult:
         parent_agent = getattr(self, "context", None)
         if not parent_agent:
             return ToolResult.fail("delegate_agent requires an active Agent context")

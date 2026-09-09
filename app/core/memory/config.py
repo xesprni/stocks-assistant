@@ -9,15 +9,15 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
 
 
 @dataclass
 class MemoryConfig:
     """记忆系统配置"""
+
     workspace_root: str = "~/stocks-assistant"  # 工作空间根目录
-    index_db_path: Optional[str] = None  # 可选：覆盖默认索引数据库路径
-    owner_user_id: Optional[str] = None  # 可选：将同步范围限制到指定用户
+    index_db_path: str | None = None  # 可选：覆盖默认索引数据库路径
+    owner_user_id: str | None = None  # 可选：将同步范围限制到指定用户
     embedding_provider: str = "openai"  # 向量化服务商标识
     embedding_model: str = "text-embedding-3-small"  # 向量化模型名称
     embedding_signature: str = ""  # 当前向量配置签名，用于模型切换后触发重建索引
@@ -28,7 +28,7 @@ class MemoryConfig:
     min_score: float = 0.1  # 搜索最低相关度阈值
     vector_weight: float = 0.7  # 向量搜索权重
     keyword_weight: float = 0.3  # 关键词搜索权重
-    sources: List[str] = field(default_factory=lambda: ["memory", "session"])  # 记忆来源
+    sources: list[str] = field(default_factory=lambda: ["memory", "session"])  # 记忆来源
     enable_auto_sync: bool = True  # 是否启用自动同步
     sync_on_search: bool = True  # 搜索前是否自动同步
 

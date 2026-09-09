@@ -101,7 +101,7 @@ Stocks Assistant 的核心不是普通聊天框，而是一个能调用工具的
 
 ### 环境要求
 
-- Python >= 3.10
+- Python >= 3.12
 - Node.js >= 20 与 npm（用于前端工作台）
 
 ### 安装
@@ -111,10 +111,12 @@ Stocks Assistant 的核心不是普通聊天框，而是一个能调用工具的
 git clone https://github.com/xesprni/stocks-assistant.git
 cd stocks-assistant
 
-# 安装依赖（推荐使用 uv）
-pip install -e .
-# 或
-uv sync
+# 安装运行及开发依赖（推荐）
+uv sync --python 3.12
+
+# 备用方式：使用 Python 3.12+ 创建虚拟环境后安装运行依赖
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
 ```
 
 前端依赖：
@@ -123,6 +125,26 @@ uv sync
 cd frontend
 npm install
 ```
+
+### 后端检查
+
+```bash
+# 格式、静态规则、渐进类型检查、完整测试和部署脚本语法检查
+bash scripts/check_backend.sh
+
+# 单独运行测试
+uv run pytest
+```
+
+Ruff 统一使用 Python 3.12、100 字符行宽以及 `E4/E7/E9/F/I/UP/B/SIM` 规则。
+新抽出的辅助、转换和计算模块纳入严格 mypy，检查范围在 `pyproject.toml` 中显式维护；
+外部 SDK 和其余既有动态模块逐步扩展覆盖。测试默认使用临时数据库和工作空间，
+不会迁移仓库本地配置或使用实际应用数据库。
+
+VPS 部署和更新要求选定解释器及已有 `.venv` 均为 Python 3.12+，可通过
+`PYTHON_BIN=/usr/bin/python3.12` 指定解释器。旧虚拟环境需要先按维护流程重建；
+脚本会在源码切换前拒绝不兼容环境。首次跨版本更新应运行本版本的更新脚本，
+避免旧的 `stocks-assistant-update` 命令跳过新增检查。
 
 ### 配置
 

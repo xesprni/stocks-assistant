@@ -50,7 +50,10 @@ class CodexAuthTest(unittest.TestCase):
 
     def test_inspect_codex_oauth_does_not_expose_secret_token(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = write_auth(Path(tmp), {"tokens": {"access_token": "secret-token", "account_id": "workspace-123"}})
+            path = write_auth(
+                Path(tmp),
+                {"tokens": {"access_token": "secret-token", "account_id": "workspace-123"}},
+            )
 
             status = inspect_codex_oauth(str(path))
 

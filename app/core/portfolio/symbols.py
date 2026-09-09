@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from app.schemas.portfolio import PortfolioMarket
-
 
 _SUFFIX_MARKETS: dict[str, PortfolioMarket] = {"US": "US", "SH": "A", "SZ": "A", "HK": "H"}
 
 
-def canonical_portfolio_symbol(symbol: str, market: Optional[PortfolioMarket] = None) -> str:
+def canonical_portfolio_symbol(symbol: str, market: PortfolioMarket | None = None) -> str:
     normalized = str(symbol or "").strip().upper()
     if not normalized:
         raise ValueError("symbol is required")

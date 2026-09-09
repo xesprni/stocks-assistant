@@ -7,19 +7,18 @@
 - 线程安全（通过 threading.Lock）
 """
 
-from datetime import datetime
 import json
 import logging
 import os
 import threading
 import uuid
-from typing import Dict, List, Optional
+from datetime import datetime
 
 logger = logging.getLogger("stocks-assistant.scheduler")
 
 
 class TaskStore:
-    def __init__(self, store_path: Optional[str] = None):
+    def __init__(self, store_path: str | None = None):
         if store_path is None:
             home = os.path.expanduser("~")
             store_path = os.path.join(home, "stocks-assistant", "scheduler", "tasks.json")
@@ -27,24 +26,24 @@ class TaskStore:
         self.lock = threading.Lock()
         os.makedirs(os.path.dirname(self.store_path), exist_ok=True)
 
-    def load_tasks(self) -> Dict[str, dict]:
+    def load_tasks(self) -> dict[str, dict]:
         with self.lock:
             if not os.path.exists(self.store_path):
                 return {}
             try:
-                with open(self.store_path, "r", encoding="utf-8") as f:
+                with open(self.store_path, encoding="utf-8") as f:
                     return json.load(f).get("tasks", {})
             except Exception:
                 return {}
 
-    def save_tasks(self, tasks: Dict[str, dict]):
+    def save_tasks(self, tasks: dict[str, dict]):
         with self.lock:
             try:
                 data = {"version": 1, "updated_at": datetime.now().isoformat(), "tasks": tasks}
                 with open(self.store_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                logger.error(f"Failed to save tasks: {e}")
+                logger.error("Failed to save tasks: %s", e)
                 raise
 
     def add_task(self, task: dict) -> bool:
@@ -73,10 +72,10 @@ class TaskStore:
         self.save_tasks(tasks)
         return True
 
-    def get_task(self, task_id: str) -> Optional[dict]:
+    def get_task(self, task_id: str) -> dict | None:
         return self.load_tasks().get(task_id)
 
-    def list_tasks(self, enabled_only: bool = False) -> List[dict]:
+    def list_tasks(self, enabled_only: bool = False) -> list[dict]:
         tasks = list(self.load_tasks().values())
         if enabled_only:
             tasks = [t for t in tasks if t.get("enabled", True)]
@@ -90,7 +89,7 @@ class TaskStore:
 class RunStore:
     """调度任务执行记录持久化存储。"""
 
-    def __init__(self, store_path: Optional[str] = None, max_records: int = 500):
+    def __init__(self, store_path: str | None = None, max_records: int = 500):
         if store_path is None:
             home = os.path.expanduser("~")
             store_path = os.path.join(home, "stocks-assistant", "scheduler", "runs.json")
@@ -99,26 +98,26 @@ class RunStore:
         self.lock = threading.Lock()
         os.makedirs(os.path.dirname(self.store_path), exist_ok=True)
 
-    def load_runs(self) -> List[dict]:
+    def load_runs(self) -> list[dict]:
         with self.lock:
             if not os.path.exists(self.store_path):
                 return []
             try:
-                with open(self.store_path, "r", encoding="utf-8") as f:
+                with open(self.store_path, encoding="utf-8") as f:
                     data = json.load(f)
                 runs = data.get("runs", [])
                 return runs if isinstance(runs, list) else []
             except Exception:
                 return []
 
-    def save_runs(self, runs: List[dict]) -> None:
+    def save_runs(self, runs: list[dict]) -> None:
         with self.lock:
             try:
                 data = {"version": 1, "updated_at": datetime.now().isoformat(), "runs": runs}
                 with open(self.store_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                logger.error(f"Failed to save scheduler runs: {e}")
+                logger.error("Failed to save scheduler runs: %s", e)
                 raise
 
     def add_run(self, run: dict) -> dict:
@@ -131,7 +130,7 @@ class RunStore:
         self.save_runs(runs)
         return record
 
-    def list_runs(self, task_id: Optional[str] = None, limit: int = 50) -> List[dict]:
+    def list_runs(self, task_id: str | None = None, limit: int = 50) -> list[dict]:
         limit = max(1, min(int(limit or 50), 200))
         runs = self.load_runs()
         if task_id:
@@ -143,19 +142,19 @@ class RunStore:
 class SQLiteTaskStore:
     """SQLite-backed scheduler task store with optional user scoping."""
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         self.user_id = user_id
 
     def for_user(self, user_id: str) -> "SQLiteTaskStore":
         return SQLiteTaskStore(user_id=user_id)
 
-    def load_tasks(self) -> Dict[str, dict]:
+    def load_tasks(self) -> dict[str, dict]:
         from app.core.app_store import get_app_store
 
         tasks = get_app_store().list_scheduler_tasks(user_id=self.user_id)
         return {task["id"]: task for task in tasks}
 
-    def save_tasks(self, tasks: Dict[str, dict]):
+    def save_tasks(self, tasks: dict[str, dict]):
         from app.core.app_store import get_app_store
 
         for task in tasks.values():
@@ -200,12 +199,12 @@ class SQLiteTaskStore:
             raise ValueError(f"Task '{task_id}' not found")
         return True
 
-    def get_task(self, task_id: str) -> Optional[dict]:
+    def get_task(self, task_id: str) -> dict | None:
         from app.core.app_store import get_app_store
 
         return get_app_store().get_scheduler_task(task_id, user_id=self.user_id)
 
-    def list_tasks(self, enabled_only: bool = False) -> List[dict]:
+    def list_tasks(self, enabled_only: bool = False) -> list[dict]:
         from app.core.app_store import get_app_store
 
         return get_app_store().list_scheduler_tasks(user_id=self.user_id, enabled_only=enabled_only)
@@ -217,7 +216,7 @@ class SQLiteTaskStore:
 class SQLiteRunStore:
     """SQLite-backed scheduler run store with optional user scoping."""
 
-    def __init__(self, user_id: Optional[str] = None, max_records: int = 500):
+    def __init__(self, user_id: str | None = None, max_records: int = 500):
         self.user_id = user_id
         self.max_records = max_records
 
@@ -239,7 +238,9 @@ class SQLiteRunStore:
             raise ValueError("Scheduler run requires user_id")
         return get_app_store().add_scheduler_run(run, max_records=self.max_records)
 
-    def list_runs(self, task_id: Optional[str] = None, limit: int = 50) -> List[dict]:
+    def list_runs(self, task_id: str | None = None, limit: int = 50) -> list[dict]:
         from app.core.app_store import get_app_store
 
-        return get_app_store().list_scheduler_runs(user_id=self.user_id, task_id=task_id, limit=limit)
+        return get_app_store().list_scheduler_runs(
+            user_id=self.user_id, task_id=task_id, limit=limit
+        )

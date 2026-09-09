@@ -4,7 +4,7 @@ import base64
 import binascii
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -24,8 +24,8 @@ from app.core.security import (
     hash_refresh_token,
     public_user,
     refresh_tokens,
-    resolve_device_id,
     request_ip,
+    resolve_device_id,
     verify_password,
 )
 from app.schemas.auth import (
@@ -34,9 +34,9 @@ from app.schemas.auth import (
     DeviceHeartbeatRequest,
     DeviceHeartbeatResponse,
     LoginRecordResponse,
+    LoginRequest,
     LoginSessionListResponse,
     LoginSessionResponse,
-    LoginRequest,
     LogoutRequest,
     RefreshRequest,
     RevokeOtherSessionsResponse,
@@ -80,7 +80,9 @@ def _normalize_avatar_base64(value: str | None) -> str | None:
     if not clean:
         return ""
     if not clean.startswith(AVATAR_DATA_URL_PREFIXES):
-        raise HTTPException(status_code=400, detail="Avatar must be a PNG, JPEG, WebP or GIF data URL")
+        raise HTTPException(
+            status_code=400, detail="Avatar must be a PNG, JPEG, WebP or GIF data URL"
+        )
     _, _, encoded = clean.partition(",")
     try:
         decoded = base64.b64decode(encoded, validate=True)
@@ -91,7 +93,9 @@ def _normalize_avatar_base64(value: str | None) -> str | None:
     return clean
 
 
-def _token_response(user: dict, refresh_token: str, *, session_id: str | None = None) -> AuthTokenResponse:
+def _token_response(
+    user: dict, refresh_token: str, *, session_id: str | None = None
+) -> AuthTokenResponse:
     return AuthTokenResponse(
         access_token=create_access_token(user, session_id=session_id),
         refresh_token=refresh_token,
@@ -100,12 +104,38 @@ def _token_response(user: dict, refresh_token: str, *, session_id: str | None = 
     )
 
 
+def _issue_login_tokens(
+    user: dict,
+    http_request: Request,
+    *,
+    device_id: str | None = None,
+    audit_action: str,
+    audit_details: dict | None = None,
+) -> AuthTokenResponse:
+    """认证成功后的签发顺序统一，设备上限在返回令牌前执行。"""
+    metadata = {
+        "user_agent": http_request.headers.get("user-agent", ""),
+        "ip_address": request_ip(http_request),
+    }
+    session = create_login_session(
+        user["id"],
+        device_id=resolve_device_id(device_id, request=http_request),
+        **metadata,
+    )
+    refresh_token, _ = create_refresh_token(user["id"], session_id=session["id"], **metadata)
+    _enforce_device_limit(user["id"], session["id"])
+    get_app_store().audit(user["id"], audit_action, "users", audit_details)
+    return _token_response(user, refresh_token, session_id=session["id"])
+
+
 def _record_response(record: dict, *, current_session_id: str | None = None) -> LoginRecordResponse:
     revoked_at = record.get("revoked_at")
     expires_at = datetime.fromisoformat(record["expires_at"])
     is_online = bool(record.get("is_online"))
-    default_active = not revoked_at and expires_at > datetime.now(timezone.utc) and (
-        record.get("active_refresh_tokens", 0) > 0 or is_online
+    default_active = (
+        not revoked_at
+        and expires_at > datetime.now(UTC)
+        and (record.get("active_refresh_tokens", 0) > 0 or is_online)
     )
     is_active = bool(record.get("is_active", default_active))
     return LoginRecordResponse(
@@ -137,7 +167,11 @@ def _session_response(
     current_user_id: str | None = None,
 ) -> LoginSessionResponse:
     base = _record_response(session, current_session_id=current_session_id)
-    session_ids = session.get("session_ids") if isinstance(session.get("session_ids"), list) else [session["id"]]
+    session_ids = (
+        session.get("session_ids")
+        if isinstance(session.get("session_ids"), list)
+        else [session["id"]]
+    )
     records = [
         _record_response(record, current_session_id=current_session_id)
         for record in session.get("records", [])
@@ -145,20 +179,33 @@ def _session_response(
     ]
     is_current = bool(current_session_id and current_session_id in session_ids)
     if not is_current and not current_session_id and current_device_id:
-        is_current = session.get("user_id") == current_user_id and (session.get("device_id") or session["id"]) == current_device_id
-    return LoginSessionResponse(**base.model_dump(exclude={"is_current"}), is_current=is_current, records=records)
+        is_current = (
+            session.get("user_id") == current_user_id
+            and (session.get("device_id") or session["id"]) == current_device_id
+        )
+    return LoginSessionResponse(
+        **base.model_dump(exclude={"is_current"}), is_current=is_current, records=records
+    )
 
 
 def _device_matches_current(session: dict, current_user, http_request: Request) -> bool:
-    session_ids = session.get("session_ids") if isinstance(session.get("session_ids"), list) else [session.get("id")]
+    session_ids = (
+        session.get("session_ids")
+        if isinstance(session.get("session_ids"), list)
+        else [session.get("id")]
+    )
     if current_user.session_id and current_user.session_id in session_ids:
         return True
     if current_user.session_id:
         return False
-    return session.get("user_id") == current_user.id and (session.get("device_id") or session.get("id")) == _current_device_id(http_request)
+    return session.get("user_id") == current_user.id and (
+        session.get("device_id") or session.get("id")
+    ) == _current_device_id(http_request)
 
 
-def _record_matches_current(record_id: str, device: dict, current_user, http_request: Request) -> bool:
+def _record_matches_current(
+    record_id: str, device: dict, current_user, http_request: Request
+) -> bool:
     if current_user.session_id:
         return current_user.session_id == record_id
     return _device_matches_current(device, current_user, http_request)
@@ -166,7 +213,9 @@ def _record_matches_current(record_id: str, device: dict, current_user, http_req
 
 def _enforce_device_limit(user_id: str, session_id: str) -> None:
     max_devices = get_settings().auth_max_devices_per_user
-    revoked = get_app_store().enforce_login_session_limit(user_id, max_devices, keep_session_id=session_id)
+    revoked = get_app_store().enforce_login_session_limit(
+        user_id, max_devices, keep_session_id=session_id
+    )
     if revoked:
         get_app_store().audit(
             user_id,
@@ -185,7 +234,9 @@ def setup_status():
 def setup(request: SetupRequest, http_request: Request):
     store = get_app_store()
     if store.has_users():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup has already been completed")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Setup has already been completed"
+        )
 
     store.migrate_config_json_once()
     try:
@@ -200,38 +251,36 @@ def setup(request: SetupRequest, http_request: Request):
 
     settings = get_settings()
     store.migrate_legacy_user_data(user["id"], settings.workspace_dir)
-    login_session = create_login_session(
-        user["id"],
-        user_agent=http_request.headers.get("user-agent", ""),
-        ip_address=request_ip(http_request),
-        device_id=resolve_device_id(request.device_id, request=http_request),
+    return _issue_login_tokens(
+        user,
+        http_request,
+        device_id=request.device_id,
+        audit_action="auth.setup",
+        audit_details={"permissions": list(PERMISSION_DESCRIPTIONS)},
     )
-    refresh_token, _ = create_refresh_token(
-        user["id"],
-        session_id=login_session["id"],
-        user_agent=http_request.headers.get("user-agent", ""),
-        ip_address=request_ip(http_request),
-    )
-    _enforce_device_limit(user["id"], login_session["id"])
-    store.audit(user["id"], "auth.setup", "users", {"permissions": list(PERMISSION_DESCRIPTIONS)})
-    return _token_response(user, refresh_token, session_id=login_session["id"])
 
 
 @router.post("/dev-login", response_model=AuthTokenResponse)
 def dev_login(http_request: Request):
     if not _dev_auth_enabled():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Development auth is disabled")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Development auth is disabled"
+        )
 
     store = get_app_store()
     store.migrate_config_json_once()
     username = os.environ.get(DEV_AUTH_USERNAME_ENV, "dev_admin").strip() or "dev_admin"
     display_name = os.environ.get(DEV_AUTH_DISPLAY_NAME_ENV, "Dev Admin").strip() or "Dev Admin"
     if len(username) < 3:
-        raise HTTPException(status_code=400, detail=f"{DEV_AUTH_USERNAME_ENV} must be at least 3 characters")
+        raise HTTPException(
+            status_code=400, detail=f"{DEV_AUTH_USERNAME_ENV} must be at least 3 characters"
+        )
 
     user = store.get_user_by_username(username)
     if user:
-        user = store.update_user(user["id"], display_name=display_name, is_active=True, role_names=["admin"])
+        user = store.update_user(
+            user["id"], display_name=display_name, is_active=True, role_names=["admin"]
+        )
     else:
         # 仅在显式开发开关打开时创建本地管理员，方便沙箱验证页面而不暴露生产登录入口。
         user = store.create_user(
@@ -245,43 +294,19 @@ def dev_login(http_request: Request):
 
     store.touch_login(user["id"])
     user = store.get_user_by_id(user["id"]) or user
-    login_session = create_login_session(
-        user["id"],
-        user_agent=http_request.headers.get("user-agent", ""),
-        ip_address=request_ip(http_request),
-        device_id=resolve_device_id(request=http_request),
-    )
-    refresh_token, _ = create_refresh_token(
-        user["id"],
-        session_id=login_session["id"],
-        user_agent=http_request.headers.get("user-agent", ""),
-        ip_address=request_ip(http_request),
-    )
-    _enforce_device_limit(user["id"], login_session["id"])
-    store.audit(user["id"], "auth.dev_login", "users")
-    return _token_response(user, refresh_token, session_id=login_session["id"])
+    return _issue_login_tokens(user, http_request, audit_action="auth.dev_login")
 
 
 @router.post("/login", response_model=AuthTokenResponse)
 def login(request: LoginRequest, http_request: Request):
     user = authenticate_user(request.username, request.password)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
-    login_session = create_login_session(
-        user["id"],
-        user_agent=http_request.headers.get("user-agent", ""),
-        ip_address=request_ip(http_request),
-        device_id=resolve_device_id(request.device_id, request=http_request),
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
+        )
+    return _issue_login_tokens(
+        user, http_request, device_id=request.device_id, audit_action="auth.login"
     )
-    refresh_token, _ = create_refresh_token(
-        user["id"],
-        session_id=login_session["id"],
-        user_agent=http_request.headers.get("user-agent", ""),
-        ip_address=request_ip(http_request),
-    )
-    _enforce_device_limit(user["id"], login_session["id"])
-    get_app_store().audit(user["id"], "auth.login", "users")
-    return _token_response(user, refresh_token, session_id=login_session["id"])
 
 
 @router.post("/refresh", response_model=AuthTokenResponse)
@@ -323,7 +348,9 @@ def list_login_sessions(http_request: Request, current_user=Depends(get_current_
             current_device_id=_current_device_id(http_request),
             current_user_id=current_user.id,
         )
-        for session in get_app_store().list_login_sessions(None if current_user.is_admin else current_user.id)
+        for session in get_app_store().list_login_sessions(
+            None if current_user.is_admin else current_user.id
+        )
     ]
     return LoginSessionListResponse(
         sessions=sessions,
@@ -343,7 +370,9 @@ def heartbeat_login_device(
     device = get_app_store().heartbeat_login_device(
         current_user.id,
         session_id=current_user.session_id,
-        expires_at=(datetime.now(timezone.utc) + timedelta(days=LOGIN_SESSION_DAYS)).replace(microsecond=0).isoformat(),
+        expires_at=(datetime.now(UTC) + timedelta(days=LOGIN_SESSION_DAYS))
+        .replace(microsecond=0)
+        .isoformat(),
         user_agent=http_request.headers.get("user-agent", ""),
         ip_address=request_ip(http_request),
         device_id=device_id,
@@ -387,7 +416,10 @@ def revoke_login_session(
         "login_sessions",
         {"device_id": session.get("device_id") or session_id, "user_id": session.get("user_id")},
     )
-    return {"status": "ok", "revoked_current": _device_matches_current(session, current_user, http_request)}
+    return {
+        "status": "ok",
+        "revoked_current": _device_matches_current(session, current_user, http_request),
+    }
 
 
 @router.delete("/sessions/{device_id}/device")
@@ -408,7 +440,11 @@ def delete_login_device(
         current_user.id,
         "auth.device_delete",
         "login_sessions",
-        {"device_id": device.get("device_id") or device_id, "user_id": device.get("user_id"), "deleted_session_ids": deleted_ids},
+        {
+            "device_id": device.get("device_id") or device_id,
+            "user_id": device.get("user_id"),
+            "deleted_session_ids": deleted_ids,
+        },
     )
     return {"status": "ok", "deleted": len(deleted_ids), "deleted_current": deleted_current}
 
@@ -424,7 +460,9 @@ def delete_login_record(
     store = get_app_store()
     target_user_id = user_id if current_user.is_admin else current_user.id
     device = store.get_login_device(device_id, user_id=target_user_id)
-    session_ids = device.get("session_ids") if device and isinstance(device.get("session_ids"), list) else []
+    session_ids = (
+        device.get("session_ids") if device and isinstance(device.get("session_ids"), list) else []
+    )
     if not device or record_id not in session_ids:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Login record not found")
     deleted_current = _record_matches_current(record_id, device, current_user, http_request)
@@ -434,7 +472,11 @@ def delete_login_record(
         current_user.id,
         "auth.record_delete",
         "login_sessions",
-        {"device_id": device.get("device_id") or device_id, "record_id": record_id, "user_id": device.get("user_id")},
+        {
+            "device_id": device.get("device_id") or device_id,
+            "record_id": record_id,
+            "user_id": device.get("user_id"),
+        },
     )
     return {"status": "ok", "deleted_current": deleted_current}
 
@@ -458,7 +500,9 @@ def update_profile(request: UserProfileUpdateRequest, current_user=Depends(get_c
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
-    get_app_store().audit(current_user.id, "auth.profile_update", "users", {"avatar": avatar_base64 is not None})
+    get_app_store().audit(
+        current_user.id, "auth.profile_update", "users", {"avatar": avatar_base64 is not None}
+    )
     return UserPublic(**public_user(user))
 
 
@@ -467,9 +511,14 @@ def change_password(request: ChangePasswordRequest, current_user=Depends(get_cur
     store = get_app_store()
     user = store.get_user_by_id(current_user.id)
     if not user or not verify_password(request.current_password, user["password_hash"]):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect"
+        )
     if request.new_password == request.current_password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be different from current password")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password",
+        )
     store.update_user(current_user.id, password_hash=hash_password(request.new_password))
     store.audit(current_user.id, "auth.password_change", "users")
     return {"status": "ok"}

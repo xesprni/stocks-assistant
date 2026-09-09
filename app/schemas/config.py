@@ -1,6 +1,6 @@
 """配置管理 API Schema。"""
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -55,7 +55,7 @@ class AppConfig(BaseModel):
     multi_agent_default_max_steps: int = 8
     multi_agent_max_depth: int = 1
     multi_agent_dangerous_tools: list[str] = Field(default_factory=list)
-    multi_agent_roles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    multi_agent_roles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     knowledge_enabled: bool
     memory_enabled: bool
@@ -75,7 +75,7 @@ class AppConfig(BaseModel):
     telegram_parse_mode: str = ""
 
     system_prompt: str
-    mcp_servers: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
     mcp_tool_timeout_seconds: float = 60.0
 
     longbridge_auth_mode: Literal["apikey", "oauth"] = "apikey"
@@ -103,73 +103,73 @@ class ConfigUpdate(BaseModel):
     字段均为可选；只持久化请求中显式传入的字段。
     """
 
-    llm_provider: Optional[str] = None
-    llm_auth_mode: Optional[str] = None
-    llm_api_key: Optional[str] = None
-    llm_api_base: Optional[str] = None
-    llm_model: Optional[str] = None
-    llm_codex_auth_file: Optional[str] = None
-    llm_codex_api_base: Optional[str] = None
-    llm_codex_model: Optional[str] = None
-    llm_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    llm_max_output_tokens: Optional[int] = Field(default=None, ge=0)
-    llm_reasoning_effort: Optional[str] = None
-    llm_tool_choice: Optional[str] = None
+    llm_provider: str | None = None
+    llm_auth_mode: str | None = None
+    llm_api_key: str | None = None
+    llm_api_base: str | None = None
+    llm_model: str | None = None
+    llm_codex_auth_file: str | None = None
+    llm_codex_api_base: str | None = None
+    llm_codex_model: str | None = None
+    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    llm_max_output_tokens: int | None = Field(default=None, ge=0)
+    llm_reasoning_effort: str | None = None
+    llm_tool_choice: str | None = None
 
-    embedding_auth_mode: Optional[str] = None
-    embedding_api_key: Optional[str] = None
-    embedding_api_base: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_provider: Optional[str] = None
-    embedding_codex_auth_file: Optional[str] = None
-    embedding_codex_api_base: Optional[str] = None
-    embedding_codex_model: Optional[str] = None
+    embedding_auth_mode: str | None = None
+    embedding_api_key: str | None = None
+    embedding_api_base: str | None = None
+    embedding_model: str | None = None
+    embedding_provider: str | None = None
+    embedding_codex_auth_file: str | None = None
+    embedding_codex_api_base: str | None = None
+    embedding_codex_model: str | None = None
 
-    workspace_dir: Optional[str] = None
-    app_language: Optional[str] = None
-    research_quick_prompts_refresh_seconds: Optional[int] = Field(default=None, ge=60, le=604800)
-    auth_max_devices_per_user: Optional[int] = Field(default=None, ge=1, le=50)
-    agent_max_steps: Optional[int] = None
-    agent_max_context_tokens: Optional[int] = None
-    agent_max_context_turns: Optional[int] = None
-    agent_tool_allowlist: Optional[list[str]] = None
-    agent_allow_all_mcp_tools: Optional[bool] = None
-    multi_agent_enabled: Optional[bool] = None
-    multi_agent_max_parallel_agents: Optional[int] = None
-    multi_agent_default_max_steps: Optional[int] = None
-    multi_agent_max_depth: Optional[int] = None
-    multi_agent_dangerous_tools: Optional[list[str]] = None
-    multi_agent_roles: Optional[Dict[str, Dict[str, Any]]] = None
+    workspace_dir: str | None = None
+    app_language: str | None = None
+    research_quick_prompts_refresh_seconds: int | None = Field(default=None, ge=60, le=604800)
+    auth_max_devices_per_user: int | None = Field(default=None, ge=1, le=50)
+    agent_max_steps: int | None = None
+    agent_max_context_tokens: int | None = None
+    agent_max_context_turns: int | None = None
+    agent_tool_allowlist: list[str] | None = None
+    agent_allow_all_mcp_tools: bool | None = None
+    multi_agent_enabled: bool | None = None
+    multi_agent_max_parallel_agents: int | None = None
+    multi_agent_default_max_steps: int | None = None
+    multi_agent_max_depth: int | None = None
+    multi_agent_dangerous_tools: list[str] | None = None
+    multi_agent_roles: dict[str, dict[str, Any]] | None = None
 
-    knowledge_enabled: Optional[bool] = None
-    memory_enabled: Optional[bool] = None
-    memory_auto_curate_enabled: Optional[bool] = None
-    memory_curator_min_importance: Optional[float] = None
-    memory_curator_min_confidence: Optional[float] = None
-    scheduler_enabled: Optional[bool] = None
-    tracing_enabled: Optional[bool] = None
-    product_analytics_enabled: Optional[bool] = None
-    debug: Optional[bool] = None
+    knowledge_enabled: bool | None = None
+    memory_enabled: bool | None = None
+    memory_auto_curate_enabled: bool | None = None
+    memory_curator_min_importance: float | None = None
+    memory_curator_min_confidence: float | None = None
+    scheduler_enabled: bool | None = None
+    tracing_enabled: bool | None = None
+    product_analytics_enabled: bool | None = None
+    debug: bool | None = None
 
-    telegram_enabled: Optional[bool] = None
-    telegram_bot_token: Optional[str] = None
-    telegram_chat_id: Optional[str] = None
-    telegram_api_base: Optional[str] = None
-    telegram_parse_mode: Optional[str] = None
+    telegram_enabled: bool | None = None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    telegram_api_base: str | None = None
+    telegram_parse_mode: str | None = None
 
-    system_prompt: Optional[str] = None
-    mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None
-    mcp_tool_timeout_seconds: Optional[float] = None
+    system_prompt: str | None = None
+    mcp_servers: dict[str, dict[str, Any]] | None = None
+    mcp_tool_timeout_seconds: float | None = None
 
-    longbridge_auth_mode: Optional[Literal["apikey", "oauth"]] = None
-    longbridge_app_key: Optional[str] = None
-    longbridge_app_secret: Optional[str] = None
-    longbridge_access_token: Optional[str] = None
-    longbridge_http_url: Optional[str] = None
-    longbridge_quote_ws_url: Optional[str] = None
-    guardian_api_key: Optional[str] = None
-    search_api_url: Optional[str] = None
-    search_api_key: Optional[str] = None
+    longbridge_auth_mode: Literal["apikey", "oauth"] | None = None
+    longbridge_app_key: str | None = None
+    longbridge_app_secret: str | None = None
+    longbridge_access_token: str | None = None
+    longbridge_http_url: str | None = None
+    longbridge_quote_ws_url: str | None = None
+    guardian_api_key: str | None = None
+    search_api_url: str | None = None
+    search_api_key: str | None = None
 
     @field_validator("llm_reasoning_effort", mode="before")
     @classmethod

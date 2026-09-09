@@ -1,6 +1,6 @@
 """Dashboard aggregate API schemas."""
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,10 +14,10 @@ class DashboardModule(BaseModel):
     """Common module availability metadata."""
 
     available: bool = True
-    error: Optional[str] = None
-    fetched_at: Optional[str] = None
+    error: str | None = None
+    fetched_at: str | None = None
     stale: bool = False
-    source: Optional[Literal["local", "cache", "live"]] = None
+    source: Literal["local", "cache", "live"] | None = None
 
 
 class DashboardMarketModule(DashboardModule):
@@ -29,7 +29,7 @@ class DashboardMarketModule(DashboardModule):
 class DashboardWatchlistRow(QuoteItem):
     """Dashboard watchlist quote row."""
 
-    id: Optional[int] = None
+    id: int | None = None
     name_cn: str = ""
     name_en: str = ""
     name_hk: str = ""
@@ -59,7 +59,7 @@ class DashboardWatchlistModule(DashboardModule):
     views: DashboardWatchlistViews = Field(default_factory=DashboardWatchlistViews)
     counts_by_category: dict[str, int] = Field(default_factory=dict)
     total: int = 0
-    quote_error: Optional[str] = None
+    quote_error: str | None = None
 
 
 class DashboardPortfolioPosition(PortfolioItem):
@@ -73,14 +73,14 @@ class DashboardPortfolioMarket(BaseModel):
     total_assets: str = "0"
     market_value: str = "0"
     cash_amount: str = "0"
-    cash_ratio: Optional[str] = None
+    cash_ratio: str | None = None
     cost_value: str = "0"
-    unrealized_pnl_value: Optional[str] = None
-    unrealized_pnl_ratio: Optional[str] = None
-    day_change_value: Optional[str] = None
-    day_change_rate: Optional[str] = None
+    unrealized_pnl_value: str | None = None
+    unrealized_pnl_ratio: str | None = None
+    day_change_value: str | None = None
+    day_change_rate: str | None = None
     position_count: int = 0
-    quote_error: Optional[str] = None
+    quote_error: str | None = None
     top_positions: list[DashboardPortfolioPosition] = Field(default_factory=list)
 
 
@@ -94,7 +94,7 @@ class DashboardSymbolInsightSection(BaseModel):
     """One Longbridge detail section for a Dashboard symbol."""
 
     available: bool = True
-    error: Optional[str] = None
+    error: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
     items: list[Any] = Field(default_factory=list)
     total: int = 0
@@ -110,8 +110,12 @@ class DashboardSymbolInsightsResponse(BaseModel):
     company: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
     valuation: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
     dividends: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
-    institution_rating: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
-    corporate_actions: DashboardSymbolInsightSection = Field(default_factory=DashboardSymbolInsightSection)
+    institution_rating: DashboardSymbolInsightSection = Field(
+        default_factory=DashboardSymbolInsightSection
+    )
+    corporate_actions: DashboardSymbolInsightSection = Field(
+        default_factory=DashboardSymbolInsightSection
+    )
 
 
 class DashboardResponse(BaseModel):

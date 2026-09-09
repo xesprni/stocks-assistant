@@ -10,25 +10,27 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any
 
 
 class TaskType(Enum):
     """任务内容类型"""
-    TEXT = "text"      # 纯文本
-    IMAGE = "image"    # 图片
-    VIDEO = "video"    # 视频
-    AUDIO = "audio"    # 音频
-    FILE = "file"      # 文件
-    MIXED = "mixed"    # 混合类型
+
+    TEXT = "text"  # 纯文本
+    IMAGE = "image"  # 图片
+    VIDEO = "video"  # 视频
+    AUDIO = "audio"  # 音频
+    FILE = "file"  # 文件
+    MIXED = "mixed"  # 混合类型
 
 
 class TaskStatus(Enum):
     """任务状态"""
-    INIT = "init"              # 初始化
+
+    INIT = "init"  # 初始化
     PROCESSING = "processing"  # 处理中
-    COMPLETED = "completed"    # 已完成
-    FAILED = "failed"          # 已失败
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"  # 已失败
 
 
 @dataclass
@@ -37,17 +39,18 @@ class Task:
 
     封装了 Agent 需要处理的一次请求，包含内容、类型、状态和附件信息。
     """
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     content: str = ""  # 任务文本内容
     type: TaskType = TaskType.TEXT  # 内容类型
     status: TaskStatus = TaskStatus.INIT  # 当前状态
     created_at: float = field(default_factory=time.time)  # 创建时间
     updated_at: float = field(default_factory=time.time)  # 更新时间
-    metadata: Dict[str, Any] = field(default_factory=dict)  # 额外元数据
-    images: List[str] = field(default_factory=list)  # 图片附件列表
-    videos: List[str] = field(default_factory=list)  # 视频附件列表
-    audios: List[str] = field(default_factory=list)  # 音频附件列表
-    files: List[str] = field(default_factory=list)  # 文件附件列表
+    metadata: dict[str, Any] = field(default_factory=dict)  # 额外元数据
+    images: list[str] = field(default_factory=list)  # 图片附件列表
+    videos: list[str] = field(default_factory=list)  # 视频附件列表
+    audios: list[str] = field(default_factory=list)  # 音频附件列表
+    files: list[str] = field(default_factory=list)  # 文件附件列表
 
     def __init__(self, content: str = "", **kwargs):
         self.id = kwargs.get("id", str(uuid.uuid4()))

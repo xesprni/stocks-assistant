@@ -13,6 +13,7 @@ set -Eeuo pipefail
 #   REPO_REF=main
 #   APP_DIR=/opt/stocks-assistant
 #   APP_USER=stocks
+#   PYTHON_BIN=/usr/bin/python3.12
 #   BACKEND_PORT=8000
 #   LOG_DIR=/var/log/stocks-assistant-deploy
 #   DEPLOY_DEBUG=1
@@ -22,6 +23,7 @@ REPO_URL="${REPO_URL:-https://github.com/xesprni/stocks-assistant.git}"
 REPO_REF="${REPO_REF:-main}"
 APP_DIR="${APP_DIR:-/opt/stocks-assistant}"
 APP_USER="${APP_USER:-stocks}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 DATA_DIR="${DATA_DIR:-/var/lib/stocks-assistant}"
 DB_PATH="${DB_PATH:-$DATA_DIR/stocks-assistant.db}"
@@ -176,12 +178,22 @@ apt_install_base() {
 }
 
 ensure_python() {
-  log "Checking Python version"
-  python3 - <<'PY'
+  command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "Python interpreter not found: $PYTHON_BIN"
+  local interpreters=("$PYTHON_BIN")
+  local interpreter
+  if [[ -e "$APP_DIR/.venv" ]]; then
+    [[ -x "$APP_DIR/.venv/bin/python" ]] || die "Invalid existing virtual environment: $APP_DIR/.venv. Rebuild it with Python 3.12+."
+    interpreters+=("$APP_DIR/.venv/bin/python")
+  fi
+  # 在源码切换和依赖安装前检查旧环境，避免留下半更新部署。
+  for interpreter in "${interpreters[@]}"; do
+    "$interpreter" - <<'PYTHON' || die "Python 3.12+ is required. Set PYTHON_BIN and rebuild any older $APP_DIR/.venv before updating."
 import sys
-if sys.version_info < (3, 10):
-    raise SystemExit("Python 3.10+ is required")
-PY
+if sys.version_info < (3, 12):
+    raise SystemExit(f"Unsupported Python {sys.version.split()[0]}: {sys.executable}")
+print(f"Python {sys.version.split()[0]}: {sys.executable}")
+PYTHON
+  done
 }
 
 ensure_node() {
@@ -237,7 +249,9 @@ deploy_source() {
 
 build_backend() {
   log "Installing backend dependencies"
-  python3 -m venv "$APP_DIR/.venv"
+  if [[ ! -x "$APP_DIR/.venv/bin/python" ]]; then
+    "$PYTHON_BIN" -m venv "$APP_DIR/.venv"
+  fi
   "$APP_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
   "$APP_DIR/.venv/bin/python" -m pip install -e "$APP_DIR"
 }
@@ -432,4 +446,6 @@ main() {
   print_summary
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

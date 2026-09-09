@@ -1,7 +1,5 @@
 """Authentication, user, and role schemas."""
 
-from typing import Dict, List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -13,18 +11,18 @@ class SetupRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8, max_length=256)
     display_name: str = Field(default="", max_length=120)
-    device_id: Optional[str] = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=128)
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
-    device_id: Optional[str] = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=128)
 
 
 class RefreshRequest(BaseModel):
     refresh_token: str
-    device_id: Optional[str] = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=128)
 
 
 class LogoutRequest(BaseModel):
@@ -32,7 +30,7 @@ class LogoutRequest(BaseModel):
 
 
 class DeviceHeartbeatRequest(BaseModel):
-    device_id: Optional[str] = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=128)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -41,8 +39,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 class UserProfileUpdateRequest(BaseModel):
-    display_name: Optional[str] = Field(default=None, max_length=120)
-    avatar_base64: Optional[str] = Field(default=None, max_length=800_000)
+    display_name: str | None = Field(default=None, max_length=120)
+    avatar_base64: str | None = Field(default=None, max_length=800_000)
 
 
 class UserPublic(BaseModel):
@@ -50,13 +48,13 @@ class UserPublic(BaseModel):
     username: str
     display_name: str = ""
     avatar_base64: str = Field(default="", max_length=800_000)
-    roles: List[str] = Field(default_factory=list)
-    permissions: List[str] = Field(default_factory=list)
-    page_permissions: Dict[str, str] = Field(default_factory=dict)
+    roles: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+    page_permissions: dict[str, str] = Field(default_factory=dict)
     is_active: bool
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    last_login_at: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_login_at: str | None = None
 
 
 class AuthTokenResponse(BaseModel):
@@ -76,7 +74,7 @@ class LoginRecordResponse(BaseModel):
     created_at: str
     last_seen_at: str
     expires_at: str
-    revoked_at: Optional[str] = None
+    revoked_at: str | None = None
     user_agent: str = ""
     ip_address: str = ""
     last_ip_address: str = ""
@@ -88,7 +86,7 @@ class LoginRecordResponse(BaseModel):
 
 
 class LoginSessionResponse(LoginRecordResponse):
-    records: List[LoginRecordResponse] = Field(default_factory=list)
+    records: list[LoginRecordResponse] = Field(default_factory=list)
 
 
 class DeviceHeartbeatResponse(BaseModel):
@@ -99,7 +97,7 @@ class DeviceHeartbeatResponse(BaseModel):
 
 
 class LoginSessionListResponse(BaseModel):
-    sessions: List[LoginSessionResponse]
+    sessions: list[LoginSessionResponse]
     max_lifetime_days: int
     max_devices_per_user: int
     refresh_token_days: int
@@ -115,19 +113,19 @@ class UserCreateRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8, max_length=256)
     display_name: str = Field(default="", max_length=120)
-    roles: List[str] = Field(default_factory=lambda: ["user"])
+    roles: list[str] = Field(default_factory=lambda: ["user"])
     is_active: bool = True
 
 
 class UserUpdateRequest(BaseModel):
-    display_name: Optional[str] = Field(default=None, max_length=120)
-    password: Optional[str] = Field(default=None, min_length=8, max_length=256)
-    roles: Optional[List[str]] = None
-    is_active: Optional[bool] = None
+    display_name: str | None = Field(default=None, max_length=120)
+    password: str | None = Field(default=None, min_length=8, max_length=256)
+    roles: list[str] | None = None
+    is_active: bool | None = None
 
 
 class UserListResponse(BaseModel):
-    users: List[UserPublic]
+    users: list[UserPublic]
     total: int
 
 
@@ -136,19 +134,19 @@ class RoleResponse(BaseModel):
     name: str
     description: str = ""
     builtin: bool = False
-    permissions: List[str] = Field(default_factory=list)
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    permissions: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class RoleUpdateRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=64)
     description: str = Field(default="", max_length=240)
-    permissions: List[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
 
 
 class RoleListResponse(BaseModel):
-    roles: List[RoleResponse]
+    roles: list[RoleResponse]
     permissions: dict[str, str]
     page_permissions: dict[str, str] = Field(default_factory=dict)
 

@@ -42,15 +42,22 @@ class PortfolioPositionsToolTest(unittest.TestCase):
     def test_reads_all_markets_with_current_user_scope(self):
         service = FakePortfolioService()
         settings = SimpleNamespace(longbridge_app_key="demo")
-        tool = GetPortfolioPositionsTool(portfolio_service=service, user_id="user-1", settings=settings)
+        tool = GetPortfolioPositionsTool(
+            portfolio_service=service, user_id="user-1", settings=settings
+        )
 
         result = tool.execute({"market": "ALL"})
 
         self.assertEqual(result.status, "success")
-        self.assertEqual(service.calls, [("US", "user-1", settings), ("A", "user-1", settings), ("H", "user-1", settings)])
+        self.assertEqual(
+            service.calls,
+            [("US", "user-1", settings), ("A", "user-1", settings), ("H", "user-1", settings)],
+        )
         self.assertEqual(result.result["source"], "portfolio")
         self.assertEqual(result.result["total_positions"], 3)
-        self.assertEqual(result.result["quote_errors"], [{"market": "A", "error": "quote unavailable"}])
+        self.assertEqual(
+            result.result["quote_errors"], [{"market": "A", "error": "quote unavailable"}]
+        )
         first_item = result.result["markets"][0]["items"][0]
         self.assertEqual(first_item["symbol"], "MSFT.US")
         self.assertNotIn("user_id", first_item)

@@ -28,7 +28,9 @@ class ChatMessage(SessionBase):
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    session_id: Mapped[str] = mapped_column(Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -41,9 +43,15 @@ class TraceRun(SessionBase):
     __table_args__ = (Index("idx_trace_runs_session_started", "session_id", "started_at"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    session_id: Mapped[str] = mapped_column(Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
-    user_message_id: Mapped[str | None] = mapped_column(Text, ForeignKey("messages.id", ondelete="SET NULL"))
-    assistant_message_id: Mapped[str | None] = mapped_column(Text, ForeignKey("messages.id", ondelete="SET NULL"))
+    session_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    user_message_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("messages.id", ondelete="SET NULL")
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("messages.id", ondelete="SET NULL")
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
     started_at: Mapped[str] = mapped_column(Text, nullable=False)
     ended_at: Mapped[str | None] = mapped_column(Text)
@@ -60,9 +68,13 @@ class TraceEvent(SessionBase):
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    run_id: Mapped[str] = mapped_column(Text, ForeignKey("trace_runs.id", ondelete="CASCADE"), nullable=False)
+    run_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("trace_runs.id", ondelete="CASCADE"), nullable=False
+    )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    parent_id: Mapped[str | None] = mapped_column(Text, ForeignKey("trace_events.id", ondelete="SET NULL"))
+    parent_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("trace_events.id", ondelete="SET NULL")
+    )
     node_type: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)

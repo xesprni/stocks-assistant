@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 APP_DB_ENV = "STOCKS_ASSISTANT_DB_PATH"
 DEFAULT_APP_DB = "~/stocks-assistant/stocks-assistant.db"
@@ -121,7 +120,7 @@ PAGE_PERMISSION_REQUIREMENTS: dict[str, str] = {
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def app_db_path() -> Path:

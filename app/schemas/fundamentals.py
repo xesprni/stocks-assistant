@@ -1,7 +1,5 @@
 """Fundamental data API schemas."""
 
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -10,19 +8,19 @@ class FinancialReportColumn(BaseModel):
 
     key: str
     label: str
-    year: Optional[int] = None
-    fp_end: Optional[str] = None
+    year: int | None = None
+    fp_end: str | None = None
 
 
 class FinancialReportCell(BaseModel):
     """A statement cell aligned to one reporting period."""
 
     period: str
-    value: Optional[str] = None
-    ratio: Optional[str] = None
-    yoy: Optional[str] = None
-    year: Optional[int] = None
-    fp_end: Optional[str] = None
+    value: str | None = None
+    ratio: str | None = None
+    yoy: str | None = None
+    year: int | None = None
+    fp_end: str | None = None
 
 
 class FinancialReportRow(BaseModel):
@@ -32,7 +30,7 @@ class FinancialReportRow(BaseModel):
     name: str = ""
     percent: bool = False
     tip: str = ""
-    cells: List[FinancialReportCell] = Field(default_factory=list)
+    cells: list[FinancialReportCell] = Field(default_factory=list)
 
 
 class FinancialStatementTable(BaseModel):
@@ -44,8 +42,8 @@ class FinancialStatementTable(BaseModel):
     short_title: str = ""
     currency: str = ""
     has_yoy: bool = False
-    columns: List[FinancialReportColumn] = Field(default_factory=list)
-    rows: List[FinancialReportRow] = Field(default_factory=list)
+    columns: list[FinancialReportColumn] = Field(default_factory=list)
+    rows: list[FinancialReportRow] = Field(default_factory=list)
 
 
 class FinancialReportsResponse(BaseModel):
@@ -53,5 +51,5 @@ class FinancialReportsResponse(BaseModel):
 
     symbol: str
     kind: str
-    period: Optional[str] = None
-    statements: List[FinancialStatementTable] = Field(default_factory=list)
+    period: str | None = None
+    statements: list[FinancialStatementTable] = Field(default_factory=list)

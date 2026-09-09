@@ -5,7 +5,7 @@ small skill index, and the model can call this tool to load one skill body when
 it is actually needed.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.core.skills.config import should_include_skill
 from app.core.skills.types import SkillEntry
@@ -22,13 +22,20 @@ class ReadSkillTool(BaseTool):
         "type": "object",
         "properties": {
             "skill_name": {"type": "string", "description": "Exact name of the skill to load"},
-            "start_line": {"type": "integer", "description": "Start line (default: 1)", "default": 1},
-            "num_lines": {"type": "integer", "description": "Number of lines to read (default: all)"},
+            "start_line": {
+                "type": "integer",
+                "description": "Start line (default: 1)",
+                "default": 1,
+            },
+            "num_lines": {
+                "type": "integer",
+                "description": "Number of lines to read (default: all)",
+            },
         },
         "required": ["skill_name"],
     }
 
-    def execute(self, args: Dict[str, Any]) -> ToolResult:
+    def execute(self, args: dict[str, Any]) -> ToolResult:
         skill_name = str(args.get("skill_name") or "").strip()
         if not skill_name:
             return ToolResult.fail("Error: skill_name is required")
@@ -39,12 +46,19 @@ class ReadSkillTool(BaseTool):
 
         allowed_filter = self._get_active_skill_filter()
         entries = manager.filter_skills(skill_filter=allowed_filter, include_disabled=False)
-        entries = [entry for entry in entries if not entry.skill.disable_model_invocation and should_include_skill(entry, manager.config)]
+        entries = [
+            entry
+            for entry in entries
+            if not entry.skill.disable_model_invocation
+            and should_include_skill(entry, manager.config)
+        ]
 
         entry = self._find_entry(entries, skill_name)
         if not entry:
             available = ", ".join(entry.skill.name for entry in entries) or "(none)"
-            return ToolResult.fail(f"Skill not found or not enabled: {skill_name}. Available skills: {available}")
+            return ToolResult.fail(
+                f"Skill not found or not enabled: {skill_name}. Available skills: {available}"
+            )
 
         content = entry.skill.content or ""
         lines = content.splitlines()
@@ -53,7 +67,11 @@ class ReadSkillTool(BaseTool):
         num_lines = self._as_int(num_lines_raw, 0) if num_lines_raw is not None else 0
 
         start_idx = min(start_line - 1, len(lines))
-        selected = lines[start_idx:start_idx + num_lines] if num_lines and num_lines > 0 else lines[start_idx:]
+        selected = (
+            lines[start_idx : start_idx + num_lines]
+            if num_lines and num_lines > 0
+            else lines[start_idx:]
+        )
         body = "\n".join(f"{start_idx + idx + 1}: {line}" for idx, line in enumerate(selected))
         end_line = start_idx + len(selected)
         return ToolResult.success(
@@ -75,7 +93,7 @@ class ReadSkillTool(BaseTool):
         except Exception:
             return None
 
-    def _get_active_skill_filter(self) -> Optional[list[str]]:
+    def _get_active_skill_filter(self) -> list[str] | None:
         ctx = getattr(self, "context", None)
         active = getattr(ctx, "active_skill_filter", None) if ctx else None
         if not active:
@@ -83,7 +101,7 @@ class ReadSkillTool(BaseTool):
         return list(active)
 
     @staticmethod
-    def _find_entry(entries: list[SkillEntry], skill_name: str) -> Optional[SkillEntry]:
+    def _find_entry(entries: list[SkillEntry], skill_name: str) -> SkillEntry | None:
         exact = {entry.skill.name: entry for entry in entries}
         if skill_name in exact:
             return exact[skill_name]

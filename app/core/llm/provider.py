@@ -9,11 +9,13 @@ agent executor already understands.
 import json
 import logging
 import threading
-from typing import Any, Dict, Generator, List
+from collections.abc import Generator
+from typing import Any
 
 import httpx
 
 from app.core.agent.models import LLMModel, LLMRequest
+from app.core.llm.message_codec import iter_sse_objects, split_message_blocks
 
 logger = logging.getLogger("stocks-assistant.llm")
 
@@ -21,7 +23,7 @@ logger = logging.getLogger("stocks-assistant.llm")
 # 每个请求创建新的 Provider + httpx.Client 会浪费 TCP/TLS 连接。
 # 按 (api_base, timeout) 共享 Client，连接池跨请求复用。
 # api_key 在每次请求的 header 中传递，不影响连接复用。
-_httpx_client_pool: Dict[tuple, httpx.Client] = {}
+_httpx_client_pool: dict[tuple, httpx.Client] = {}
 _httpx_client_pool_lock = threading.Lock()
 
 
@@ -134,17 +136,7 @@ class OpenAICompatibleProvider(LLMModel):
 
         with self.client.stream("POST", url, json=payload, headers=headers) as resp:
             _raise_for_llm_status(resp, "Chat Completions")
-            for line in resp.iter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":  # 流结束标记
-                    break
-                try:
-                    chunk = json.loads(data)
-                    yield chunk
-                except json.JSONDecodeError:
-                    continue
+            yield from iter_sse_objects(resp.iter_lines())
 
     def _build_payload(self, request: LLMRequest, stream: bool = False) -> dict:
         """构建 API 请求体
@@ -159,7 +151,7 @@ class OpenAICompatibleProvider(LLMModel):
             messages.append({"role": "system", "content": request.system})
         messages.extend(self._convert_messages_to_openai(request.messages))
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model or self.model,
             "messages": messages,
             "temperature": request.temperature,
@@ -168,9 +160,7 @@ class OpenAICompatibleProvider(LLMModel):
         if request.max_tokens:
             payload["max_tokens"] = request.max_tokens
         if request.tools:
-            payload["tools"] = [
-                {"type": "function", "function": t} for t in request.tools
-            ]
+            payload["tools"] = [{"type": "function", "function": t} for t in request.tools]
             tool_choice = _normalize_tool_choice(getattr(request, "tool_choice", None))
             if tool_choice:
                 payload["tool_choice"] = tool_choice
@@ -178,7 +168,7 @@ class OpenAICompatibleProvider(LLMModel):
             payload["reasoning_effort"] = getattr(request, "reasoning_effort", None) or "medium"
         return payload
 
-    def _convert_messages_to_openai(self, messages: List[dict]) -> List[dict]:
+    def _convert_messages_to_openai(self, messages: list[dict]) -> list[dict]:
         """将 Claude 风格的消息转换为 OpenAI 格式
 
         转换规则：
@@ -203,21 +193,7 @@ class OpenAICompatibleProvider(LLMModel):
                 openai_messages.append({"role": role, "content": content})
                 continue
 
-            text_parts = []
-            tool_uses = []
-            tool_results = []
-
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                block_type = block.get("type")
-                if block_type == "text":
-                    text_parts.append(block.get("text", ""))
-                elif block_type == "tool_use":
-                    tool_uses.append(block)
-                elif block_type == "tool_result":
-                    tool_results.append(block)
-                # thinking 块忽略
+            text_parts, tool_uses, tool_results = split_message_blocks(content)
 
             if role == "assistant":
                 assistant_msg = {
@@ -241,16 +217,20 @@ class OpenAICompatibleProvider(LLMModel):
             elif role == "user":
                 if tool_results:
                     for tr in tool_results:
-                        openai_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tr.get("tool_use_id", ""),
-                            "content": tr.get("content", ""),
-                        })
+                        openai_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tr.get("tool_use_id", ""),
+                                "content": tr.get("content", ""),
+                            }
+                        )
                 if text_parts:
-                    openai_messages.append({
-                        "role": "user",
-                        "content": "\n".join(text_parts),
-                    })
+                    openai_messages.append(
+                        {
+                            "role": "user",
+                            "content": "\n".join(text_parts),
+                        }
+                    )
             else:
                 text = "\n".join(text_parts) if text_parts else ""
                 openai_messages.append({"role": role, "content": text})
@@ -280,7 +260,7 @@ class OpenAIResponsesProvider(LLMModel):
         api_base: str = "https://api.openai.com/v1",
         model: str = "gpt-5.2-codex",
         timeout: int = 180,
-        extra_headers: Dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
         store_response: bool | None = None,
     ):
         super().__init__(model=model)
@@ -306,24 +286,14 @@ class OpenAIResponsesProvider(LLMModel):
         headers = self._headers()
         url = f"{self.api_base}/responses"
 
-        state: Dict[str, Any] = {"saw_function_call": False, "argument_buffers": {}}
+        state: dict[str, Any] = {"saw_function_call": False, "argument_buffers": {}}
         with self.client.stream("POST", url, json=payload, headers=headers) as resp:
             _raise_for_llm_status(resp, "Responses")
-            for line in resp.iter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                for chunk in self._stream_event_to_chat_chunks(event, state):
-                    yield chunk
+            for event in iter_sse_objects(resp.iter_lines()):
+                yield from self._stream_event_to_chat_chunks(event, state)
 
     def _build_payload(self, request: LLMRequest, stream: bool = False) -> dict:
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model or self.model,
             "input": self._convert_messages_to_responses(request.messages),
         }
@@ -354,13 +324,15 @@ class OpenAIResponsesProvider(LLMModel):
                 "effort": getattr(request, "reasoning_effort", None) or "medium",
                 "summary": "auto",
             }
-        if request.temperature is not None and not self._model_prefers_default_temperature(request.model or self.model):
+        if request.temperature is not None and not self._model_prefers_default_temperature(
+            request.model or self.model
+        ):
             payload["temperature"] = request.temperature
         return payload
 
-    def _convert_messages_to_responses(self, messages: List[dict]) -> List[dict]:
+    def _convert_messages_to_responses(self, messages: list[dict]) -> list[dict]:
         """Convert local message blocks to Responses API input items."""
-        response_items: List[dict] = []
+        response_items: list[dict] = []
 
         for msg in messages:
             role = msg.get("role") or "user"
@@ -376,20 +348,7 @@ class OpenAIResponsesProvider(LLMModel):
                     response_items.append(self._message_item(role, str(content)))
                 continue
 
-            text_parts = []
-            tool_uses = []
-            tool_results = []
-
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                block_type = block.get("type")
-                if block_type == "text":
-                    text_parts.append(block.get("text", ""))
-                elif block_type == "tool_use":
-                    tool_uses.append(block)
-                elif block_type == "tool_result":
-                    tool_results.append(block)
+            text_parts, tool_uses, tool_results = split_message_blocks(content)
 
             text = "\n".join(part for part in text_parts if part)
             if text:
@@ -398,21 +357,25 @@ class OpenAIResponsesProvider(LLMModel):
             if role == "assistant":
                 for tool_use in tool_uses:
                     call_id = tool_use.get("id") or tool_use.get("call_id") or ""
-                    response_items.append({
-                        "type": "function_call",
-                        "call_id": call_id,
-                        "name": tool_use.get("name", ""),
-                        "arguments": json.dumps(tool_use.get("input", {}), ensure_ascii=False),
-                        "status": "completed",
-                    })
+                    response_items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": call_id,
+                            "name": tool_use.get("name", ""),
+                            "arguments": json.dumps(tool_use.get("input", {}), ensure_ascii=False),
+                            "status": "completed",
+                        }
+                    )
 
             if role == "user":
                 for tool_result in tool_results:
-                    response_items.append({
-                        "type": "function_call_output",
-                        "call_id": tool_result.get("tool_use_id", ""),
-                        "output": tool_result.get("content", ""),
-                    })
+                    response_items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": tool_result.get("tool_use_id", ""),
+                            "output": tool_result.get("content", ""),
+                        }
+                    )
 
         return response_items
 
@@ -430,7 +393,7 @@ class OpenAIResponsesProvider(LLMModel):
     def _adapt_response_to_chat(self, response: dict) -> dict:
         text = self._extract_response_text(response)
         tool_calls = self._extract_response_tool_calls(response)
-        message: Dict[str, Any] = {
+        message: dict[str, Any] = {
             "role": "assistant",
             "content": text or None,
         }
@@ -455,7 +418,7 @@ class OpenAIResponsesProvider(LLMModel):
         if isinstance(output_text, str) and output_text:
             return output_text
 
-        parts: List[str] = []
+        parts: list[str] = []
         for item in response.get("output") or []:
             if not isinstance(item, dict):
                 continue
@@ -472,25 +435,27 @@ class OpenAIResponsesProvider(LLMModel):
                 parts.append(str(item.get("text")))
         return "\n".join(parts)
 
-    def _extract_response_tool_calls(self, response: dict) -> List[dict]:
+    def _extract_response_tool_calls(self, response: dict) -> list[dict]:
         tool_calls = []
         for item in response.get("output") or []:
             if not isinstance(item, dict) or item.get("type") != "function_call":
                 continue
             call_id = item.get("call_id") or item.get("id") or ""
-            tool_calls.append({
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": item.get("name", ""),
-                    "arguments": item.get("arguments", "") or "{}",
-                },
-            })
+            tool_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments", "") or "{}",
+                    },
+                }
+            )
         return tool_calls
 
-    def _stream_event_to_chat_chunks(self, event: dict, state: Dict[str, Any]) -> List[dict]:
+    def _stream_event_to_chat_chunks(self, event: dict, state: dict[str, Any]) -> list[dict]:
         event_type = event.get("type")
-        chunks: List[dict] = []
+        chunks: list[dict] = []
 
         if event_type == "response.output_text.delta":
             delta = event.get("delta") or ""
@@ -512,7 +477,9 @@ class OpenAIResponsesProvider(LLMModel):
                 arguments = item.get("arguments") or ""
                 state["saw_function_call"] = True
                 state["argument_buffers"][index] = arguments
-                chunks.append(self._tool_call_chunk(index, call_id, item.get("name", ""), arguments))
+                chunks.append(
+                    self._tool_call_chunk(index, call_id, item.get("name", ""), arguments)
+                )
             return chunks
 
         if event_type == "response.function_call_arguments.delta":
@@ -530,12 +497,14 @@ class OpenAIResponsesProvider(LLMModel):
             arguments = event.get("arguments") or item.get("arguments") or ""
             if arguments and not state["argument_buffers"].get(index):
                 state["argument_buffers"][index] = arguments
-                chunks.append(self._tool_call_chunk(
-                    index,
-                    item.get("call_id") or item.get("id") or "",
-                    item.get("name", ""),
-                    arguments,
-                ))
+                chunks.append(
+                    self._tool_call_chunk(
+                        index,
+                        item.get("call_id") or item.get("id") or "",
+                        item.get("name", ""),
+                        arguments,
+                    )
+                )
             state["saw_function_call"] = True
             return chunks
 
@@ -552,12 +521,12 @@ class OpenAIResponsesProvider(LLMModel):
         return chunks
 
     def _tool_call_chunk(self, index: int, call_id: str, name: str, arguments: str) -> dict:
-        function: Dict[str, str] = {}
+        function: dict[str, str] = {}
         if name:
             function["name"] = name
         if arguments:
             function["arguments"] = arguments
-        tool_call: Dict[str, Any] = {
+        tool_call: dict[str, Any] = {
             "index": index,
             "type": "function",
             "function": function,

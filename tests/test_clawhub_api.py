@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import skills as skills_api
-from app.core.skills.clawhub import ClawHubConflictError
 from app.core.security import CurrentUser, get_current_user
+from app.core.skills.clawhub import ClawHubConflictError
 
 
 class FakeClawHubService:

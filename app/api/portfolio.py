@@ -3,9 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_effective_settings
-from app.core.watchlist.service import LongbridgeUnavailableError
-from app.deps import get_portfolio_service
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
+from app.deps import get_portfolio_service
 from app.schemas.portfolio import (
     PortfolioItem,
     PortfolioItemCreate,
@@ -34,7 +34,11 @@ def list_portfolio(
 ):
     """List portfolio holdings for one market."""
     service = get_portfolio_service()
-    return PortfolioListResponse(**service.list_items(market, user_id=current_user.id, settings=get_effective_settings(current_user.id)))
+    return PortfolioListResponse(
+        **service.list_items(
+            market, user_id=current_user.id, settings=get_effective_settings(current_user.id)
+        )
+    )
 
 
 @router.post("", response_model=PortfolioItem)
@@ -62,7 +66,9 @@ def search_portfolio_symbols(
     try:
         results = [
             PortfolioSearchResult(**item)
-            for item in service.search(q, market, limit, settings=get_effective_settings(current_user.id))
+            for item in service.search(
+                q, market, limit, settings=get_effective_settings(current_user.id)
+            )
         ]
     except LongbridgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -78,7 +84,9 @@ def update_portfolio_settings(
     """Update capital denominator for one market."""
     service = get_portfolio_service()
     try:
-        return PortfolioSettings(**service.save_settings(market, body.total_capital, user_id=current_user.id))
+        return PortfolioSettings(
+            **service.save_settings(market, body.total_capital, user_id=current_user.id)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -91,7 +99,9 @@ def list_portfolio_transactions(
 ):
     """List local portfolio transaction history."""
     service = get_portfolio_service()
-    return PortfolioTransactionListResponse(**service.list_transactions(market, user_id=current_user.id, limit=limit))
+    return PortfolioTransactionListResponse(
+        **service.list_transactions(market, user_id=current_user.id, limit=limit)
+    )
 
 
 @router.post("/{item_id}/sell", response_model=PortfolioSellResponse)

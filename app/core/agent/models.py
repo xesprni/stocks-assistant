@@ -4,8 +4,6 @@ LLMRequest 封装了发送给大语言模型的请求参数，
 LLMModel 定义了模型调用接口（call / call_stream）。
 """
 
-from typing import Any, Dict, List, Optional
-
 
 class LLMRequest:
     """LLM 请求参数
@@ -15,13 +13,13 @@ class LLMRequest:
 
     def __init__(
         self,
-        messages: List[Dict[str, str]] = None,
-        model: Optional[str] = None,
+        messages: list[dict[str, str]] = None,
+        model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         stream: bool = False,
-        tools: Optional[List] = None,
-        system: Optional[str] = None,
+        tools: list | None = None,
+        system: str | None = None,
         **kwargs,
     ):
         self.messages = messages or []  # 对话消息列表

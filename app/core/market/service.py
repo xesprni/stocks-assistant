@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.longbridge_data import LongbridgeMarketDataMixin
 from app.core.market.utils import (
     canonical_symbol,
@@ -16,7 +17,6 @@ from app.core.market.utils import (
     normalize_symbols,
     stringify,
 )
-from app.core.watchlist.service import LongbridgeUnavailableError
 
 # 默认监控指数列表
 DEFAULT_INDICES = [
@@ -88,7 +88,7 @@ class MarketService(LongbridgeMarketDataMixin):
 
     # ------------------------------------------------------------------ config
 
-    def get_config(self, user_id: Optional[str] = None) -> dict:
+    def get_config(self, user_id: str | None = None) -> dict:
         if user_id:
             try:
                 from app.core.app_store import get_app_store
@@ -107,7 +107,7 @@ class MarketService(LongbridgeMarketDataMixin):
                 pass
         return _default_config()
 
-    def save_config(self, config: dict, user_id: Optional[str] = None) -> dict:
+    def save_config(self, config: dict, user_id: str | None = None) -> dict:
         config = _normalize_config(config)
         if user_id:
             try:
@@ -122,7 +122,7 @@ class MarketService(LongbridgeMarketDataMixin):
 
     # ------------------------------------------------------------------ quotes
 
-    def get_index_quotes(self, user_id: Optional[str] = None, settings: Any = None) -> list[dict]:
+    def get_index_quotes(self, user_id: str | None = None, settings: Any = None) -> list[dict]:
         cfg = self.get_config(user_id=user_id)
         indices = cfg.get("indices", DEFAULT_INDICES)
         name_map = {idx["symbol"]: idx["name"] for idx in indices}
@@ -142,10 +142,11 @@ class MarketService(LongbridgeMarketDataMixin):
             for item in watchlist_items
         }
         category_map = {
-            canonical_symbol(item["symbol"]): item.get("category", "")
-            for item in watchlist_items
+            canonical_symbol(item["symbol"]): item.get("category", "") for item in watchlist_items
         }
-        return self._fetch_quotes(symbols, name_map=name_map, category_map=category_map, settings=settings)
+        return self._fetch_quotes(
+            symbols, name_map=name_map, category_map=category_map, settings=settings
+        )
 
     def get_security_static_info(self, symbols: list[str], settings: Any = None) -> list[dict]:
         """拉取 Longbridge 标的基础资料，用于 Dashboard 公司资料补全。"""
@@ -164,8 +165,8 @@ class MarketService(LongbridgeMarketDataMixin):
     def _fetch_quotes(
         self,
         symbols: list[str],
-        name_map: Optional[dict] = None,
-        category_map: Optional[dict] = None,
+        name_map: dict | None = None,
+        category_map: dict | None = None,
         settings: Any = None,
     ) -> list[dict]:
         # 批量报价前先做归一和去重，减少 Longbridge 请求量并稳定结果 key。

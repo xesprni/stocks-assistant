@@ -3,9 +3,6 @@
 读取工作空间中的记忆文件（MEMORY.md、memory/、knowledge/ 目录下的 Markdown 文件）。
 """
 
-from pathlib import Path
-from typing import Optional
-
 from app.core.tools.base_tool import BaseTool, ToolResult
 
 
@@ -22,13 +19,17 @@ class MemoryGetTool(BaseTool):
                 "type": "string",
                 "description": "Relative path returned by memory_search, e.g. 'MEMORY.md' or 'memory/2026-01-01.md'",
             },
-            "start_line": {"type": "integer", "description": "Start line (default: 1)", "default": 1},
+            "start_line": {
+                "type": "integer",
+                "description": "Start line (default: 1)",
+                "default": 1,
+            },
             "num_lines": {"type": "integer", "description": "Number of lines to read"},
         },
         "required": ["path"],
     }
 
-    def __init__(self, memory_manager=None, user_id: Optional[str] = None):
+    def __init__(self, memory_manager=None, user_id: str | None = None):
         super().__init__()
         self.memory_manager = memory_manager
         self.user_id = user_id
@@ -36,8 +37,8 @@ class MemoryGetTool(BaseTool):
     def _get_memory_manager(self):
         if self.memory_manager:
             return self.memory_manager
-        ctx = getattr(self, 'context', None)
-        if ctx and hasattr(ctx, 'memory_manager'):
+        ctx = getattr(self, "context", None)
+        if ctx and hasattr(ctx, "memory_manager"):
             return ctx.memory_manager
         return None
 
@@ -50,25 +51,33 @@ class MemoryGetTool(BaseTool):
             return ToolResult.fail("Error: path is required")
         try:
             workspace_dir = mgr.config.get_workspace()
-            if not path.startswith('memory/') and not path.startswith('knowledge/') and path != 'MEMORY.md':
-                path = f'memory/{path}'
+            if (
+                not path.startswith("memory/")
+                and not path.startswith("knowledge/")
+                and path != "MEMORY.md"
+            ):
+                path = f"memory/{path}"
             if self.user_id:
                 allowed_prefix = f"memory/users/{self.user_id}/"
                 if not path.startswith(allowed_prefix):
-                    return ToolResult.fail("Error: memory path is outside the current user's memory")
-            from pathlib import Path
+                    return ToolResult.fail(
+                        "Error: memory path is outside the current user's memory"
+                    )
             file_path = (workspace_dir / path).resolve()
             if not str(file_path).startswith(str(workspace_dir.resolve())):
                 return ToolResult.fail("Error: path outside workspace")
             if not file_path.exists():
                 return ToolResult.fail(f"Error: file not found: {path}")
-            content = file_path.read_text(encoding='utf-8')
-            lines = content.split('\n')
+            content = file_path.read_text(encoding="utf-8")
+            lines = content.split("\n")
             start_line = max(1, args.get("start_line", 1))
             start_idx = start_line - 1
             num_lines = args.get("num_lines")
-            selected = lines[start_idx:start_idx + num_lines] if num_lines else lines[start_idx:]
-            output = f"File: {path}\nLines: {start_line}-{start_line + len(selected) - 1} (total: {len(lines)})\n\n" + '\n'.join(selected)
+            selected = lines[start_idx : start_idx + num_lines] if num_lines else lines[start_idx:]
+            output = (
+                f"File: {path}\nLines: {start_line}-{start_line + len(selected) - 1} (total: {len(lines)})\n\n"
+                + "\n".join(selected)
+            )
             return ToolResult.success(output)
         except Exception as e:
             return ToolResult.fail(f"Error reading memory file: {e}")

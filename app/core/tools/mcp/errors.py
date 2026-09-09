@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 _SENSITIVE_ERROR_KEYS = (
     "authorization",
@@ -43,13 +44,14 @@ class MCPErrorFormatterMixin:
             message = exc.__class__.__name__
         return self._truncate_error_text(self._redact_sensitive_text(message))
 
-    def _find_mcp_error(self, exc: BaseException) -> Optional[BaseException]:
+    def _find_mcp_error(self, exc: BaseException) -> BaseException | None:
         """在异常链或 ExceptionGroup 中查找 MCP SDK 的 McpError。"""
+
         def has_mcp_error_data(error: BaseException) -> bool:
             data = getattr(error, "error", None)
             return data is not None and hasattr(data, "code") and hasattr(data, "message")
 
-        def walk(error: BaseException, seen: set[int]) -> Optional[BaseException]:
+        def walk(error: BaseException, seen: set[int]) -> BaseException | None:
             if id(error) in seen:
                 return None
             seen.add(id(error))
@@ -94,7 +96,7 @@ class MCPErrorFormatterMixin:
             if texts:
                 parts.append("\n".join(texts))
             else:
-                content = [getattr(c, "model_dump", lambda: str(c))() for c in content_items]
+                content = [getattr(c, "model_dump", lambda c=c: str(c))() for c in content_items]
                 detail = self._format_error_detail(content)
                 if detail:
                     parts.append(detail)

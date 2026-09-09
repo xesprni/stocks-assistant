@@ -17,4 +17,3 @@ class WatchlistBase(DeclarativeBase):
 
 class PortfolioBase(DeclarativeBase):
     """Portfolio workspace database."""
-

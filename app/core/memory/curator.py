@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.core.agent.models import LLMRequest
 
@@ -82,10 +82,10 @@ class MemoryCurator:
         session_id: str,
         user_message: str,
         assistant_response: str,
-        user_message_id: Optional[str] = None,
-        assistant_message_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[CuratedMemory]:
+        user_message_id: str | None = None,
+        assistant_message_id: str | None = None,
+        user_id: str | None = None,
+    ) -> CuratedMemory | None:
         if not user_message.strip() or not assistant_response.strip():
             return None
 
@@ -107,13 +107,15 @@ class MemoryCurator:
             "assistant_message_id": assistant_message_id,
             "reason": decision.reason,
         }
-        asyncio.run(self.memory_manager.add_memory(
-            content=decision.memory,
-            user_id=user_id,
-            scope="user" if user_id else "shared",
-            source="memory",
-            metadata=metadata,
-        ))
+        asyncio.run(
+            self.memory_manager.add_memory(
+                content=decision.memory,
+                user_id=user_id,
+                scope="user" if user_id else "shared",
+                source="memory",
+                metadata=metadata,
+            )
+        )
         logger.info("Saved curated memory for session %s: %s", session_id, decision.category)
         return decision
 
@@ -160,17 +162,17 @@ class MemoryCurator:
             return False
         if decision.category not in ALLOWED_CATEGORIES:
             return False
-        if len(decision.memory) < 8 or len(decision.memory) > 1200:
-            return False
-        return True
+        return 8 <= len(decision.memory) <= 1200
 
     def _is_duplicate(self, memory: str) -> bool:
         try:
-            results = asyncio.run(self.memory_manager.search(
-                query=memory,
-                max_results=5,
-                min_score=0.72,
-            ))
+            results = asyncio.run(
+                self.memory_manager.search(
+                    query=memory,
+                    max_results=5,
+                    min_score=0.72,
+                )
+            )
         except Exception as exc:
             logger.warning("Curated memory dedupe search failed: %s", exc)
             return False
@@ -186,7 +188,7 @@ class MemoryCurator:
         return False
 
 
-def _extract_response_text(response: Dict[str, Any]) -> str:
+def _extract_response_text(response: dict[str, Any]) -> str:
     choices = response.get("choices") or []
     if not choices:
         return ""
@@ -203,7 +205,7 @@ def _extract_response_text(response: Dict[str, Any]) -> str:
     return str(content)
 
 
-def _load_json_object(raw: str) -> Dict[str, Any]:
+def _load_json_object(raw: str) -> dict[str, Any]:
     text = raw.strip()
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
     if fence:
@@ -212,7 +214,7 @@ def _load_json_object(raw: str) -> Dict[str, Any]:
         start = text.find("{")
         end = text.rfind("}")
         if start >= 0 and end > start:
-            text = text[start:end + 1]
+            text = text[start : end + 1]
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("Curator response must be a JSON object")

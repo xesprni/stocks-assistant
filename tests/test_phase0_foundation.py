@@ -12,12 +12,12 @@ from app.api.config import _readiness_checks
 from app.config import Settings
 from app.core.memory.config import MemoryConfig
 from app.core.memory.manager import MemoryManager
+from app.core.portfolio.service import PortfolioService
 from app.core.tools.knowledge_get import KnowledgeGetTool
 from app.core.tools.knowledge_search import KnowledgeSearchTool
 from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
 from app.core.tools.web_search import WebSearchTool
 from app.core.watchlist.service import WatchlistService
-from app.core.portfolio.service import PortfolioService
 from app.schemas.telemetry import ProductEventRequest
 
 
@@ -66,7 +66,10 @@ class Phase0EvidenceTest(unittest.TestCase):
             }
         )
         insight_service = SimpleNamespace(
-            get_security_insights=lambda symbol, settings: {"symbol": symbol, "valuation": {"items": []}}
+            get_security_insights=lambda symbol, settings: {
+                "symbol": symbol,
+                "valuation": {"items": []},
+            }
         )
 
         news = GetSecurityNewsTool(service=news_service).execute({"symbol": "aapl.us"})
@@ -83,9 +86,12 @@ class Phase0EvidenceTest(unittest.TestCase):
 
 class Phase0KnowledgeRagTest(unittest.TestCase):
     def test_imported_user_knowledge_is_searchable_and_citable(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            os.environ,
-            {"OPENAI_API_KEY": "", "EMBEDDING_API_KEY": ""},
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "", "EMBEDDING_API_KEY": ""},
+            ),
         ):
             workspace = Path(tmp)
             knowledge_file = workspace / "users" / "user-1" / "knowledge" / "company.md"
@@ -156,7 +162,9 @@ class Phase0ReadinessAndPrivacyTest(unittest.TestCase):
             self.assertEqual(2, len(portfolio.seed_sample_items("user-1")))
             self.assertEqual([], watchlist.seed_sample_items("user-1"))
             self.assertEqual([], portfolio.seed_sample_items("user-1"))
-            self.assertTrue(all("[Sample]" in item["note"] for item in watchlist.list_items(user_id="user-1")))
+            self.assertTrue(
+                all("[Sample]" in item["note"] for item in watchlist.list_items(user_id="user-1"))
+            )
 
 
 if __name__ == "__main__":

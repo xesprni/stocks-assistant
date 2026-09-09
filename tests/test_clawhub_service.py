@@ -30,7 +30,7 @@ def make_skill_manager(root: Path) -> SkillManager:
     return SkillManager(builtin_dir=str(builtin_dir), custom_dir=str(custom_dir))
 
 
-class TestableClawHubService(ClawHubService):
+class FakeClawHubService(ClawHubService):
     def __init__(
         self,
         skills_dir: Path,
@@ -54,7 +54,9 @@ class TestableClawHubService(ClawHubService):
     def _get_text(self, path: str, params: dict[str, str] | None = None) -> str:
         return self.text_payloads[path]
 
-    def _download_archive(self, slug: str, version: str | None = None, tag: str | None = None) -> bytes:
+    def _download_archive(
+        self, slug: str, version: str | None = None, tag: str | None = None
+    ) -> bytes:
         return self.archive_bytes
 
 
@@ -63,7 +65,7 @@ class ClawHubServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(
+            service = FakeClawHubService(
                 root / "skills",
                 manager,
                 json_payloads={
@@ -95,7 +97,7 @@ class ClawHubServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(
+            service = FakeClawHubService(
                 root / "skills",
                 manager,
                 json_payloads={
@@ -121,7 +123,7 @@ class ClawHubServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(
+            service = FakeClawHubService(
                 root / "skills",
                 manager,
                 json_payloads={
@@ -149,7 +151,7 @@ class ClawHubServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(root / "skills", manager)
+            service = FakeClawHubService(root / "skills", manager)
 
             with self.assertRaises(ClawHubValidationError):
                 service.install("../bad")
@@ -159,7 +161,7 @@ class ClawHubServiceTest(unittest.TestCase):
             root = Path(tmp)
             manager = make_skill_manager(root)
             (root / "skills" / "research").mkdir()
-            service = TestableClawHubService(root / "skills", manager)
+            service = FakeClawHubService(root / "skills", manager)
 
             with self.assertRaises(ClawHubConflictError):
                 service.install("research")
@@ -168,10 +170,12 @@ class ClawHubServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(
+            service = FakeClawHubService(
                 root / "skills",
                 manager,
-                archive_bytes=make_zip({"../bad/SKILL.md": "---\nname: bad\ndescription: bad\n---\n"}),
+                archive_bytes=make_zip(
+                    {"../bad/SKILL.md": "---\nname: bad\ndescription: bad\n---\n"}
+                ),
             )
 
             with self.assertRaises(ClawHubArchiveError):
@@ -183,7 +187,7 @@ class ClawHubServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(
+            service = FakeClawHubService(
                 root / "skills",
                 manager,
                 archive_bytes=make_zip({"README.md": "missing skill"}),
@@ -203,7 +207,7 @@ description: Research skill from ClawHub
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manager = make_skill_manager(root)
-            service = TestableClawHubService(
+            service = FakeClawHubService(
                 root / "skills",
                 manager,
                 json_payloads={

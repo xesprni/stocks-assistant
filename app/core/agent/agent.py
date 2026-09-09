@@ -8,15 +8,14 @@ Agent 是系统的核心组件，负责：
 """
 
 import json
+import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from app.core.agent.models import LLMRequest, LLMModel
 from app.core.agent.executor import AgentStreamExecutor
+from app.core.agent.models import LLMModel
 from app.core.agent.result import AgentAction, AgentActionType, ToolResultData
 from app.core.tools.base_tool import BaseTool, ToolStage
-
-import logging
 
 logger = logging.getLogger("stocks-assistant.agent")
 
@@ -32,12 +31,12 @@ class Agent:
         self,
         system_prompt: str,
         model: LLMModel = None,
-        tools: Optional[List[BaseTool]] = None,
+        tools: list[BaseTool] | None = None,
         max_steps: int = 100,
-        max_context_tokens: Optional[int] = None,
+        max_context_tokens: int | None = None,
         max_context_turns: int = 30,
         memory_manager=None,
-        workspace_dir: Optional[str] = None,
+        workspace_dir: str | None = None,
         skill_manager=None,
         enable_skills: bool = True,
         multi_agent_depth: int = 0,
@@ -48,8 +47,8 @@ class Agent:
         self.max_steps = max_steps  # 最大工具调用轮数
         self.max_context_tokens = max_context_tokens  # 上下文 token 上限
         self.max_context_turns = max_context_turns  # 上下文对话轮数上限
-        self.captured_actions: List[AgentAction] = []  # 已捕获的动作记录
-        self.messages: List[Dict] = []  # 对话消息历史
+        self.captured_actions: list[AgentAction] = []  # 已捕获的动作记录
+        self.messages: list[dict] = []  # 对话消息历史
         self.messages_lock = threading.Lock()  # 消息列表线程锁
         self.memory_manager = memory_manager  # 记忆管理器
         self.workspace_dir = workspace_dir  # 工作空间目录
@@ -57,8 +56,8 @@ class Agent:
         self.active_skill_filter = None  # 当前请求允许读取的技能集合
         self.multi_agent_depth = multi_agent_depth  # 多 Agent 委派深度
         self.settings = settings  # 当前请求/用户的有效配置
-        self.last_evidence: List[Dict[str, Any]] = []
-        self.last_sources: List[Dict[str, Any]] = []
+        self.last_evidence: list[dict[str, Any]] = []
+        self.last_sources: list[dict[str, Any]] = []
 
         # 技能管理器（从 Markdown 文件加载技能定义）
         self.skill_manager = None
@@ -66,7 +65,7 @@ class Agent:
             self.skill_manager = skill_manager
 
         # 注册工具
-        self.tools: List[BaseTool] = []
+        self.tools: list[BaseTool] = []
         if tools:
             for tool in tools:
                 self.add_tool(tool)
@@ -83,7 +82,7 @@ class Agent:
         try:
             return self.skill_manager.build_skills_prompt(skill_filter=skill_filter)
         except Exception as e:
-            logger.warning(f"Failed to build skills prompt: {e}")
+            logger.warning("Failed to build skills prompt: %s", e)
             return ""
 
     def get_memory_prompt(self) -> str:
@@ -171,22 +170,22 @@ When tool results include evidence or sources metadata:
         - GLM-5.1: 200K
         - 默认: 128K
         """
-        if self.model and hasattr(self.model, 'model'):
+        if self.model and hasattr(self.model, "model"):
             model_name = self.model.model.lower()
-            if 'claude-3' in model_name or 'claude-sonnet' in model_name:
+            if "claude-3" in model_name or "claude-sonnet" in model_name:
                 return 200000
-            elif 'gpt-4' in model_name:
-                if 'turbo' in model_name or '128k' in model_name:
+            elif "gpt-4" in model_name:
+                if "turbo" in model_name or "128k" in model_name:
                     return 128000
-                elif '32k' in model_name:
+                elif "32k" in model_name:
                     return 32000
                 else:
                     return 8000
-            elif 'glm-5.1' in model_name:
+            elif "glm-5.1" in model_name:
                 return 200000
-            elif 'gpt-3.5' in model_name:
-                return 16000 if '16k' in model_name else 4000
-            elif 'deepseek' in model_name:
+            elif "gpt-3.5" in model_name:
+                return 16000 if "16k" in model_name else 4000
+            elif "deepseek" in model_name:
                 return 64000
         return 128000  # 保守默认值
 
@@ -205,7 +204,7 @@ When tool results include evidence or sources metadata:
         - tool_use: 结构开销 50 + 输入参数 token
         - tool_result: 结构开销 30 + 结果内容 token
         """
-        content = message.get('content', '')
+        content = message.get("content", "")
         if isinstance(content, str):
             return max(1, self._estimate_text_tokens(content))
         elif isinstance(content, list):
@@ -213,20 +212,20 @@ When tool results include evidence or sources metadata:
             for part in content:
                 if not isinstance(part, dict):
                     continue
-                block_type = part.get('type', '')
-                if block_type == 'text':
-                    total_tokens += self._estimate_text_tokens(part.get('text', ''))
-                elif block_type == 'image':
+                block_type = part.get("type", "")
+                if block_type == "text":
+                    total_tokens += self._estimate_text_tokens(part.get("text", ""))
+                elif block_type == "image":
                     total_tokens += 1200
-                elif block_type == 'tool_use':
+                elif block_type == "tool_use":
                     total_tokens += 50  # 工具调用结构开销
-                    input_data = part.get('input', {})
+                    input_data = part.get("input", {})
                     if isinstance(input_data, dict):
                         input_str = json.dumps(input_data, ensure_ascii=False)
                         total_tokens += self._estimate_text_tokens(input_str)
-                elif block_type == 'tool_result':
+                elif block_type == "tool_result":
                     total_tokens += 30  # 工具结果结构开销
-                    result_content = part.get('content', '')
+                    result_content = part.get("content", "")
                     if isinstance(result_content, str):
                         total_tokens += self._estimate_text_tokens(result_content)
                 else:
@@ -246,7 +245,7 @@ When tool results include evidence or sources metadata:
         ascii_count = len(text) - non_ascii
         return int(non_ascii * 1.5 + ascii_count * 0.25) + 1
 
-    def _find_tool(self, tool_name: str) -> Optional[BaseTool]:
+    def _find_tool(self, tool_name: str) -> BaseTool | None:
         """按名称查找工具（仅返回可主动调用的 PRE_PROCESS 阶段工具）"""
         for tool in self.tools:
             if tool.name == tool_name:
@@ -256,22 +255,44 @@ When tool results include evidence or sources metadata:
                 return None
         return None
 
-    def capture_tool_use(self, tool_name, input_params, output, status, thought=None,
-                         error_message=None, execution_time=0.0):
+    def capture_tool_use(
+        self,
+        tool_name,
+        input_params,
+        output,
+        status,
+        thought=None,
+        error_message=None,
+        execution_time=0.0,
+    ):
         """记录一次工具调用动作，用于追踪和调试"""
         tool_result = ToolResultData(
-            tool_name=tool_name, input_params=input_params, output=output,
-            status=status, error_message=error_message, execution_time=execution_time,
+            tool_name=tool_name,
+            input_params=input_params,
+            output=output,
+            status=status,
+            error_message=error_message,
+            execution_time=execution_time,
         )
         action = AgentAction(
-            agent_id=str(id(self)), agent_name="Agent",
-            action_type=AgentActionType.TOOL_USE, tool_result=tool_result, thought=thought,
+            agent_id=str(id(self)),
+            agent_name="Agent",
+            action_type=AgentActionType.TOOL_USE,
+            tool_result=tool_result,
+            thought=thought,
         )
         self.captured_actions.append(action)
         return action
 
-    def run_stream(self, user_message: str, on_event=None, clear_history: bool = False,
-                   skill_filter=None, cancel_event=None, thinking_enabled: bool = False) -> str:
+    def run_stream(
+        self,
+        user_message: str,
+        on_event=None,
+        clear_history: bool = False,
+        skill_filter=None,
+        cancel_event=None,
+        thinking_enabled: bool = False,
+    ) -> str:
         """执行一次流式对话
 
         完整流程：

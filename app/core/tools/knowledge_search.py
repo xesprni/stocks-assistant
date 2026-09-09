@@ -1,7 +1,6 @@
 """搜索当前用户的个人知识库。"""
 
 import asyncio
-from typing import Optional
 
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import evidence_for_source, evidence_metadata, source_reference
@@ -16,14 +15,17 @@ class KnowledgeSearchTool(BaseTool):
     params = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Focused query for the user's knowledge base."},
+            "query": {
+                "type": "string",
+                "description": "Focused query for the user's knowledge base.",
+            },
             "max_results": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
             "min_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.1},
         },
         "required": ["query"],
     }
 
-    def __init__(self, memory_manager=None, user_id: Optional[str] = None):
+    def __init__(self, memory_manager=None, user_id: str | None = None):
         self.memory_manager = memory_manager
         self.user_id = user_id
 
@@ -45,7 +47,9 @@ class KnowledgeSearchTool(BaseTool):
                     include_shared=self.user_id is None,
                 )
             )
-            knowledge_results = [item for item in results if item.source == "knowledge"][:max_results]
+            knowledge_results = [item for item in results if item.source == "knowledge"][
+                :max_results
+            ]
             payload = []
             evidence = []
             for item in knowledge_results:
@@ -59,7 +63,11 @@ class KnowledgeSearchTool(BaseTool):
                 evidence_item = evidence_for_source(
                     source,
                     excerpt=item.snippet,
-                    data={"path": item.path, "start_line": item.start_line, "end_line": item.end_line},
+                    data={
+                        "path": item.path,
+                        "start_line": item.start_line,
+                        "end_line": item.end_line,
+                    },
                 )
                 evidence.append(evidence_item)
                 payload.append(
@@ -91,4 +99,3 @@ def _run_async(awaitable):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(lambda: asyncio.run(awaitable)).result()
-

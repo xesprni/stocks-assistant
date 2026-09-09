@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import base64
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import urlparse
-
 
 # 标准可流式 HTTP 传输（MCP 推荐方式）
 STANDARD_HTTP_TRANSPORT = "streamable_http"
@@ -54,9 +54,7 @@ def normalize_transport(value: Any, config: Mapping[str, Any] | None = None) -> 
     transport = str(value)
     normalized = TRANSPORT_ALIASES.get(transport)
     if not normalized:
-        raise ValueError(
-            f"unsupported transport '{transport}'. Use streamable_http, sse, or stdio"
-        )
+        raise ValueError(f"unsupported transport '{transport}'. Use streamable_http, sse, or stdio")
     return normalized
 
 
@@ -180,7 +178,14 @@ def normalize_mcp_server_config(name: str, config: Mapping[str, Any]) -> dict[st
                 auth_type = "oauth_authorization_code"
             if auth_type == "client_credentials":
                 auth_type = "oauth_client_credentials"
-            if auth_type not in {"none", "bearer", "basic", "header", "oauth_client_credentials", "oauth_authorization_code"}:
+            if auth_type not in {
+                "none",
+                "bearer",
+                "basic",
+                "header",
+                "oauth_client_credentials",
+                "oauth_authorization_code",
+            }:
                 raise ValueError(
                     "auth.type must be none, bearer, basic, header, oauth_client_credentials, or oauth_authorization_code"
                 )
@@ -198,10 +203,7 @@ def normalize_mcp_servers(value: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(value, Mapping):
         raise ValueError("mcp_servers must be an object")
 
-    return {
-        name: normalize_mcp_server_config(name, config)
-        for name, config in value.items()
-    }
+    return {name: normalize_mcp_server_config(name, config) for name, config in value.items()}
 
 
 def _has_header(headers: Mapping[str, str], name: str) -> bool:
@@ -235,8 +237,10 @@ def build_http_headers(config: Mapping[str, Any]) -> dict[str, str]:
             username = auth.get("username")
             password = auth.get("password")
             if isinstance(username, str) and isinstance(password, str):
-                raw = f"{username}:{password}".encode("utf-8")
-                headers.setdefault("Authorization", f"Basic {base64.b64encode(raw).decode('ascii')}")
+                raw = f"{username}:{password}".encode()
+                headers.setdefault(
+                    "Authorization", f"Basic {base64.b64encode(raw).decode('ascii')}"
+                )
         elif auth_type == "header":
             # 自定义请求头鉴权
             name = auth.get("name")
@@ -263,7 +267,10 @@ def _mask_value(value: str) -> str:
 def _looks_secret(key: str) -> bool:
     """判断字段名是否可能包含敏感信息（如 token、password、key 等）。"""
     lower = key.lower()
-    return any(part in lower for part in ("authorization", "token", "secret", "password", "api-key", "apikey", "key"))
+    return any(
+        part in lower
+        for part in ("authorization", "token", "secret", "password", "api-key", "apikey", "key")
+    )
 
 
 def _auth_key_is_secret(key: str, auth: Mapping[str, Any]) -> bool:
@@ -288,7 +295,9 @@ def _preserve_secret_map(existing: Any, incoming: Any) -> Any:
     for key, incoming_value in incoming.items():
         if key not in existing:
             continue
-        merged[key] = _preserve_if_unchanged_masked(existing[key], incoming_value, _looks_secret(str(key)))
+        merged[key] = _preserve_if_unchanged_masked(
+            existing[key], incoming_value, _looks_secret(str(key))
+        )
     return merged
 
 
@@ -330,7 +339,9 @@ def preserve_masked_mcp_secrets(
             elif key == "auth":
                 merged[key] = _preserve_secret_auth(existing_config.get(key), incoming_value)
             else:
-                merged[key] = _preserve_if_unchanged_masked(existing_config[key], incoming_value, _looks_secret(str(key)))
+                merged[key] = _preserve_if_unchanged_masked(
+                    existing_config[key], incoming_value, _looks_secret(str(key))
+                )
         result[name] = merged
     return result
 
@@ -353,7 +364,9 @@ def mask_mcp_server_config(config: Mapping[str, Any]) -> dict[str, Any]:
     # 脱敏鉴权配置中的敏感值
     if isinstance(masked.get("auth"), Mapping):
         masked["auth"] = {
-            key: _mask_value(value) if isinstance(value, str) and _auth_key_is_secret(str(key), masked["auth"]) else value
+            key: _mask_value(value)
+            if isinstance(value, str) and _auth_key_is_secret(str(key), masked["auth"])
+            else value
             for key, value in masked["auth"].items()
         }
     elif isinstance(masked.get("auth"), str):

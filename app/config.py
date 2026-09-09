@@ -9,11 +9,10 @@ import threading
 import time as _time
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Tuple, Type
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
-
 
 DEFAULT_SYSTEM_PROMPT = """You are Stocks Assistant, an AI agent specialized in stocks, finance, and market analysis.
 
@@ -166,7 +165,7 @@ ALWAYS_USER_CONFIG_KEYS = {
 }
 
 
-DEFAULT_MULTI_AGENT_ROLES: Dict[str, Dict[str, Any]] = {
+DEFAULT_MULTI_AGENT_ROLES: dict[str, dict[str, Any]] = {
     "researcher": {
         "description": "Gather facts, source context, and relevant background before analysis.",
         "system_prompt": (
@@ -239,7 +238,9 @@ class Settings(BaseSettings):
     llm_api_key: str = ""  # API 密钥
     llm_api_base: str = "https://api.openai.com/v1"  # API 地址（兼容 OpenAI 接口）
     llm_model: str = "gpt-4o"  # 模型名称
-    llm_codex_auth_file: str = ""  # Codex OAuth 登录态文件；为空时读取 $CODEX_HOME/auth.json 或 ~/.codex/auth.json
+    llm_codex_auth_file: str = (
+        ""  # Codex OAuth 登录态文件；为空时读取 $CODEX_HOME/auth.json 或 ~/.codex/auth.json
+    )
     llm_codex_api_base: str = CODEX_OAUTH_API_BASE  # Codex OAuth API 地址
     llm_codex_model: str = CODEX_DEFAULT_MODEL  # Codex OAuth 模型名称
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)  # 主 Agent 生成温度
@@ -261,7 +262,9 @@ class Settings(BaseSettings):
     app_language: str = "zh"  # UI 语言：zh / en
 
     # ---- Research 快速问答 ----
-    research_quick_prompts_refresh_seconds: int = Field(default=3600, ge=60, le=604800)  # AI 问题缓存有效期（秒）
+    research_quick_prompts_refresh_seconds: int = Field(
+        default=3600, ge=60, le=604800
+    )  # AI 问题缓存有效期（秒）
 
     # ---- 认证安全配置 ----
     auth_max_devices_per_user: int = Field(default=5, ge=1, le=50)  # 单账号最多保留的活跃登录设备数
@@ -270,7 +273,9 @@ class Settings(BaseSettings):
     agent_max_steps: int = 20  # 单次对话最大工具调用轮数
     agent_max_context_tokens: int = 50000  # 上下文窗口最大 token 数
     agent_max_context_turns: int = 20  # 上下文最大对话轮数
-    agent_tool_allowlist: list[str] = Field(default_factory=lambda: list(DEFAULT_AGENT_TOOL_ALLOWLIST))
+    agent_tool_allowlist: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_AGENT_TOOL_ALLOWLIST)
+    )
     agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True  # 是否启用多 Agent 委派工具
     multi_agent_max_parallel_agents: int = 3  # 单次委派最多并行智能体数
@@ -279,7 +284,7 @@ class Settings(BaseSettings):
     multi_agent_dangerous_tools: list[str] = Field(
         default_factory=lambda: ["bash", "write_file", "scheduler", "watchlist", "portfolio"],
     )
-    multi_agent_roles: Dict[str, Dict[str, Any]] = Field(
+    multi_agent_roles: dict[str, dict[str, Any]] = Field(
         default_factory=lambda: deepcopy(DEFAULT_MULTI_AGENT_ROLES),
     )
 
@@ -303,7 +308,7 @@ class Settings(BaseSettings):
 
     # ---- MCP 服务器配置 ----
     # 格式: {"server_name": {"transport": "streamable_http", "url": "..."}}
-    mcp_servers: Dict[str, Dict[str, Any]] = {}
+    mcp_servers: dict[str, dict[str, Any]] = {}
     mcp_tool_timeout_seconds: float = Field(default=60.0, gt=0)  # 单次 MCP 工具调用超时时间
 
     # ---- Longbridge OpenAPI 配置 ----
@@ -342,15 +347,13 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls: Type[BaseSettings],
+        settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
-    ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        return (
-            init_settings,
-        )
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
 
     def get_workspace_path(self) -> Path:
         """获取工作空间路径（自动创建目录）"""
@@ -385,7 +388,7 @@ class Settings(BaseSettings):
             return "openai_responses"
         return "openai_compatible"
 
-    @field_validator("llm_auth_mode", mode="before")
+    @field_validator("llm_auth_mode", "embedding_auth_mode", mode="before")
     @classmethod
     def validate_llm_auth_mode(cls, value):
         normalized = str(value or "api_key").strip().lower().replace("-", "_")
@@ -411,19 +414,13 @@ class Settings(BaseSettings):
             return "required"
         return "auto"
 
-    @field_validator("embedding_auth_mode", mode="before")
-    @classmethod
-    def validate_embedding_auth_mode(cls, value):
-        normalized = str(value or "api_key").strip().lower().replace("-", "_")
-        if normalized in {"codex", "chatgpt", "chatgpt_oauth", "codex_oauth", "oauth"}:
-            return "codex"
-        return "api_key"
-
     @model_validator(mode="after")
     def normalize_llm_auth_pair(self):
         llm_base = (self.llm_api_base or "").rstrip("/")
         embedding_base = (self.embedding_api_base or "").rstrip("/")
-        legacy_llm_codex_base = self.llm_provider == "openai_responses" and llm_base == CODEX_OAUTH_API_BASE
+        legacy_llm_codex_base = (
+            self.llm_provider == "openai_responses" and llm_base == CODEX_OAUTH_API_BASE
+        )
         legacy_embedding_codex_base = embedding_base == CODEX_OAUTH_API_BASE
 
         if legacy_llm_codex_base:
@@ -434,10 +431,18 @@ class Settings(BaseSettings):
                 self.llm_codex_api_base = CODEX_OAUTH_API_BASE
             if llm_base == CODEX_OAUTH_API_BASE:
                 self.llm_codex_api_base = CODEX_OAUTH_API_BASE
-                fallback_api_base = self.embedding_api_base if embedding_base and embedding_base != CODEX_OAUTH_API_BASE else "https://api.openai.com/v1"
+                fallback_api_base = (
+                    self.embedding_api_base
+                    if embedding_base and embedding_base != CODEX_OAUTH_API_BASE
+                    else "https://api.openai.com/v1"
+                )
                 self.llm_api_base = fallback_api_base
             if not self.llm_codex_model:
-                self.llm_codex_model = self.llm_model if legacy_llm_codex_base and self.llm_model else CODEX_DEFAULT_MODEL
+                self.llm_codex_model = (
+                    self.llm_model
+                    if legacy_llm_codex_base and self.llm_model
+                    else CODEX_DEFAULT_MODEL
+                )
             if not self.llm_model:
                 self.llm_model = "gpt-4o"
         if legacy_embedding_codex_base:
@@ -447,15 +452,23 @@ class Settings(BaseSettings):
                 self.embedding_codex_api_base = CODEX_OAUTH_API_BASE
             if embedding_base == CODEX_OAUTH_API_BASE:
                 self.embedding_codex_api_base = CODEX_OAUTH_API_BASE
-                fallback_embedding_base = self.llm_api_base if (self.llm_api_base or "").rstrip("/") != CODEX_OAUTH_API_BASE else "https://api.openai.com/v1"
+                fallback_embedding_base = (
+                    self.llm_api_base
+                    if (self.llm_api_base or "").rstrip("/") != CODEX_OAUTH_API_BASE
+                    else "https://api.openai.com/v1"
+                )
                 self.embedding_api_base = fallback_embedding_base or "https://api.openai.com/v1"
             if not self.embedding_codex_model:
-                self.embedding_codex_model = self.embedding_model if legacy_embedding_codex_base and self.embedding_model else EMBEDDING_DEFAULT_MODEL
+                self.embedding_codex_model = (
+                    self.embedding_model
+                    if legacy_embedding_codex_base and self.embedding_model
+                    else EMBEDDING_DEFAULT_MODEL
+                )
         return self
 
 
 # 全局配置单例
-_config_instance: Optional[Settings] = None
+_config_instance: Settings | None = None
 
 
 def get_settings() -> Settings:
@@ -466,7 +479,7 @@ def get_settings() -> Settings:
     return _config_instance
 
 
-def get_effective_config(user_id: Optional[str] = None) -> dict[str, Any]:
+def get_effective_config(user_id: str | None = None) -> dict[str, Any]:
     """Return system config overlaid with the user's personal config.
 
     结果带短 TTL 缓存，避免同一请求内多次调用（chat 流程会调用 3+ 次）
@@ -479,7 +492,7 @@ def get_effective_config(user_id: Optional[str] = None) -> dict[str, Any]:
         if cached is not None:
             expires_at, payload = cached
             if expires_at > now:
-                return {**payload}
+                return deepcopy(payload)
 
     from app.core.app_store import get_app_store
 
@@ -497,20 +510,24 @@ def get_effective_config(user_id: Optional[str] = None) -> dict[str, Any]:
         result = {**system_config, **user_config}
         # 个人认证方式显式覆盖时，不把系统 OAuth 账号混入个人连接；旧版个人
         # API Key 配置也继续使用原认证方式，避免管理员启用 OAuth 后悄然换账户。
-        if "longbridge_auth_mode" in user_config and "longbridge_oauth_client_id" not in user_config:
+        if (
+            "longbridge_auth_mode" in user_config
+            and "longbridge_oauth_client_id" not in user_config
+        ):
             result["longbridge_oauth_client_id"] = ""
         elif "longbridge_auth_mode" not in user_config and any(
-            key in user_config for key in ("longbridge_app_key", "longbridge_app_secret", "longbridge_access_token")
+            key in user_config
+            for key in ("longbridge_app_key", "longbridge_app_secret", "longbridge_access_token")
         ):
             result["longbridge_auth_mode"] = "apikey"
             result["longbridge_oauth_client_id"] = ""
 
     with _effective_config_cache_lock:
         _effective_config_cache[cache_key] = (now + _EFFECTIVE_CONFIG_TTL, deepcopy(result))
-    return {**result}
+    return deepcopy(result)
 
 
-def get_effective_settings(user_id: Optional[str] = None) -> Settings:
+def get_effective_settings(user_id: str | None = None) -> Settings:
     """Build settings for a request/user without mutating the global singleton."""
     return Settings(**get_effective_config(user_id))
 
@@ -527,6 +544,13 @@ def clear_effective_settings_cache() -> None:
     """清除有效配置缓存。配置写入后调用，确保新配置立即生效。"""
     with _effective_config_cache_lock:
         _effective_config_cache.clear()
+
+
+def reset_settings_cache() -> None:
+    """配置持久化后重置公共读取入口，调用方无需操作私有单例。"""
+    global _config_instance
+    _config_instance = None
+    clear_effective_settings_cache()
 
 
 def _load_settings() -> Settings:

@@ -83,7 +83,9 @@ class FakePortfolioService:
         for existing in self.items:
             if existing["id"] == item_id and existing["user_id"] == user_id:
                 if patch.get("symbol"):
-                    patch["symbol"] = canonical_symbol(patch["symbol"], patch.get("market") or existing["market"])
+                    patch["symbol"] = canonical_symbol(
+                        patch["symbol"], patch.get("market") or existing["market"]
+                    )
                 existing.update(patch)
                 existing["updated_at"] = "2026-01-02T00:00:00"
                 return dict(existing)
@@ -121,7 +123,9 @@ class PortfolioToolTest(unittest.TestCase):
         service = FakePortfolioService()
         tool = PortfolioTool(portfolio_service=service, user_id="user-1")
 
-        result = tool.execute({"action": "upsert", "market": "US", "symbol": "MSFT", "shares": "12"})
+        result = tool.execute(
+            {"action": "upsert", "market": "US", "symbol": "MSFT", "shares": "12"}
+        )
 
         self.assertEqual(result.status, "success")
         self.assertEqual(result.result["operation"], "update")

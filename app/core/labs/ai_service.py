@@ -11,7 +11,9 @@ import re
 import threading
 import time
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from contextlib import suppress
+from typing import Any
 
 import anyio
 from pydantic import ValidationError
@@ -24,12 +26,21 @@ from app.core.security import CurrentUser, user_workspace_dir
 from app.core.tools.base_tool import ToolResult
 from app.core.tools.investment_labs import LabAIDataTool, LabAIValuationTool
 from app.schemas.labs import (
-    GreaterChinaRequest, LabAIRequest, LabAIValuationRequest, LabDataRequest,
-    PeerComparisonRequest, PortfolioLabRequest, ValuationModelCreate,
+    GreaterChinaRequest,
+    LabAIRequest,
+    LabAIValuationRequest,
+    LabDataRequest,
+    PeerComparisonRequest,
+    PortfolioLabRequest,
+    ValuationModelCreate,
 )
 
 logger = logging.getLogger("stocks-assistant.labs.ai")
-LAB_PERMISSIONS = {"portfolio": "portfolio:read", "valuation": "fundamentals:read", "greater_china": "fundamentals:read"}
+LAB_PERMISSIONS = {
+    "portfolio": "portfolio:read",
+    "valuation": "fundamentals:read",
+    "greater_china": "fundamentals:read",
+}
 _ACTIONS = {
     "portfolio": ["portfolio"],
     "valuation": ["financial_reports", "security_insights", "quotes", "peers", "valuation_models"],
@@ -51,27 +62,54 @@ class LabAIRunStore:
                 id TEXT PRIMARY KEY, user_id TEXT NOT NULL, lab TEXT NOT NULL,
                 status TEXT NOT NULL, created_at TEXT NOT NULL, payload_json TEXT NOT NULL
             )""")
-            connection.execute("CREATE INDEX IF NOT EXISTS idx_labs_ai_user ON ai_runs(user_id,lab,created_at DESC)")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_labs_ai_user ON ai_runs(user_id,lab,created_at DESC)"
+            )
 
     def create(self, user_id: str, request: LabAIRequest) -> dict:
-        labels = {"portfolio": ("组合体检", "Portfolio review"), "valuation": ("公司估值", "Company valuation"), "greater_china": ("大中华研究", "Greater China research")}
+        labels = {
+            "portfolio": ("组合体检", "Portfolio review"),
+            "valuation": ("公司估值", "Company valuation"),
+            "greater_china": ("大中华研究", "Greater China research"),
+        }
         label = labels[request.lab][request.locale != "zh-CN"]
-        title = (request.symbols[0] + " · " if request.symbols and request.lab != "portfolio" else "") + label
+        title = (
+            request.symbols[0] + " · " if request.symbols and request.lab != "portfolio" else ""
+        ) + label
         run = {
-            "id": "lab_" + uuid.uuid4().hex, "lab": request.lab,
-            "title": title, "objective": request.objective, "symbols": request.symbols,
-            "status": "running", "report": "", "artifacts": [], "warnings": [], "steps": 0,
-            "created_at": _now(), "completed_at": None, "error": None,
+            "id": "lab_" + uuid.uuid4().hex,
+            "lab": request.lab,
+            "title": title,
+            "objective": request.objective,
+            "symbols": request.symbols,
+            "status": "running",
+            "report": "",
+            "artifacts": [],
+            "warnings": [],
+            "steps": 0,
+            "created_at": _now(),
+            "completed_at": None,
+            "error": None,
         }
         with self.service._connect() as connection:
-            connection.execute("INSERT INTO ai_runs VALUES (?,?,?,?,?,?)", (
-                run["id"], user_id, request.lab, run["status"], run["created_at"], _dump(run),
-            ))
+            connection.execute(
+                "INSERT INTO ai_runs VALUES (?,?,?,?,?,?)",
+                (
+                    run["id"],
+                    user_id,
+                    request.lab,
+                    run["status"],
+                    run["created_at"],
+                    _dump(run),
+                ),
+            )
         return run
 
     def get(self, user_id: str, run_id: str) -> dict:
         with self.service._connect() as connection:
-            row = connection.execute("SELECT payload_json FROM ai_runs WHERE id=? AND user_id=?", (run_id, user_id)).fetchone()
+            row = connection.execute(
+                "SELECT payload_json FROM ai_runs WHERE id=? AND user_id=?", (run_id, user_id)
+            ).fetchone()
         if not row:
             raise KeyError(run_id)
         return json.loads(row[0])
@@ -87,7 +125,8 @@ class LabAIRunStore:
             rows = connection.execute(
                 # SQLite端去除大型证据/正文，历史列表不会把多份财报读进应用内存。
                 f"SELECT json_set(payload_json,'$.report','','$.artifacts',json('[]'),'$.warnings',json('[]')) "
-                f"FROM ai_runs WHERE {clause} ORDER BY created_at DESC LIMIT ?", values,
+                f"FROM ai_runs WHERE {clause} ORDER BY created_at DESC LIMIT ?",
+                values,
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
@@ -111,14 +150,24 @@ class LabAIRunStore:
                     request = runtime.pending_models.get(artifact["id"])
                     if request:
                         saved = self.service.create_valuation_model(
-                            runtime.user.id, artifact["data"]["symbol"], request, _connection=connection,
+                            runtime.user.id,
+                            artifact["data"]["symbol"],
+                            request,
+                            _connection=connection,
                         )
                         artifact["data"]["saved_model_id"] = saved["id"]
-            completed.update(status="completed", report=runtime.clean(report)[:100_000], completed_at=_now())
+            completed.update(
+                status="completed", report=runtime.clean(report)[:100_000], completed_at=_now()
+            )
             runtime.check()
-            updated = connection.execute("UPDATE ai_runs SET status='completed',payload_json=? WHERE id=? AND user_id=? AND status='running'", (
-                _dump(completed), completed["id"], runtime.user.id,
-            ))
+            updated = connection.execute(
+                "UPDATE ai_runs SET status='completed',payload_json=? WHERE id=? AND user_id=? AND status='running'",
+                (
+                    _dump(completed),
+                    completed["id"],
+                    runtime.user.id,
+                ),
+            )
             if updated.rowcount != 1:
                 raise AgentCancelledError("The persisted run is already terminal")
             runtime.check()
@@ -140,9 +189,16 @@ class LabAIRuntime:
         self.calls = 0
         self.partial = ""
         self.pending_models: dict[str, ValuationModelCreate] = {}
-        self.secrets = [str(getattr(settings, key, "") or "") for key in (
-            "llm_api_key", "longbridge_app_key", "longbridge_app_secret", "longbridge_access_token", "telegram_bot_token",
-        )]
+        self.secrets = [
+            str(getattr(settings, key, "") or "")
+            for key in (
+                "llm_api_key",
+                "longbridge_app_key",
+                "longbridge_app_secret",
+                "longbridge_access_token",
+                "telegram_bot_token",
+            )
+        ]
 
     def localized(self, zh: str, en: str) -> str:
         return zh if self.request.locale == "zh-CN" else en
@@ -160,7 +216,11 @@ class LabAIRuntime:
             for secret in self.secrets:
                 if secret:
                     value = value.replace(secret, "[redacted]")
-            return re.sub(r"(?i)(bearer\s+|(?:access_token|api_key|app_secret)=)[^\s&\"']+", r"\1[redacted]", value)
+            return re.sub(
+                r"(?i)(bearer\s+|(?:access_token|api_key|app_secret)=)[^\s&\"']+",
+                r"\1[redacted]",
+                value,
+            )
         if isinstance(value, dict):
             return {key: self.clean(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
@@ -178,10 +238,18 @@ class LabAIRuntime:
         data = self.clean(data)
         # 超大响应不能无界写库或占满模型上下文；明确显示缺口而非静默裁掉财务字段。
         if len(_dump(data)) > 350_000:
-            raise ValueError("Source data is too large; narrow the requested symbols or report period")
+            raise ValueError(
+                "Source data is too large; narrow the requested symbols or report period"
+            )
         with self.lock:
             self.check()
-            artifact = {"id": f"evidence_{len(self.run['artifacts']) + 1}", "kind": kind, "title": title, "data": data, "created_at": _now()}
+            artifact = {
+                "id": f"evidence_{len(self.run['artifacts']) + 1}",
+                "kind": kind,
+                "title": title,
+                "data": data,
+                "created_at": _now(),
+            }
             self.run["artifacts"].append(artifact)
             self.store.update(self.user.id, self.run)
             return artifact
@@ -196,7 +264,10 @@ class LabAIRuntime:
             "peers": ("计算同业对比", "Compare peers"),
             "greater_china": ("梳理大中华市场信息", "Review Greater China context"),
             "valuation_models": ("读取历史估值模型", "Read saved valuation models"),
-            "calculate_lab_valuation": ("计算估值模型与敏感性", "Calculate valuation and sensitivity"),
+            "calculate_lab_valuation": (
+                "计算估值模型与敏感性",
+                "Calculate valuation and sensitivity",
+            ),
             "data": ("采集实验数据", "Collect research data"),
         }
         label = self.localized(*labels[name])
@@ -204,7 +275,9 @@ class LabAIRuntime:
             self.check()
             self.calls += 1
             if self.calls > _MAX_DATA_CALLS:
-                return ToolResult.fail("Research tool budget reached. Finish using collected data and list remaining gaps.")
+                return ToolResult.fail(
+                    "Research tool budget reached. Finish using collected data and list remaining gaps."
+                )
             self.emit("tool_start", {"tool_name": name, "message": label})
             try:
                 result = operation()
@@ -214,8 +287,13 @@ class LabAIRuntime:
             except AgentCancelledError:
                 raise
             except ValidationError as exc:
-                issues = [str(item["msg"]).removeprefix("Value error, ") for item in exc.errors(include_url=False, include_input=False)[:3]]
-                message = self.localized("实验参数需要调整：", "Adjust the experiment parameters: ") + "; ".join(issues)
+                issues = [
+                    str(item["msg"]).removeprefix("Value error, ")
+                    for item in exc.errors(include_url=False, include_input=False)[:3]
+                ]
+                message = self.localized(
+                    "实验参数需要调整：", "Adjust the experiment parameters: "
+                ) + "; ".join(issues)
             except (ValueError, KeyError) as exc:
                 message = self.clean(str(exc))[:500]
             except Exception as exc:
@@ -238,26 +316,47 @@ class LabAIRuntime:
             if key in self.cache:
                 return self.cache[key]
             action = request.action
-            symbol = self.service.research.normalize_symbol(request.symbol) if request.symbol else ""
+            symbol = (
+                self.service.research.normalize_symbol(request.symbol) if request.symbol else ""
+            )
             symbols = [self.service.research.normalize_symbol(value) for value in request.symbols]
             if action in {"financial_reports", "security_insights", "greater_china"} and not symbol:
                 raise ValueError("A security symbol is required")
             fetched = _now()
             if action == "portfolio":
-                result = self.service.analyze_portfolio(self.user.id, PortfolioLabRequest(
-                    markets=[request.market], base_currency=_CURRENCIES[request.market],
-                    benchmark_symbol=self.service.research.normalize_symbol(request.benchmark_symbol),
-                    lookback_days=request.lookback_days,
-                    scenario_shocks=request.scenario_shocks,
-                ), settings=self.settings)
+                result = self.service.analyze_portfolio(
+                    self.user.id,
+                    PortfolioLabRequest(
+                        markets=[request.market],
+                        base_currency=_CURRENCIES[request.market],
+                        benchmark_symbol=self.service.research.normalize_symbol(
+                            request.benchmark_symbol
+                        ),
+                        lookback_days=request.lookback_days,
+                        scenario_shocks=request.scenario_shocks,
+                    ),
+                    settings=self.settings,
+                )
                 result["source"] = "User portfolio and Longbridge price history"
-                result["scenario_assumptions"] = {"shocks": request.scenario_shocks, "note": request.scenario_note, "hypothetical": True}
-                title = f"{request.market} " + self.localized("组合风险", "portfolio risk") + f" · {_CURRENCIES[request.market]}"
+                result["scenario_assumptions"] = {
+                    "shocks": request.scenario_shocks,
+                    "note": request.scenario_note,
+                    "hypothetical": True,
+                }
+                title = (
+                    f"{request.market} "
+                    + self.localized("组合风险", "portfolio risk")
+                    + f" · {_CURRENCIES[request.market]}"
+                )
             elif action == "financial_reports":
-                result = self.service.fundamentals.get_financial_reports(symbol, settings=self.settings)
+                result = self.service.fundamentals.get_financial_reports(
+                    symbol, settings=self.settings
+                )
                 title = f"{symbol} " + self.localized("财务报表", "financial reports")
             elif action == "security_insights":
-                result = self.service.fundamentals.get_security_insights(symbol, settings=self.settings)
+                result = self.service.fundamentals.get_security_insights(
+                    symbol, settings=self.settings
+                )
                 title = f"{symbol} " + self.localized("公司资料与估值", "company and valuation")
             elif action == "quotes":
                 selected = list(dict.fromkeys(symbols or ([symbol] if symbol else [])))
@@ -266,25 +365,55 @@ class LabAIRuntime:
                 result = self.service.market.get_realtime_quotes(selected, settings=self.settings)
                 # Quote报文本身没有币种；从同一标的基础资料补齐，不能按上市地猜测报告币种。
                 try:
-                    static = self.service.market.get_security_static_info(selected, settings=self.settings)
-                    currencies = {self.service.research.normalize_symbol(item["symbol"]): item.get("currency") for item in static if item.get("symbol")}
-                    result = {**result, "quotes": [{**quote, "currency": currencies.get(quote.get("symbol"))} for quote in result.get("quotes", [])]}
+                    static = self.service.market.get_security_static_info(
+                        selected, settings=self.settings
+                    )
+                    currencies = {
+                        self.service.research.normalize_symbol(item["symbol"]): item.get("currency")
+                        for item in static
+                        if item.get("symbol")
+                    }
+                    result = {
+                        **result,
+                        "quotes": [
+                            {**quote, "currency": currencies.get(quote.get("symbol"))}
+                            for quote in result.get("quotes", [])
+                        ],
+                    }
                 except Exception:
-                    self.warn(self.localized("报价币种资料暂不可用，跨币种估值需要补充可核对来源。", "Quote currency is unavailable; valuation needs a verified currency source."))
+                    self.warn(
+                        self.localized(
+                            "报价币种资料暂不可用，跨币种估值需要补充可核对来源。",
+                            "Quote currency is unavailable; valuation needs a verified currency source.",
+                        )
+                    )
                 title = ", ".join(selected) + self.localized(" 当前报价", " quotes")
             elif action == "peers":
-                result = self.service.compare_peers(PeerComparisonRequest(symbols=symbols), settings=self.settings)
+                result = self.service.compare_peers(
+                    PeerComparisonRequest(symbols=symbols), settings=self.settings
+                )
                 title = ", ".join(symbols) + self.localized(" 同业对比", " peers")
             elif action == "valuation_models":
-                result = {"models": self.service.list_valuation_models(self.user.id, symbol or None), "source": "User valuation models (historical assumptions; not current financial facts)"}
+                result = {
+                    "models": self.service.list_valuation_models(self.user.id, symbol or None),
+                    "source": "User valuation models (historical assumptions; not current financial facts)",
+                }
                 title = f"{symbol or 'Saved'} valuation models"
             else:
-                result = self.service.greater_china_context(GreaterChinaRequest(
-                    symbol=symbol, paired_symbol=request.paired_symbol,
-                    china_related_us_listing=request.china_related_us_listing,
-                ), settings=self.settings)
+                result = self.service.greater_china_context(
+                    GreaterChinaRequest(
+                        symbol=symbol,
+                        paired_symbol=request.paired_symbol,
+                        china_related_us_listing=request.china_related_us_listing,
+                    ),
+                    settings=self.settings,
+                )
                 title = f"{symbol} " + self.localized("大中华研究", "Greater China context")
-            result = {**result, "source": result.get("source") or "Longbridge", "fetched_at": result.get("fetched_at") or fetched}
+            result = {
+                **result,
+                "source": result.get("source") or "Longbridge",
+                "fetched_at": result.get("fetched_at") or fetched,
+            }
             for field in ("warnings", "errors"):
                 messages = result.get(field) or []
                 for warning in messages if isinstance(messages, list) else [messages]:
@@ -292,11 +421,17 @@ class LabAIRuntime:
             artifact = self.artifact(action, title, result)
             self.cache[key] = artifact
             return artifact
+
         return self._operation(str(args.get("action") or "data"), execute)
 
     def _source_number(self, artifact_id: str | None, path: str | None) -> float:
         artifact = next((item for item in self.run["artifacts"] if item["id"] == artifact_id), None)
-        if not artifact or artifact["kind"] not in {"financial_reports", "security_insights", "quotes", "peers"}:
+        if not artifact or artifact["kind"] not in {
+            "financial_reports",
+            "security_insights",
+            "quotes",
+            "peers",
+        }:
             raise ValueError("Valuation facts must reference data collected in this run")
         if not path or not path.startswith("/"):
             raise ValueError("Source evidence requires a JSON Pointer beginning with /")
@@ -338,7 +473,9 @@ class LabAIRuntime:
         except (KeyError, IndexError, ValueError, TypeError):
             actual = None
         if str(actual or "").upper() != currency:
-            raise ValueError("The financial source currency is missing or differs from the valuation currency; do not invent FX conversions")
+            raise ValueError(
+                "The financial source currency is missing or differs from the valuation currency; do not invent FX conversions"
+            )
 
     def valuation_tool(self, args: dict) -> ToolResult:
         def execute():
@@ -351,91 +488,197 @@ class LabAIRuntime:
                 required = {"peer_median", "target_metric"}
                 allowed = required | {"metric"}
                 factual = required
-                if assumptions.get("metric", "pe_ttm_ratio") not in {"pe_ttm_ratio", "pb_ratio", "ps_ttm_ratio"}:
+                if assumptions.get("metric", "pe_ttm_ratio") not in {
+                    "pe_ttm_ratio",
+                    "pb_ratio",
+                    "ps_ttm_ratio",
+                }:
                     raise ValueError("Relative valuation supports PE, PB or PS only")
             else:
-                required = {"revenue", "fcf_margin", "revenue_growth", "wacc", "terminal_growth", "shares_outstanding", "cash", "debt", "years"}
+                required = {
+                    "revenue",
+                    "fcf_margin",
+                    "revenue_growth",
+                    "wacc",
+                    "terminal_growth",
+                    "shares_outstanding",
+                    "cash",
+                    "debt",
+                    "years",
+                }
                 if request.model_type == "reverse_dcf":
                     required = required - {"revenue_growth"} | {"target_price"}
                 allowed = required
                 factual = {"revenue", "shares_outstanding", "cash", "debt", "target_price"}
             if not required.issubset(assumptions) or set(assumptions) - allowed:
-                raise ValueError("Supply all explicit model inputs (including cash, debt and years); do not default missing facts")
+                raise ValueError(
+                    "Supply all explicit model inputs (including cash, debt and years); do not default missing facts"
+                )
             for field in required:
                 value = _number(assumptions[field])
                 evidence = request.evidence.get(field)
-                if isinstance(assumptions[field], bool) or value is None or abs(value) > 1e18 or evidence is None:
-                    raise ValueError(f"{field} requires a bounded numeric value and explicit evidence")
+                if (
+                    isinstance(assumptions[field], bool)
+                    or value is None
+                    or abs(value) > 1e18
+                    or evidence is None
+                ):
+                    raise ValueError(
+                        f"{field} requires a bounded numeric value and explicit evidence"
+                    )
                 if field in factual and evidence.kind != "source":
-                    raise ValueError(f"{field} requires verified source evidence, not a guessed assumption")
+                    raise ValueError(
+                        f"{field} requires verified source evidence, not a guessed assumption"
+                    )
                 if evidence.kind == "source":
                     if field != "peer_median":
                         self._check_source_symbol(evidence.artifact_id, evidence.path, symbol)
                     if field in {"revenue", "cash", "debt", "target_metric", "target_price"}:
-                        self._check_source_currency(evidence.artifact_id, evidence.path, request.currency)
+                        self._check_source_currency(
+                            evidence.artifact_id, evidence.path, request.currency
+                        )
                     if field in factual and evidence.denominator_path:
-                        raise ValueError("Historical financial totals, share counts and prices require direct source fields, not derived ratios")
-                    if evidence.scale not in {1, 1000, 1e6, 1e9, .001, .000001, .000000001}:
+                        raise ValueError(
+                            "Historical financial totals, share counts and prices require direct source fields, not derived ratios"
+                        )
+                    if evidence.scale not in {1, 1000, 1e6, 1e9, 0.001, 0.000001, 0.000000001}:
                         raise ValueError("Unsupported source unit conversion")
-                    expected = self._source_number(evidence.artifact_id, evidence.path) * evidence.scale
+                    expected = (
+                        self._source_number(evidence.artifact_id, evidence.path) * evidence.scale
+                    )
                     if evidence.denominator_path:
-                        divisor = self._source_number(evidence.denominator_artifact_id or evidence.artifact_id, evidence.denominator_path)
+                        divisor = self._source_number(
+                            evidence.denominator_artifact_id or evidence.artifact_id,
+                            evidence.denominator_path,
+                        )
                         if divisor == 0:
                             raise ValueError("Source ratio denominator cannot be zero")
                         expected /= divisor
-                    if not math.isfinite(expected) or not math.isclose(value, expected, rel_tol=1e-6, abs_tol=1e-8):
-                        raise ValueError(f"{field} does not match the referenced source and declared unit conversion")
+                    if not math.isfinite(expected) or not math.isclose(
+                        value, expected, rel_tol=1e-6, abs_tol=1e-8
+                    ):
+                        raise ValueError(
+                            f"{field} does not match the referenced source and declared unit conversion"
+                        )
                 assumptions[field] = value
             if request.model_type != "relative":
-                if not (0.01 < assumptions["wacc"] <= 1 and -0.1 <= assumptions["terminal_growth"] <= 0.1):
-                    raise ValueError("Discount and terminal growth rates must be decimal fractions within the supported range")
-                if not (-1 <= assumptions["fcf_margin"] <= 1) or assumptions["shares_outstanding"] < 1:
-                    raise ValueError("FCF margin must be a decimal fraction and share count must be at least one")
-                if "revenue_growth" in assumptions and not (-1 < assumptions["revenue_growth"] <= 5):
-                    raise ValueError("Revenue growth must be a decimal fraction within the supported range")
+                if not (
+                    0.01 < assumptions["wacc"] <= 1
+                    and -0.1 <= assumptions["terminal_growth"] <= 0.1
+                ):
+                    raise ValueError(
+                        "Discount and terminal growth rates must be decimal fractions within the supported range"
+                    )
+                if (
+                    not (-1 <= assumptions["fcf_margin"] <= 1)
+                    or assumptions["shares_outstanding"] < 1
+                ):
+                    raise ValueError(
+                        "FCF margin must be a decimal fraction and share count must be at least one"
+                    )
+                if "revenue_growth" in assumptions and not (
+                    -1 < assumptions["revenue_growth"] <= 5
+                ):
+                    raise ValueError(
+                        "Revenue growth must be a decimal fraction within the supported range"
+                    )
             else:
                 source_id = request.evidence["peer_median"].artifact_id
-                peer_artifact = next((item for item in self.run["artifacts"] if item["id"] == source_id), None)
-                if not peer_artifact or peer_artifact["kind"] != "peers" or any(row["symbol"] == symbol for row in peer_artifact["data"]["rows"]):
-                    raise ValueError("Peer median must come from a peers comparison excluding the target company")
+                peer_artifact = next(
+                    (item for item in self.run["artifacts"] if item["id"] == source_id), None
+                )
+                if (
+                    not peer_artifact
+                    or peer_artifact["kind"] != "peers"
+                    or any(row["symbol"] == symbol for row in peer_artifact["data"]["rows"])
+                ):
+                    raise ValueError(
+                        "Peer median must come from a peers comparison excluding the target company"
+                    )
                 median_evidence = request.evidence["peer_median"]
                 metric = assumptions.get("metric", "pe_ttm_ratio")
-                if median_evidence.path != f"/medians/{metric}" or median_evidence.scale != 1 or median_evidence.denominator_path:
-                    raise ValueError("Peer median evidence must reference the exact unscaled /medians/metric field")
+                if (
+                    median_evidence.path != f"/medians/{metric}"
+                    or median_evidence.scale != 1
+                    or median_evidence.denominator_path
+                ):
+                    raise ValueError(
+                        "Peer median evidence must reference the exact unscaled /medians/metric field"
+                    )
                 if assumptions["peer_median"] <= 0 or assumptions["target_metric"] <= 0:
-                    raise ValueError("Relative valuation requires positive comparable multiples and company totals")
+                    raise ValueError(
+                        "Relative valuation requires positive comparable multiples and company totals"
+                    )
             result = self.service._calculate_valuation(request.model_type, assumptions)
             _dump(result)  # 拒绝溢出 inf/nan，防止前端和持久模型得到不可审计数值。
-            evidence = {field: item.model_dump(exclude_none=True) for field, item in request.evidence.items()}
-            source_ids = list(dict.fromkeys(
-                source for item in request.evidence.values()
-                for source in (item.artifact_id, item.denominator_artifact_id) if source
-            ))
-            artifact = self.artifact("valuation", request.title, {
-                "symbol": symbol, "model_type": request.model_type, "currency": request.currency.upper(),
-                "assumptions": assumptions, "evidence": evidence, "result": result, "source_ids": source_ids,
-                "source": "Investment Labs deterministic calculation", "fetched_at": _now(),
-            })
+            evidence = {
+                field: item.model_dump(exclude_none=True)
+                for field, item in request.evidence.items()
+            }
+            source_ids = list(
+                dict.fromkeys(
+                    source
+                    for item in request.evidence.values()
+                    for source in (item.artifact_id, item.denominator_artifact_id)
+                    if source
+                )
+            )
+            artifact = self.artifact(
+                "valuation",
+                request.title,
+                {
+                    "symbol": symbol,
+                    "model_type": request.model_type,
+                    "currency": request.currency.upper(),
+                    "assumptions": assumptions,
+                    "evidence": evidence,
+                    "result": result,
+                    "source_ids": source_ids,
+                    "source": "Investment Labs deterministic calculation",
+                    "fetched_at": _now(),
+                },
+            )
             self.pending_models[artifact["id"]] = ValuationModelCreate(
-                model_type=request.model_type, title=request.title, assumptions=assumptions,
-                peer_symbols=request.peer_symbols, source_ids=[f"{self.run['id']}:{value}" for value in source_ids],
+                model_type=request.model_type,
+                title=request.title,
+                assumptions=assumptions,
+                peer_symbols=request.peer_symbols,
+                source_ids=[f"{self.run['id']}:{value}" for value in source_ids],
                 reason=f"AI Lab {self.run['id']}; currency={request.currency.upper()}; evidence and assumptions retained in the run",
             )
             return artifact
+
         return self._operation("calculate_lab_valuation", execute)
 
     def bootstrap(self):
-        self.emit("status_update", {"message": self.localized("正在采集本次实验的数据与来源。", "Collecting data and sources for this experiment.")})
+        self.emit(
+            "status_update",
+            {
+                "message": self.localized(
+                    "正在采集本次实验的数据与来源。",
+                    "Collecting data and sources for this experiment.",
+                )
+            },
+        )
         if self.request.lab == "portfolio":
             for market in ("US", "A", "H"):
-                self.data_tool({"action": "portfolio", "market": market, "scenario_shocks": {"default": -0.1}, "scenario_note": self.localized(
-                    "默认压力假设：所有权益资产同时下跌10%、现金保持不变；仅用于敏感性检验，不是市场预测。",
-                    "Default hypothetical stress: all equities fall 10% while cash is unchanged; sensitivity test, not a market forecast.",
-                )})
-            self.warn(self.localized(
-                "各市场按本币分别分析；未提供可核对汇率，未合并跨币种总资产。历史曲线是当前持仓权重回放，并非账户真实收益。",
-                "Markets are analyzed in native currencies; no cross-currency total without verified FX. Historical returns replay current weights, not actual account performance.",
-            ))
+                self.data_tool(
+                    {
+                        "action": "portfolio",
+                        "market": market,
+                        "scenario_shocks": {"default": -0.1},
+                        "scenario_note": self.localized(
+                            "默认压力假设：所有权益资产同时下跌10%、现金保持不变；仅用于敏感性检验，不是市场预测。",
+                            "Default hypothetical stress: all equities fall 10% while cash is unchanged; sensitivity test, not a market forecast.",
+                        ),
+                    }
+                )
+            self.warn(
+                self.localized(
+                    "各市场按本币分别分析；未提供可核对汇率，未合并跨币种总资产。历史曲线是当前持仓权重回放，并非账户真实收益。",
+                    "Markets are analyzed in native currencies; no cross-currency total without verified FX. Historical returns replay current weights, not actual account performance.",
+                )
+            )
         elif self.request.symbols:
             symbol = self.request.symbols[0]
             if self.request.lab == "greater_china":
@@ -450,7 +693,15 @@ class LabAIRuntime:
     def prompt(self) -> str:
         data = _dump({"artifacts": self.run["artifacts"], "warnings": self.run["warnings"]})
         if len(data) > 180_000:
-            data = _dump({"artifacts": [{key: item[key] for key in ("id", "kind", "title")} for item in self.run["artifacts"]], "warnings": self.run["warnings"]})
+            data = _dump(
+                {
+                    "artifacts": [
+                        {key: item[key] for key in ("id", "kind", "title")}
+                        for item in self.run["artifacts"]
+                    ],
+                    "warnings": self.run["warnings"],
+                }
+            )
             data += "\nRead the source artifacts with get_lab_data before interpreting any numbers."
         return (
             f"Experiment: {self.request.lab}\nResearch objective: {self.request.objective}\n"
@@ -467,7 +718,15 @@ class LabAIRuntime:
                 return
             if kind == "turn_start":
                 self.run["steps"] = int(data.get("turn", 0))
-                self.emit("status_update", {"message": self.localized("AI 正在分析证据并整理结论。", "AI is analyzing evidence and preparing the report.")})
+                self.emit(
+                    "status_update",
+                    {
+                        "message": self.localized(
+                            "AI 正在分析证据并整理结论。",
+                            "AI is analyzing evidence and preparing the report.",
+                        )
+                    },
+                )
             elif kind == "message_start":
                 self.partial = ""
                 self.emit("message_delta", {"delta": "", "reset": True})
@@ -483,7 +742,12 @@ class LabAIRuntime:
                 return
             if status != "completed":
                 self.cancel.set()
-            self.run.update(status=status, error=error, report=self.clean(report or self.partial)[:100_000], completed_at=_now())
+            self.run.update(
+                status=status,
+                error=error,
+                report=self.clean(report or self.partial)[:100_000],
+                completed_at=_now(),
+            )
             self.store.update(self.user.id, self.run)
 
 
@@ -529,7 +793,13 @@ class LabAIService:
             if not busy:
                 self._active.add(key)
         if busy:
-            yield {"type": "error", "timestamp": time.time(), "data": {"error": "An AI experiment is already running. Wait for it to stop before retrying."}}
+            yield {
+                "type": "error",
+                "timestamp": time.time(),
+                "data": {
+                    "error": "An AI experiment is already running. Wait for it to stop before retrying."
+                },
+            }
             return
         runtime = None
         worker_started = False
@@ -537,10 +807,9 @@ class LabAIService:
         events: queue.Queue = queue.Queue(maxsize=256)
 
         def emit(kind, data):
-            try:
+            # 流式进度可丢弃；最终结果始终从已落库的 run 发送。
+            with suppress(queue.Full):
                 events.put_nowait({"type": kind, "timestamp": time.time(), "data": data})
-            except queue.Full:
-                pass  # 流式进度可丢弃；最终结果始终从已落库的run发送。
 
         try:
             run = self.store.create(user.id, request)
@@ -561,19 +830,29 @@ class LabAIService:
 
             model.call_stream = safe_provider_stream
             agent = Agent(
-                system_prompt=_SYSTEM_PROMPT.format(language="Simplified Chinese" if request.locale == "zh-CN" else "English"),
-                model=model, tools=tools, max_steps=min(max(settings.agent_max_steps, 1), 12),
+                system_prompt=_SYSTEM_PROMPT.format(
+                    language="Simplified Chinese" if request.locale == "zh-CN" else "English"
+                ),
+                model=model,
+                tools=tools,
+                max_steps=min(max(settings.agent_max_steps, 1), 12),
                 max_context_tokens=settings.agent_max_context_tokens,
                 max_context_turns=settings.agent_max_context_turns,
                 workspace_dir=user_workspace_dir(settings.workspace_dir, user.id),
-                settings=settings, enable_skills=False, multi_agent_depth=1,
+                settings=settings,
+                enable_skills=False,
+                multi_agent_depth=1,
             )
 
             def worker():
                 try:
                     runtime.bootstrap()
                     runtime.check()
-                    report = agent.run_stream(runtime.prompt(), on_event=runtime.on_agent_event, cancel_event=runtime.cancel)
+                    report = agent.run_stream(
+                        runtime.prompt(),
+                        on_event=runtime.on_agent_event,
+                        cancel_event=runtime.cancel,
+                    )
                     runtime.check()
                     if not report.strip():
                         raise ValueError("The model returned no report")
@@ -582,10 +861,13 @@ class LabAIService:
                     runtime.finish(runtime.stop_status, runtime.stop_error)
                 except Exception as exc:
                     logger.warning("Labs AI run %s failed (%s)", run["id"], type(exc).__name__)
-                    runtime.finish("failed", runtime.localized(
-                        "AI 实验未完成，请检查模型连接与数据配置后重试；已采集的数据保留在本次记录。",
-                        "AI research did not complete. Check model and data connections, then retry. Collected evidence is retained.",
-                    ))
+                    runtime.finish(
+                        "failed",
+                        runtime.localized(
+                            "AI 实验未完成，请检查模型连接与数据配置后重试；已采集的数据保留在本次记录。",
+                            "AI research did not complete. Check model and data connections, then retry. Collected evidence is retained.",
+                        ),
+                    )
                 finally:
                     done.set()
                     with self._active_lock:
@@ -600,7 +882,10 @@ class LabAIService:
             last_ping = time.monotonic()
             while not done.is_set() or not events.empty():
                 if time.monotonic() >= deadline:
-                    error = runtime.localized("AI 实验超过时间限制，已停止后续步骤。", "Research time limit reached; further steps were stopped.")
+                    error = runtime.localized(
+                        "AI 实验超过时间限制，已停止后续步骤。",
+                        "Research time limit reached; further steps were stopped.",
+                    )
                     runtime.stop("failed", error)
                     await asyncio.to_thread(runtime.finish, "failed", error)
                     break
@@ -608,12 +893,28 @@ class LabAIService:
                     yield events.get_nowait()
                 except queue.Empty:
                     if time.monotonic() - last_ping > 15:
-                        yield {"type": "status_update", "timestamp": time.time(), "data": {"message": runtime.localized("正在等待数据或模型返回。", "Waiting for data or the model response.")}}
+                        yield {
+                            "type": "status_update",
+                            "timestamp": time.time(),
+                            "data": {
+                                "message": runtime.localized(
+                                    "正在等待数据或模型返回。",
+                                    "Waiting for data or the model response.",
+                                )
+                            },
+                        }
                         last_ping = time.monotonic()
-                    await asyncio.sleep(.05)
+                    await asyncio.sleep(0.05)
             final = self.store.get(user.id, run["id"])
             kind = "run_completed" if final["status"] == "completed" else "error"
-            yield {"type": kind, "timestamp": time.time(), "data": {"run": final, **({"error": final["error"] or "Research canceled"} if kind == "error" else {})}}
+            yield {
+                "type": kind,
+                "timestamp": time.time(),
+                "data": {
+                    "run": final,
+                    **({"error": final["error"] or "Research canceled"} if kind == "error" else {}),
+                },
+            }
         finally:
             if runtime:
                 runtime.cancel.set()

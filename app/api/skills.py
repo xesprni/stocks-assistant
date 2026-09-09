@@ -8,9 +8,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import get_settings
+from app.core.security import CurrentUser, require_permissions
 from app.core.skills.clawhub import ClawHubError, ClawHubService
 from app.deps import get_skill_manager
-from app.core.security import CurrentUser, require_permissions
 from app.schemas.skills import (
     ClawHubInstallRequest,
     ClawHubInstallResponse,
@@ -66,7 +66,7 @@ def search_clawhub_skills(
     try:
         return get_clawhub_service().search(q, limit=limit)
     except ClawHubError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 
 @router.get("/clawhub/{slug}", response_model=ClawHubSkillDetail)
@@ -74,7 +74,7 @@ def get_clawhub_skill(slug: str, _: CurrentUser = Depends(require_permissions("s
     try:
         return get_clawhub_service().get_detail(slug)
     except ClawHubError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 
 @router.post("/clawhub/{slug}/install", response_model=ClawHubInstallResponse)
@@ -86,7 +86,7 @@ def install_clawhub_skill(
     try:
         return get_clawhub_service().install(slug, version=request.version, tag=request.tag)
     except ClawHubError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 
 @router.post("/{name}/toggle")
@@ -100,7 +100,7 @@ def toggle_skill(
         mgr.set_skill_enabled(name, request.enabled)
         return {"status": "ok", "name": name, "enabled": request.enabled}
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.delete("/{name}")
@@ -110,9 +110,9 @@ def delete_skill(name: str, _: CurrentUser = Depends(require_permissions("skills
         deleted_path = mgr.delete_skill(name)
         return {"status": "ok", "name": name, "deleted_path": deleted_path}
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.post("/refresh")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -22,17 +22,21 @@ class WatchlistRepository:
         self.session_factory = create_session_factory(self.engine)
         init_watchlist_schema(self.engine)
 
-    def list_items(self, category: Optional[str] = None, user_id: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_items(
+        self, category: str | None = None, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         with session_scope(self.session_factory) as session:
             stmt = select(WatchlistItem)
             if user_id:
                 stmt = stmt.where(WatchlistItem.user_id == user_id)
             if category:
                 stmt = stmt.where(WatchlistItem.category == category)
-            rows = session.scalars(stmt.order_by(WatchlistItem.sort_order.asc(), WatchlistItem.id.asc())).all()
+            rows = session.scalars(
+                stmt.order_by(WatchlistItem.sort_order.asc(), WatchlistItem.id.asc())
+            ).all()
             return [self._item_to_dict(row) for row in rows]
 
-    def reorder_items(self, ordered_ids: list[int], user_id: Optional[str] = None) -> None:
+    def reorder_items(self, ordered_ids: list[int], user_id: str | None = None) -> None:
         with session_scope(self.session_factory) as session:
             for position, item_id in enumerate(ordered_ids):
                 item = session.get(WatchlistItem, item_id)
@@ -83,7 +87,7 @@ class WatchlistRepository:
                 raise RuntimeError("Failed to persist watchlist item")
             return self._item_to_dict(row)
 
-    def delete_item(self, item_id: int, user_id: Optional[str] = None) -> bool:
+    def delete_item(self, item_id: int, user_id: str | None = None) -> bool:
         with session_scope(self.session_factory) as session:
             item = session.get(WatchlistItem, item_id)
             if not item or (user_id and item.user_id != user_id):
@@ -112,4 +116,3 @@ class WatchlistRepository:
             "created_at": item.created_at,
             "updated_at": item.updated_at,
         }
-

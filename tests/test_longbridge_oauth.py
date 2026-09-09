@@ -135,11 +135,13 @@ class FakeOAuthRuntime:
                 runtime.pending[self.client_id] = (future, self.port)
                 on_open_url(
                     "https://openapi.longbridge.com/oauth2/authorize?"
-                    + urlencode({
-                        "client_id": self.client_id,
-                        "redirect_uri": f"http://localhost:{self.port}/callback",
-                        "state": "opaque-sdk-state",
-                    })
+                    + urlencode(
+                        {
+                            "client_id": self.client_id,
+                            "redirect_uri": f"http://localhost:{self.port}/callback",
+                            "state": "opaque-sdk-state",
+                        }
+                    )
                 )
                 try:
                     return await future
@@ -161,7 +163,9 @@ class FakeOAuthRuntime:
                 runtime.registrations.append((url, json))
                 if runtime.registration_error:
                     raise runtime.registration_error
-                client_id = runtime.next_client_id or f"registered-client-{len(runtime.registrations)}"
+                client_id = (
+                    runtime.next_client_id or f"registered-client-{len(runtime.registrations)}"
+                )
                 return httpx.Response(
                     201,
                     json={"client_id": client_id},
@@ -205,7 +209,9 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
         self.stack.enter_context(patch.object(oauth_module, "_handles", {}))
         self.stack.enter_context(patch.object(oauth_module, "_restorations", {}))
         self.stack.enter_context(patch.object(oauth_module, "_revoked_clients", set()))
-        self.stack.enter_context(patch.object(oauth_module, "socket", SimpleNamespace(socket=FakeSocket)))
+        self.stack.enter_context(
+            patch.object(oauth_module, "socket", SimpleNamespace(socket=FakeSocket))
+        )
 
     def test_reservation_is_private_and_does_not_overwrite_existing_credentials(self):
         client_id = "registered-client-1"
@@ -226,7 +232,10 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
 
     def test_reservation_rejects_symlink_in_every_cache_directory(self):
         for component in (".longbridge", ".longbridge/openapi", ".longbridge/openapi/tokens"):
-            with self.subTest(component=component), tempfile.TemporaryDirectory(dir=self.directory) as directory:
+            with (
+                self.subTest(component=component),
+                tempfile.TemporaryDirectory(dir=self.directory) as directory,
+            ):
                 test_home = Path(directory) / "home"
                 test_home.mkdir()
                 external = Path(directory) / "external"
@@ -234,14 +243,19 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
                 link = test_home / component
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to(external, target_is_directory=True)
-                with patch.object(Path, "home", return_value=test_home):
-                    with self.assertRaises(LongbridgeUnavailableError):
-                        oauth_module._reserve_token("registered-client-1")
+                with (
+                    patch.object(Path, "home", return_value=test_home),
+                    self.assertRaises(LongbridgeUnavailableError),
+                ):
+                    oauth_module._reserve_token("registered-client-1")
                 self.assertEqual(list(external.iterdir()), [])
 
     def test_read_and_disconnect_do_not_follow_ancestor_symlinks(self):
         for component in (".longbridge", ".longbridge/openapi", ".longbridge/openapi/tokens"):
-            with self.subTest(component=component), tempfile.TemporaryDirectory(dir=self.directory) as directory:
+            with (
+                self.subTest(component=component),
+                tempfile.TemporaryDirectory(dir=self.directory) as directory,
+            ):
                 test_home = Path(directory) / "home"
                 test_home.mkdir()
                 external = Path(directory) / "external"
@@ -294,11 +308,13 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
             self.assertFalse(oauth_module.oauth_connected(settings))
 
     def test_client_id_is_not_a_writable_configuration_field(self):
-        update = ConfigUpdate.model_validate({
-            "longbridge_auth_mode": "oauth",
-            "longbridge_oauth_client_id": "another-users-client",
-            "longbridge_oauth_connected": True,
-        })
+        update = ConfigUpdate.model_validate(
+            {
+                "longbridge_auth_mode": "oauth",
+                "longbridge_oauth_client_id": "another-users-client",
+                "longbridge_oauth_connected": True,
+            }
+        )
         self.assertEqual(update.model_dump(exclude_unset=True), {"longbridge_auth_mode": "oauth"})
 
     def test_get_oauth_restores_once_and_never_uses_another_client_handle(self):
@@ -317,9 +333,13 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
         self.assertEqual([entry[0] for entry in runtime.builders], [first, second])
 
     def test_get_oauth_without_usable_cache_does_not_start_sdk(self):
-        with patch("longbridge.openapi.OAuthBuilder") as builder:
-            with self.assertRaises(LongbridgeUnavailableError):
-                oauth_module.get_oauth(SimpleNamespace(longbridge_oauth_client_id="registered-client-1"))
+        with (
+            patch("longbridge.openapi.OAuthBuilder") as builder,
+            self.assertRaises(LongbridgeUnavailableError),
+        ):
+            oauth_module.get_oauth(
+                SimpleNamespace(longbridge_oauth_client_id="registered-client-1")
+            )
         builder.assert_not_called()
 
     def test_simultaneous_requests_share_one_restore(self):
@@ -337,9 +357,11 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
             started.wait(timeout=2)
             return oauth_module.get_oauth(settings)
 
-        with patch.object(oauth_module, "_restore_oauth", side_effect=restore) as restore_call:
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                results = list(executor.map(lambda _: request(), range(8)))
+        with (
+            patch.object(oauth_module, "_restore_oauth", side_effect=restore) as restore_call,
+            ThreadPoolExecutor(max_workers=8) as executor,
+        ):
+            results = list(executor.map(lambda _: request(), range(8)))
         self.assertTrue(all(result is handle for result in results))
         self.assertEqual(restore_call.call_count, 1)
         self.assertNotIn(client_id, oauth_module._restorations)
@@ -358,14 +380,16 @@ class LongbridgeOAuthTokenTest(unittest.TestCase):
             write_token(client_id)
             return object()
 
-        with patch.object(oauth_module, "_restore_oauth", side_effect=refresh):
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                request = executor.submit(oauth_module.get_oauth, settings)
-                self.assertTrue(started.wait(timeout=2))
-                oauth_module._forget_client(client_id)
-                release.set()
-                with self.assertRaises(LongbridgeUnavailableError):
-                    request.result(timeout=2)
+        with (
+            patch.object(oauth_module, "_restore_oauth", side_effect=refresh),
+            ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            request = executor.submit(oauth_module.get_oauth, settings)
+            self.assertTrue(started.wait(timeout=2))
+            oauth_module._forget_client(client_id)
+            release.set()
+            with self.assertRaises(LongbridgeUnavailableError):
+                request.result(timeout=2)
         self.assertNotIn(client_id, oauth_module._handles)
         self.assertNotIn(client_id, oauth_module._restorations)
         self.assertFalse(oauth_module._token_path(client_id).exists())
@@ -404,23 +428,39 @@ class LongbridgeOAuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.runtime = FakeOAuthRuntime()
         self.service = oauth_module.LongbridgeOAuthService()
         self.stack.enter_context(patch.object(Path, "home", return_value=self.home))
-        self.stack.enter_context(patch.object(oauth_module, "get_app_store", return_value=self.store))
+        self.stack.enter_context(
+            patch.object(oauth_module, "get_app_store", return_value=self.store)
+        )
         self.stack.enter_context(patch.object(oauth_module, "_handles", {}))
         self.stack.enter_context(patch.object(oauth_module, "_restorations", {}))
         self.stack.enter_context(patch.object(oauth_module, "_revoked_clients", set()))
         self.stack.enter_context(patch.object(oauth_module, "_refresh_caches"))
-        self.stack.enter_context(patch("app.config.get_effective_settings", side_effect=lambda user_id: SimpleNamespace(
-            longbridge_auth_mode=self.store.personal.get(user_id, {}).get(
-                "longbridge_auth_mode", self.store.system.get("longbridge_auth_mode", "apikey")
+        self.stack.enter_context(
+            patch(
+                "app.config.get_effective_settings",
+                side_effect=lambda user_id: SimpleNamespace(
+                    longbridge_auth_mode=self.store.personal.get(user_id, {}).get(
+                        "longbridge_auth_mode",
+                        self.store.system.get("longbridge_auth_mode", "apikey"),
+                    )
+                ),
             )
-        )))
+        )
         # 只替换业务模块的 socket 名称，不能影响 asyncio 的事件循环 socketpair。
-        self.stack.enter_context(patch.object(oauth_module, "socket", SimpleNamespace(socket=FakeSocket)))
-        self.stack.enter_context(patch.object(oauth_module.httpx, "AsyncClient", self.runtime.AsyncClient))
+        self.stack.enter_context(
+            patch.object(oauth_module, "socket", SimpleNamespace(socket=FakeSocket))
+        )
+        self.stack.enter_context(
+            patch.object(oauth_module.httpx, "AsyncClient", self.runtime.AsyncClient)
+        )
         self.stack.enter_context(patch("longbridge.openapi.OAuthBuilder", self.runtime.Builder))
 
     async def asyncTearDown(self):
-        tasks = [session.task for session in self.service._sessions.values() if session.task and not session.task.done()]
+        tasks = [
+            session.task
+            for session in self.service._sessions.values()
+            if session.task and not session.task.done()
+        ]
         for future, _port in self.runtime.pending.values():
             if not future.done():
                 future.set_exception(RuntimeError("test cleanup"))
@@ -446,9 +486,13 @@ class LongbridgeOAuthServiceTest(unittest.IsolatedAsyncioTestCase):
         client_ids = [status.client_id for status in statuses]
         self.assertEqual(len(set(client_ids)), 3)
         self.assertEqual(self.store.system["longbridge_oauth_client_id"], client_ids[0])
-        self.assertEqual(self.store.personal[self.alice.id]["longbridge_oauth_client_id"], client_ids[1])
-        self.assertEqual(self.store.personal[self.bob.id]["longbridge_oauth_client_id"], client_ids[2])
-        for (url, payload), status in zip(self.runtime.registrations, statuses):
+        self.assertEqual(
+            self.store.personal[self.alice.id]["longbridge_oauth_client_id"], client_ids[1]
+        )
+        self.assertEqual(
+            self.store.personal[self.bob.id]["longbridge_oauth_client_id"], client_ids[2]
+        )
+        for (url, payload), status in zip(self.runtime.registrations, statuses, strict=True):
             self.assertEqual(url, oauth_module.REGISTER_URL)
             self.assertEqual(payload["grant_types"], ["authorization_code", "refresh_token"])
             self.assertNotIn("client_id", payload)
@@ -456,7 +500,9 @@ class LongbridgeOAuthServiceTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("private-refresh-token", status.model_dump_json())
 
     async def test_repeated_start_reuses_pending_authorization(self):
-        first, second = await asyncio.gather(self.service.start(self.alice), self.service.start(self.alice))
+        first, second = await asyncio.gather(
+            self.service.start(self.alice), self.service.start(self.alice)
+        )
         self.assertEqual(first.authorization_url, second.authorization_url)
         self.assertEqual(len(self.runtime.registrations), 1)
         self.assertEqual(len(self.runtime.builders), 1)
@@ -483,7 +529,9 @@ class LongbridgeOAuthServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.start(self.alice)
         session = self.service._sessions[self.service._key(self.alice)]
         with self.assertLogs(oauth_module.logger, level="WARNING") as logs:
-            self.runtime.fail(session.client_id, "secret-access-token https://example.test/?code=secret-code")
+            self.runtime.fail(
+                session.client_id, "secret-access-token https://example.test/?code=secret-code"
+            )
             await session.task
         status = self.service.status(self.alice)
         self.assertEqual(status.status, "error")
@@ -574,12 +622,18 @@ class LongbridgeOAuthServiceTest(unittest.IsolatedAsyncioTestCase):
         app.include_router(config_api.router, prefix="/config")
         selected = {"current": actor("forbidden-user")}
         selected["current"] = CurrentUser(
-            id="forbidden-user", username="forbidden", display_name="Forbidden",
-            roles=(), permissions=frozenset(), is_active=True,
+            id="forbidden-user",
+            username="forbidden",
+            display_name="Forbidden",
+            roles=(),
+            permissions=frozenset(),
+            is_active=True,
         )
         app.dependency_overrides[get_current_user] = lambda: selected["current"]
         with patch.object(config_api, "longbridge_oauth_service", self.service):
-            async with ASGIClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            async with ASGIClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 forbidden = await client.post("/config/longbridge/oauth/start")
                 self.assertEqual(forbidden.status_code, 403)
                 self.assertEqual(self.runtime.registrations, [])

@@ -49,7 +49,13 @@ class FakeQuoteContext:
         ]
 
     def candlesticks(self, symbol, period, count, adjust_type, *args):
-        self.candlestick_args = (symbol, str(period), count, str(adjust_type), [str(arg) for arg in args])
+        self.candlestick_args = (
+            symbol,
+            str(period),
+            count,
+            str(adjust_type),
+            [str(arg) for arg in args],
+        )
         return [
             SimpleNamespace(
                 timestamp=datetime(2026, 1, 2, 9, 30),
@@ -65,7 +71,14 @@ class FakeQuoteContext:
         ]
 
     def history_candlesticks_by_date(self, symbol, period, adjust_type, start, end, *args):
-        self.history_args = (symbol, str(period), str(adjust_type), start, end, [str(arg) for arg in args])
+        self.history_args = (
+            symbol,
+            str(period),
+            str(adjust_type),
+            start,
+            end,
+            [str(arg) for arg in args],
+        )
         return [
             SimpleNamespace(
                 timestamp=datetime(2026, 1, 1),
@@ -81,8 +94,20 @@ class FakeQuoteContext:
     def intraday(self, symbol, *args):
         self.intraday_args = (symbol, [str(arg) for arg in args])
         return [
-            SimpleNamespace(timestamp=datetime(2026, 1, 2, 9, 30), price="10", volume="100", turnover="1000", avg_price="10"),
-            SimpleNamespace(timestamp=datetime(2026, 1, 2, 9, 31), price="11", volume="200", turnover="2200", avg_price="10.5"),
+            SimpleNamespace(
+                timestamp=datetime(2026, 1, 2, 9, 30),
+                price="10",
+                volume="100",
+                turnover="1000",
+                avg_price="10",
+            ),
+            SimpleNamespace(
+                timestamp=datetime(2026, 1, 2, 9, 31),
+                price="11",
+                volume="200",
+                turnover="2200",
+                avg_price="10.5",
+            ),
         ]
 
     def capital_flow(self, symbol):
@@ -114,11 +139,15 @@ class FakeQuoteContext:
 
     def trading_days(self, market, begin, end):
         self.trading_days_args = (str(market), begin, end)
-        return SimpleNamespace(trading_days=[date(2026, 1, 2)], half_trading_days=[date(2026, 1, 5)])
+        return SimpleNamespace(
+            trading_days=[date(2026, 1, 2)], half_trading_days=[date(2026, 1, 5)]
+        )
 
     def calc_indexes(self, symbols, indexes):
         self.calc_indexes_args = (symbols, [str(index) for index in indexes])
-        return [SimpleNamespace(symbol="HSI.HK", last_done="10", change_rate="2.5", pe_ttm_ratio=None)]
+        return [
+            SimpleNamespace(symbol="HSI.HK", last_done="10", change_rate="2.5", pe_ttm_ratio=None)
+        ]
 
 
 class FakeMarketContext:
@@ -138,7 +167,7 @@ class FakeMarketContext:
         )
 
 
-class TestableMarketService(MarketService):
+class FakeMarketService(MarketService):
     def __init__(self, workspace_dir: str, quote_context: FakeQuoteContext, market_context=None):
         super().__init__(workspace_dir)
         self.fake_quote_context = quote_context
@@ -194,13 +223,15 @@ class MarketServiceConfigTest(unittest.TestCase):
 
             stored = json.loads(service.config_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(saved["indices"], [{"symbol": "HSI.HK", "name": "恒生指数", "enabled": True}])
+        self.assertEqual(
+            saved["indices"], [{"symbol": "HSI.HK", "name": "恒生指数", "enabled": True}]
+        )
         self.assertEqual(stored, saved)
 
     def test_fetch_quotes_normalizes_legacy_symbols_and_metadata_maps(self):
         with tempfile.TemporaryDirectory() as tmp:
             quote_context = FakeQuoteContext()
-            service = TestableMarketService(tmp, quote_context)
+            service = FakeMarketService(tmp, quote_context)
 
             quotes = service._fetch_quotes(
                 [".HSI.HK", "HSI.HK"],
@@ -217,7 +248,7 @@ class MarketServiceConfigTest(unittest.TestCase):
     def test_realtime_quotes_return_richer_longbridge_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             quote_context = FakeQuoteContext()
-            service = TestableMarketService(tmp, quote_context)
+            service = FakeMarketService(tmp, quote_context)
 
             payload = service.get_realtime_quotes([".HSI.HK", "HSI.HK"])
 
@@ -232,9 +263,11 @@ class MarketServiceConfigTest(unittest.TestCase):
     def test_candlesticks_supports_minute_period_adjust_and_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
             quote_context = FakeQuoteContext()
-            service = TestableMarketService(tmp, quote_context)
+            service = FakeMarketService(tmp, quote_context)
 
-            payload = service.get_candlesticks("hsi.hk", "5min", count=1200, adjust_type="none", trade_sessions="all")
+            payload = service.get_candlesticks(
+                "hsi.hk", "5min", count=1200, adjust_type="none", trade_sessions="all"
+            )
 
         self.assertEqual(quote_context.candlestick_args[0], "HSI.HK")
         self.assertEqual(quote_context.candlestick_args[1], "Period.Min_5")
@@ -246,7 +279,7 @@ class MarketServiceConfigTest(unittest.TestCase):
     def test_technical_indicators_calculate_from_longbridge_candlesticks(self):
         with tempfile.TemporaryDirectory() as tmp:
             quote_context = FakeQuoteContext()
-            service = TestableMarketService(tmp, quote_context)
+            service = FakeMarketService(tmp, quote_context)
 
             payload = service.get_technical_indicators(
                 "hsi.hk",
@@ -267,9 +300,11 @@ class MarketServiceConfigTest(unittest.TestCase):
     def test_history_trades_depth_trading_days_status_and_indicators(self):
         with tempfile.TemporaryDirectory() as tmp:
             quote_context = FakeQuoteContext()
-            service = TestableMarketService(tmp, quote_context)
+            service = FakeMarketService(tmp, quote_context)
 
-            history = service.get_history_candlesticks("HSI.HK", start="2026-01-01", end="2026-01-31")
+            history = service.get_history_candlesticks(
+                "HSI.HK", start="2026-01-01", end="2026-01-31"
+            )
             trades = service.get_trades("HSI.HK", count=999)
             depth = service.get_depth("HSI.HK")
             days = service.get_trading_days("US", "2026-01-01", "2026-01-31")
@@ -285,7 +320,9 @@ class MarketServiceConfigTest(unittest.TestCase):
         self.assertEqual(quote_context.trading_days_args[0], "Market.US")
         self.assertEqual(days["trading_days"], ["2026-01-02"])
         self.assertEqual(status["market_time"][0]["market"], "US")
-        self.assertEqual(quote_context.calc_indexes_args[1], ["CalcIndex.LastDone", "CalcIndex.PeTtmRatio"])
+        self.assertEqual(
+            quote_context.calc_indexes_args[1], ["CalcIndex.LastDone", "CalcIndex.PeTtmRatio"]
+        )
         self.assertEqual(indicators["indicators"][0]["last_done"], "10")
         self.assertEqual(quote_context.capital_flow_symbol, "HSI.HK")
         self.assertEqual(capital_flow["source"], "Longbridge QuoteContext.capital_flow")

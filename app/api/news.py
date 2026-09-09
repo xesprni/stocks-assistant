@@ -6,9 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_effective_settings
+from app.core.market.errors import LongbridgeUnavailableError
+from app.core.news.service import (
+    GuardianConfigError,
+    GuardianTranslationError,
+    GuardianUpstreamError,
+)
 from app.core.security import CurrentUser, require_permissions
-from app.core.news.service import GuardianConfigError, GuardianTranslationError, GuardianUpstreamError
-from app.core.watchlist.service import LongbridgeUnavailableError
 from app.deps import create_llm_provider, get_news_service
 from app.schemas.news import (
     GuardianArticleResponse,
@@ -35,9 +39,9 @@ def get_security_news(
             settings=get_effective_settings(current_user.id),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return SecurityNewsResponse(**data)
 
 
@@ -64,7 +68,9 @@ def get_guardian_article(
 ):
     service = get_news_service()
     try:
-        data = service.get_guardian_article(url=url, settings=get_effective_settings(current_user.id))
+        data = service.get_guardian_article(
+            url=url, settings=get_effective_settings(current_user.id)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except GuardianConfigError as exc:

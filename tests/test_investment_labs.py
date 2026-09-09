@@ -7,7 +7,12 @@ from zoneinfo import ZoneInfo
 from app.core.labs.service import InvestmentLabService, _number
 from app.core.portfolio.service import PortfolioService
 from app.core.research.service import ResearchService
-from app.schemas.labs import GreaterChinaRequest, PeerComparisonRequest, PortfolioLabRequest, ValuationModelCreate
+from app.schemas.labs import (
+    GreaterChinaRequest,
+    PeerComparisonRequest,
+    PortfolioLabRequest,
+    ValuationModelCreate,
+)
 from app.schemas.portfolio import PortfolioItemCreate
 from app.schemas.research import ThesisPayload, ThesisSnapshotCreate
 
@@ -21,8 +26,24 @@ class FakePortfolio:
             "total_capital": "100",
             "quote_error": None,
             "items": [
-                {"symbol": "AAA.US", "market": "US", "shares": "10", "cost_price": "10", "current_price": "12", "stock_value": "120", "currency": "USD"},
-                {"symbol": "BBB.US", "market": "US", "shares": "5", "cost_price": "20", "current_price": "18", "stock_value": "90", "currency": "USD"},
+                {
+                    "symbol": "AAA.US",
+                    "market": "US",
+                    "shares": "10",
+                    "cost_price": "10",
+                    "current_price": "12",
+                    "stock_value": "120",
+                    "currency": "USD",
+                },
+                {
+                    "symbol": "BBB.US",
+                    "market": "US",
+                    "shares": "5",
+                    "cost_price": "20",
+                    "current_price": "18",
+                    "stock_value": "90",
+                    "currency": "USD",
+                },
             ],
         }
 
@@ -38,7 +59,15 @@ class FakeMarket:
         return {"bars": values}
 
     def get_security_static_info(self, symbols, settings=None):
-        return [{"symbol": symbols[0], "name_cn": "腾讯控股", "currency": "HKD", "lot_size": "100", "board": "MainBoard"}]
+        return [
+            {
+                "symbol": symbols[0],
+                "name_cn": "腾讯控股",
+                "currency": "HKD",
+                "lot_size": "100",
+                "board": "MainBoard",
+            }
+        ]
 
 
 class FakeFundamentals:
@@ -97,14 +126,30 @@ class CrossCurrencyPortfolio:
                 "market": market,
                 "total_capital": "0",
                 "quote_error": None,
-                "items": [{"symbol": "AAA.US", "shares": "1", "current_price": "100", "stock_value": "100", "currency": "USD"}],
+                "items": [
+                    {
+                        "symbol": "AAA.US",
+                        "shares": "1",
+                        "current_price": "100",
+                        "stock_value": "100",
+                        "currency": "USD",
+                    }
+                ],
             }
         if market == "H":
             return {
                 "market": market,
                 "total_capital": "0",
                 "quote_error": None,
-                "items": [{"symbol": "700.HK", "shares": "1", "current_price": "780", "stock_value": "780", "currency": "HKD"}],
+                "items": [
+                    {
+                        "symbol": "700.HK",
+                        "shares": "1",
+                        "current_price": "780",
+                        "stock_value": "780",
+                        "currency": "HKD",
+                    }
+                ],
             }
         return {"market": market, "total_capital": "0", "quote_error": None, "items": []}
 
@@ -118,7 +163,10 @@ class NestedMetricFundamentals:
             "valuation": {
                 "data": {
                     "metrics": {
-                        "pe": [{"date": "2025-01-01", "value": value - 1}, {"date": "2026-01-01", "value": value}],
+                        "pe": [
+                            {"date": "2025-01-01", "value": value - 1},
+                            {"date": "2026-01-01", "value": value},
+                        ],
                         "pb": {"2026-01-01": {"value": value / 10}},
                         "ps": [{"value": value / 5}],
                     }
@@ -135,7 +183,9 @@ class InvestmentLabsTest(unittest.TestCase):
         self.research.create_thesis(
             "user-1",
             "AAA.US",
-            ThesisSnapshotCreate(payload=ThesisPayload(confidence=0.7, risks=["Demand"]), reason="Baseline"),
+            ThesisSnapshotCreate(
+                payload=ThesisPayload(confidence=0.7, risks=["Demand"]), reason="Baseline"
+            ),
         )
         self.service = InvestmentLabService(
             self.tmp.name,
@@ -217,7 +267,9 @@ class InvestmentLabsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing FX rates for HKD"):
             service.analyze_portfolio(
                 "user-1",
-                PortfolioLabRequest(markets=["US", "H"], benchmark_symbol="SPY.US", lookback_days=30),
+                PortfolioLabRequest(
+                    markets=["US", "H"], benchmark_symbol="SPY.US", lookback_days=30
+                ),
             )
 
         result = service.analyze_portfolio(
@@ -246,17 +298,28 @@ class InvestmentLabsTest(unittest.TestCase):
             "years": 5,
         }
         first = self.service.create_valuation_model(
-            "user-1", "AAA.US", ValuationModelCreate(title="Base DCF", assumptions=assumptions, reason="Initial")
+            "user-1",
+            "AAA.US",
+            ValuationModelCreate(title="Base DCF", assumptions=assumptions, reason="Initial"),
         )
         second = self.service.create_valuation_model(
             "user-1",
             "AAA.US",
-            ValuationModelCreate(model_id=first["id"], title="Base DCF", assumptions={**assumptions, "revenue_growth": 0.1}, reason="Update"),
+            ValuationModelCreate(
+                model_id=first["id"],
+                title="Base DCF",
+                assumptions={**assumptions, "revenue_growth": 0.1},
+                reason="Update",
+            ),
         )
         reverse = self.service.create_valuation_model(
             "user-1",
             "AAA.US",
-            ValuationModelCreate(title="Reverse", model_type="reverse_dcf", assumptions={**assumptions, "target_price": 30}),
+            ValuationModelCreate(
+                title="Reverse",
+                model_type="reverse_dcf",
+                assumptions={**assumptions, "target_price": 30},
+            ),
         )
         self.assertGreater(first["result"]["value_per_share"], 0)
         self.assertEqual(2, second["version"])
@@ -274,7 +337,9 @@ class InvestmentLabsTest(unittest.TestCase):
         }
         self.assertEqual(0.1, _number("10%"))
         with self.assertRaisesRegex(ValueError, "outside the solvable growth range"):
-            self.service._calculate_valuation("reverse_dcf", {**assumptions, "target_price": 1_000_000_000})
+            self.service._calculate_valuation(
+                "reverse_dcf", {**assumptions, "target_price": 1_000_000_000}
+            )
         with self.assertRaisesRegex(ValueError, "finite non-negative"):
             self.service._calculate_valuation("dcf", {**assumptions, "cash": float("nan")})
         with self.assertRaisesRegex(ValueError, "whole number"):
@@ -289,7 +354,9 @@ class InvestmentLabsTest(unittest.TestCase):
             self.service.create_valuation_model(
                 "user-1",
                 "AAA.US",
-                ValuationModelCreate(title="Bad link", assumptions=assumptions, thesis_snapshot_id=other_thesis["id"]),
+                ValuationModelCreate(
+                    title="Bad link", assumptions=assumptions, thesis_snapshot_id=other_thesis["id"]
+                ),
             )
 
     def test_concurrent_valuation_versions_are_allocated_atomically(self):
@@ -323,7 +390,9 @@ class InvestmentLabsTest(unittest.TestCase):
 
     def test_peer_comparison_and_greater_china_context_keep_sources(self):
         peers = self.service.compare_peers(PeerComparisonRequest(symbols=["AAA.US", "BBB.US"]))
-        context = self.service.greater_china_context(GreaterChinaRequest(symbol="00700.HK", paired_symbol="AAA.US"))
+        context = self.service.greater_china_context(
+            GreaterChinaRequest(symbol="00700.HK", paired_symbol="AAA.US")
+        )
         self.assertEqual(25, peers["medians"]["pe_ttm_ratio"])
         self.assertTrue(all(row["fetched_at"] for row in peers["rows"]))
         self.assertEqual("HK", context["market"])
@@ -345,11 +414,16 @@ class InvestmentLabsTest(unittest.TestCase):
     def test_hong_kong_portfolio_market_is_persisted(self):
         service = PortfolioService(self.tmp.name)
         item = service.add_item(
-            PortfolioItemCreate(market="H", symbol="700", name="Tencent", shares="10", cost_price="300"), user_id="user-1"
+            PortfolioItemCreate(
+                market="H", symbol="700", name="Tencent", shares="10", cost_price="300"
+            ),
+            user_id="user-1",
         )
         self.assertEqual("700.HK", item["symbol"])
         updated = service.add_item(
-            PortfolioItemCreate(market="H", symbol="00700.HK", name="腾讯控股", shares="20", cost_price="310"),
+            PortfolioItemCreate(
+                market="H", symbol="00700.HK", name="腾讯控股", shares="20", cost_price="310"
+            ),
             user_id="user-1",
         )
         self.assertEqual(item["id"], updated["id"])

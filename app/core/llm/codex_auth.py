@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_CODEX_HOME = "~/.codex"
 DEFAULT_CODEX_AUTH_PATH = "auth.json"
 
@@ -40,7 +39,9 @@ def resolve_codex_oauth(auth_file: str | None = None) -> CodexOAuthCredentials:
     """Load Codex ChatGPT OAuth credentials from the local auth file."""
     path = Path(auth_file).expanduser() if auth_file else default_codex_auth_path()
     if not path.is_file():
-        raise CodexAuthError(f"Codex OAuth credentials not found at {path}. Run `codex login` first.")
+        raise CodexAuthError(
+            f"Codex OAuth credentials not found at {path}. Run `codex login` first."
+        )
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -50,7 +51,9 @@ def resolve_codex_oauth(auth_file: str | None = None) -> CodexOAuthCredentials:
     tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
     access_token = _first_str(tokens.get("access_token"), data.get("access_token"))
     if not access_token:
-        raise CodexAuthError(f"Codex auth file does not contain a ChatGPT OAuth access token: {path}")
+        raise CodexAuthError(
+            f"Codex auth file does not contain a ChatGPT OAuth access token: {path}"
+        )
 
     account_id = _first_str(tokens.get("account_id"), data.get("account_id"))
     if not account_id:
@@ -69,7 +72,9 @@ def inspect_codex_oauth(auth_file: str | None = None) -> dict[str, str | bool]:
         return {
             "available": False,
             "account_id": "",
-            "auth_path": str(Path(auth_file).expanduser() if auth_file else default_codex_auth_path()),
+            "auth_path": str(
+                Path(auth_file).expanduser() if auth_file else default_codex_auth_path()
+            ),
             "error": str(exc),
         }
     return {
