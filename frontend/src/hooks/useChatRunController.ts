@@ -259,9 +259,12 @@ export function useChatRunController({ chatHistory, language, productAnalyticsEn
       const msg = chatFailureMessage(caught, language);
       showToast({ kind: "error", message: msg, title: language === "en" ? "Chat" : "对话" });
       if (convId) {
+        // 请求已终止时停止未完成条目的动画，已完成轮次和工具保留原状态。
+        view.trace = view.trace.map((item) => item.status === "running" ? { ...item, status: "error" } : item);
         chatHistory.updateMessage(convId, assistantMessageId, {
           content: [view.streamedContent.trimEnd(), formatTemplate(ui.chat.requestFailed, { message: msg })].filter(Boolean).join("\n\n"),
           pending: false,
+          trace: view.trace,
         });
       }
     } finally {

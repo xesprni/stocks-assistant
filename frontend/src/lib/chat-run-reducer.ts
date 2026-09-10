@@ -27,6 +27,11 @@ function formatDurationDetail(ms: number | null) {
   return ms == null ? undefined : `${(ms / 1000).toFixed(2)}s`;
 }
 
+function subagentTraceId(batchId: string, taskId: string) {
+  // 任务名允许包含冒号；编码后再拼接，避免与另一任务的轮次前缀混淆。
+  return `sub:${encodeURIComponent(batchId)}:${encodeURIComponent(taskId)}`;
+}
+
 function summarizeToolArguments(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "";
   const entries = Object.entries(value as Record<string, unknown>).slice(0, 3);
@@ -82,10 +87,29 @@ export function chatRunReducer(previous: ChatRunState, action: {
     trace = trace.map((item) => item.id === id ? { ...item, ...patch } : item);
     commitStreamState();
   };
-  const projectTool = (type: string, toolData: Record<string, unknown> | undefined, owner?: { role: string; prefix: string }) => {
+  const projectTurn = (type: string, turnData: Record<string, unknown> | undefined, owner?: { label: string; prefix: string }) => {
+    const turn = getStreamNumber(turnData, "turn");
+    const prefix = `${owner?.prefix ?? `main:${streamEvent.run_id ?? "local"}:`}turn:`;
+    const label = `${owner ? `${owner.label} ` : ""}${turn == null ? ui.chat.startAnalysis : formatTemplate(ui.chat.turn, { turn })}`;
+    if (type === "turn_start") {
+      // 同一 Agent 的轮次串行；即使遗漏结束帧，新轮也只结算本任务，保留并发状态。
+      trace = trace.map((item) => item.id.startsWith(prefix) && item.status === "running"
+        ? { ...item, status: "done" } : item);
+      addTrace(makeTrace(label, "running", undefined, `${prefix}${turn ?? nextId()}`));
+      return;
+    }
+    const id = turn == null
+      ? [...trace].reverse().find((item) => item.id.startsWith(prefix) && item.status === "running")?.id
+      : `${prefix}${turn}`;
+    if (id) updateTrace(id, { status: "done" });
+    currentStatus = owner ? `${owner.label} ${ui.chat.subRunning}`
+      : turnData?.has_tool_calls === true ? ui.chat.toolResultsReturned : ui.chat.finishing;
+    commitStreamState();
+  };
+  const projectTool = (type: string, toolData: Record<string, unknown> | undefined, owner?: { label: string; prefix: string }) => {
     const toolName = getStreamText(toolData, "tool_name") || "tool";
     const rawId = getStreamText(toolData, "tool_call_id");
-    const titlePrefix = owner ? `${owner.role} ` : "";
+    const titlePrefix = owner ? `${owner.label} ` : "";
     if (type === "tool_execution_start") {
       addTrace(makeTrace(`${titlePrefix}${ui.chat.callTool} ${toolName}`, "running", summarizeToolArguments(toolData?.arguments), `${owner?.prefix ?? ""}${rawId || nextId()}`));
       return;
@@ -100,7 +124,7 @@ export function chatRunReducer(previous: ChatRunState, action: {
     const label = `${titlePrefix}${formatTemplate(ui.chat.toolDone, { tool: toolName })}`;
     if (rawId) updateTrace(`${owner?.prefix ?? ""}${rawId}`, { label, status, detail });
     else if (!owner) addTrace(makeTrace(label, status, detail));
-    currentStatus = owner ? `${owner.role} ${ui.chat.subToolReturned}`
+    currentStatus = owner ? `${owner.label} ${ui.chat.subToolReturned}`
       : status === "done" ? ui.chat.toolDoneContinue : ui.chat.toolFailedContinue;
     commitStreamState();
   };
@@ -138,6 +162,9 @@ export function chatRunReducer(previous: ChatRunState, action: {
     if (streamEvent.type === "error") {
       terminalEventReceived = true;
       error = getStreamText(data, "error") || (language === "en" ? "Chat request failed" : "对话请求失败");
+      trace = trace.map((item) => item.status === "running" ? { ...item, status: "error" } : item);
+      currentStatus = formatTemplate(ui.chat.requestFailed, { message: error });
+      commitStreamState({ pending: false });
       return;
     }
 
@@ -186,13 +213,14 @@ export function chatRunReducer(previous: ChatRunState, action: {
       const batchId = getStreamText(data, "batch_id") || "batch";
       const taskId = getStreamText(data, "task_id") || nextId();
       const role = getStreamText(data, "role") || "subagent";
+      const agentLabel = `${role} [${taskId}]`;
       const task = getStreamText(data, "task");
       const queued = streamEvent.type === "subagent_queued";
       const waitingFor = queued && Array.isArray(data?.waiting_for)
         ? data.waiting_for.map(String).join(", ") : "";
       const detail = [compactStreamText(task), waitingFor ? formatTemplate(ui.chat.subWaitingFor, { tasks: waitingFor }) : ""].filter(Boolean).join(" · ");
-      const label = `${role} ${queued ? ui.chat.subQueued : ui.chat.subStart}`;
-      trace = upsertSubagentTrace(trace, makeTrace(label, queued ? "info" : "running", detail, `sub:${batchId}:${taskId}`));
+      const label = `${agentLabel} ${queued ? ui.chat.subQueued : ui.chat.subStart}`;
+      trace = upsertSubagentTrace(trace, makeTrace(label, queued ? "info" : "running", detail, subagentTraceId(batchId, taskId)));
       currentStatus = label;
       commitStreamState();
       return;
@@ -202,6 +230,7 @@ export function chatRunReducer(previous: ChatRunState, action: {
       const batchId = getStreamText(data, "batch_id") || "batch";
       const taskId = getStreamText(data, "task_id") || "";
       const role = getStreamText(data, "role") || "subagent";
+      const agentLabel = taskId ? `${role} [${taskId}]` : role;
       const outcome = getStreamText(data, "status");
       const status = subagentTraceStatus(outcome);
       const labels: Record<string, string> = {
@@ -211,11 +240,11 @@ export function chatRunReducer(previous: ChatRunState, action: {
         cancelled: ui.chat.subStatusCancelled,
         skipped: ui.chat.subStatusSkipped,
       };
-      const label = `${role} ${labels[outcome] || ui.chat.subStatusError}`;
+      const label = `${agentLabel} ${labels[outcome] || ui.chat.subStatusError}`;
       const errorText = getStreamText(data, "error");
       const detail = errorText || formatDurationDetail(getStreamNumber(data, "duration_ms"));
-      trace = upsertSubagentTrace(trace, makeTrace(label, status, detail, `sub:${batchId}:${taskId}`), true);
-      currentStatus = status === "done" ? `${role} ${ui.chat.subBatchResult}` : label;
+      trace = upsertSubagentTrace(trace, makeTrace(label, status, detail, subagentTraceId(batchId, taskId)), true);
+      currentStatus = status === "done" ? `${agentLabel} ${ui.chat.subBatchResult}` : label;
       commitStreamState();
       return;
     }
@@ -224,44 +253,35 @@ export function chatRunReducer(previous: ChatRunState, action: {
       const batchId = getStreamText(data, "batch_id") || "batch";
       const taskId = getStreamText(data, "task_id") || "task";
       const role = getStreamText(data, "role") || "subagent";
+      const agentLabel = `${role} [${taskId}]`;
       const childType = getStreamText(data, "child_event_type");
       const childData = getStreamObject(data, "child_data");
 
-      if (childType === "turn_start") {
-        const turn = getStreamNumber(childData, "turn");
-        addTrace(makeTrace(`${role} ${formatTemplate(ui.chat.turn, { turn: turn ?? "?" })}`, "running", undefined, `sub:${batchId}:${taskId}:turn:${turn ?? nextId()}`));
-        return;
-      }
-
-      if (childType === "turn_end") {
-        const turn = getStreamNumber(childData, "turn");
-        if (turn != null) updateTrace(`sub:${batchId}:${taskId}:turn:${turn}`, { status: "done", label: `${role} ${formatTemplate(ui.chat.turn, { turn })} ${ui.chat.subDone}` });
-        currentStatus = `${role} ${ui.chat.subRunning}`;
-        commitStreamState();
+      if (childType === "turn_start" || childType === "turn_end") {
+        projectTurn(childType, childData, { label: agentLabel, prefix: `${subagentTraceId(batchId, taskId)}:` });
         return;
       }
 
       if (childType === "tool_execution_start" || childType === "tool_execution_end") {
-        projectTool(childType, childData, { role, prefix: `sub:${batchId}:${taskId}:tool:` });
+        projectTool(childType, childData, { label: agentLabel, prefix: `${subagentTraceId(batchId, taskId)}:tool:` });
         return;
       }
 
       if (childType === "message_update") {
-        currentStatus = `${role} ${ui.chat.subGenerating}`;
+        currentStatus = `${agentLabel} ${ui.chat.subGenerating}`;
         commitStreamState();
         return;
       }
 
       if (childType === "message_end") {
-        currentStatus = `${role} ${ui.chat.subGenerated}`;
+        currentStatus = `${agentLabel} ${ui.chat.subGenerated}`;
         commitStreamState();
         return;
       }
     }
 
-    if (streamEvent.type === "turn_start") {
-      const turn = getStreamNumber(data, "turn");
-      addTrace(makeTrace(turn ? formatTemplate(ui.chat.turn, { turn }) : ui.chat.startAnalysis, "running"));
+    if (streamEvent.type === "turn_start" || streamEvent.type === "turn_end") {
+      projectTurn(streamEvent.type, data);
       return;
     }
 
@@ -280,13 +300,6 @@ export function chatRunReducer(previous: ChatRunState, action: {
 
     if (streamEvent.type === "tool_execution_start" || streamEvent.type === "tool_execution_end") {
       projectTool(streamEvent.type, data);
-      return;
-    }
-
-    if (streamEvent.type === "turn_end") {
-      const hasToolCalls = data?.has_tool_calls === true;
-      currentStatus = hasToolCalls ? ui.chat.toolResultsReturned : ui.chat.finishing;
-      commitStreamState();
       return;
     }
 
