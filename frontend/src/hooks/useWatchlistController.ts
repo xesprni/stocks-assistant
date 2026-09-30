@@ -1,9 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { addWatchlistItem, deleteWatchlistItem, getWatchlistOverview, listWatchlist, reorderWatchlist } from "@/lib/api";
 import { WatchlistController } from "@/lib/watchlist-controller";
-import type { WatchlistCategory } from "@/types/app";
+import type { WatchlistMarket } from "@/types/app";
 
-export function useWatchlistController(category: WatchlistCategory, refreshSeconds: number) {
+export function useWatchlistController(category: WatchlistMarket, refreshSeconds: number) {
   const [controller] = useState(() => new WatchlistController(category, {
     list: listWatchlist, overview: getWatchlistOverview, add: addWatchlistItem, remove: deleteWatchlistItem, reorder: reorderWatchlist,
   }));

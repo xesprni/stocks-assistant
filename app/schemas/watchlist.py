@@ -1,14 +1,32 @@
 """Watchlist API Schema."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.schemas.market import QuoteItem
 
 WatchlistCategory = Literal["US", "A", "H"]
 WatchlistOverviewSource = Literal["local", "cache", "live"]
 WatchlistQuoteView = Literal["movers", "gainers", "losers", "active"]
+
+
+class WatchlistGroupWrite(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+
+
+class WatchlistGroupMembersWrite(BaseModel):
+    item_ids: list[Annotated[int, Field(gt=0)]] = Field(max_length=2000)
+
+
+class WatchlistGroup(BaseModel):
+    id: int
+    name: str
+    item_ids: list[int] = Field(default_factory=list)
+
+
+class WatchlistGroupsResponse(BaseModel):
+    groups: list[WatchlistGroup]
 
 
 class WatchlistItem(BaseModel):

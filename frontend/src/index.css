@@ -1850,6 +1850,36 @@
     height: 100%;
     min-height: 0 !important;
   }
+
+  /* 横屏高度由外层分配，资金图不能继续保留竖屏的最小高度。 */
+  .watchlist-analysis-shell .technical-capital-flow-panel {
+    flex: 1 1 0%;
+    height: auto;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .watchlist-analysis-shell .capital-flow-canvas,
+  .watchlist-analysis-shell .capital-flow-state {
+    min-height: 0 !important;
+  }
+
+  .watchlist-analysis-shell .capital-flow-canvas {
+    flex: 1 1 0%;
+    overflow: hidden;
+  }
+
+  .watchlist-analysis-shell .capital-flow-header {
+    flex-wrap: nowrap;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .watchlist-analysis-shell .capital-flow-metrics {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
 }
 
 @keyframes theme-icon-in {

@@ -522,12 +522,14 @@ function drawTextPill(
   y: number,
   theme: NativeChartTheme,
   align: CanvasTextAlign = "left",
+  boundsWidth?: number,
 ) {
   ctx.save();
   ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
   const paddingX = 4;
   const width = ctx.measureText(text).width + paddingX * 2;
-  const pillX = align === "right" ? x - width : x;
+  const requestedX = align === "right" ? x - width : x;
+  const pillX = boundsWidth == null ? requestedX : clamp(requestedX, 0, Math.max(0, boundsWidth - width));
   ctx.fillStyle = theme.axisBackground;
   ctx.fillRect(pillX, y - 8, width, 16);
   ctx.fillStyle = theme.text;
@@ -686,6 +688,7 @@ function drawChart(
 
   const targetGridPx = clamp(baseMapper.spacing * 6, 54, 120);
   const verticalTicks = clamp(Math.round(layouts[0].width / targetGridPx), 2, 12);
+  let lastTimeLabelRight = -Infinity;
   ctx.strokeStyle = theme.grid;
   for (let tick = 0; tick <= verticalTicks; tick++) {
     const logical = normalized.from + ((viewportCount(normalized) - 1) * tick) / verticalTicks;
@@ -699,7 +702,14 @@ function drawChart(
     }
     ctx.fillStyle = theme.mutedText;
     ctx.textAlign = "center";
-    ctx.fillText(formatTimeLabel(times[index], intradayScale), x, height - TIME_AXIS_HEIGHT / 2);
+    const label = formatTimeLabel(times[index], intradayScale);
+    const halfLabelWidth = ctx.measureText(label).width / 2;
+    const labelX = clamp(x, halfLabelWidth + 4, width - halfLabelWidth - 4);
+    // 窄屏首尾刻度保持完整；网格可更密，但时间文字不能互相覆盖。
+    if (labelX - halfLabelWidth >= lastTimeLabelRight + 8) {
+      ctx.fillText(label, labelX, height - TIME_AXIS_HEIGHT / 2);
+      lastTimeLabelRight = labelX + halfLabelWidth;
+    }
   }
 
   for (const item of series) {
@@ -748,7 +758,8 @@ function drawChart(
       }
     }
 
-    drawTextPill(ctx, formatTimeLabel(times[crosshair.index], intradayScale), x + 6, height - TIME_AXIS_HEIGHT / 2, theme);
+    const timeLabel = formatTimeLabel(times[crosshair.index], intradayScale);
+    drawTextPill(ctx, timeLabel, x + 6, height - TIME_AXIS_HEIGHT / 2, theme, "left", width);
   }
 
   const legendIndex = crosshair && crosshair.index >= 0 && crosshair.index < times.length ? crosshair.index : null;
@@ -932,6 +943,8 @@ export function NativeStockChart({
     return () => {
       observer.disconnect();
       if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+      // StrictMode 会重新建立布局 effect；取消后必须释放标记，允许下一次绘制。
+      rafRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -13,7 +13,7 @@ from app.core.market.utils import change_value as _change_value
 from app.core.market.utils import stringify as _decimal_to_str
 from app.core.orm.repositories.watchlist import WatchlistRepository
 from app.core.portfolio.symbols import canonical_portfolio_symbol
-from app.schemas.watchlist import WatchlistCategory, WatchlistItemCreate
+from app.schemas.watchlist import WatchlistCategory, WatchlistGroupWrite, WatchlistItemCreate
 
 
 def _now() -> str:
@@ -138,6 +138,20 @@ class WatchlistService:
         self, category: WatchlistCategory | None = None, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         return self.repository.list_items(category=category, user_id=user_id)
+
+    def list_groups(self, user_id: str) -> list[dict[str, Any]]:
+        return self.repository.list_groups(user_id)
+
+    def save_group(self, name: str, user_id: str, group_id: int | None = None) -> None:
+        # Service 入口也验证名称，保证 API 外的调用遵守同样约束。
+        name = WatchlistGroupWrite(name=name).name
+        self.repository.save_group(name, user_id, group_id)
+
+    def delete_group(self, group_id: int, user_id: str) -> None:
+        self.repository.delete_group(group_id, user_id)
+
+    def set_group_members(self, group_id: int, item_ids: list[int], user_id: str) -> None:
+        self.repository.set_group_members(group_id, item_ids, user_id)
 
     def reorder_items(self, ordered_ids: list[int], user_id: str | None = None) -> None:
         """Update sort_order for each item according to the provided ID sequence."""

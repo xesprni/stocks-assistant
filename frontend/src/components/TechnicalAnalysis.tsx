@@ -28,9 +28,13 @@ import {
 import { getCandlesticks, getIntraday, listWatchlist } from "@/lib/api";
 import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
+import { i18n } from "@/lib/i18n";
 import type { CandlestickItem, IntradayItem, WatchlistItem } from "@/types/app";
 import {
   calcMA,
+  calcATR,
+  calcOBV,
+  calcROC,
   calcMACD,
   calcKDJ,
   calcRSI,
@@ -48,8 +52,24 @@ import { useChartColors } from "@/lib/color-scheme";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Period = "1D" | "1W" | "1M";
-type SubIndicatorKey = "MACD" | "KDJ" | "RSI" | "CCI" | "WR" | "DMI" | "OSC";
-type OverlayIndicatorKey = "BOLL" | "BBIBOLL" | "EMA";
+const MA_PERIODS = [5, 10, 20, 60, 120, 250] as const;
+type MAPeriod = (typeof MA_PERIODS)[number];
+const MA_SELECTION_STORAGE_KEY = "stocks-assistant.chart-ma-periods";
+// 预留均线起算历史，使 MA250 在首次打开时就能显示一段有效曲线。
+const INITIAL_KLINE_COUNT = 500;
+
+function maDefinitions(theme: NativeChartTheme) {
+  return [
+    { period: 5, color: theme.orange },
+    { period: 10, color: theme.blue },
+    { period: 20, color: theme.purple },
+    { period: 60, color: theme.yellow },
+    { period: 120, color: "#06b6d4" },
+    { period: 250, color: "#ec4899" },
+  ] as const;
+}
+type SubIndicatorKey = "MACD" | "KDJ" | "RSI" | "CCI" | "WR" | "DMI" | "OSC" | "ATR" | "OBV" | "ROC";
+type OverlayIndicatorKey = "BOLL" | "BBIBOLL" | "EMA" | "MA" | "VOLMA";
 type IndicatorKey = SubIndicatorKey | OverlayIndicatorKey;
 
 interface Props {
@@ -534,6 +554,7 @@ function makeHistogramSeries(
 function buildKLineChartModel(
   bars: ParsedKLineBar[],
   activeIndicators: Set<IndicatorKey>,
+  activeMAPeriods: ReadonlySet<MAPeriod>,
   theme: NativeChartTheme,
 ): { panes: NativeChartPane[]; series: NativeChartSeries[] } {
   const closes = bars.map((bar) => bar.close);
@@ -557,13 +578,25 @@ function buildKLineChartModel(
         close: bar.close,
       })),
     },
-    makeLineSeries("ma5", "price", "MA5", theme.orange, bars, calcMA(closes, 5)),
-    makeLineSeries("ma10", "price", "MA10", theme.blue, bars, calcMA(closes, 10)),
-    makeLineSeries("ma20", "price", "MA20", theme.purple, bars, calcMA(closes, 20)),
     makeHistogramSeries("volume", "volume", "VOL", bars, bars.map((bar) => bar.volume), (_value, index) =>
       bars[index].close >= bars[index].open ? colorWithAlpha(theme.up, 0.36) : colorWithAlpha(theme.down, 0.36),
     ),
   ];
+
+  if (activeIndicators.has("MA")) {
+    for (const { period, color } of maDefinitions(theme)) {
+      if (activeMAPeriods.has(period) && bars.length >= period) {
+        series.push(makeLineSeries(`ma${period}`, "price", `MA${period}`, color, bars, calcMA(closes, period)));
+      }
+    }
+  }
+  if (activeIndicators.has("VOLMA")) {
+    const volumes = bars.map((bar) => bar.volume);
+    series.push(
+      makeLineSeries("volma5", "volume", "VOL MA5", theme.orange, bars, calcMA(volumes, 5)),
+      makeLineSeries("volma10", "volume", "VOL MA10", theme.blue, bars, calcMA(volumes, 10)),
+    );
+  }
 
   if (activeIndicators.has("BOLL")) {
     const boll = calcBollinger(closes);
@@ -590,7 +623,7 @@ function buildKLineChartModel(
     );
   }
 
-  for (const key of ["MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC"] as SubIndicatorKey[]) {
+  for (const key of ["MACD", "KDJ", "RSI", "CCI", "WR", "DMI", "OSC", "ATR", "OBV", "ROC"] as SubIndicatorKey[]) {
     if (!activeIndicators.has(key)) continue;
     const paneId = key.toLowerCase();
     panes.push({ id: paneId, label: key, heightWeight: 0.9 });
@@ -624,6 +657,12 @@ function buildKLineChartModel(
         makeLineSeries("dmi-adx", paneId, "ADX", theme.purple, bars, dmi.map((point) => point?.adx ?? null)),
         makeLineSeries("dmi-adxr", paneId, "ADXR", theme.yellow, bars, dmi.map((point) => point?.adxr ?? null), true),
       );
+    } else if (key === "ATR") {
+      series.push(makeLineSeries("atr", paneId, "ATR14", theme.orange, bars, calcATR(highs, lows, closes)));
+    } else if (key === "OBV") {
+      series.push(makeLineSeries("obv", paneId, "OBV", theme.blue, bars, calcOBV(closes, bars.map((bar) => bar.volume))));
+    } else if (key === "ROC") {
+      series.push(makeLineSeries("roc", paneId, "ROC12 %", theme.purple, bars, calcROC(closes)));
     } else if (key === "OSC") {
       const osc = calcOSC(closes);
       series.push(
@@ -644,6 +683,8 @@ function buildKLineChartModel(
 function KLineChart({
   symbol,
   activeIndicators,
+  activeMAPeriods,
+  onToggleMA,
   copy,
   language,
   isDark,
@@ -652,6 +693,8 @@ function KLineChart({
 }: {
   symbol: string;
   activeIndicators: Set<IndicatorKey>;
+  activeMAPeriods: ReadonlySet<MAPeriod>;
+  onToggleMA: (period: MAPeriod) => void;
   copy: TechnicalCopy;
   language: AppLanguage;
   isDark: boolean;
@@ -667,7 +710,7 @@ function KLineChart({
   const [bars, setBars] = useState<ReturnType<typeof parseBars>>([]);
   const symbolRef = useRef(symbol);
   const periodRef = useRef(period);
-  const dataCountRef = useRef(200);
+  const dataCountRef = useRef(INITIAL_KLINE_COUNT);
   const isLoadingMoreRef = useRef(false);
   const isRefreshingLatestRef = useRef(false);
   const allDataLoadedRef = useRef(false);
@@ -679,8 +722,8 @@ function KLineChart({
   }, [period]);
 
   const chartModel = useMemo(
-    () => buildKLineChartModel(bars, activeIndicators, theme),
-    [activeIndicators, bars, theme],
+    () => buildKLineChartModel(bars, activeIndicators, activeMAPeriods, theme),
+    [activeIndicators, activeMAPeriods, bars, theme],
   );
   const times = useMemo(() => bars.map((bar) => bar.time), [bars]);
   const formatCrosshairValueLabel = useCallback((state: NativeCrosshairValueState) => {
@@ -694,6 +737,14 @@ function KLineChart({
     if (!bar) return null;
     const rate = changeRate(bar.close, bars[state.index - 1]?.close);
     const lineRate = state.paneId === "price" ? changeRate(state.paneValue, bars[state.index - 1]?.close) : null;
+    if (state.paneId && state.paneId !== "price") {
+      const metrics = chartModel.series.filter((series) => series.paneId === state.paneId && series.type !== "candlestick").map((series) => {
+        const point = series.data.find((point) => point.time === bar.time);
+        const value = point && "value" in point ? point.value : null;
+        return { label: series.title ?? series.id, value: formatChartNumber(value, language) };
+      });
+      return <ChartHoverCard title={formatHoverTime(bar.time, language)} metrics={metrics} />;
+    }
     return (
       <ChartHoverCard
         title={formatHoverTime(bar.time, language)}
@@ -706,7 +757,7 @@ function KLineChart({
         ]}
       />
     );
-  }, [bars, copy.changeRate, copy.close, copy.lineChangeRate, copy.open, copy.volume, language]);
+  }, [bars, chartModel.series, copy.changeRate, copy.close, copy.lineChangeRate, copy.open, copy.volume, language]);
 
   const loadMore = useCallback(() => {
     if (!symbolRef.current || isLoadingMoreRef.current || allDataLoadedRef.current || bars.length === 0) return;
@@ -762,10 +813,10 @@ function KLineChart({
       return;
     }
     let cancelled = false;
-    dataCountRef.current = 200;
+    dataCountRef.current = INITIAL_KLINE_COUNT;
     allDataLoadedRef.current = false;
     setLoading(true);
-    getCandlesticks(symbol, period)
+    getCandlesticks(symbol, period, INITIAL_KLINE_COUNT)
       .then((res) => {
         if (cancelled) return;
         const parsed = parseBars(res.bars);
@@ -793,8 +844,8 @@ function KLineChart({
 
   return (
     <div className="technical-chart-panel flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-background px-3 py-1">
-        <div className="flex h-8 items-center gap-1 border-b border-border/70">
+      <div className="technical-kline-toolbar flex shrink-0 items-center gap-3 overflow-x-auto border-b border-border bg-background px-3 py-1">
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/70">
           {(["1D", "1W", "1M"] as Period[]).map((p) => (
             <button
               key={p}
@@ -809,18 +860,20 @@ function KLineChart({
             </button>
           ))}
         </div>
-        <div className="ml-3 flex items-center gap-2.5">
-          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <span className="h-px w-3 bg-orange-500" />MA5
-          </span>
-          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <span className="h-px w-3 bg-blue-600" />MA10
-          </span>
-          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <span className="h-px w-3 bg-purple-600" />MA20
-          </span>
+        <div className="flex shrink-0 items-center gap-1" role="group" aria-label={i18n[language].chart.maTitle}>
+          {maDefinitions(theme).map(({ period: maPeriod, color }) => {
+            const enabled = activeIndicators.has("MA") && activeMAPeriods.has(maPeriod);
+            const alias = period === "1D" ? maPeriod === 120 ? i18n[language].chart.halfYear : maPeriod === 250 ? i18n[language].chart.year : "" : "";
+            return <button key={maPeriod} type="button" aria-pressed={enabled} aria-label={`MA${maPeriod}`}
+              title={i18n[language].chart.maHint}
+              onClick={() => onToggleMA(maPeriod)}
+              className={cn("flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] transition-colors", enabled ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50")}>
+              <span className={cn("h-0.5 w-3", !enabled && "opacity-30")} style={{ background: color }} />
+              <span className={cn(!enabled && "line-through opacity-60")}>MA{maPeriod}{alias ? ` · ${alias}` : ""}</span>
+            </button>;
+          })}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {loading && (
             <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <RefreshCw size={10} className="animate-spin" />{copy.loading}
@@ -828,6 +881,11 @@ function KLineChart({
           )}
         </div>
       </div>
+      {activeIndicators.has("MA") && bars.length > 0 && MA_PERIODS.some((value) => activeMAPeriods.has(value) && bars.length < value) && (
+        <p role="status" className="shrink-0 border-b border-border px-3 py-1 text-[10px] text-muted-foreground">
+          {formatTemplate(i18n[language].chart.maInsufficient, { lines: MA_PERIODS.filter((value) => activeMAPeriods.has(value) && bars.length < value).map((value) => `MA${value}`).join(" / ") })}
+        </p>
+      )}
       <NativeStockChart
         times={times}
         panes={chartModel.panes}
@@ -1198,6 +1256,9 @@ function ChipDistributionPanel({
 // ── Indicator selector + display ──────────────────────────────────────────────
 
 const SUB_INDICATORS: { key: SubIndicatorKey; label: string; color: string }[] = [
+  { key: "ATR", label: "ATR(14)", color: "#d97706" },
+  { key: "OBV", label: "OBV", color: "#2563eb" },
+  { key: "ROC", label: "ROC(12)", color: "#7c3aed" },
   { key: "MACD", label: "MACD", color: "#2563eb" },
   { key: "KDJ",  label: "KDJ",  color: "#d97706" },
   { key: "RSI",  label: "RSI",  color: "#7c3aed" },
@@ -1207,6 +1268,8 @@ const SUB_INDICATORS: { key: SubIndicatorKey; label: string; color: string }[] =
   { key: "OSC",  label: "OSC",  color: "#ea580c" },
 ];
 const OVERLAY_INDICATORS: { key: OverlayIndicatorKey; label: string; color: string }[] = [
+  { key: "MA", label: "MA", color: "#d97706" },
+  { key: "VOLMA", label: "VOL MA", color: "#0284c7" },
   { key: "BOLL",    label: "BOLL",    color: "#ca8a04" },
   { key: "BBIBOLL", label: "BBIBOLL", color: "#ea580c" },
   { key: "EMA",     label: "EMA",     color: "#7c3aed" },
@@ -1218,7 +1281,21 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
   const copy = technicalCopy[language];
   const isDark = useIsDark();
   const [displayName, setDisplayName] = useState("");
-  const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorKey>>(new Set());
+  const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorKey>>(() => {
+    try {
+      const stored: unknown = JSON.parse(window.localStorage.getItem("stocks-assistant.chart-indicators") ?? "null");
+      const allowed = [...SUB_INDICATORS, ...OVERLAY_INDICATORS].map((item) => item.key);
+      if (Array.isArray(stored)) return new Set(stored.filter((key): key is IndicatorKey => allowed.includes(key)));
+    } catch { /* 存储不可用时保留默认均线。 */ }
+    return new Set(["MA"]);
+  });
+  const [activeMAPeriods, setActiveMAPeriods] = useState<Set<MAPeriod>>(() => {
+    try {
+      const stored: unknown = JSON.parse(window.localStorage.getItem(MA_SELECTION_STORAGE_KEY) ?? "null");
+      if (Array.isArray(stored)) return new Set(MA_PERIODS.filter((period) => stored.includes(period)));
+    } catch { /* 存储不可用时显示默认均线组合。 */ }
+    return new Set(MA_PERIODS);
+  });
   const [activeTab, setActiveTab] = useState<"kline" | "intraday" | "capital">(() =>
     readStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, ["kline", "intraday", "capital"], "kline"),
   );
@@ -1233,6 +1310,29 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
     writeStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, activeTab);
   }, [activeTab]);
 
+  useEffect(() => {
+    writeStoredValue("stocks-assistant.chart-indicators", JSON.stringify([...activeIndicators]));
+  }, [activeIndicators]);
+
+  useEffect(() => {
+    writeStoredValue(MA_SELECTION_STORAGE_KEY, JSON.stringify([...activeMAPeriods]));
+  }, [activeMAPeriods]);
+
+  function toggleMA(period: MAPeriod) {
+    // 总开关关闭时，点击单条均线只打开该线，避免意外恢复整个组合。
+    if (!activeIndicators.has("MA")) {
+      setActiveIndicators((previous) => new Set([...previous, "MA"]));
+      setActiveMAPeriods(new Set([period]));
+      return;
+    }
+    setActiveMAPeriods((previous) => {
+      const next = new Set(previous);
+      if (next.has(period)) next.delete(period);
+      else next.add(period);
+      return next;
+    });
+  }
+
   function toggleIndicator(key: IndicatorKey) {
     setActiveIndicators((prev) => {
       const next = new Set(prev);
@@ -1242,9 +1342,6 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
     });
   }
 
-  // Active sub-indicator descriptions for display
-  const activeSubLabels = SUB_INDICATORS.filter((i) => activeIndicators.has(i.key));
-  const activeOverlayLabels = OVERLAY_INDICATORS.filter((i) => activeIndicators.has(i.key));
 
   return (
     <div className="technical-analysis-root flex min-h-0 flex-col bg-background text-foreground lg:h-full lg:overflow-hidden">
@@ -1328,8 +1425,10 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                   {SUB_INDICATORS.map(({ key, label, color }) => (
                     <button
                       key={key}
+                      aria-pressed={activeIndicators.has(key)}
+                      title={label}
                       onClick={() => toggleIndicator(key)}
-                      className={`inline-flex h-7 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium transition-colors ${
+                      className={`inline-flex h-7 shrink-0 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium transition-colors ${
                         activeIndicators.has(key)
                           ? "border-primary text-foreground"
                           : "border-transparent text-muted-foreground hover:text-foreground"
@@ -1344,8 +1443,10 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                   {OVERLAY_INDICATORS.map(({ key, label, color }) => (
                     <button
                       key={key}
+                      aria-pressed={activeIndicators.has(key)}
+                      title={label}
                       onClick={() => toggleIndicator(key)}
-                      className={`inline-flex h-7 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium transition-colors ${
+                      className={`inline-flex h-7 shrink-0 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium transition-colors ${
                         activeIndicators.has(key)
                           ? "border-primary text-foreground"
                           : "border-transparent text-muted-foreground hover:text-foreground"
@@ -1356,30 +1457,15 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                     </button>
                   ))}
 
-                  {/* Active indicator tags inline */}
-                  {(activeSubLabels.length > 0 || activeOverlayLabels.length > 0) && (
-                    <>
-                      <div className="mx-1.5 h-3 w-px bg-border" />
-                      {activeOverlayLabels.map(({ key, label, color }) => (
-                        <span key={key} className="flex items-center gap-1 border-l border-border/80 pl-1.5 text-[10px] text-muted-foreground">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-                          <span className="font-medium">{label}</span>
-                        </span>
-                      ))}
-                      {activeSubLabels.map(({ key, label, color }) => (
-                        <span key={key} className="flex items-center gap-1 border-l border-border/80 pl-1.5 text-[10px] text-muted-foreground">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-                          <span className="font-medium">{label}</span>
-                        </span>
-                      ))}
-                    </>
-                  )}
+
                 </div>
 
                 {/* Chart area (flex-1 fills remaining space) */}
                 <KLineChart
                   symbol={symbol}
                   activeIndicators={activeIndicators}
+                  activeMAPeriods={activeMAPeriods}
+                  onToggleMA={toggleMA}
                   copy={copy}
                   language={language}
                   isDark={isDark}
@@ -1403,8 +1489,8 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
             />
           ) : (
             <CapitalFlowChart
-              chartClassName="min-h-[500px]"
-              className="flex min-h-[560px] flex-1"
+              chartClassName="technical-capital-flow-chart"
+              className="flex min-h-[440px] flex-1 lg:min-h-0"
               language={language}
               symbol={symbol}
             />

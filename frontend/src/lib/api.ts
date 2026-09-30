@@ -95,7 +95,8 @@ import type {
   UserListResponse,
   UserProfileUpdateRequest,
   UserUpdateRequest,
-  WatchlistCategory,
+  WatchlistMarket,
+  WatchlistGroupsResponse,
   WatchlistItem,
   WatchlistListResponse,
   WatchlistOverviewResponse,
@@ -844,16 +845,17 @@ export function getSessionTraces(sessionId: string, limit = 20) {
   return request<TraceSessionResponse>(`/api/v1/tracing/sessions/${sessionId}?${params.toString()}`);
 }
 
-export function listWatchlist(category: WatchlistCategory, init?: RequestInit) {
-  return request<WatchlistListResponse>(`/api/v1/watchlist?category=${category}`, init);
+export function listWatchlist(category: WatchlistMarket, init?: RequestInit) {
+  return request<WatchlistListResponse>(`/api/v1/watchlist${category === "all" ? "" : `?category=${category}`}`, init);
 }
 
 export function getWatchlistOverview(init?: RequestInit) {
   return request<WatchlistOverviewResponse>("/api/v1/watchlist/overview", init);
 }
 
-export function searchWatchlist(query: string, category: WatchlistCategory, init?: RequestInit) {
-  const params = new URLSearchParams({ q: query, category, limit: "10" });
+export function searchWatchlist(query: string, category: WatchlistMarket, init?: RequestInit) {
+  const params = new URLSearchParams({ q: query, limit: "10" });
+  if (category !== "all") params.set("category", category);
   return request<WatchlistSearchResponse>(`/api/v1/watchlist/search?${params.toString()}`, init);
 }
 
@@ -874,6 +876,26 @@ export function reorderWatchlist(ids: number[]) {
   return request<{ status: string }>("/api/v1/watchlist/reorder", {
     method: "PATCH",
     body: JSON.stringify({ ids }),
+  });
+}
+
+export function listWatchlistGroups(init?: RequestInit) {
+  return request<WatchlistGroupsResponse>("/api/v1/watchlist/groups", init);
+}
+
+export function saveWatchlistGroup(name: string, id?: number) {
+  return request<WatchlistGroupsResponse>(`/api/v1/watchlist/groups${id == null ? "" : `/${id}`}`, {
+    method: id == null ? "POST" : "PATCH", body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteWatchlistGroup(id: number) {
+  return request<WatchlistGroupsResponse>(`/api/v1/watchlist/groups/${id}`, { method: "DELETE" });
+}
+
+export function setWatchlistGroupMembers(id: number, itemIds: number[]) {
+  return request<WatchlistGroupsResponse>(`/api/v1/watchlist/groups/${id}/members`, {
+    method: "PUT", body: JSON.stringify({ item_ids: itemIds }),
   });
 }
 

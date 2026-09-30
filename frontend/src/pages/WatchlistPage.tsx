@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { FileText, GripVertical, Loader2, Search, Star, Trash2 } from "lucide-react";
+import { FileText, Folder, GripVertical, Loader2, Plus, Search, Star, Trash2, X } from "lucide-react";
 import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
+import { SideDrawer } from "@/components/common/SideDrawer";
+import { WatchlistGroupsDrawer } from "@/components/WatchlistGroupsDrawer";
+import { Select } from "@/components/ui/select";
+import { useWatchlistGroups } from "@/hooks/useWatchlistGroups";
+import { filterWatchlist, quoteNumber, reorderVisibleItems, type WatchlistGroupFilter, type WatchlistSort } from "@/lib/watchlist-view";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/common/Toast";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
@@ -14,7 +19,7 @@ import { useWatchlistController } from "@/hooks/useWatchlistController";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import type { WatchlistCategory, WatchlistItem, WatchlistSearchResult } from "@/types/app";
+import type { WatchlistCategory, WatchlistMarket, WatchlistItem, WatchlistSearchResult } from "@/types/app";
 
 type NameParts = Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">;
 
@@ -66,6 +71,7 @@ function loadStoredWatchlistRefreshSeconds() {
 
 function SortableWatchlistItem({
   item,
+  sortingEnabled,
   activeSymbol,
   onDelete,
   onOpenFinancials,
@@ -73,6 +79,7 @@ function SortableWatchlistItem({
   copy,
 }: {
   item: WatchlistItem;
+  sortingEnabled: boolean;
   activeSymbol: string;
   onDelete: (item: WatchlistItem) => void;
   onOpenFinancials: (symbol: string) => void;
@@ -80,7 +87,7 @@ function SortableWatchlistItem({
   copy: typeof i18n.zh.watchlist;
 }) {
   const { active, attributes, listeners, over, setNodeRef, transform, transition, isDragging, isSorting } = useSortable({
-    id: item.id,
+    id: item.id, disabled: !sortingEnabled,
   });
   const isDropTarget = over?.id === item.id && active?.id !== item.id;
   const pressStartedAtRef = useRef(0);
@@ -102,7 +109,7 @@ function SortableWatchlistItem({
   return (
     <div
       className={cn(
-        "watchlist-sortable-row finance-row-card message-bubble select-none rounded-md border border-border/80 bg-card/80 p-1.5 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary sm:p-2",
+        "watchlist-sortable-row finance-row-card message-bubble select-none rounded-md border border-border/80 bg-card/80 p-2.5 outline-none transition-colors hover:border-primary/50 focus-visible:border-primary",
         isDragging && "watchlist-sortable-row-dragging",
         isDropTarget && "watchlist-sortable-row-over",
         isSorting && !isDragging && "watchlist-sortable-row-sorting",
@@ -119,7 +126,7 @@ function SortableWatchlistItem({
         onSelect(item);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           onSelect(item);
         }
@@ -147,8 +154,9 @@ function SortableWatchlistItem({
           {...attributes}
           {...listeners}
           aria-label={copy.dragSort}
+          disabled={!sortingEnabled}
           className={cn(
-            "watchlist-drag-handle grid size-6 shrink-0 cursor-grab touch-none select-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
+            "watchlist-drag-handle grid size-7 shrink-0 disabled:cursor-default disabled:opacity-20 cursor-grab touch-none select-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
             (isDragging || isDropTarget) && "text-primary",
           )}
           onClick={(event) => event.stopPropagation()}
@@ -157,8 +165,14 @@ function SortableWatchlistItem({
           <GripVertical className="size-3.5" />
         </button>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-semibold sm:text-sm">{item.symbol}</p>
-          <p className="truncate text-[11px] text-muted-foreground sm:text-xs">{stockName(item)}</p>
+          <p className="truncate text-sm font-semibold" title={stockName(item)}>{stockName(item)}</p>
+          <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{item.symbol}</p>
+        </div>
+        <div className="shrink-0 text-right font-mono tabular-nums">
+          <p className="text-xs font-medium" title={item.currency}>{quoteNumber(item.last_done)?.toLocaleString(undefined, { maximumFractionDigits: 3 }) ?? "—"}</p>
+          <p className={cn("mt-0.5 text-[11px]", (quoteNumber(item.change_rate) ?? 0) > 0 ? "text-[var(--color-up)]" : (quoteNumber(item.change_rate) ?? 0) < 0 ? "text-[var(--color-down)]" : "text-muted-foreground")}>
+            {quoteNumber(item.change_rate) == null ? "—" : `${quoteNumber(item.change_rate)! > 0 ? "+" : ""}${quoteNumber(item.change_rate)!.toFixed(2)}%`}
+          </p>
         </div>
         <RowActions
           copy={copy}
@@ -214,11 +228,11 @@ function RowActions({
 }) {
   return (
     <div className="ml-auto flex shrink-0 justify-end gap-0.5">
-      <Button aria-label={copy.financials} className="h-6 w-6 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenFinancials(); }} size="icon" title={copy.financials} variant="ghost">
+      <Button aria-label={copy.financials} className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={(event) => { event.stopPropagation(); onOpenFinancials(); }} size="icon" title={copy.financials} variant="ghost">
         <FileText />
       </Button>
       {showDelete ? (
-        <Button aria-label={copy.deleteItem} className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
+        <Button aria-label={copy.deleteItem} className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
           <Trash2 />
         </Button>
       ) : null}
@@ -226,278 +240,167 @@ function RowActions({
   );
 }
 
-export function WatchlistPage({
-  language,
-  selectedSymbol = "",
-  onSelectedSymbolChange,
-  onOpenFinancials,
-}: {
-  language: AppLanguage;
-  selectedSymbol?: string;
-  onSelectedSymbolChange?: (symbol: string) => void;
+export function WatchlistPage({ language, selectedSymbol = "", onSelectedSymbolChange, onOpenFinancials }: {
+  language: AppLanguage; selectedSymbol?: string; onSelectedSymbolChange?: (symbol: string) => void;
   onOpenFinancials: (symbol: string) => void;
 }) {
-  const common = i18n[language].common;
-  const copy = i18n[language].watchlist;
-  const watchlistCategories = getWatchlistCategories(language);
-  const [category, setCategory] = useState<WatchlistCategory>(() =>
-    inferCategoryFromSymbol(selectedSymbol) ?? readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["US", "A", "H"], "US"),
-  );
+  const common = i18n[language].common, copy = i18n[language].watchlist;
+  const [category, setCategory] = useState<WatchlistMarket>(() =>
+    inferCategoryFromSymbol(selectedSymbol) ?? readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["all", "US", "A", "H"], "all"));
   const [activeSymbol, setActiveSymbol] = useState(selectedSymbol);
-  const { controller, items, loading: isLoading, refreshing: isRefreshingQuotes, error: resourceError } = useWatchlistController(category, loadStoredWatchlistRefreshSeconds());
-  const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
-  const [activeDragSize, setActiveDragSize] = useState<DragPreviewSize | null>(null);
+  const { controller, items, loading: isLoading, refreshing, error } = useWatchlistController("all", loadStoredWatchlistRefreshSeconds());
+  const groupState = useWatchlistGroups();
+  const [group, setGroup] = useState<WatchlistGroupFilter>("all");
+  const [localQuery, setLocalQuery] = useState("");
+  const [sort, setSort] = useState<WatchlistSort>("manual");
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WatchlistSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-
-  const searchControllerRef = useRef<AbortController | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
+  const [activeDragSize, setActiveDragSize] = useState<DragPreviewSize | null>(null);
   const lastErrorToastRef = useRef({ message: "", time: 0 });
   const { showToast } = useToast();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const selectedCategory = watchlistCategories.find((item) => item.id === category);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const categories = [{ id: "all" as const, label: copy.allMarkets }, ...getWatchlistCategories(language)];
+  const visibleItems = useMemo(() => filterWatchlist(items, groupState.groups, { market: category, group, query: localQuery, sort }),
+    [items, groupState.groups, category, group, localQuery, sort]);
   const symbolSet = useMemo(() => new Set(items.map((item) => item.symbol)), [items]);
-  const activeDragItem = useMemo(
-    () => items.find((item) => item.id === activeDragId) ?? null,
-    [activeDragId, items],
-  );
-  const showWatchlistError = useCallback((text: string) => {
-    const message = text.trim();
-    if (!message) return;
+  const activeDragItem = items.find((item) => item.id === activeDragId) ?? null;
+  const showError = useCallback((message: string) => {
+    if (!message.trim()) return;
     const now = Date.now();
     if (lastErrorToastRef.current.message === message && now - lastErrorToastRef.current.time < 15_000) return;
     lastErrorToastRef.current = { message, time: now };
-    showToast({ kind: "error", message, title: copy.title });
-  }, [copy.title, showToast]);
-
+    showToast({ kind: "error", message, title: copy.companies });
+  }, [copy.companies, showToast]);
   useEffect(() => { writeStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, category); }, [category]);
-  useEffect(() => { if (resourceError) showWatchlistError(resourceError); }, [resourceError, showWatchlistError]);
-
+  useEffect(() => { if (error) showError(error); }, [error, showError]);
+  useEffect(() => { if (groupState.error) showError(groupState.error); }, [groupState.error, showError]);
   useEffect(() => {
-    if (!selectedSymbol || selectedSymbol === activeSymbol) return;
-    const inferred = inferCategoryFromSymbol(selectedSymbol);
-    if (inferred && inferred !== category) setCategory(inferred);
-    setActiveSymbol(selectedSymbol);
-  }, [activeSymbol, category, selectedSymbol]);
-
+    if (typeof group === "number" && !groupState.loading && !groupState.groups.some((item) => item.id === group)) setGroup("all");
+  }, [group, groupState.groups, groupState.loading]);
+  useEffect(() => { if (selectedSymbol) setActiveSymbol(selectedSymbol); }, [selectedSymbol]);
   useEffect(() => {
-    if (activeSymbol) return;
-    const fallback = items[0];
-    if (!fallback) return;
-    setActiveSymbol(fallback.symbol);
-    onSelectedSymbolChange?.(fallback.symbol);
-  }, [activeSymbol, items, onSelectedSymbolChange]);
-
+    if (activeSymbol || !visibleItems.length) return;
+    setActiveSymbol(visibleItems[0].symbol);
+    onSelectedSymbolChange?.(visibleItems[0].symbol);
+  }, [activeSymbol, visibleItems, onSelectedSymbolChange]);
   useEffect(() => {
-    searchControllerRef.current?.abort();
     const text = query.trim();
-    if (!text) {
-      setResults([]);
-      setIsSearching(false);
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    searchControllerRef.current = controller;
     setResults([]);
+    setIsSearching(Boolean(addOpen && text));
+    if (!addOpen || !text) return;
+    const abort = new AbortController();
     const timer = window.setTimeout(() => {
-      setIsSearching(true);
-      searchWatchlist(text, category, { signal: controller.signal })
-        .then((response) => {
-          if (!controller.signal.aborted) setResults(response.results);
-        })
-        .catch((caught) => {
-          if (!controller.signal.aborted) {
-            setResults([]);
-            showWatchlistError(caught instanceof Error ? caught.message : copy.searchFailed);
-          }
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setIsSearching(false);
-        });
-    }, 450);
-
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [category, copy.searchFailed, query, showWatchlistError]);
-
-  function selectCategory(next: WatchlistCategory) {
-    if (next === category) return;
-    setCategory(next);
-    setActiveSymbol("");
-    onSelectedSymbolChange?.("");
-    setResults([]);
-  }
-
-  const handleSelectSymbol = useCallback((itemOrSymbol: WatchlistItem | string) => {
-    const nextSymbol = typeof itemOrSymbol === "string" ? itemOrSymbol : itemOrSymbol.symbol;
-    if (!nextSymbol) return;
-    setActiveSymbol(nextSymbol);
-    onSelectedSymbolChange?.(nextSymbol);
+      searchWatchlist(text, category, { signal: abort.signal }).then((response) => {
+        if (!abort.signal.aborted) setResults(response.results);
+      }).catch((caught) => {
+        if (!abort.signal.aborted) showError(caught instanceof Error ? caught.message : copy.searchFailed);
+      }).finally(() => { if (!abort.signal.aborted) setIsSearching(false); });
+    }, 350);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [addOpen, category, query, copy.searchFailed, showError]);
+  const handleSelect = useCallback((value: WatchlistItem | string) => {
+    const symbol = typeof value === "string" ? value : value.symbol;
+    setActiveSymbol(symbol); onSelectedSymbolChange?.(symbol);
   }, [onSelectedSymbolChange]);
-
   async function handleAdd(result: WatchlistSearchResult) {
-    const item = await controller.add(result);
-    if (item) handleSelectSymbol(item);
+    if (adding) return;
+    setAdding(true);
+    try {
+      const item = await controller.add(result);
+      if (item) { setGroup("all"); setLocalQuery(""); if (category !== "all") setCategory(item.category); handleSelect(item); }
+    } finally { setAdding(false); }
   }
-
   async function handleDelete(item: WatchlistItem) {
-    if (item.symbol === activeSymbol) setActiveSymbol("");
     await controller.remove(item);
+    if (!controller.snapshot().items.some((entry) => entry.id === item.id)) {
+      if (item.symbol === activeSymbol) { setActiveSymbol(""); onSelectedSymbolChange?.(""); }
+      void groupState.controller.load();
+    }
   }
-
   function handleDragStart(event: DragStartEvent) {
-    const initialRect = event.active.rect.current.initial;
-    setActiveDragId(event.active.id);
-    setActiveDragSize(initialRect ? { height: initialRect.height, width: initialRect.width } : null);
+    const rect = event.active.rect.current.initial;
+    setActiveDragId(event.active.id); setActiveDragSize(rect ? { height: rect.height, width: rect.width } : null);
   }
-
-  function handleDragCancel() {
-    setActiveDragId(null);
-    setActiveDragSize(null);
-  }
-
+  function cancelDrag() { setActiveDragId(null); setActiveDragSize(null); }
   function handleDragEnd(event: DragEndEvent) {
-    setActiveDragId(null);
-    setActiveDragSize(null);
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = items.findIndex((item) => item.id === active.id);
-    const newIndex = items.findIndex((item) => item.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-    controller.reorder(arrayMove(items, oldIndex, newIndex).map((item) => item.id));
+    cancelDrag();
+    if (sort !== "manual" || !event.over || event.active.id === event.over.id) return;
+    const from = visibleItems.findIndex((item) => item.id === event.active.id);
+    const to = visibleItems.findIndex((item) => item.id === event.over?.id);
+    if (from < 0 || to < 0) return;
+    controller.reorder(reorderVisibleItems(items, arrayMove(visibleItems, from, to).map((item) => item.id)));
   }
-
+  const resetFilters = () => { setCategory("all"); setGroup("all"); setLocalQuery(""); setSort("manual"); };
   return (
     <section className="watchlist-page-shell panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
-      <div className="page-toolbar watchlist-compact-toolbar flex flex-nowrap items-center justify-between gap-1.5 overflow-x-auto md:gap-2">
-        <div className="inline-flex h-6 w-fit max-w-full shrink-0 items-center overflow-x-auto rounded-full border border-border bg-muted/45 p-0.5">
-          {watchlistCategories.map((item) => (
-            <button
-              aria-pressed={category === item.id}
-              className={cn(
-                "h-5 min-w-[3.25rem] rounded-full px-1.5 text-[11px] font-medium transition-colors sm:min-w-[4rem] sm:px-2",
-                category === item.id
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-              )}
-              key={item.id}
-              onClick={() => selectCategory(item.id)}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
+      <div className="page-toolbar watchlist-compact-toolbar flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{copy.companies}</h2>
+          <Badge className="gap-1" variant="outline">{refreshing && <Loader2 className="size-3 animate-spin" />}{items.length}</Badge>
         </div>
-        <Badge className="h-6 shrink-0 gap-1 px-1.5 text-[11px]" variant="outline">
-          {isRefreshingQuotes ? <Loader2 className="size-3 animate-spin" /> : null}
-          {formatTemplate(copy.symbols, { count: items.length })}
-        </Badge>
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="ghost" disabled={groupState.loading} onClick={() => setGroupsOpen(true)}><Folder className="size-4" />{copy.manageGroups}</Button>
+          <Button size="sm" onClick={() => { setQuery(""); setAddOpen(true); }}><Plus className="size-4" />{copy.addCompany}</Button>
+        </div>
       </div>
-
-      <div className="watchlist-page-grid grid min-h-0 flex-1 gap-3 pt-1.5 pb-3 lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden lg:gap-0 lg:pt-2 lg:pb-4">
-        <aside className="watchlist-list-shell finance-module flex min-h-0 flex-col overflow-hidden rounded-md border border-border/80 bg-card/45">
-          <div className="finance-module-header space-y-2 border-b border-border/70 p-2">
-            <div>
-              <p className="text-sm font-semibold">{formatTemplate(copy.listTitle, { label: selectedCategory?.label ?? category })}</p>
-              <p className="hidden text-xs text-muted-foreground sm:block">
-                {formatTemplate(copy.dragHint, { hint: selectedCategory?.hint ?? category })}
-              </p>
+      <div className="watchlist-page-grid grid min-h-0 flex-1 grid-rows-[max-content_max-content] gap-3 pb-3 pt-2 lg:grid-cols-[370px_minmax(0,1fr)] lg:grid-rows-1 lg:gap-3 lg:overflow-hidden lg:pb-4">
+        <aside className="watchlist-list-shell finance-module flex min-h-0 min-w-0 flex-col rounded-md border border-border/80 bg-card/45">
+          <div className="relative z-20 shrink-0 space-y-3 border-b border-border/70 p-3">
+            <div className="flex gap-1 rounded-lg bg-muted/50 p-1" role="group" aria-label={copy.allMarkets}>
+              {categories.map((market) => <button key={market.id} type="button" aria-pressed={category === market.id}
+                className={cn("min-h-8 flex-1 whitespace-nowrap rounded-md px-1.5 text-xs font-medium transition-colors", category === market.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                onClick={() => setCategory(market.id)}>{market.label}</button>)}
             </div>
-
-            <div className="relative z-20">
+            <Select aria-label={copy.groups} value={String(group)} onValueChange={(value) => setGroup(value === "all" || value === "ungrouped" ? value : Number(value))}
+              options={[{ value: "all", label: copy.allGroups }, { value: "ungrouped", label: copy.ungrouped }, ...groupState.groups.map((entry) => ({ value: String(entry.id), label: entry.name }))]} />
+            <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                aria-label={common.search}
-                className="h-8 pr-8 pl-8"
-                placeholder={selectedCategory?.placeholder}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              {isSearching ? <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" /> : null}
-              {query.trim() ? (
-                <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-30 max-h-64 overflow-y-auto rounded-md border border-border/90 bg-popover p-1 text-popover-foreground shadow-xl">
-                  {isSearching && results.length === 0 ? (
-                    <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" />
-                      {common.loading}
-                    </div>
-                  ) : null}
-                  {results.map((result) => {
-                    const exists = symbolSet.has(result.symbol);
-                    return (
-                      <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted/60" key={result.symbol}>
-                        <span className="min-w-0 flex-1 truncate">{searchResultName(result)}</span>
-                        <button
-                          aria-label={exists ? common.added : common.add}
-                          className={cn(
-                            "grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-primary",
-                            exists && "text-primary hover:bg-transparent",
-                          )}
-                          disabled={exists}
-                          onClick={() => void handleAdd(result)}
-                          title={exists ? common.added : common.add}
-                          type="button"
-                        >
-                          <Star className="size-4" fill={exists ? "currentColor" : "none"} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {results.length === 0 && !isSearching ? (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      {copy.noMatch}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              <Input aria-label={copy.localFilter} className="pl-8 pr-9" placeholder={copy.localFilterPlaceholder} value={localQuery} onChange={(event) => setLocalQuery(event.target.value)} />
+              {localQuery && <button className="absolute right-0 top-0 grid size-9 place-items-center text-muted-foreground" aria-label={common.clear} onClick={() => setLocalQuery("")}><X className="size-4" /></button>}
             </div>
-
+            <Select aria-label={copy.sortLabel} value={sort} onValueChange={(value) => setSort(value as WatchlistSort)} options={[
+              { value: "manual", label: copy.manualOrder }, { value: "name", label: copy.nameOrder },
+              { value: "gainers", label: copy.gainersOrder }, { value: "losers", label: copy.losersOrder },
+            ]} />
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span aria-live="polite">{formatTemplate(copy.visibleCount, { visible: visibleItems.length, total: items.length })}</span>
+              <span>{copy.price} / {copy.rate}</span>
+            </div>
           </div>
-
-          <div className="min-h-0 flex-1 overscroll-contain p-2 lg:overflow-y-auto">
-            <ManageList
-              activeDragItem={activeDragItem}
-              activeDragSize={activeDragSize}
-              activeSymbol={activeSymbol}
-              commonLoading={common.loading}
-              copy={copy}
-              isLoading={isLoading}
-              items={items}
-              onDelete={handleDelete}
-              onDragCancel={handleDragCancel}
-              onDragEnd={handleDragEnd}
-              onDragStart={handleDragStart}
-              onOpenFinancials={onOpenFinancials}
-              onSelect={handleSelectSymbol}
-              sensors={sensors}
-            />
+          <div className="min-h-0 max-h-[320px] flex-1 overflow-y-auto p-2 lg:max-h-none">
+            {!isLoading && !visibleItems.length && items.length > 0 ? <SoftState icon={<Search className="size-6" />}>
+              <span className="block">{copy.localNoMatch}</span><Button variant="ghost" size="sm" className="mt-2" onClick={resetFilters}>{copy.resetFilters}</Button>
+            </SoftState> : <ManageList activeDragItem={activeDragItem} activeDragSize={activeDragSize} activeSymbol={activeSymbol}
+              commonLoading={common.loading} copy={copy} isLoading={isLoading} items={visibleItems} sortingEnabled={sort === "manual"}
+              onDelete={handleDelete} onDragCancel={cancelDrag} onDragEnd={handleDragEnd} onDragStart={handleDragStart}
+              onOpenFinancials={onOpenFinancials} onSelect={handleSelect} sensors={sensors} />}
           </div>
         </aside>
-
         <div className="watchlist-analysis-shell finance-module flex min-h-[560px] min-w-0 flex-col overflow-hidden overscroll-contain rounded-md border border-border/80 bg-card/45 sm:min-h-[640px] lg:min-h-0">
-          {activeSymbol ? (
-            <TechnicalAnalysis
-              embedded
-              language={language}
-              symbol={activeSymbol}
-              onSymbolChange={handleSelectSymbol}
-            />
-          ) : (
-            <SoftState icon={<Star className="size-8 text-muted-foreground" />}>
-              <span className="block text-sm font-medium">{copy.emptyTitle}</span>
-              <span className="mt-1 block text-xs text-muted-foreground">{copy.emptyHint}</span>
-            </SoftState>
-          )}
+          {activeSymbol ? <TechnicalAnalysis embedded language={language} symbol={activeSymbol} onSymbolChange={handleSelect} /> :
+            <SoftState icon={<Star className="size-8" />}><span className="block font-medium">{copy.emptyTitle}</span><span className="mt-1 block text-xs">{copy.emptyHint}</span></SoftState>}
         </div>
       </div>
+      <SideDrawer open={addOpen} onClose={() => setAddOpen(false)} title={copy.addCompany} subtitle={copy.addSearchHint} dismissDisabled={adding}>
+        <div className="space-y-3 p-4">
+          <Input aria-label={copy.addCompany} placeholder="AAPL.US / 700.HK / 600519.SH" value={query} onChange={(event) => setQuery(event.target.value)} />
+          {isSearching && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{common.loading}</div>}
+          {results.map((result) => <div className="flex min-h-14 items-center gap-3 rounded-lg border border-border/60 p-3" key={result.symbol}>
+            <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{searchResultName(result)}</p><p className="font-mono text-xs text-muted-foreground">{result.symbol}</p></div>
+            <Button size="sm" variant={symbolSet.has(result.symbol) ? "ghost" : "outline"} disabled={adding || symbolSet.has(result.symbol)} onClick={() => void handleAdd(result)}>
+              <Star className="size-4" fill={symbolSet.has(result.symbol) ? "currentColor" : "none"} />{symbolSet.has(result.symbol) ? common.added : common.add}
+            </Button>
+          </div>)}
+          {query.trim() && !isSearching && !results.length && <p className="text-sm text-muted-foreground">{copy.noMatch}</p>}
+        </div>
+      </SideDrawer>
+      {groupsOpen && <WatchlistGroupsDrawer open onClose={() => setGroupsOpen(false)} language={language} items={items}
+        groups={groupState.groups} controller={groupState.controller} saving={groupState.saving} initialGroup={typeof group === "number" ? group : undefined} />}
     </section>
   );
 }
@@ -517,6 +420,7 @@ function ManageList({
   onOpenFinancials,
   onSelect,
   sensors,
+  sortingEnabled,
 }: {
   activeDragItem: WatchlistItem | null;
   activeDragSize: DragPreviewSize | null;
@@ -525,6 +429,7 @@ function ManageList({
   copy: typeof i18n.zh.watchlist;
   isLoading: boolean;
   items: WatchlistItem[];
+  sortingEnabled: boolean;
   onDelete: (item: WatchlistItem) => void;
   onDragCancel: () => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -550,6 +455,7 @@ function ManageList({
         <div className="grid gap-1">
           {items.map((item) => (
             <SortableWatchlistItem
+              sortingEnabled={sortingEnabled}
               activeSymbol={activeSymbol}
               copy={copy}
               item={item}

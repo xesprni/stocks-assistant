@@ -47,9 +47,9 @@ def init_session_schema(engine: Engine) -> None:
 
 
 def init_watchlist_schema(engine: Engine) -> None:
-    from app.core.orm.models import watchlist  # noqa: F401
+    from app.core.orm.models import watchlist
 
-    WatchlistBase.metadata.create_all(engine)
+    WatchlistBase.metadata.create_all(engine, tables=[watchlist.WatchlistItem.__table__])
     with engine.begin() as conn:
         _migrate_watchlist_user_scope(conn)
         conn.exec_driver_sql(
@@ -71,6 +71,8 @@ def init_watchlist_schema(engine: Engine) -> None:
                 )
                 """
             )
+    # 先完成旧自选表重建，再创建分组外键，避免 SQLite 将外键指向旧表名。
+    WatchlistBase.metadata.create_all(engine)
 
 
 def init_portfolio_schema(engine: Engine) -> None:

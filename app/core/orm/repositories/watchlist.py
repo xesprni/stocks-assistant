@@ -5,12 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 
 from app.core.orm.database import create_session_factory, create_sqlite_engine, session_scope
 from app.core.orm.migrations import init_watchlist_schema
-from app.core.orm.models.watchlist import WatchlistItem
+from app.core.orm.models.watchlist import WatchlistGroup, WatchlistGroupMember, WatchlistItem
 
 
 class WatchlistRepository:
@@ -21,6 +22,77 @@ class WatchlistRepository:
         self.engine = create_sqlite_engine(self.db_path)
         self.session_factory = create_session_factory(self.engine)
         init_watchlist_schema(self.engine)
+
+    def list_groups(self, user_id: str) -> list[dict[str, Any]]:
+        with session_scope(self.session_factory) as session:
+            groups = session.scalars(
+                select(WatchlistGroup)
+                .where(WatchlistGroup.user_id == user_id)
+                .order_by(WatchlistGroup.id)
+            ).all()
+            members = session.execute(
+                select(WatchlistGroupMember.group_id, WatchlistGroupMember.item_id)
+                .join(WatchlistGroup)
+                .where(WatchlistGroup.user_id == user_id)
+                .order_by(WatchlistGroupMember.item_id)
+            ).all()
+            by_group: dict[int, list[int]] = {}
+            for group_id, item_id in members:
+                by_group.setdefault(group_id, []).append(item_id)
+            return [
+                {"id": group.id, "name": group.name, "item_ids": by_group.get(group.id, [])}
+                for group in groups
+            ]
+
+    def save_group(self, name: str, user_id: str, group_id: int | None = None) -> int:
+        try:
+            with session_scope(self.session_factory) as session:
+                if group_id is None:
+                    group = WatchlistGroup(user_id=user_id, name=name)
+                    session.add(group)
+                else:
+                    group = session.get(WatchlistGroup, group_id)
+                    if group is None or group.user_id != user_id:
+                        raise KeyError(group_id)
+                    group.name = name
+                session.flush()
+                return group.id
+        except IntegrityError as exc:
+            raise ValueError("A group with this name already exists") from exc
+
+    def delete_group(self, group_id: int, user_id: str) -> None:
+        with session_scope(self.session_factory) as session:
+            group = session.get(WatchlistGroup, group_id)
+            if group is None or group.user_id != user_id:
+                raise KeyError(group_id)
+            # 外键只级联删除成员关系，保留公司及其他分组中的成员关系。
+            session.delete(group)
+
+    def set_group_members(self, group_id: int, item_ids: list[int], user_id: str) -> None:
+        with session_scope(self.session_factory) as session:
+            group = session.get(WatchlistGroup, group_id)
+            if group is None or group.user_id != user_id:
+                raise KeyError(group_id)
+            wanted = set(item_ids)
+            owned = set(
+                session.scalars(
+                    select(WatchlistItem.id).where(
+                        WatchlistItem.user_id == user_id, WatchlistItem.id.in_(wanted)
+                    )
+                )
+            )
+            # 同一事务校验全部成员归属，跨用户或已删除的 ID 不允许部分写入。
+            if owned != wanted:
+                raise ValueError("Some watchlist items are unavailable")
+            session.execute(
+                delete(WatchlistGroupMember).where(WatchlistGroupMember.group_id == group_id)
+            )
+            session.add_all(
+                [
+                    WatchlistGroupMember(group_id=group_id, item_id=item_id)
+                    for item_id in sorted(wanted)
+                ]
+            )
 
     def list_items(
         self, category: str | None = None, user_id: str | None = None

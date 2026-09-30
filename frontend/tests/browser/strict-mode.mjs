@@ -33,6 +33,7 @@ const server = createServer(async (request, response) => {
   const payload = body ? JSON.parse(body) : undefined;
   calls.push({ method: request.method, path: url.pathname, payload });
   if (url.pathname === "/api/v1/watchlist" && request.method === "GET") { json({ items: order.map((id) => stock(id, url.searchParams.get("category") || "US")), total: 3 }); return; }
+  if (url.pathname === "/api/v1/watchlist/groups") { json({ groups: [] }); return; }
   if (url.pathname === "/api/v1/watchlist/overview") { json({ items: order.map((id) => stock(id)), quote_error: null, error: null }); return; }
   if (url.pathname === "/api/v1/watchlist/reorder") { order = payload.ids; json({ status: "ok" }); return; }
   const listDocuments = url.pathname.match(/^\/api\/v1\/research\/security\/([^/]+)\/documents$/);
@@ -72,9 +73,11 @@ try {
   const second = page.locator(".watchlist-drag-handle").nth(1);
   const from = await first.boundingBox(), to = await second.boundingBox();
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  const reordered = page.waitForResponse((response) => response.url().endsWith("/api/v1/watchlist/reorder"));
   await page.mouse.down();
   await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
   await page.mouse.up();
+  await reordered;
   await page.waitForFunction(() => document.querySelector(".watchlist-sortable-row")?.textContent.includes("MSFT.US"));
   assert.equal(calls.filter((call) => call.path.endsWith("/reorder")).length, 1, "one drag causes exactly one mutation under StrictMode");
   await page.waitForFunction(() => !document.querySelector('[data-dragging="true"]'));

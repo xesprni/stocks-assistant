@@ -579,7 +579,7 @@ export function calcSupportResistance(
 
 // ── ATR (Average True Range, 14) ──────────────────────────────────────────────
 
-function calcATR(
+export function calcATR(
   highs: number[],
   lows: number[],
   closes: number[],
@@ -587,7 +587,7 @@ function calcATR(
 ): (number | null)[] {
   const n = closes.length;
   const result: (number | null)[] = new Array(n).fill(null);
-  if (n < period + 1) return result;
+  if (!Number.isInteger(period) || period < 1 || n < period + 1) return result;
 
   const tr: number[] = new Array(n).fill(0);
   for (let i = 1; i < n; i++) {
@@ -606,4 +606,27 @@ function calcATR(
     result[i] = (result[i - 1]! * (period - 1) + tr[i]) / period;
   }
   return result;
+}
+
+// OBV 以首根 K 线为零基点；平盘不计入成交量。
+// Formula: https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/OBV
+export function calcOBV(closes: number[], volumes: number[]): (number | null)[] {
+  let total = 0;
+  return closes.map((close, index) => {
+    if (!Number.isFinite(close) || !Number.isFinite(volumes[index]) || volumes[index] < 0) return null;
+    if (index > 0) {
+      if (!Number.isFinite(closes[index - 1])) return null;
+      total += Math.sign(close - closes[index - 1]) * volumes[index];
+    }
+    return total;
+  });
+}
+
+// ROC 返回百分数；不足周期或基期为零时不绘制，避免伪造零值。
+export function calcROC(closes: number[], period = 12): (number | null)[] {
+  return closes.map((close, index) => {
+    if (!Number.isInteger(period) || period < 1 || index < period) return null;
+    const base = closes[index - period];
+    return Number.isFinite(close) && Number.isFinite(base) && base !== 0 ? (close - base) / base * 100 : null;
+  });
 }

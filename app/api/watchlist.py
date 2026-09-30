@@ -12,6 +12,9 @@ from app.core.security import CurrentUser, require_permissions
 from app.deps import get_market_service, get_portfolio_service, get_watchlist_service
 from app.schemas.watchlist import (
     WatchlistCategory,
+    WatchlistGroupMembersWrite,
+    WatchlistGroupsResponse,
+    WatchlistGroupWrite,
     WatchlistItem,
     WatchlistItemCreate,
     WatchlistListResponse,
@@ -22,6 +25,71 @@ from app.schemas.watchlist import (
 )
 
 router = APIRouter()
+
+
+@router.get("/groups", response_model=WatchlistGroupsResponse)
+def list_watchlist_groups(
+    current_user: CurrentUser = Depends(require_permissions("watchlist:read")),
+):
+    return {"groups": get_watchlist_service().list_groups(current_user.id)}
+
+
+@router.post("/groups", response_model=WatchlistGroupsResponse)
+def create_watchlist_group(
+    body: WatchlistGroupWrite,
+    current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
+):
+    service = get_watchlist_service()
+    try:
+        service.save_group(body.name, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"groups": service.list_groups(current_user.id)}
+
+
+@router.patch("/groups/{group_id}", response_model=WatchlistGroupsResponse)
+def rename_watchlist_group(
+    group_id: int,
+    body: WatchlistGroupWrite,
+    current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
+):
+    service = get_watchlist_service()
+    try:
+        service.save_group(body.name, current_user.id, group_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Watchlist group not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"groups": service.list_groups(current_user.id)}
+
+
+@router.delete("/groups/{group_id}", response_model=WatchlistGroupsResponse)
+def delete_watchlist_group(
+    group_id: int,
+    current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
+):
+    service = get_watchlist_service()
+    try:
+        service.delete_group(group_id, current_user.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Watchlist group not found") from None
+    return {"groups": service.list_groups(current_user.id)}
+
+
+@router.put("/groups/{group_id}/members", response_model=WatchlistGroupsResponse)
+def set_watchlist_group_members(
+    group_id: int,
+    body: WatchlistGroupMembersWrite,
+    current_user: CurrentUser = Depends(require_permissions("watchlist:write")),
+):
+    service = get_watchlist_service()
+    try:
+        service.set_group_members(group_id, body.item_ids, current_user.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Watchlist group not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"groups": service.list_groups(current_user.id)}
 
 
 @router.get("", response_model=WatchlistListResponse)

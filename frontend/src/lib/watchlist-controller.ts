@@ -1,28 +1,28 @@
 import { RequestScope } from "@/lib/request-scope";
 import { applyEntityOrder, restoreEntity } from "@/lib/optimistic-list";
-import type { WatchlistCategory, WatchlistItem, WatchlistListResponse, WatchlistOverviewResponse, WatchlistSearchResult } from "@/types/app";
+import type { WatchlistMarket, WatchlistItem, WatchlistListResponse, WatchlistOverviewResponse, WatchlistSearchResult } from "@/types/app";
 
 type Dependencies = {
-  list: (category: WatchlistCategory, init: RequestInit) => Promise<WatchlistListResponse>;
+  list: (category: WatchlistMarket, init: RequestInit) => Promise<WatchlistListResponse>;
   overview: (init: RequestInit) => Promise<WatchlistOverviewResponse>;
   add: (result: WatchlistSearchResult) => Promise<WatchlistItem>;
   remove: (id: number) => Promise<unknown>;
   reorder: (ids: number[]) => Promise<unknown>;
 };
 export type WatchlistState = {
-  category: WatchlistCategory; items: WatchlistItem[]; loading: boolean; refreshing: boolean; error: string;
+  category: WatchlistMarket; items: WatchlistItem[]; loading: boolean; refreshing: boolean; error: string;
 };
 
 /** Domain controller: reads are replaceable; mutations own entity/order-specific reconciliation. */
 export class WatchlistController {
-  private scope: RequestScope<WatchlistCategory>;
+  private scope: RequestScope<WatchlistMarket>;
   private listeners = new Set<() => void>();
   private state: WatchlistState;
-  private pending = new Map<WatchlistCategory, number>();
-  private sorting = new Map<WatchlistCategory, { pending: number[] | null; confirmed: number[]; ticket: ReturnType<RequestScope<WatchlistCategory>["capture"]> }>();
+  private pending = new Map<WatchlistMarket, number>();
+  private sorting = new Map<WatchlistMarket, { pending: number[] | null; confirmed: number[]; ticket: ReturnType<RequestScope<WatchlistMarket>["capture"]> }>();
   private disposed = false;
 
-  constructor(category: WatchlistCategory, private readonly api: Dependencies) {
+  constructor(category: WatchlistMarket, private readonly api: Dependencies) {
     this.scope = new RequestScope(category);
     this.state = { category, items: [], loading: false, refreshing: false, error: "" };
   }
@@ -33,7 +33,7 @@ export class WatchlistController {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
   }
-  activate(category: WatchlistCategory) {
+  activate(category: WatchlistMarket) {
     this.disposed = false;
     this.scope.reset(category);
     this.patch({ category, items: [], loading: false, refreshing: false, error: "" });
@@ -45,11 +45,11 @@ export class WatchlistController {
     for (const sort of this.sorting.values()) sort.pending = null;
   }
   private fail(error: unknown) { this.patch({ error: error instanceof Error ? error.message : "Request failed" }); }
-  private beginMutation(category: WatchlistCategory) {
+  private beginMutation(category: WatchlistMarket) {
     this.pending.set(category, (this.pending.get(category) ?? 0) + 1);
     if (category === this.scope.key) { this.scope.cancel("read"); this.patch({ loading: false, refreshing: false, error: "" }); }
   }
-  private endMutation(category: WatchlistCategory) {
+  private endMutation(category: WatchlistMarket) {
     this.pending.set(category, Math.max(0, (this.pending.get(category) ?? 1) - 1));
   }
   async load() {
@@ -69,7 +69,7 @@ export class WatchlistController {
     try {
       const result = await this.api.overview({ signal: request.signal });
       if (!request.isCurrent()) return;
-      const incoming = result.items.filter((item) => item.category === request.key);
+      const incoming = result.items.filter((item) => request.key === "all" || item.category === request.key);
       const failed = Boolean(result.quote_error || result.error);
       const byId = new Map(incoming.map((item) => [item.id, item]));
       // A failed quote refresh is not evidence that a holding vanished or its last price is zero.
@@ -89,7 +89,7 @@ export class WatchlistController {
     this.beginMutation(ticket.key);
     try {
       const item = await this.api.add(result);
-      if (ticket.isCurrent() && item.category === ticket.key) {
+      if (ticket.isCurrent() && (ticket.key === "all" || item.category === ticket.key)) {
         this.patch({ items: [...this.state.items.filter((entry) => entry.symbol !== item.symbol), item] });
         return item;
       }

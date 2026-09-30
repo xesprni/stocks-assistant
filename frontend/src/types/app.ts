@@ -650,6 +650,17 @@ export interface TraceSessionResponse {
 }
 
 export type WatchlistCategory = "US" | "A" | "H";
+export type WatchlistMarket = WatchlistCategory | "all";
+
+export interface WatchlistGroup {
+  id: number;
+  name: string;
+  item_ids: number[];
+}
+
+export interface WatchlistGroupsResponse {
+  groups: WatchlistGroup[];
+}
 
 export interface WatchlistItem {
   id: number;

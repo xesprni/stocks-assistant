@@ -211,6 +211,7 @@ export function CapitalFlowChart({
   useErrorToast(error, labels.title);
 
   const load = useCallback((signal?: AbortSignal) => {
+    const requestId = ++requestSeqRef.current;
     const requestSymbol = symbol.trim();
     if (!requestSymbol) {
       setPoints([]);
@@ -219,21 +220,19 @@ export function CapitalFlowChart({
       return;
     }
 
-    const requestId = requestSeqRef.current + 1;
-    requestSeqRef.current = requestId;
     setLoading(true);
     setError("");
 
     getCapitalFlow(requestSymbol, signal ? { signal } : undefined)
       .then((payload) => {
-        if (requestSeqRef.current !== requestId) return;
+        if (signal?.aborted || requestSeqRef.current !== requestId) return;
         const nextPoints = parseCapitalFlow(payload.lines);
         setPoints(nextPoints);
         setLastUpdated(formatTime(nextPoints[nextPoints.length - 1]?.time ?? null, language));
       })
       .catch((caught) => {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
-        if (requestSeqRef.current !== requestId) return;
+        if (signal?.aborted || requestSeqRef.current !== requestId) return;
         setError(caught instanceof Error ? caught.message : labels.empty);
         setPoints([]);
         setLastUpdated("");
@@ -297,7 +296,7 @@ export function CapitalFlowChart({
 
   return (
     <div className={cn("technical-chart-panel technical-capital-flow-panel flex min-h-[320px] flex-col overflow-hidden bg-background", className)}>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-background px-3 py-2">
+      <div className="capital-flow-header flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-background px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
             <Activity className="size-4" />
@@ -323,22 +322,22 @@ export function CapitalFlowChart({
         </Button>
       </div>
 
-      <div className="grid shrink-0 grid-cols-3 gap-1.5 border-b border-border/55 bg-background/45 p-2">
+      <div className="capital-flow-metrics grid shrink-0 grid-cols-3 gap-1.5 border-b border-border/55 bg-background/45 p-2">
         <MiniMetric label={labels.latest} tone={latestTone} value={formatSignedCompact(latest, language)} />
         <MiniMetric label={labels.high} tone={toneFor(high)} value={formatSignedCompact(high, language)} />
         <MiniMetric label={labels.low} tone={toneFor(low)} value={formatSignedCompact(low, language)} />
       </div>
 
-      <div className={cn("min-h-[220px] flex-1", chartClassName)}>
+      <div className={cn("capital-flow-canvas min-h-[220px] flex-1", chartClassName)}>
         {loading && points.length === 0 ? (
-          <div className="flex h-full min-h-[220px] items-center justify-center p-3">
+          <div className="capital-flow-state flex h-full min-h-[220px] items-center justify-center p-3">
             <div className="flex items-center gap-2 rounded-md bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
               {labels.loading}
             </div>
           </div>
         ) : points.length === 0 ? (
-          <div className="flex h-full min-h-[220px] items-center justify-center p-3">
+          <div className="capital-flow-state flex h-full min-h-[220px] items-center justify-center p-3">
             <div className="rounded-md bg-muted/20 px-3 py-2 text-sm text-muted-foreground">{labels.empty}</div>
           </div>
         ) : (

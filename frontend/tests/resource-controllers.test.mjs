@@ -159,3 +159,13 @@ test("bulk-clear reconciliation preserves new sessions, newer local edits and la
   assert.deepEqual(result[2].messages, [{ id: "message" }]);
   assert.deepEqual(reconcileConversationClear({ current, persisted: [], snapshot, deletedIds: new Set() }), current);
 });
+
+test("all-market watchlist keeps mixed-market quotes and additions", async () => {
+  const controller = watchlist({ list: async () => ({ items: [item(1), item(2, "H")] }),
+    overview: async () => overview([item(1), item(2, "H")]) });
+  controller.activate("all"); await tick();
+  await controller.refresh();
+  assert.deepEqual(controller.snapshot().items.map((entry) => entry.category), ["US", "H"]);
+  assert.equal((await controller.add(item(3, "A"))).category, "A");
+  assert.deepEqual(controller.snapshot().items.map((entry) => entry.category), ["US", "H", "A"]);
+});

@@ -1,0 +1,196 @@
+// Real chart/layout regression with deterministic local fixtures; no live account or network.
+import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import { build } from "esbuild";
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE_PATH || "playwright");
+const assets = new URL("../../dist/assets/", import.meta.url);
+const cssName = (await readdir(assets)).find((name) => /^index-.*\.css$/.test(name));
+assert.ok(cssName, "Run npm run build before the browser regression");
+const css = await readFile(new URL(cssName, assets), "utf8");
+const compiled = await build({ entryPoints: [new URL("./watchlist-fixture.tsx", import.meta.url).pathname], bundle: true,
+  write: false, format: "esm", platform: "browser", jsx: "automatic", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"development"' },
+  tsconfig: new URL("../../tsconfig.app.json", import.meta.url).pathname });
+const bundle = compiled.outputFiles[0].text;
+const stock = (id, symbol, category, name, rate) => ({ id, symbol, category, name, name_en: name, name_cn: name, name_hk: "", exchange: "", currency: "USD",
+  last_done: "123.45", change_rate: rate, change_value: "2", note: "", created_at: "2026-09-01", updated_at: "2026-09-01" });
+const initialItems = [stock(1, "AAPL.US", "US", "苹果 Apple", "2.50%"), stock(2, "MSFT.US", "US", "微软 Microsoft", null),
+  stock(3, "NVDA.US", "US", "英伟达 Nvidia", "-1.23%"), stock(4, "700.HK", "H", "腾讯控股", "0.42%")];
+let items = [...initialItems], groups = [{ id: 1, name: "核心关注", item_ids: [1, 4] }], flowMode = "data", candleCountLimit = 1000;
+const calls = [], errors = [], failures = [];
+const origin = "http://watchlist.test";
+const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+async function route(route) {
+  const request = route.request(), url = new URL(request.url());
+  const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+  if (url.origin !== origin) { failures.push(request.url()); await route.abort(); return; }
+  if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: '<!doctype html><html lang="zh"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>' });
+  if (url.pathname === "/app.css") return route.fulfill({ contentType: "text/css", body: css });
+  if (url.pathname === "/app.js") return route.fulfill({ contentType: "application/javascript", body: bundle });
+  if (url.pathname === "/favicon.ico") return route.fulfill({ status: 204 });
+  const payload = request.postDataJSON();
+  calls.push({ path: url.pathname, method: request.method(), payload, params: Object.fromEntries(url.searchParams) });
+  if (url.pathname === "/api/v1/watchlist") return json({ items, total: items.length });
+  if (url.pathname === "/api/v1/watchlist/overview") return json({ items, quote_error: null, error: null });
+  if (url.pathname === "/api/v1/watchlist/reorder") { items = payload.ids.map((id) => items.find((item) => item.id === id)); return json({ status: "ok" }); }
+  if (url.pathname === "/api/v1/watchlist/groups") {
+    if (request.method() === "POST") groups = [...groups, { id: Math.max(0, ...groups.map((group) => group.id)) + 1, name: payload.name, item_ids: [] }];
+    return json({ groups });
+  }
+  const groupRoute = url.pathname.match(/^\/api\/v1\/watchlist\/groups\/(\d+)(\/members)?$/);
+  if (groupRoute) {
+    const id = Number(groupRoute[1]);
+    if (request.method() === "DELETE") groups = groups.filter((group) => group.id !== id);
+    else groups = groups.map((group) => group.id !== id ? group : { ...group, ...(groupRoute[2] ? { item_ids: payload.item_ids } : { name: payload.name }) });
+    return json({ groups });
+  }
+  if (url.pathname === "/api/v1/market/candlesticks") return json({ bars: Array.from({ length: Math.min(Number(url.searchParams.get("count")), candleCountLimit) }, (_, i) => {
+    const close = 100 + Math.sin(i / 7) * 8 + i / 10;
+    return { timestamp: 1720000000 + i * 86400, open: String(close - 1), high: String(close + 3), low: String(close - 3), close: String(close), volume: String(10000 + i * 700), turnover: "1000000" };
+  }) });
+  if (url.pathname === "/api/v1/market/capital-flow") {
+    if (flowMode === "error") return json({ detail: "Fixture unavailable" }, 503);
+    const lines = flowMode === "empty" ? [] : Array.from({ length: 100 }, (_, i) => ({ timestamp: 1720000000 + i * 60, inflow: String(Math.sin(i / 12) * 1e7) }));
+    return json({ symbol: "AAPL.US", source: "fixture", lines, total: lines.length });
+  }
+  failures.push(`${request.method()} ${url.pathname}`); return json({ detail: "Unexpected request" }, 500);
+}
+await context.route("**/*", route);
+await context.addInitScript(() => {
+  const clear = CanvasRenderingContext2D.prototype.clearRect;
+  const fillText = CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+    this.canvas.drawnLabels = [];
+    return clear.apply(this, args);
+  };
+  CanvasRenderingContext2D.prototype.fillText = function (...args) {
+    (this.canvas.drawnLabels ??= []).push(args[0]);
+    return fillText.apply(this, args);
+  };
+});
+let page;
+const rows = () => page.locator(".watchlist-sortable-row");
+async function select(label, option) { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: option, exact: true }).click(); }
+async function waitRows(count) { await page.waitForFunction((count) => document.querySelectorAll(".watchlist-sortable-row").length === count, count); }
+async function maLines(expected) {
+  await page.waitForFunction((expected) => {
+    const labels = document.querySelector(".technical-native-chart canvas")?.drawnLabels ?? [];
+    const actual = labels.filter((label) => /^MA\d+$/.test(label));
+    return JSON.stringify(actual) === JSON.stringify(expected.map((period) => `MA${period}`));
+  }, expected);
+}
+async function painted(selector) {
+  await page.waitForFunction((selector) => {
+    const canvas = document.querySelector(selector);
+    if (!canvas) return false;
+    const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    const colors = new Set();
+    for (let index = 0; index < data.length; index += 40) colors.add(`${data[index]},${data[index + 1]},${data[index + 2]},${data[index + 3]}`);
+    return colors.size > 8;
+  }, selector);
+}
+async function contained(selector, minimumHeight = 0) {
+  const rect = await page.locator(selector).boundingBox();
+  assert.ok(rect && rect.height > minimumHeight, `${selector} must have usable height`);
+  assert.ok(rect.x >= -1 && rect.y >= -1 && rect.x + rect.width <= page.viewportSize().width + 1 && rect.y + rect.height <= page.viewportSize().height + 1,
+    `${selector} clipped: ${JSON.stringify(rect)} / ${JSON.stringify(page.viewportSize())}`);
+}
+try {
+  page = await context.newPage(); page.on("pageerror", (error) => errors.push(error.message)); page.setDefaultTimeout(8000);
+  await page.goto(origin); await waitRows(4);
+  await maLines([5, 10, 20, 60, 120, 250]);
+  assert.equal(calls.find((call) => call.path.endsWith("/candlesticks")).params.count, "500");
+  await page.getByRole("button", { name: "MA60", exact: true }).click();
+  await maLines([5, 10, 20, 120, 250]);
+  await page.getByRole("button", { name: "MA120", exact: true }).click();
+  await maLines([5, 10, 20, 250]);
+  await page.getByRole("button", { name: "MA120", exact: true }).click();
+  await page.getByRole("button", { name: "MA", exact: true }).click();
+  await maLines([]);
+  await page.getByRole("button", { name: "MA", exact: true }).click();
+  await maLines([5, 10, 20, 120, 250]);
+  await page.getByRole("button", { name: "周K", exact: true }).click();
+  assert.doesNotMatch(await page.getByRole("button", { name: "MA120", exact: true }).textContent(), /半年线/);
+  await maLines([5, 10, 20, 120, 250]);
+  await page.getByRole("button", { name: "日K", exact: true }).click();
+  assert.match(await page.getByRole("button", { name: "MA250", exact: true }).textContent(), /年线/);
+  await maLines([5, 10, 20, 120, 250]);
+  await page.getByRole("button", { name: "港股", exact: true }).click(); await waitRows(1);
+  await select("自选分组", "核心关注"); await waitRows(1);
+  await page.getByRole("button", { name: "全部市场", exact: true }).click(); await waitRows(2);
+  await page.getByRole("textbox", { name: "筛选自选" }).fill("aapl 苹果"); await waitRows(1);
+  assert.equal(calls.filter((call) => call.path.endsWith("/search")).length, 0);
+  await page.getByRole("textbox", { name: "筛选自选" }).fill("");
+  await select("自选分组", "全部自选"); await waitRows(4);
+  await select("公司排序", "跌幅优先");
+  assert.match(await rows().first().textContent(), /NVDA/);
+  assert.match(await rows().last().textContent(), /MSFT/);
+  assert.ok(await page.locator(".watchlist-drag-handle").first().isDisabled());
+  await select("公司排序", "自定义排序");
+  await page.getByRole("button", { name: "管理分组", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "分组名称" }).fill("重点公司");
+  await dialog.getByRole("button", { name: "保存", exact: true }).click();
+  await dialog.getByRole("checkbox", { name: /英伟达/ }).check();
+  await dialog.getByRole("button", { name: "保存成员", exact: true }).click();
+  await dialog.getByRole("status").waitFor();
+  assert.deepEqual(groups[0].item_ids, [1, 4, 3]);
+  await dialog.getByRole("button", { name: "新建分组", exact: true }).click();
+  await dialog.getByRole("textbox", { name: "分组名称" }).fill("观察池");
+  await dialog.getByRole("button", { name: "新建分组", exact: true }).last().click();
+  await dialog.getByRole("button", { name: "删除分组", exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "删除分组", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "删除", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('[role="alertdialog"]'));
+  await dialog.getByRole("button", { name: "关闭抽屉", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+  await page.getByRole("button", { name: "ATR(14)", exact: true }).click();
+  await page.getByRole("button", { name: "OBV", exact: true }).click();
+  await page.getByRole("button", { name: "ROC(12)", exact: true }).click();
+  await page.getByRole("button", { name: "VOL MA", exact: true }).click();
+  await page.reload(); await waitRows(4);
+  for (const name of ["ATR(14)", "OBV", "ROC(12)", "VOL MA"]) assert.equal(await page.getByRole("button", { name, exact: true }).getAttribute("aria-pressed"), "true");
+  await painted(".technical-native-chart canvas");
+  await maLines([5, 10, 20, 120, 250]);
+  assert.equal(await page.getByRole("button", { name: "MA60", exact: true }).getAttribute("aria-pressed"), "false");
+  for (const period of [120, 250]) assert.equal(await page.getByRole("button", { name: `MA${period}`, exact: true }).getAttribute("aria-pressed"), "true");
+  candleCountLimit = 100;
+  await page.getByRole("button", { name: "周K", exact: true }).click();
+  await page.getByText("MA120 / MA250：历史数据不足，暂不绘制", { exact: true }).waitFor();
+  await maLines([5, 10, 20]);
+  candleCountLimit = 1000;
+  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await maLines([5, 10, 20, 120, 250]);
+  await page.screenshot({ path: "/tmp/stocks-watchlist-desktop.png" });
+  const mobile = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  await mobile.route("**/*", route); page = await mobile.newPage(); page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(origin); await page.getByRole("button", { name: "资金", exact: true }).click();
+  await page.locator(".capital-flow-canvas canvas").waitFor();
+  for (const [width, height] of [[844, 390], [667, 375], [568, 320]]) {
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(150);
+    await contained(".technical-capital-flow-panel"); await contained(".capital-flow-metrics");
+    await contained(".capital-flow-canvas canvas", 100);
+    await painted(".capital-flow-canvas canvas");
+  }
+  await page.screenshot({ path: "/tmp/stocks-capital-landscape.png" });
+  flowMode = "empty"; await page.getByRole("button", { name: "刷新资金流向", exact: true }).click();
+  await page.getByText("暂无资金流向数据", { exact: true }).waitFor(); await contained(".capital-flow-state", 100);
+  flowMode = "error"; await page.getByRole("button", { name: "刷新资金流向", exact: true }).click();
+  await page.getByText("Fixture unavailable", { exact: true }).waitFor(); await contained(".capital-flow-state", 100);
+  flowMode = "data"; await page.getByRole("button", { name: "刷新资金流向", exact: true }).click();
+  await page.locator(".capital-flow-canvas canvas").waitFor();
+  await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(150);
+  assert.ok(await page.locator(".watchlist-list-shell").isVisible());
+  const listRect = await page.locator(".watchlist-list-shell").boundingBox();
+  const analysisRect = await page.locator(".watchlist-analysis-shell").boundingBox();
+  assert.ok(listRect.y + listRect.height <= analysisRect.y, "portrait list must not overlap the chart");
+  assert.equal(await page.locator(".watchlist-sortable-row").count(), 4);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.screenshot({ path: "/tmp/stocks-watchlist-portrait.png", fullPage: true });
+  assert.deepEqual(errors, []); assert.deepEqual(failures, []);
+  console.log("PASS: local filters, quote sorting, group CRUD/membership, persisted per-line MA selection, 500-bar history and short-history handling; capital flow data/empty/error at 844x390, 667x375, 568x320, and portrait rotation.");
+} catch (error) {
+  if (page) await page.screenshot({ path: "/tmp/stocks-watchlist-failure.png", fullPage: true });
+  throw error;
+} finally { await browser.close(); }

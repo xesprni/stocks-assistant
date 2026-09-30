@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.orm.base import WatchlistBase
@@ -35,3 +35,23 @@ class WatchlistItem(WatchlistBase):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class WatchlistGroup(WatchlistBase):
+    __tablename__ = "watchlist_groups"
+    __table_args__ = (UniqueConstraint("user_id", "name"), {"sqlite_autoincrement": True})
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class WatchlistGroupMember(WatchlistBase):
+    __tablename__ = "watchlist_group_members"
+
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlist_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlist_items.id", ondelete="CASCADE"), primary_key=True
+    )
