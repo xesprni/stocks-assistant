@@ -61,30 +61,98 @@ test("failed deletion restores only its entity, preserving later deletion and ad
   assert.deepEqual(controller.snapshot().items.map((row) => row.id), [1, 3, 4]);
 });
 
-test("reorders serialize and coalesce queued intents without replaying a stale rollback", async () => {
-  const first = deferred(), last = deferred(), calls = [];
-  const controller = watchlist({ reorder: (ids) => { calls.push(ids); return calls.length === 1 ? first.promise : last.promise; } });
+test("edit drafts do not write until close, which commits once even under repeated toggles", async () => {
+  const saved = deferred(), calls = [], preferences = [];
+  const controller = watchlist({ reorder: (ids) => { calls.push(ids); return saved.promise; }, persistSort: (sort) => preferences.push(sort) });
   controller.activate("US"); await tick();
-  controller.reorder([2, 1, 3]);
-  controller.reorder([2, 3, 1]);
-  controller.reorder([3, 2, 1]);
+  controller.reorderDraft([3, 2, 1]);
+  assert.equal(controller.snapshot().draftOrder, null);
+  controller.beginEdit();
+  controller.reorderDraft([2, 1, 3]);
+  controller.reorderDraft([2, 3, 1]);
+  controller.reorderDraft([3, 2, 1]);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(controller.snapshot().items.map((row) => row.id), [1, 2, 3]);
+  const saving = controller.finishEdit([3, 2, 1]);
+  assert.equal(controller.snapshot().savingOrder, true);
+  assert.equal(controller.snapshot().editing, true);
+  assert.equal(await controller.finishEdit([3, 2, 1]), false);
   assert.equal(calls.length, 1);
-  first.reject(new Error("First failed")); await tick();
-  assert.deepEqual(calls, [[2, 1, 3], [3, 2, 1]]);
+  assert.deepEqual(preferences, []);
+  saved.resolve(); assert.equal(await saving, true);
   assert.deepEqual(controller.snapshot().items.map((row) => row.id), [3, 2, 1]);
-  last.resolve(); await tick();
-  assert.equal(controller.snapshot().error, "");
+  assert.equal(controller.snapshot().editing, false);
+  assert.equal(controller.snapshot().savingOrder, false);
+  assert.equal(controller.snapshot().draftOrder, null);
+  assert.deepEqual(preferences, ["manual"]);
 });
 
-test("a failed final order restores order without resurrecting a removed entity", async () => {
-  const sort = deferred();
-  const controller = watchlist({ reorder: () => sort.promise });
+test("a failed save preserves the draft and edit mode for retry, including chosen sort", async () => {
+  const calls = [], preferences = [];
+  const controller = watchlist({ reorder: async (ids) => { calls.push(ids); if (calls.length === 1) throw new Error("Reorder failed"); },
+    persistSort: (sort) => preferences.push(sort) });
   controller.activate("US"); await tick();
-  controller.reorder([3, 1, 2]);
+  controller.beginEdit(); controller.setSort("gainers");
+  assert.equal(await controller.finishEdit([3, 1, 2]), false);
+  assert.equal(controller.snapshot().editing, true);
+  assert.equal(controller.snapshot().savingOrder, false);
+  assert.equal(controller.snapshot().mutating, false);
+  assert.equal(controller.snapshot().sort, "gainers");
+  assert.equal(controller.snapshot().orderError, "Reorder failed");
+  assert.deepEqual(controller.snapshot().draftOrder, [3, 1, 2]);
+  assert.deepEqual(controller.snapshot().items.map((row) => row.id), [1, 2, 3]);
+  assert.deepEqual(preferences, []);
+  assert.equal(await controller.finishEdit([3, 1, 2]), true);
+  assert.deepEqual(calls, [[3, 1, 2], [3, 1, 2]]);
+  assert.deepEqual(preferences, ["gainers"]);
+  assert.equal(controller.snapshot().orderError, "");
+  controller.activate("US"); await tick();
+  assert.equal(controller.snapshot().sort, "gainers");
+});
+
+test("fresh quotes, deletions and additions survive a pending edit without resurrecting rows", async () => {
+  const calls = [];
+  const controller = watchlist({ reorder: async (ids) => { calls.push(ids); },
+    overview: async () => overview([1, 2, 3].map((id) => ({ ...item(id), last_done: "125" }))) });
+  controller.activate("US"); await tick();
+  controller.beginEdit(); controller.reorderDraft([3, 1, 2]);
+  await controller.refresh();
+  assert.deepEqual(controller.snapshot().draftOrder, [3, 1, 2]);
   await controller.remove(item(2));
   await controller.add(item(4));
-  sort.reject(new Error("Reorder failed")); await tick();
-  assert.deepEqual(controller.snapshot().items.map((row) => row.id), [1, 3, 4]);
+  assert.equal(await controller.finishEdit([3, 1, 4, 2, 3, 99]), true);
+  assert.deepEqual(calls, [[3, 1, 4]]);
+  assert.deepEqual(controller.snapshot().items.map((row) => row.id), [3, 1, 4]);
+  assert.equal(controller.snapshot().items[0].last_done, "125");
+});
+
+test("closing a filtered sort preserves hidden slots and saves a preference without redundant writes", async () => {
+  const calls = [], preferences = [];
+  const controller = watchlist({ reorder: async (ids) => { calls.push(ids); }, persistSort: (sort) => preferences.push(sort) });
+  controller.activate("US"); await tick();
+  controller.beginEdit(); controller.setSort("name");
+  assert.equal(await controller.finishEdit([3, 1]), true);
+  assert.deepEqual(calls, [[3, 2, 1]]);
+  assert.deepEqual(preferences, ["name"]);
+  controller.beginEdit(); controller.setSort("manual");
+  assert.equal(await controller.finishEdit([3, 1]), true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(preferences, ["name", "manual"]);
+});
+
+test("late save completions cannot close a new edit or persist its predecessor's preference", async () => {
+  const saved = deferred(), preferences = [];
+  const controller = watchlist({ reorder: () => saved.promise, persistSort: (sort) => preferences.push(sort) });
+  controller.activate("US"); await tick();
+  controller.beginEdit(); controller.setSort("losers");
+  const saving = controller.finishEdit([3, 2, 1]);
+  controller.activate("H"); await tick();
+  controller.beginEdit();
+  saved.resolve(); assert.equal(await saving, false);
+  assert.equal(controller.snapshot().category, "H");
+  assert.equal(controller.snapshot().editing, true);
+  assert.equal(controller.snapshot().sort, "manual");
+  assert.deepEqual(preferences, []);
 });
 
 test("bulk-clear reconciliation preserves new sessions, newer local edits and later deletions", () => {

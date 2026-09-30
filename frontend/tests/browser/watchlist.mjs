@@ -16,6 +16,7 @@ const stock = (id, symbol, category, name, rate) => ({ id, symbol, category, nam
 const initialItems = [stock(1, "AAPL.US", "US", "苹果 Apple", "2.50%"), stock(2, "MSFT.US", "US", "微软 Microsoft", null),
   stock(3, "NVDA.US", "US", "英伟达 Nvidia", "-1.23%"), stock(4, "700.HK", "H", "腾讯控股", "0.42%")];
 let items = [...initialItems], groups = [{ id: 1, name: "核心关注", item_ids: [1, 4] }], flowMode = "data", candleCountLimit = 1000, candleMode = "data";
+let failReorder = false;
 const calls = [], errors = [], failures = [];
 const origin = "http://watchlist.test";
 const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
@@ -32,7 +33,10 @@ async function route(route) {
   calls.push({ path: url.pathname, method: request.method(), payload, params: Object.fromEntries(url.searchParams) });
   if (url.pathname === "/api/v1/watchlist") return json({ items, total: items.length });
   if (url.pathname === "/api/v1/watchlist/overview") return json({ items, quote_error: null, error: null });
-  if (url.pathname === "/api/v1/watchlist/reorder") { items = payload.ids.map((id) => items.find((item) => item.id === id)); return json({ status: "ok" }); }
+  if (url.pathname === "/api/v1/watchlist/reorder") {
+    if (failReorder) return json({ detail: "Fixture save failed" }, 503);
+    items = payload.ids.map((id) => items.find((item) => item.id === id)); return json({ status: "ok" });
+  }
   if (url.pathname === "/api/v1/watchlist/groups") {
     if (request.method() === "POST") groups = [...groups, { id: Math.max(0, ...groups.map((group) => group.id)) + 1, name: payload.name, item_ids: [] }];
     return json({ groups });
@@ -73,6 +77,25 @@ let page;
 const rows = () => page.locator(".watchlist-sortable-row");
 async function select(label, option) { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: option, exact: true }).click(); }
 async function waitRows(count) { await page.waitForFunction((count) => document.querySelectorAll(".watchlist-sortable-row").length === count, count); }
+const reorders = () => calls.filter((call) => call.path.endsWith("/reorder"));
+const editSwitch = () => page.getByRole("switch", { name: "编辑模式", exact: true });
+async function finishEdit() {
+  await editSwitch().click();
+  await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="编辑模式"]')?.getAttribute("aria-checked") === "false");
+  assert.equal(await page.locator(".watchlist-drag-handle").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "公司排序", exact: true }).count(), 0);
+}
+async function moveFirstDown(symbol) {
+  const handle = page.locator(".watchlist-drag-handle").first();
+  await handle.press("Space");
+  await page.locator('[data-dragging="true"]').waitFor();
+  // KeyboardSensor attaches its document listeners after activation; let layout settle first.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.keyboard.press("ArrowDown");
+  await page.locator('[data-drop-target="true"]').waitFor();
+  await page.keyboard.press("Space");
+  await page.waitForFunction((symbol) => document.querySelector(".watchlist-sortable-row")?.textContent.includes(symbol), symbol);
+}
 async function maLines(expected) {
   await page.waitForFunction((expected) => {
     const labels = document.querySelector(".technical-native-chart canvas")?.drawnLabels ?? [];
@@ -147,17 +170,54 @@ try {
   assert.match(await page.getByRole("button", { name: "MA250", exact: true }).textContent(), /年线/);
   await maLines([5, 10, 20, 120, 250]);
   await page.getByRole("button", { name: "港股", exact: true }).click(); await waitRows(1);
-  await select("自选分组", "核心关注"); await waitRows(1);
+  assert.equal(await page.locator(".watchlist-drag-handle").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "公司排序", exact: true }).count(), 0);
+  await page.getByRole("tab", { name: "核心关注", exact: true }).click(); await waitRows(1);
   await page.getByRole("button", { name: "全部市场", exact: true }).click(); await waitRows(2);
   await page.getByRole("textbox", { name: "筛选自选" }).fill("aapl 苹果"); await waitRows(1);
   assert.equal(calls.filter((call) => call.path.endsWith("/search")).length, 0);
   await page.getByRole("textbox", { name: "筛选自选" }).fill("");
-  await select("自选分组", "全部自选"); await waitRows(4);
+  await page.getByRole("tab", { name: "全部自选", exact: true }).click(); await waitRows(4);
+  await page.getByRole("tab", { name: "全部自选", exact: true }).press("ArrowRight"); await waitRows(2);
+  assert.equal(await page.getByRole("tab", { name: "未分组", exact: true }).getAttribute("aria-selected"), "true");
+  await page.getByRole("tab", { name: "全部自选", exact: true }).click(); await waitRows(4);
+  await editSwitch().click();
   await select("公司排序", "跌幅优先");
   assert.match(await rows().first().textContent(), /NVDA/);
   assert.match(await rows().last().textContent(), /MSFT/);
   assert.ok(await page.locator(".watchlist-drag-handle").first().isDisabled());
+  assert.equal(reorders().length, 0, "sort selection only previews until edit mode closes");
+  await finishEdit();
+  assert.equal(reorders().length, 1);
+  assert.deepEqual(items.map((item) => item.id), [3, 4, 1, 2]);
+  await page.reload(); await waitRows(4);
+  assert.match(await rows().first().textContent(), /NVDA/);
+  assert.equal(await page.evaluate(() => localStorage.getItem("stocks-assistant.watchlist-sort")), "losers");
+  await editSwitch().click();
   await select("公司排序", "自定义排序");
+  await moveFirstDown("700.HK");
+  assert.equal(reorders().length, 1, "keyboard drag is also a draft");
+  await page.screenshot({ path: "/tmp/stocks-watchlist-editing.png" });
+  failReorder = true;
+  await editSwitch().click();
+  await page.getByRole("alert").filter({ hasText: "修改已保留" }).waitFor();
+  assert.equal(await editSwitch().getAttribute("aria-checked"), "true");
+  assert.match(await rows().first().textContent(), /700.HK/);
+  assert.equal(await page.evaluate(() => localStorage.getItem("stocks-assistant.watchlist-sort")), "losers", "failed save does not commit sort preference");
+  failReorder = false; await finishEdit();
+  assert.equal(reorders().length, 3);
+  assert.deepEqual(items.map((item) => item.id), [4, 3, 1, 2]);
+  await page.getByRole("tab", { name: "核心关注", exact: true }).click(); await waitRows(2);
+  await editSwitch().click(); await moveFirstDown("AAPL.US");
+  assert.equal(reorders().length, 3);
+  await finishEdit();
+  assert.deepEqual(items.map((item) => item.id), [1, 3, 4, 2], "group drag retains hidden companies' slots");
+  await page.getByRole("tab", { name: "全部自选", exact: true }).click(); await waitRows(4);
+  await page.reload(); await waitRows(4);
+  assert.match(await rows().first().textContent(), /AAPL/);
+  assert.equal(await page.evaluate(() => localStorage.getItem("stocks-assistant.watchlist-sort")), "manual");
+  await editSwitch().click(); await finishEdit();
+  assert.equal(reorders().length, 4, "unchanged order does not send a redundant mutation");
   await page.getByRole("button", { name: "管理分组", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "分组名称" }).fill("重点公司");
@@ -209,6 +269,8 @@ try {
   await page.getByRole("button", { name: "日K", exact: true }).click();
   await maLines([5, 10, 20, 120, 250]);
   await page.screenshot({ path: "/tmp/stocks-watchlist-desktop.png" });
+  const longGroupName = "长期观察公司与行业机会跟踪";
+  groups = [...groups, { id: 9, name: longGroupName, item_ids: [] }];
   const mobile = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   await mobile.route("**/*", route); page = await mobile.newPage(); page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(origin);
@@ -253,9 +315,20 @@ try {
   assert.ok(listRect.y + listRect.height <= analysisRect.y, "portrait list must not overlap the chart");
   assert.equal(await page.locator(".watchlist-sortable-row").count(), 4);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.getByRole("tab", { name: longGroupName, exact: true }).click(); await waitRows(0);
+  const tabsRect = await page.locator(".watchlist-group-tabs").boundingBox();
+  const activeTabRect = await page.getByRole("tab", { name: longGroupName, exact: true }).boundingBox();
+  assert.ok(activeTabRect.x >= tabsRect.x - 1 && activeTabRect.x + activeTabRect.width <= tabsRect.x + tabsRect.width + 1, "selected tab stays within the horizontal scroller");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.getByRole("tab", { name: "全部自选", exact: true }).click(); await waitRows(4);
+  await editSwitch().tap();
+  assert.equal(await page.locator(".watchlist-drag-handle").count(), 4);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.screenshot({ path: "/tmp/stocks-watchlist-editing-mobile.png" });
+  await finishEdit();
   await page.screenshot({ path: "/tmp/stocks-watchlist-portrait.png", fullPage: true });
   assert.deepEqual(errors, []); assert.deepEqual(failures, []);
-  console.log("PASS: local filters, quote sorting, group CRUD/membership, persisted per-line MA selection, 500-bar history; chip cost ranges, lookback persistence, keyboard/touch inspection, price tracking, themes, flat/zero-volume samples and landscape/portrait layouts; capital flow data/empty/error and rotation.");
+  console.log("PASS: group tabs and keyboard/mobile overflow, draft drag/sort, save on edit close, failure retry, persisted order/preferences, filtered-slot preservation; group CRUD, chart indicators, chips and capital-flow/rotation regressions.");
 } catch (error) {
   if (page) console.error(await page.evaluate(() => ({ width: innerWidth, height: innerHeight, clientWidth: document.documentElement.clientWidth, clientHeight: document.documentElement.clientHeight, landscape: matchMedia("(orientation: landscape)").matches, coarse: matchMedia("(pointer: coarse)").matches, touch: navigator.maxTouchPoints })));
   if (page) await page.screenshot({ path: "/tmp/stocks-watchlist-failure.png", fullPage: true });

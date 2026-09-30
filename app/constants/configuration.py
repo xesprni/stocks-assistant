@@ -263,6 +263,7 @@ WORKSPACE_DEPENDENCIES = (
     "get_watchlist_service",
     "get_market_service",
     "get_portfolio_service",
+    "get_portfolio_snapshot_service",
     "get_session_store",
     "get_trace_store",
 )

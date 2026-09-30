@@ -7,7 +7,7 @@ export type { KnowledgeDir, KnowledgeFile, KnowledgeFileContent, KnowledgeGraph,
 export type { CandlestickItem, CandlesticksResponse, CapitalFlowItem, CapitalFlowResponse, IndexConfig, IntradayItem, IntradayResponse, MarketDashboardConfig, MarketQuotesResponse, MarketTemperature, QuoteItem } from "@/types/market";
 export type { MCPServerStatus, MCPServerToolsResponse, MCPStatusResponse, MCPToolInfo } from "@/types/mcp";
 export type { MemoryFile, MemoryFileContent, MemorySearchResult, MemoryStatus } from "@/types/memory";
-export type { PortfolioItem, PortfolioItemDraft, PortfolioListResponse, PortfolioMarket, PortfolioSearchResponse, PortfolioSearchResult, PortfolioSellDraft, PortfolioSellResponse, PortfolioTransaction, PortfolioTransactionListResponse } from "@/types/portfolio";
+export type { PortfolioAssetSnapshot, PortfolioItem, PortfolioItemDraft, PortfolioListResponse, PortfolioMarket, PortfolioSearchResponse, PortfolioSearchResult, PortfolioSellDraft, PortfolioSellResponse, PortfolioTransaction, PortfolioTransactionListResponse } from "@/types/portfolio";
 export type { FinancialReportCell, FinancialReportColumn, FinancialReportKind, FinancialReportPeriod, FinancialReportRow, FinancialReportsResponse, FinancialStatementTable, SecurityNewsItem, SecurityNewsResponse } from "@/types/research";
 export type { SchedulerTask, SchedulerTaskList, SchedulerTaskRun, SchedulerTaskRunList } from "@/types/scheduler";
 export type { ClawHubInstallResponse, ClawHubSearchResponse, ClawHubSearchResult, ClawHubSkillDetail, SkillInfo, SkillListResponse } from "@/types/skills";

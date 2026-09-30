@@ -1,10 +1,10 @@
 export default {
   "waitingForSnapshots": "等待资产快照",
   "sinceFirstSnapshot": "较本区间首个快照",
-  "snapshotsHint": "完整行情加载后开始记录资产快照",
+  "snapshotsHint": "后端会在每个交易日收盘后自动记录资产快照",
   "snapshotsAriaLabel": "资产快照图，左右方向键查看各日期",
-  "firstSnapshotHint": "已记录 1 个快照，后续访问会逐日积累。",
-  "storageHint": "仅记录此账户在当前浏览器的完整估值；每日本地时间保留最后一次记录。资产变化包含出入金和持仓调整，不代表投资收益。",
+  "firstSnapshotHint": "已记录首个收盘快照，之后每个交易日自动累积。",
+  "storageHint": "按市场交易日收盘后自动保存至账户，后端需保持运行，无需打开本页。行情缺失时重试。资产变化包含资金进出及持仓调整，不等同投资收益。",
   "total": "合计",
   "openHoldingDetails": "，查看持仓详情",
   "holdingPnl": "持仓盈亏贡献",

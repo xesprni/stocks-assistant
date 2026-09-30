@@ -126,6 +126,7 @@ class PortfolioService:
             quote_error=quote_error,
             valuation_complete=not unpriced_symbols,
             unpriced_symbols=unpriced_symbols,
+            asset_snapshots=self.repository.list_asset_snapshots(market, user_id),
         )
 
     def get_local_snapshot(

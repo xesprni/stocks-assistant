@@ -55,6 +55,11 @@ async def lifespan(app: FastAPI):
     if not memory_file.exists():
         memory_file.write_text("")
 
+    # 收盘快照属于基础数据采集，即使关闭 Agent 定时任务也需要持续运行。
+    from app.deps import get_portfolio_snapshot_scheduler
+
+    await get_portfolio_snapshot_scheduler().start()
+
     # 启动定时任务调度器
     scheduler_service = None
     if settings.scheduler_enabled:

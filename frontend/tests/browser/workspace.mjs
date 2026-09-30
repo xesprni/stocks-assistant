@@ -21,6 +21,11 @@ const marketConfig = { refresh_interval: 60, indices: Array.from({ length: 8 }, 
 const marketWrites = [], configWrites = [];
 let marketSaveGate = null;
 const marketModule = () => ({ available: true, error: null, stale: false, source: "live", fetched_at: "2026-09-30", indices: marketConfig.indices.filter((item) => item.enabled).map((item) => ({ ...item, last_done: "100", change_rate: "1" })) });
+const closingSnapshots = [
+  { market: "US", date: "2026-09-28", total_assets: "1800.00", total_capital: "500", equity_value: "1300", scheduled_at: "2026-09-28T16:00:00-04:00", captured_at: "2026-09-28T20:05:00Z", source: "fixture close" },
+  { market: "US", date: "2026-09-29", total_assets: "2000.00", total_capital: "500", equity_value: "1500", scheduled_at: "2026-09-29T16:00:00-04:00", captured_at: "2026-09-29T20:05:00Z", source: "fixture close" },
+];
+let portfolioQuotesComplete = true;
 const symbol = "AAPL.US";
 const position = { id: 1, symbol, name: "Apple", market: "US", shares: "12", cost_price: "100", currency: "USD", current_price: "110", stock_value: "1320", note: "", change_rate: "1%", valuation_price_source: "live" };
 const session = { id: "session", title: "Fixture chat", created_at: "2026-09-30T00:00:00Z", updated_at: "2026-09-30T00:00:00Z", messages: [], inputs: [], message_count: 0, active_run: null };
@@ -75,7 +80,11 @@ await context.route("**/*", async (route) => {
   if (path === "/api/v1/market/candlesticks") return json({ symbol, bars: Array.from({ length: 500 }, (_, i) => ({ timestamp: 1720000000 + i * 86400, open: String(100 + i / 10), high: String(103 + i / 10), low: String(98 + i / 10), close: String(101 + i / 10), volume: "10000", turnover: "1000000" })) });
   if (path === "/api/v1/news") return json({ symbol, news: [{ id: "story", title: "Fixture company news", description: "Longbridge news remains available", published_at: "2026-09-30", url: "https://example.invalid/story", likes_count: 0, comments_count: 0, shares_count: 0 }], total: 1 });
   if (path === "/api/v1/fundamentals/financial-reports") return json({ symbol, kind: "All", statements: [] });
-  if (path === "/api/v1/portfolio") return json({ market: "US", total_capital: "2000", total_assets: "2120", cash_ratio: "30%", items: [position], total: 1, valuation_complete: true, unpriced_symbols: [] });
+  if (path === "/api/v1/portfolio") {
+    assert.equal(request.method(), "GET", "Viewing snapshots must never write portfolio data");
+    return json({ market: "US", total_capital: "2000", total_assets: "2120", cash_ratio: "30%", items: [position], total: 1, valuation_complete: portfolioQuotesComplete, unpriced_symbols: portfolioQuotesComplete ? [] : [symbol], asset_snapshots: closingSnapshots });
+  }
+  if (path === "/api/v1/portfolio/transactions") return json({ market: "US", transactions: [], total: 0 });
   if (path === "/api/v1/knowledge/tree") return json({ tree: { root_files: [{ name: "note.md", title: "Fixture note", size: 20 }], tree: [], stats: { pages: 1, size: 20 }, enabled: true } });
   if (path === "/api/v1/knowledge/graph") return json({ nodes: [], links: [] });
   if (path === "/api/v1/knowledge/read") return json({ path: "note.md", content: "Knowledge is retained", size: 20 });
@@ -146,6 +155,29 @@ async function checkMarketConfigSaves() {
   await page.locator(".app-toast").filter({ hasText: "配置管理" }).getByText("已保存", { exact: true }).waitFor();
   assert.equal(config.llm_model, "manual-model");
   assert.equal(configWrites.length, 2);
+}
+async function checkClosingSnapshots() {
+  const legacyKey = "stocks-assistant.portfolio.asset-snapshots.v2.fixture";
+  const legacy = JSON.stringify([{ market: "US", date: "2026-09-30", total_assets: "999999" }]);
+  await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: legacyKey, value: legacy });
+  await page.goto(`${origin}/portfolio`);
+  await page.getByRole("button", { name: "图表", exact: true }).click();
+  const chart = page.getByRole("group", { name: "资产快照图，左右方向键查看各日期" });
+  await chart.waitFor();
+  const panel = chart.locator("../../..");
+  await panel.getByText("2026-09-29", { exact: true }).first().waitFor();
+  assert.ok((await panel.innerText()).includes("2,000"), "Chart must show the saved closing value");
+  assert.ok(!(await panel.innerText()).includes("999,999"), "Legacy intraday browser data must not masquerade as closes");
+  await chart.focus();
+  await page.keyboard.press("ArrowLeft");
+  await panel.getByText("2026-09-28", { exact: true }).first().waitFor();
+  portfolioQuotesComplete = false;
+  await page.reload();
+  await page.getByRole("button", { name: "图表", exact: true }).click();
+  await chart.waitFor();
+  assert.ok((await panel.innerText()).includes("2,000"), "Missing current quotes must not hide saved history");
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), legacyKey), legacy, "Page visits must not overwrite legacy snapshots");
+  portfolioQuotesComplete = true;
 }
 async function absentRemovedUI() {
   assert.equal(await page.getByRole("button", { name: /^(AI 研究|Thesis|估值|Guardian|实验室|保存为证据|保存证据)$/i }).count(), 0);
@@ -237,6 +269,7 @@ async function checkThemePreferences() {
 }
 try {
   await checkMarketConfigSaves();
+  await checkClosingSnapshots();
   await page.goto(`${origin}/security/${symbol}`);
   await page.getByRole("button", { name: "MA250", exact: true }).waitFor();
   await page.waitForFunction(() => (document.querySelector(".technical-native-chart canvas")?.width ?? 0) > 300);
@@ -292,7 +325,7 @@ try {
   assert.equal(calls.filter((path) => /^\/api\/v1\/(research|labs|alerts)(\/|$)|\/guardian\//.test(path)).length, 0);
   assert.deepEqual(failures, []);
   assert.deepEqual(errors, []);
-  console.log("PASS: market autosave, tab/page navigation and reload persistence, ninth index, manual/automatic save toasts; company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; theme colors, contrast, keyboard selection, persistence, mobile layout and fallback; locale switching and persistence; no retired feature requests or page errors.");
+  console.log("PASS: backend closing snapshots, quote failures and legacy browser isolation; market autosave, tab/page navigation and reload persistence, ninth index, manual/automatic save toasts; company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; theme colors, contrast, keyboard selection, persistence, mobile layout and fallback; locale switching and persistence; no retired feature requests or page errors.");
 } catch (error) {
   await page.screenshot({ path: "/tmp/stocks-workspace-removal-failure.png", fullPage: true });
   console.error({ failures, errors });

@@ -4,16 +4,27 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from pydantic import TypeAdapter
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from app.constants.portfolio import MAX_ASSET_SNAPSHOTS
 from app.core.orm.database import create_session_factory, create_sqlite_engine, session_scope
 from app.core.orm.migrations import init_portfolio_schema
-from app.core.orm.models.portfolio import PortfolioItem, PortfolioSetting, PortfolioTransaction
+from app.core.orm.models.portfolio import (
+    PortfolioAssetSnapshot as AssetSnapshotRow,
+)
+from app.core.orm.models.portfolio import (
+    PortfolioItem,
+    PortfolioSetting,
+    PortfolioTransaction,
+)
+from app.schemas.portfolio import PortfolioAssetSnapshot, PortfolioLocalSnapshot, PortfolioMarket
 
 
 class PortfolioRepository:
@@ -24,6 +35,66 @@ class PortfolioRepository:
         self.engine = create_sqlite_engine(self.db_path)
         self.session_factory = create_session_factory(self.engine)
         init_portfolio_schema(self.engine)
+
+    def snapshot_markets(self, user_id: str) -> list[PortfolioMarket]:
+        with session_scope(self.session_factory) as session:
+            markets = session.scalars(
+                select(PortfolioItem.market)
+                .where(PortfolioItem.user_id == user_id)
+                .union(select(PortfolioSetting.market).where(PortfolioSetting.user_id == user_id))
+            ).all()
+            return [TypeAdapter(PortfolioMarket).validate_python(market) for market in markets]
+
+    def has_asset_snapshot(self, market: PortfolioMarket, day: str, user_id: str) -> bool:
+        with session_scope(self.session_factory) as session:
+            return session.get(AssetSnapshotRow, (user_id, market, day)) is not None
+
+    def save_asset_snapshot(
+        self,
+        snapshot: PortfolioAssetSnapshot,
+        user_id: str,
+        expected: PortfolioLocalSnapshot,
+    ) -> None:
+        with session_scope(self.session_factory) as session:
+            # 行情获取在事务外进行；写入前持有写锁校验估值输入，避免卖出插入两者之间。
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            rows = session.scalars(
+                select(PortfolioItem).where(
+                    PortfolioItem.user_id == user_id, PortfolioItem.market == snapshot.market
+                )
+            ).all()
+            setting = session.get(PortfolioSetting, (user_id, snapshot.market))
+            actual_cash = Decimal(setting.total_capital if setting else "0")
+            actual_positions = {(row.id, row.symbol): Decimal(row.shares or "NaN") for row in rows}
+            expected_positions = {
+                (item.id, item.symbol): Decimal(item.shares or "NaN") for item in expected.items
+            }
+            if (
+                snapshot.market != expected.market
+                or actual_cash != Decimal(expected.total_capital)
+                or actual_positions != expected_positions
+            ):
+                raise ValueError("Portfolio changed while collecting closing prices")
+            # 唯一键保证重启、多 worker 或重复轮询不会覆盖已确认的收盘快照。
+            session.execute(
+                sqlite_insert(AssetSnapshotRow)
+                .values(user_id=user_id, **snapshot.model_dump())
+                .on_conflict_do_nothing()
+            )
+
+    def list_asset_snapshots(
+        self, market: PortfolioMarket, user_id: str | None
+    ) -> list[PortfolioAssetSnapshot]:
+        with session_scope(self.session_factory) as session:
+            rows = session.scalars(
+                select(AssetSnapshotRow)
+                .where(
+                    AssetSnapshotRow.user_id == (user_id or ""), AssetSnapshotRow.market == market
+                )
+                .order_by(AssetSnapshotRow.date.desc())
+                .limit(MAX_ASSET_SNAPSHOTS)
+            ).all()
+            return [PortfolioAssetSnapshot.model_validate(row) for row in reversed(rows)]
 
     def list_items(self, market: str, user_id: str | None = None) -> list[dict[str, Any]]:
         with session_scope(self.session_factory) as session:

@@ -46,6 +46,7 @@ def runtime_bindings() -> tuple[RuntimeBinding, ...]:
         deps.get_watchlist_service,
         deps.get_market_service,
         deps.get_portfolio_service,
+        deps.get_portfolio_snapshot_service,
         deps.get_session_store,
         deps.get_trace_store,
     )

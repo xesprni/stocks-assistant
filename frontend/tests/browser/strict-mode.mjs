@@ -65,20 +65,27 @@ try {
   await page.goto(origin);
   await page.locator(".watchlist-sortable-row").first().waitFor();
   assert.equal(await page.evaluate(() => window.strictMounts), 2, "development StrictMode replays mount effects");
+  assert.equal(await page.locator(".watchlist-drag-handle").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Sort companies", exact: true }).count(), 0);
+  const editSwitch = page.getByRole("switch", { name: "Edit mode", exact: true });
+  await editSwitch.click();
   const first = page.locator(".watchlist-drag-handle").first();
   const second = page.locator(".watchlist-drag-handle").nth(1);
   const from = await first.boundingBox(), to = await second.boundingBox();
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-  const reordered = page.waitForResponse((response) => response.url().endsWith("/api/v1/watchlist/reorder"));
   await page.mouse.down();
   await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
   await page.mouse.up();
-  await reordered;
   await page.waitForFunction(() => document.querySelector(".watchlist-sortable-row")?.textContent.includes("MSFT.US"));
-  assert.equal(calls.filter((call) => call.path.endsWith("/reorder")).length, 1, "one drag causes exactly one mutation under StrictMode");
+  assert.equal(calls.filter((call) => call.path.endsWith("/reorder")).length, 0, "drag only changes the draft");
   await page.waitForFunction(() => !document.querySelector('[data-dragging="true"]'));
   // dnd-kit's pointer sensor intentionally suppresses document clicks for 50 ms after drag end.
   await page.waitForTimeout(75);
+  const reordered = page.waitForResponse((response) => response.url().endsWith("/api/v1/watchlist/reorder"));
+  await editSwitch.press("Space");
+  await reordered;
+  await page.waitForFunction(() => !document.querySelector(".watchlist-drag-handle"));
+  assert.equal(calls.filter((call) => call.path.endsWith("/reorder")).length, 1, "closing edit mode saves exactly once under StrictMode");
   await page.getByRole("button", { name: "chat", exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[data-testid="chat-ready"]')?.textContent === "Ready");
   await page.getByRole("textbox", { name: "Prompt" }).fill("Fixture question");
@@ -91,7 +98,7 @@ try {
   if (process.env.STRICT_MODE_SCREENSHOT) await page.screenshot({ path: process.env.STRICT_MODE_SCREENSHOT, fullPage: true });
   assert.deepEqual(errors, []);
   assert.deepEqual(failures, []);
-  console.log("PASS: StrictMode double mount, one drag/one reorder, one chat submission and persisted assistant; no external requests or page errors.");
+  console.log("PASS: StrictMode double mount, draft drag with one save on edit close, one chat submission and persisted assistant; no external requests or page errors.");
 } catch (error) {
   if (process.env.STRICT_MODE_SCREENSHOT && page) await page.screenshot({ path: process.env.STRICT_MODE_SCREENSHOT, fullPage: true });
   throw error;

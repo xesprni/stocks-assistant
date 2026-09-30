@@ -1,9 +1,23 @@
 """Keep test defaults away from application data and legacy local configuration."""
 
 from collections.abc import Iterator
+from functools import lru_cache
 from unittest.mock import Mock
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_portfolio_snapshot_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import deps
+    from app.core.portfolio.snapshot_scheduler import PortfolioSnapshotScheduler
+
+    @lru_cache
+    def factory() -> PortfolioSnapshotScheduler:
+        # lifespan 测试不能启动真实行情采集；收盘采集测试显式注入行情替身。
+        return PortfolioSnapshotScheduler(lambda stop: None)
+
+    monkeypatch.setattr(deps, "get_portfolio_snapshot_scheduler", factory)
 
 
 @pytest.fixture(scope="session", autouse=True)

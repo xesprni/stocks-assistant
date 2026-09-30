@@ -2,7 +2,7 @@ import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, 
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FileText, Folder, GripVertical, Loader2, Plus, Search, Star, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { useToast } from "@/components/common/Toast";
@@ -11,12 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WatchlistGroupsDrawer } from "@/components/WatchlistGroupsDrawer";
 import { useWatchlistController } from "@/hooks/useWatchlistController";
 import { useWatchlistGroups } from "@/hooks/useWatchlistGroups";
 import type { AppLanguage } from "@/i18n";
 import { formatTemplate, i18n } from "@/i18n";
 import { searchWatchlist } from "@/lib/api";
+import { applyEntityOrder } from "@/lib/optimistic-list";
 import { cn } from "@/lib/utils";
 import { filterWatchlist, quoteNumber, reorderVisibleItems, type WatchlistGroupFilter, type WatchlistSort } from "@/lib/watchlist-view";
 import type { WatchlistCategory, WatchlistItem, WatchlistMarket, WatchlistSearchResult } from "@/types/app";
@@ -71,6 +74,8 @@ function loadStoredWatchlistRefreshSeconds() {
 
 function SortableWatchlistItem({
   item,
+  editing,
+  busy,
   sortingEnabled,
   activeSymbol,
   onDelete,
@@ -79,6 +84,8 @@ function SortableWatchlistItem({
   copy,
 }: {
   item: WatchlistItem;
+  editing: boolean;
+  busy: boolean;
   sortingEnabled: boolean;
   activeSymbol: string;
   onDelete: (item: WatchlistItem) => void;
@@ -150,10 +157,11 @@ function SortableWatchlistItem({
       tabIndex={0}
     >
       <div className="flex items-center gap-1.5 sm:gap-2">
-        <button
+        {editing && <button
           {...attributes}
           {...listeners}
           aria-label={copy.dragSort}
+          title={sortingEnabled ? copy.dragSort : copy.sortPreviewHint}
           disabled={!sortingEnabled}
           className={cn(
             "watchlist-drag-handle grid size-7 shrink-0 disabled:cursor-default disabled:opacity-20 cursor-grab touch-none select-none place-items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing",
@@ -163,7 +171,7 @@ function SortableWatchlistItem({
           type="button"
         >
           <GripVertical className="size-3.5" />
-        </button>
+        </button>}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold" title={stockName(item)}>{stockName(item)}</p>
           <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{item.symbol}</p>
@@ -176,6 +184,7 @@ function SortableWatchlistItem({
         </div>
         <RowActions
           copy={copy}
+          disabled={busy}
           onDelete={() => onDelete(item)}
           onOpenFinancials={() => onOpenFinancials(item.symbol)}
           showDelete
@@ -217,11 +226,13 @@ function WatchlistDragPreview({
 
 function RowActions({
   copy,
+  disabled = false,
   onDelete,
   onOpenFinancials,
   showDelete = false,
 }: {
   copy: typeof i18n.zh.watchlist;
+  disabled?: boolean;
   onDelete?: () => void;
   onOpenFinancials: () => void;
   showDelete?: boolean;
@@ -232,7 +243,7 @@ function RowActions({
         <FileText />
       </Button>
       {showDelete ? (
-        <Button aria-label={copy.deleteItem} className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
+        <Button aria-label={copy.deleteItem} disabled={disabled} className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={(event) => { event.stopPropagation(); onDelete?.(); }} size="icon" title={copy.deleteItem} variant="ghost">
           <Trash2 />
         </Button>
       ) : null}
@@ -248,11 +259,10 @@ export function WatchlistPage({ language, selectedSymbol = "", onSelectedSymbolC
   const [category, setCategory] = useState<WatchlistMarket>(() =>
     inferCategoryFromSymbol(selectedSymbol) ?? readStoredValue(WATCHLIST_CATEGORY_STORAGE_KEY, ["all", "US", "A", "H"], "all"));
   const [activeSymbol, setActiveSymbol] = useState(selectedSymbol);
-  const { controller, items, loading: isLoading, refreshing, error } = useWatchlistController("all", loadStoredWatchlistRefreshSeconds());
+  const { controller, items, loading: isLoading, refreshing, error, editing, savingOrder, mutating, draftOrder, sort, orderError } = useWatchlistController("all", loadStoredWatchlistRefreshSeconds());
   const groupState = useWatchlistGroups();
   const [group, setGroup] = useState<WatchlistGroupFilter>("all");
   const [localQuery, setLocalQuery] = useState("");
-  const [sort, setSort] = useState<WatchlistSort>("manual");
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -261,13 +271,21 @@ export function WatchlistPage({ language, selectedSymbol = "", onSelectedSymbolC
   const [adding, setAdding] = useState(false);
   const [activeDragId, setActiveDragId] = useState<UniqueIdentifier | null>(null);
   const [activeDragSize, setActiveDragSize] = useState<DragPreviewSize | null>(null);
+  const editToggleId = useId();
+  const groupsTabListRef = useRef<HTMLDivElement>(null);
   const lastErrorToastRef = useRef({ message: "", time: 0 });
   const { showToast } = useToast();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const categories = [{ id: "all" as const, label: copy.allMarkets }, ...getWatchlistCategories(language)];
-  const visibleItems = useMemo(() => filterWatchlist(items, groupState.groups, { market: category, group, query: localQuery, sort }),
-    [items, groupState.groups, category, group, localQuery, sort]);
+  const orderedItems = useMemo(() => applyEntityOrder(items, draftOrder ?? []), [items, draftOrder]);
+  const visibleItems = useMemo(() => filterWatchlist(orderedItems, groupState.groups, { market: category, group, query: localQuery, sort }),
+    [orderedItems, groupState.groups, category, group, localQuery, sort]);
+  const groupTabs = useMemo(() => [
+    { value: "all", label: copy.allGroups, count: items.length },
+    { value: "ungrouped", label: copy.ungrouped, count: filterWatchlist(items, groupState.groups, { market: "all", group: "ungrouped", query: "", sort: "manual" }).length },
+    ...groupState.groups.map((entry) => ({ value: String(entry.id), label: entry.name, count: entry.item_ids.filter((id) => items.some((item) => item.id === id)).length })),
+  ], [items, groupState.groups, copy.allGroups, copy.ungrouped]);
   const symbolSet = useMemo(() => new Set(items.map((item) => item.symbol)), [items]);
   const activeDragItem = items.find((item) => item.id === activeDragId) ?? null;
   const showError = useCallback((message: string) => {
@@ -283,6 +301,15 @@ export function WatchlistPage({ language, selectedSymbol = "", onSelectedSymbolC
   useEffect(() => {
     if (typeof group === "number" && !groupState.loading && !groupState.groups.some((item) => item.id === group)) setGroup("all");
   }, [group, groupState.groups, groupState.loading]);
+  useEffect(() => {
+    const list = groupsTabListRef.current;
+    const selected = list?.querySelector<HTMLElement>('[data-state="active"]');
+    if (!list || !selected) return;
+    // 仅滚动 Tab 栏，避免切分组时整个页面或 K 线区域跟着跳动。
+    const parent = list.getBoundingClientRect(), tab = selected.getBoundingClientRect();
+    if (tab.left < parent.left) list.scrollLeft -= parent.left - tab.left;
+    else if (tab.right > parent.right) list.scrollLeft += tab.right - parent.right;
+  }, [group, groupTabs.length]);
   useEffect(() => { if (selectedSymbol) setActiveSymbol(selectedSymbol); }, [selectedSymbol]);
   useEffect(() => {
     if (activeSymbol || !visibleItems.length) return;
@@ -330,56 +357,76 @@ export function WatchlistPage({ language, selectedSymbol = "", onSelectedSymbolC
   function cancelDrag() { setActiveDragId(null); setActiveDragSize(null); }
   function handleDragEnd(event: DragEndEvent) {
     cancelDrag();
-    if (sort !== "manual" || !event.over || event.active.id === event.over.id) return;
+    if (!editing || savingOrder || sort !== "manual" || !event.over || event.active.id === event.over.id) return;
     const from = visibleItems.findIndex((item) => item.id === event.active.id);
     const to = visibleItems.findIndex((item) => item.id === event.over?.id);
     if (from < 0 || to < 0) return;
-    controller.reorder(reorderVisibleItems(items, arrayMove(visibleItems, from, to).map((item) => item.id)));
+    controller.reorderDraft(reorderVisibleItems(orderedItems, arrayMove(visibleItems, from, to).map((item) => item.id)));
   }
-  const resetFilters = () => { setCategory("all"); setGroup("all"); setLocalQuery(""); setSort("manual"); };
+  async function toggleEditing(checked: boolean) {
+    if (checked) { controller.beginEdit(); return; }
+    if (await controller.finishEdit(visibleItems.map((item) => item.id))) {
+      showToast({ kind: "success", title: copy.companies, message: copy.orderSaved });
+    }
+  }
+  const resetFilters = () => { setCategory("all"); setGroup("all"); setLocalQuery(""); };
   return (
     <section className="watchlist-page-shell panel motion-panel page-enter finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="page-toolbar watchlist-compact-toolbar flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{copy.companies}</h2>
           <Badge className="gap-1" variant="outline">{refreshing && <Loader2 className="size-3 animate-spin" />}{items.length}</Badge>
         </div>
-        <div className="flex items-center gap-1">
-          <Button size="sm" variant="ghost" disabled={groupState.loading} onClick={() => setGroupsOpen(true)}><Folder className="size-4" />{copy.manageGroups}</Button>
-          <Button size="sm" onClick={() => { setQuery(""); setAddOpen(true); }}><Plus className="size-4" />{copy.addCompany}</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-h-9 items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-2.5">
+            <label htmlFor={editToggleId} className="cursor-pointer text-xs font-medium">{copy.editMode}</label>
+            <Switch id={editToggleId} checked={editing} disabled={isLoading || mutating || activeDragId != null} onCheckedChange={(checked) => void toggleEditing(checked)} aria-label={copy.editMode} />
+          </div>
+          <Button size="sm" variant="ghost" disabled={groupState.loading || savingOrder} onClick={() => setGroupsOpen(true)}><Folder className="size-4" />{copy.manageGroups}</Button>
+          <Button size="sm" disabled={savingOrder} onClick={() => { setQuery(""); setAddOpen(true); }}><Plus className="size-4" />{copy.addCompany}</Button>
         </div>
       </div>
       <div className="watchlist-page-grid grid min-h-0 flex-1 grid-rows-[max-content_max-content] gap-3 pb-3 pt-2 lg:grid-cols-[370px_minmax(0,1fr)] lg:grid-rows-1 lg:gap-3 lg:overflow-hidden lg:pb-4">
         <aside className="watchlist-list-shell finance-module flex min-h-0 min-w-0 flex-col rounded-md border border-border/80 bg-card/45">
+          <Tabs value={String(group)} onValueChange={(value) => setGroup(value === "all" || value === "ungrouped" ? value : Number(value))} className="flex min-h-0 flex-1 flex-col">
           <div className="relative z-20 shrink-0 space-y-3 border-b border-border/70 p-3">
+            <TabsList ref={groupsTabListRef} aria-label={copy.groups} className="watchlist-group-tabs flex w-full justify-start gap-1 overflow-x-auto rounded-none border-x-0 border-t-0 border-b border-border/70 bg-transparent p-0 shadow-none">
+              {groupTabs.map((tab) => <TabsTrigger key={tab.value} value={tab.value} disabled={savingOrder} aria-label={tab.label} title={tab.label}
+                className="shrink-0 gap-1.5 rounded-none border-b-2 border-transparent px-2.5 py-2 text-xs font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none">
+                <span className="max-w-32 truncate">{tab.label}</span><span aria-hidden="true" className="rounded bg-muted/70 px-1 text-[10px] tabular-nums text-muted-foreground">{tab.count}</span>
+              </TabsTrigger>)}
+            </TabsList>
             <div className="flex gap-1 rounded-lg bg-muted/50 p-1" role="group" aria-label={copy.allMarkets}>
               {categories.map((market) => <button key={market.id} type="button" aria-pressed={category === market.id}
                 className={cn("min-h-8 flex-1 whitespace-nowrap rounded-md px-1.5 text-xs font-medium transition-colors", category === market.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
                 onClick={() => setCategory(market.id)}>{market.label}</button>)}
             </div>
-            <Select aria-label={copy.groups} value={String(group)} onValueChange={(value) => setGroup(value === "all" || value === "ungrouped" ? value : Number(value))}
-              options={[{ value: "all", label: copy.allGroups }, { value: "ungrouped", label: copy.ungrouped }, ...groupState.groups.map((entry) => ({ value: String(entry.id), label: entry.name }))]} />
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input aria-label={copy.localFilter} className="pl-8 pr-9" placeholder={copy.localFilterPlaceholder} value={localQuery} onChange={(event) => setLocalQuery(event.target.value)} />
               {localQuery && <button className="absolute right-0 top-0 grid size-9 place-items-center text-muted-foreground" aria-label={common.clear} onClick={() => setLocalQuery("")}><X className="size-4" /></button>}
             </div>
-            <Select aria-label={copy.sortLabel} value={sort} onValueChange={(value) => setSort(value as WatchlistSort)} options={[
+            {editing && <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/[0.035] p-2">
+            <Select aria-label={copy.sortLabel} value={sort} disabled={savingOrder || activeDragId != null} onValueChange={(value) => controller.setSort(value as WatchlistSort)} options={[
               { value: "manual", label: copy.manualOrder }, { value: "name", label: copy.nameOrder },
               { value: "gainers", label: copy.gainersOrder }, { value: "losers", label: copy.losersOrder },
             ]} />
+              <p role="status" className="flex items-start gap-1 text-[11px] leading-5 text-muted-foreground">{savingOrder && <Loader2 className="mt-1 size-3 shrink-0 animate-spin" />}{savingOrder ? copy.savingOrder : sort === "manual" ? copy.editHint : copy.sortPreviewHint}</p>
+              {orderError && <p role="alert" className="text-xs leading-5 text-destructive">{copy.reorderFailed}</p>}
+            </div>}
             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
               <span aria-live="polite">{formatTemplate(copy.visibleCount, { visible: visibleItems.length, total: items.length })}</span>
               <span>{copy.price} / {copy.rate}</span>
             </div>
           </div>
-          <div className="min-h-0 max-h-[320px] flex-1 overflow-y-auto p-2 lg:max-h-none">
+          <TabsContent value={String(group)} className="mt-0 min-h-0 max-h-[320px] flex-1 overflow-y-auto p-2 lg:max-h-none">
             {!isLoading && !visibleItems.length && items.length > 0 ? <SoftState icon={<Search className="size-6" />}>
               <span className="block">{copy.localNoMatch}</span><Button variant="ghost" size="sm" className="mt-2" onClick={resetFilters}>{copy.resetFilters}</Button>
             </SoftState> : <ManageList activeDragItem={activeDragItem} activeDragSize={activeDragSize} activeSymbol={activeSymbol}
-              commonLoading={common.loading} copy={copy} isLoading={isLoading} items={visibleItems} sortingEnabled={sort === "manual"}
+              commonLoading={common.loading} copy={copy} isLoading={isLoading} items={visibleItems} editing={editing} busy={mutating} sortingEnabled={editing && !savingOrder && sort === "manual"}
               onDelete={handleDelete} onDragCancel={cancelDrag} onDragEnd={handleDragEnd} onDragStart={handleDragStart}
               onOpenFinancials={onOpenFinancials} onSelect={handleSelect} sensors={sensors} />}
-          </div>
+          </TabsContent>
+          </Tabs>
         </aside>
         <div className="watchlist-analysis-shell finance-module flex min-h-[560px] min-w-0 flex-col overflow-hidden overscroll-contain rounded-md border border-border/80 bg-card/45 sm:min-h-[640px] lg:min-h-0">
           {activeSymbol ? <TechnicalAnalysis embedded language={language} symbol={activeSymbol} onSymbolChange={handleSelect} /> :
@@ -421,6 +468,8 @@ function ManageList({
   onSelect,
   sensors,
   sortingEnabled,
+  editing,
+  busy,
 }: {
   activeDragItem: WatchlistItem | null;
   activeDragSize: DragPreviewSize | null;
@@ -430,6 +479,8 @@ function ManageList({
   isLoading: boolean;
   items: WatchlistItem[];
   sortingEnabled: boolean;
+  editing: boolean;
+  busy: boolean;
   onDelete: (item: WatchlistItem) => void;
   onDragCancel: () => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -456,6 +507,8 @@ function ManageList({
           {items.map((item) => (
             <SortableWatchlistItem
               sortingEnabled={sortingEnabled}
+              editing={editing}
+              busy={busy}
               activeSymbol={activeSymbol}
               copy={copy}
               item={item}

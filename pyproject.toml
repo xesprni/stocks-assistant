@@ -59,6 +59,7 @@ files = [
     "app/core/market/errors.py",
     "app/core/memory/search_filters.py",
     "app/core/portfolio/valuation.py",
+    "app/core/portfolio/close_schedule.py",
     "app/core/agent/context.py",
     "app/core/agent/stream_state.py",
     "app/core/agent/run_service.py",

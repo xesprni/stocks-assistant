@@ -9,7 +9,13 @@ async def shutdown_runtime() -> None:
     from app.core.llm.provider import close_llm_client_pool
 
     try:
-        await asyncio.to_thread(chat_runs.close)
+        try:
+            if deps.get_portfolio_snapshot_scheduler.cache_info().currsize:
+                await deps.get_portfolio_snapshot_scheduler().stop()
+        finally:
+            deps.get_portfolio_snapshot_scheduler.cache_clear()
+            deps.get_portfolio_snapshot_service.cache_clear()
+            await asyncio.to_thread(chat_runs.close)
     finally:
         try:
             if deps.get_scheduler_service.cache_info().currsize:

@@ -40,6 +40,21 @@ class PortfolioSetting(PortfolioBase):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class PortfolioAssetSnapshot(PortfolioBase):
+    __tablename__ = "portfolio_asset_snapshots"
+    __table_args__ = (CheckConstraint("market IN ('US', 'A', 'H')"),)
+
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    market: Mapped[str] = mapped_column(Text, primary_key=True)
+    date: Mapped[str] = mapped_column(Text, primary_key=True)
+    total_assets: Mapped[str] = mapped_column(Text, nullable=False)
+    total_capital: Mapped[str] = mapped_column(Text, nullable=False)
+    equity_value: Mapped[str] = mapped_column(Text, nullable=False)
+    scheduled_at: Mapped[str] = mapped_column(Text, nullable=False)
+    captured_at: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class PortfolioTransaction(PortfolioBase):
     __tablename__ = "portfolio_transactions"
     __table_args__ = (

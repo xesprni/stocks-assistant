@@ -42,6 +42,18 @@ export interface PortfolioListResponse {
   quote_error?: string | null;
   valuation_complete: boolean;
   unpriced_symbols: string[];
+  asset_snapshots: PortfolioAssetSnapshot[];
+}
+
+export interface PortfolioAssetSnapshot {
+  market: PortfolioMarket;
+  date: string;
+  total_assets: string;
+  total_capital: string;
+  equity_value: string;
+  scheduled_at: string;
+  captured_at: string;
+  source: string;
 }
 
 export interface PortfolioSellDraft {

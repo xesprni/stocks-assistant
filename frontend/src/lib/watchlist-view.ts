@@ -1,6 +1,7 @@
 import type { WatchlistGroup, WatchlistItem, WatchlistMarket } from "@/types/app";
 
-export type WatchlistSort = "manual" | "name" | "gainers" | "losers";
+export const WATCHLIST_SORTS = ["manual", "name", "gainers", "losers"] as const;
+export type WatchlistSort = typeof WATCHLIST_SORTS[number];
 export type WatchlistGroupFilter = "all" | "ungrouped" | number;
 
 export function quoteNumber(value: string | null | undefined): number | null {

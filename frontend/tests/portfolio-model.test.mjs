@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildAssetSegments, buildHoldingSegments, buildTrendPoints, holdingPnl,
-  localDateKey, parseNumber, portfolioStats, readPortfolioSnapshots,
-  snapshotStorageKey, writePortfolioSnapshot,
+  localDateKey, parseNumber, portfolioStats,
 } from "../src/components/portfolio/model.ts";
 
 const holding = (overrides = {}) => ({
@@ -49,26 +48,6 @@ test("trend aggregation uses the last available day per period and preserves its
   assert.equal(buildTrendPoints([], "day").length, 0);
   assert.equal(buildTrendPoints(snapshots.slice(0, 1), "day").length, 1);
   assert.equal(localDateKey(new Date(2026, 8, 9, 0, 1)), "2026-09-09");
-});
-
-test("asset snapshots isolate accounts and markets and replace only today's entry", () => {
-  const data = new Map();
-  globalThis.window = { localStorage: { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) } };
-  try {
-    writePortfolioSnapshot("US", "100", "alice");
-    writePortfolioSnapshot("H", "200", "alice");
-    writePortfolioSnapshot("US", "300", "bob");
-    writePortfolioSnapshot("US", "110", "alice");
-    assert.equal(readPortfolioSnapshots("US", "alice").length, 1);
-    assert.equal(readPortfolioSnapshots("US", "alice")[0].total_assets, "110");
-    assert.equal(readPortfolioSnapshots("H", "alice")[0].total_assets, "200");
-    assert.equal(readPortfolioSnapshots("US", "bob")[0].total_assets, "300");
-    assert.deepEqual(readPortfolioSnapshots("US", ""), []);
-    data.set(snapshotStorageKey("broken"), '{"invalid": true}');
-    assert.deepEqual(readPortfolioSnapshots("US", "broken"), []);
-    data.set(snapshotStorageKey("bad-row"), '[null,{"market":"US","date":55,"total_assets":100}]');
-    assert.deepEqual(readPortfolioSnapshots("US", "bad-row"), []);
-  } finally { delete globalThis.window; }
 });
 
 test("allocation excludes unavailable values and sorts holdings by market value", () => {

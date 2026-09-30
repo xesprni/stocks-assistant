@@ -99,6 +99,19 @@ class PortfolioItem(PortfolioPositionFields):
     valuation_price_source: Literal["live", "cost", "unavailable"] = "unavailable"
 
 
+class PortfolioAssetSnapshot(BaseModel):
+    """按用户、市场和交易日保存的收盘资产估值，金额保持字符串精度。"""
+
+    market: PortfolioMarket
+    date: str
+    total_assets: str
+    total_capital: str
+    equity_value: str
+    scheduled_at: str
+    captured_at: str
+    source: str
+
+
 class PortfolioListResponse(BaseModel):
     """Portfolio list response."""
 
@@ -111,6 +124,7 @@ class PortfolioListResponse(BaseModel):
     quote_error: str | None = None
     valuation_complete: bool = True
     unpriced_symbols: list[str] = Field(default_factory=list)
+    asset_snapshots: list[PortfolioAssetSnapshot] = Field(default_factory=list)
 
 
 class PortfolioSellRequest(BaseModel):

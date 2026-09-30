@@ -8,8 +8,6 @@ import {
   portfolioStats as computePortfolioStats,
   holdingPnl,
   parseNumber,
-  readPortfolioSnapshots,
-  writePortfolioSnapshot,
   type PortfolioAssetSnapshot,
   type PortfolioTrendRange,
 } from "@/components/portfolio/model";
@@ -93,7 +91,7 @@ export function usePortfolioPage({
 
   const [transactions, setTransactions] = useState<PortfolioTransaction[]>([]);
 
-  const [assetSnapshots, setAssetSnapshots] = useState<PortfolioAssetSnapshot[]>(() => readPortfolioSnapshots(readStoredValue(PORTFOLIO_MARKET_STORAGE_KEY, ["US", "A", "H"], "US"), userId));
+  const [assetSnapshots, setAssetSnapshots] = useState<PortfolioAssetSnapshot[]>([]);
 
   const [totalCapital, setTotalCapital] = useState("0");
 
@@ -276,9 +274,7 @@ export function usePortfolioPage({
         setTotalAssets(response.total_assets);
         setCashRatio(response.cash_ratio);
         setValuationComplete(response.valuation_complete);
-        setAssetSnapshots(response.valuation_complete
-          ? writePortfolioSnapshot(requestMarket, response.total_assets, userId)
-          : readPortfolioSnapshots(requestMarket, userId));
+        setAssetSnapshots(response.asset_snapshots ?? []);
         if (syncCapitalDraft) setCapitalDraft(response.total_capital);
         setQuoteError(response.quote_error ?? "");
         setMessage("");
@@ -617,7 +613,7 @@ export function usePortfolioPage({
     setIsAutoRefreshing(false);
     setMarket(nextMarket);
     setTransactions([]);
-    setAssetSnapshots(readPortfolioSnapshots(nextMarket, userId));
+    setAssetSnapshots([]);
     setShowForm(false);
     setShowCashSheet(false);
     closeAdjustmentSheet();

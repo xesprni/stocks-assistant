@@ -6,12 +6,13 @@
 
 import hashlib
 import json
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from threading import Lock, RLock
+from threading import Event, Lock, RLock
 from typing import Any
 from weakref import finalize
 
@@ -512,6 +513,43 @@ def get_portfolio_service():
 
     settings = get_settings()
     return PortfolioService(workspace_dir=settings.workspace_dir)
+
+
+@lru_cache
+def get_portfolio_snapshot_service():
+    from app.core.portfolio.snapshot_service import PortfolioSnapshotService
+
+    return PortfolioSnapshotService(get_portfolio_service(), get_market_service())
+
+
+def _capture_portfolio_snapshots(stop_event: Event) -> None:
+    from app.constants.security import Permission
+    from app.core.app_store import get_app_store
+    from app.core.security import to_current_user
+
+    # 每轮重新获取依赖；workspace 或个人凭据更新后下一轮使用新的配置快照。
+    service = get_portfolio_snapshot_service()
+    for record in get_app_store().list_users():
+        if stop_event.is_set():
+            return
+        user = to_current_user(record)
+        if not user.is_active or not user.can(Permission.PORTFOLIO_READ):
+            continue
+        try:
+            service.capture_due(
+                user.id, get_effective_settings(user.id), datetime.now(UTC), stop=stop_event
+            )
+        except Exception:
+            logging.getLogger("stocks-assistant.portfolio.snapshots").exception(
+                "Asset snapshot user poll failed: user=%s", user.id
+            )
+
+
+@lru_cache
+def get_portfolio_snapshot_scheduler():
+    from app.core.portfolio.snapshot_scheduler import PortfolioSnapshotScheduler
+
+    return PortfolioSnapshotScheduler(_capture_portfolio_snapshots)
 
 
 @lru_cache

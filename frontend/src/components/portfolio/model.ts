@@ -1,7 +1,7 @@
-import type { PortfolioItem, PortfolioMarket } from "@/types/app";
+import type { PortfolioAssetSnapshot, PortfolioItem } from "@/types/app";
 
 export type PortfolioTrendRange = "day" | "week" | "month";
-export type PortfolioAssetSnapshot = { market: PortfolioMarket; date: string; total_assets: string };
+export type { PortfolioAssetSnapshot } from "@/types/app";
 export type PortfolioTrendPoint = { label: string; date: string; value: number };
 export type PortfolioPieSegment = { label: string; value: number; displayValue: string; color: string };
 export const PORTFOLIO_COLORS = ["#6366f1", "#14b8a6", "#f59e0b", "#0ea5e9", "#a855f7", "#f97316", "#ec4899", "#84cc16"];
@@ -62,39 +62,6 @@ export function portfolioStats(items: PortfolioItem[]) {
 
 export function localDateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-export function snapshotStorageKey(userId: string) {
-  return `stocks-assistant.portfolio.asset-snapshots.v2.${encodeURIComponent(userId)}`;
-}
-
-function validSnapshots(value: unknown): PortfolioAssetSnapshot[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is PortfolioAssetSnapshot => item != null
-    && ["US", "A", "H"].includes(item.market)
-    && typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
-    && parseNumber(item.total_assets) != null);
-}
-
-export function readPortfolioSnapshots(market: PortfolioMarket, userId: string): PortfolioAssetSnapshot[] {
-  if (typeof window === "undefined" || !userId) return [];
-  try {
-    return validSnapshots(JSON.parse(window.localStorage.getItem(snapshotStorageKey(userId)) ?? "[]"))
-      .filter((item) => item.market === market).sort((a, b) => a.date.localeCompare(b.date));
-  } catch { return []; }
-}
-
-export function writePortfolioSnapshot(market: PortfolioMarket, totalAssets: string, userId: string): PortfolioAssetSnapshot[] {
-  if (typeof window === "undefined" || !userId || parseNumber(totalAssets) == null) return [];
-  try {
-    const key = snapshotStorageKey(userId);
-    const snapshots = validSnapshots(JSON.parse(window.localStorage.getItem(key) ?? "[]"));
-    const today = localDateKey();
-    const next = [...snapshots.filter((item) => !(item.market === market && item.date === today)), { market, date: today, total_assets: totalAssets }]
-      .sort((a, b) => a.date.localeCompare(b.date)).slice(-2200);
-    window.localStorage.setItem(key, JSON.stringify(next));
-    return next.filter((item) => item.market === market);
-  } catch { return readPortfolioSnapshots(market, userId); }
 }
 
 export function buildTrendPoints(snapshots: PortfolioAssetSnapshot[], range: PortfolioTrendRange): PortfolioTrendPoint[] {
