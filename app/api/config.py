@@ -86,7 +86,7 @@ def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
             status="ready" if search_configured else "optional",
             configured=search_configured,
             detail="网页搜索已配置" if search_configured else "可选：配置搜索 API 后可检索公开网页",
-            depends_on=["research"],
+            depends_on=["chat"],
         ),
         ConnectionCheck(
             component="telegram",
@@ -117,7 +117,6 @@ _PUBLIC_CONFIG_FIELDS = (
     "embedding_auth_mode",
     "workspace_dir",
     "app_language",
-    "research_quick_prompts_refresh_seconds",
     "auth_max_devices_per_user",
     "agent_max_steps",
     "agent_max_context_tokens",
@@ -173,7 +172,6 @@ _SECRET_CONFIG_FIELDS = (
     "longbridge_app_key",
     "longbridge_app_secret",
     "longbridge_access_token",
-    "guardian_api_key",
     "search_api_key",
 )
 
@@ -184,7 +182,8 @@ def _settings_to_response(
     personal_keys: set[str] | None = None,
     hide_inherited_personal: bool = False,
 ) -> AppConfig:
-    personal_keys = personal_keys or set()
+    # 已退役配置可能仍在旧数据库中，只向前端声明当前支持的个人配置项。
+    personal_keys = (personal_keys or set()) & Settings.model_fields.keys()
 
     def visible(key: str) -> bool:
         return not hide_inherited_personal or key in personal_keys

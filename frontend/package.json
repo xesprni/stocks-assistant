@@ -9,7 +9,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --import ./scripts/register-test-loader.mjs --test tests/*.test.mjs tests/*.test.ts",
     "test:browser": "node tests/browser/strict-mode.mjs",
-    "test:browser:watchlist": "node tests/browser/watchlist.mjs"
+    "test:browser:watchlist": "node tests/browser/watchlist.mjs",
+    "test:browser:workspace": "node tests/browser/workspace.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

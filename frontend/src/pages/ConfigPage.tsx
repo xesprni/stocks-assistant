@@ -438,7 +438,7 @@ export function ConfigPage({
                 </div>
                 <TabsContent value="overview" className="mt-0 space-y-5">
                   <ConfigSection
-                    description={language === "en" ? "Complete required connections before starting evidence-backed research." : "开始可验证投研前，请先完成必要连接。"}
+                    description={language === "en" ? "Connect the services you want to use." : "请配置需要使用的服务。"}
                     icon={<ShieldCheck className="size-4 text-primary" />}
                     title={language === "en" ? "Setup readiness" : "首次使用就绪检查"}
                   >
@@ -739,16 +739,6 @@ export function ConfigPage({
                       onChange={(event) => patchDraft({ agent_max_context_turns: Number(event.target.value) })}
                     />
                   </Field>
-                  <Field description={copy.researchQuickPromptsRefreshHint} label={copy.researchQuickPromptsRefresh}>
-                    <Input
-                      max={10080}
-                      min={1}
-                      step={1}
-                      type="number"
-                      value={(draft.research_quick_prompts_refresh_seconds ?? 3600) / 60}
-                      onChange={(event) => patchDraft({ research_quick_prompts_refresh_seconds: Math.round(Number(event.target.value) * 60) })}
-                    />
-                  </Field>
                 </div>
                 <div className="mt-6 grid items-start gap-x-5 gap-y-5 border-t border-border/60 pt-6 md:grid-cols-2">
                   <Field label={copy.temperature}>
@@ -920,22 +910,6 @@ export function ConfigPage({
                       placeholder={layoutCopy.sdkDefault}
                       value={draft.longbridge_quote_ws_url ?? ""}
                       onChange={(event) => patchDraft({ longbridge_quote_ws_url: event.target.value })}
-                    />
-                  </Field>
-                </div>
-              </ConfigSection>
-              <ConfigSection
-                description={copy.guardianSectionHint}
-                icon={<Globe2 className="size-4 text-primary" />}
-                title={copy.guardianSection}
-              >
-                <div className="grid items-start gap-x-5 gap-y-5 md:grid-cols-2">
-                  <Field className="md:col-span-2" description={copy.guardianApiKeyHint} label={copy.guardianApiKey}>
-                    <Input
-                      placeholder={draft.has_guardian_api_key ? draft.guardian_api_key_masked : "Guardian Open Platform API key"}
-                      type="password"
-                      value={draft.guardian_api_key}
-                      onChange={(event) => patchDraft({ guardian_api_key: event.target.value })}
                     />
                   </Field>
                 </div>

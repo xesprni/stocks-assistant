@@ -20,19 +20,16 @@
 from fastapi import APIRouter
 
 from app.api.agent import router as agent_router
-from app.api.alerts import router as alerts_router
 from app.api.auth import router as auth_router
 from app.api.config import router as config_router
 from app.api.dashboard import router as dashboard_router
 from app.api.fundamentals import router as fundamentals_router
 from app.api.knowledge import router as knowledge_router
-from app.api.labs import router as labs_router
 from app.api.market import router as market_router
 from app.api.mcp import router as mcp_router
 from app.api.memory import router as memory_router
 from app.api.news import router as news_router
 from app.api.portfolio import router as portfolio_router
-from app.api.research import router as research_router
 from app.api.roles import router as roles_router
 from app.api.scheduler import router as scheduler_router
 from app.api.skills import router as skills_router
@@ -63,6 +60,3 @@ router.include_router(tracing_router, prefix="/tracing", tags=["tracing"])
 router.include_router(users_router, prefix="/users", tags=["users"])
 router.include_router(roles_router, prefix="/roles", tags=["roles"])
 router.include_router(telemetry_router, prefix="/telemetry", tags=["telemetry"])
-router.include_router(research_router, prefix="/research", tags=["research"])
-router.include_router(alerts_router, prefix="/alerts", tags=["alerts"])
-router.include_router(labs_router, prefix="/labs", tags=["labs"])

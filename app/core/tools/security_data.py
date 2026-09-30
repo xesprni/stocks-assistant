@@ -1,4 +1,4 @@
-"""Longbridge 新闻和公司研究数据工具。"""
+"""Longbridge 新闻和公司资料工具。"""
 
 from typing import Any
 
@@ -106,7 +106,7 @@ class GetSecurityInsightsTool(BaseTool):
     read_only = True
     name = "get_security_insights"
     description = (
-        "Get Longbridge filings, company profile, valuation, dividends, analyst ratings, "
+        "Get Longbridge filings, company profile, dividends, analyst ratings, "
         "and corporate actions for a stock symbol."
     )
     params = {
@@ -135,17 +135,17 @@ class GetSecurityInsightsTool(BaseTool):
                 self.service = get_fundamental_service()
             payload = self.service.get_security_insights(symbol, settings=self.settings)
             evidence = _linked_record_evidence(
-                payload, symbol=symbol, source_type="company_research"
+                payload, symbol=symbol, source_type="company_profile"
             )
             return ToolResult.success(
                 payload,
                 ext_data=evidence_metadata(evidence)
                 if evidence
                 else longbridge_evidence(
-                    title=f"{symbol} company research data",
+                    title=f"{symbol} company data",
                     data=payload,
                     symbols=[symbol],
-                    source_type="company_research",
+                    source_type="company_profile",
                 ),
             )
         except Exception as exc:

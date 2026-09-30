@@ -21,7 +21,6 @@ import {
   Search,
   Settings2,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   TrendingUp,
 } from "lucide-react";
@@ -155,7 +154,6 @@ const copyByLanguage = {
       actions: "操作",
       emptyTitle: "暂无持仓",
       emptyHint: "点击“新增”添加 {market} 持仓。",
-      analyze: "分析股票",
       financials: "查看财报",
       edit: "编辑持仓",
       delete: "删除持仓",
@@ -258,7 +256,7 @@ const copyByLanguage = {
       costPrice: "Cost",
       optional: "Optional",
       note: "Note",
-      notePlaceholder: "Strategy, thesis, risks",
+      notePlaceholder: "Position notes",
       currentPrice: "Current",
       stockValue: "Stock value",
       assetRatio: "Asset %",
@@ -269,7 +267,6 @@ const copyByLanguage = {
       actions: "Actions",
       emptyTitle: "No holdings",
       emptyHint: "Click Add to create a {market} holding.",
-      analyze: "Analyze stock",
       financials: "Open financials",
       edit: "Edit holding",
       delete: "Delete holding",
@@ -547,13 +544,11 @@ function writeStoredSortState(value: { key: PortfolioSortKey; direction: "asc" |
 export function PortfolioPage({
   confirmAction,
   language,
-  onAnalyzeStock,
   onOpenFinancials,
   refreshInterval,
 }: {
   confirmAction: ConfirmFn;
   language: AppLanguage;
-  onAnalyzeStock: (symbol: string) => void;
   onOpenFinancials: (symbol: string) => void;
   refreshInterval: number;
 }) {
@@ -1500,7 +1495,7 @@ export function PortfolioPage({
               return <div key={label}><div className="mb-1.5 flex justify-between text-xs"><span className="text-muted-foreground">{label}</span><span className="tabular-nums">{sensitiveValue(formatMoney(value))}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted/50"><div className={cn("h-full rounded-full", label === copy.costPrice ? "bg-muted-foreground/45" : "bg-primary")} style={{ width: `${number == null ? 0 : Math.max(0, number) / maximum * 100}%` }} /></div></div>;
             })}</div></div>
             <div><h3 className="mb-2 flex items-center gap-2 text-xs font-medium"><FileText className="size-3.5" />{copy.note}</h3><p className="whitespace-pre-wrap break-words rounded-xl bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">{detailItem.note || copy.noNote}</p></div>
-            <div className="grid grid-cols-2 gap-2"><Button size="sm" onClick={() => { setDetailItemId(null); onAnalyzeStock(detailItem.symbol); }}><Sparkles />{copy.analyze}</Button><Button size="sm" variant="outline" onClick={() => { setDetailItemId(null); onOpenFinancials(detailItem.symbol); }}><FileText />{copy.financials}</Button></div>
+            <div className="grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => { setDetailItemId(null); onOpenFinancials(detailItem.symbol); }}><FileText />{copy.financials}</Button></div>
             <div className="grid grid-cols-3 gap-2 border-t border-border/60 pt-4"><Button size="sm" variant="outline" onClick={() => { setDetailItemId(null); editItem(detailItem); }}><Pencil />{language === "zh" ? "编辑" : "Edit"}</Button><Button size="sm" variant="outline" onClick={() => { setDetailItemId(null); adjustItem(detailItem); }}><SlidersHorizontal />{copy.adjust}</Button><Button size="sm" variant="outline" onClick={() => { setDetailItemId(null); sellItem(detailItem); }}><CircleDollarSign />{copy.sell}</Button></div>
             <p className="text-[11px] leading-5 text-muted-foreground">{copy.localOnly}</p>
           </div> : null}
@@ -1594,9 +1589,6 @@ export function PortfolioPage({
                       </div>
                       {viewMode === "manage" ? (
                         <div className="col-span-3 flex justify-end gap-1 border-t border-border/50 pt-2">
-                          <Button aria-label={copy.analyze} size="icon" variant="ghost" className="h-7 w-7" title={copy.analyze} onClick={() => onAnalyzeStock(item.symbol)}>
-                            <Sparkles />
-                          </Button>
                           <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
                             <FileText />
                           </Button>
@@ -1661,9 +1653,6 @@ export function PortfolioPage({
                       {viewMode === "manage" ? (
                         <td className="px-3 py-2">
                           <div className="flex justify-end gap-1">
-                            <Button aria-label={copy.analyze} size="icon" variant="ghost" className="h-7 w-7" title={copy.analyze} onClick={() => onAnalyzeStock(item.symbol)}>
-                              <Sparkles />
-                            </Button>
                             <Button aria-label={copy.financials} size="icon" variant="ghost" className="h-7 w-7" title={copy.financials} onClick={() => onOpenFinancials(item.symbol)}>
                               <FileText />
                             </Button>

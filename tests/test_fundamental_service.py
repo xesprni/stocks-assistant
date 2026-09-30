@@ -40,9 +40,6 @@ class FakeFundamentalContext:
         payload.name = symbol
         return payload
 
-    def valuation(self, symbol):
-        return SdkLikeObject()
-
     def dividend(self, symbol):
         payload = SdkLikeObject()
         payload.items = [{"symbol": symbol, "desc": "Cash dividend"}]
@@ -130,7 +127,7 @@ def test_security_insights_skip_financial_reports_and_parse_descriptor_sections(
     assert service.financial_report_calls == 0
     assert "financial_reports" not in payload
     assert payload["company"]["data"]["name"] == "AAPL.US"
-    assert payload["valuation"]["data"]["metrics"] == {"pb": "4.5", "pe": "12.3"}
+    assert "valuation" not in payload
     assert payload["dividends"]["items"] == [{"symbol": "AAPL.US", "desc": "Cash dividend"}]
     assert payload["corporate_actions"]["items"] == [{"symbol": "AAPL.US", "type": "split"}]
 

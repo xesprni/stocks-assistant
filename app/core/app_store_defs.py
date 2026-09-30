@@ -23,7 +23,6 @@ SENSITIVE_CONFIG_KEYS = {
     "longbridge_app_key",
     "longbridge_app_secret",
     "longbridge_access_token",
-    "guardian_api_key",
 }
 
 ROLE_PERMISSIONS: dict[str, list[str]] = {

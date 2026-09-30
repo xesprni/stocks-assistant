@@ -17,8 +17,6 @@ import {
   Minimize2,
   PencilLine,
   Plus,
-  RefreshCw,
-  Search,
   Send,
   Square,
   Trash2,
@@ -31,16 +29,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
 import { hasPendingChatQueue, visibleChatInputs } from "@/lib/chat-inputs";
-import { saveResearchEvidence } from "@/lib/api";
 import { formatTemplate, i18n } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { ChatHistoryState } from "@/hooks/useConversations";
-import { useResearchQuickPrompts } from "@/hooks/useResearchQuickPrompts";
 import type { ChatInput, ChatInputMode, ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
 
 function ChatSources({ message, language }: { message: ChatMessage; language: AppLanguage }) {
-  const [saved, setSaved] = useState<Set<string>>(() => new Set());
   if (!message.sources?.length) return null;
   return (
     <div className="not-prose mt-3 border-t border-border/60 pt-2.5">
@@ -58,7 +53,6 @@ function ChatSources({ message, language }: { message: ChatMessage; language: Ap
             </>
           );
           const className = "inline-flex min-h-7 items-center gap-1 rounded-md border border-border/75 bg-background/70 px-2 py-1 text-[11px] text-foreground transition-colors hover:border-primary/45 hover:bg-primary/5";
-          const symbol = source.symbol?.split(",")[0]?.trim();
           return (
             <span className="inline-flex items-center gap-1" key={source.id}>
               {source.url ? (
@@ -66,21 +60,6 @@ function ChatSources({ message, language }: { message: ChatMessage; language: Ap
               ) : (
                 <span className={className} title={`${source.provider} · ${source.as_of || source.fetched_at}`}>{content}</span>
               )}
-              {symbol ? (
-                <>
-                  <Button
-                    className="h-7 px-2 text-[11px]"
-                    disabled={saved.has(source.id)}
-                    onClick={() => void saveResearchEvidence(symbol, { source_id: source.id, source, relation: "neutral" }).then(() => setSaved((current) => new Set(current).add(source.id)))}
-                    size="sm"
-                    title={language === "en" ? `Save as ${symbol} evidence` : `保存为 ${symbol} 证据`}
-                    variant="ghost"
-                  >
-                    {saved.has(source.id) ? <Check /> : <Plus />}{language === "en" ? "Evidence" : "证据"}
-                  </Button>
-                  <Button asChild className="h-7 px-2 text-[11px]" size="sm" variant="ghost"><a href={`/security/${encodeURIComponent(symbol)}/thesis`}>Thesis</a></Button>
-                </>
-              ) : null}
             </span>
           );
         })}
@@ -505,8 +484,6 @@ export function ChatPage({
   messages,
   mobileNavVisible = true,
   prompt,
-  quickPromptsRefreshSeconds,
-  userId,
   chatHistory,
   setPrompt,
 }: {
@@ -531,8 +508,6 @@ export function ChatPage({
   messages: ChatMessage[];
   mobileNavVisible?: boolean;
   prompt: string;
-  quickPromptsRefreshSeconds: number;
-  userId: string;
   chatHistory: ChatHistoryState;
   setPrompt: (value: string) => void;
 }) {
@@ -579,20 +554,6 @@ export function ChatPage({
   const greeting = displayName
     ? formatTemplate(uiCopy.greeting, { name: displayName })
     : uiCopy.greetingAnonymous;
-  const quickPrompts = useResearchQuickPrompts({
-    enabled: isNewConversation,
-    language,
-    userId,
-    refreshIntervalSeconds: quickPromptsRefreshSeconds,
-  });
-  const suggestionPrompts = quickPrompts.data?.prompts.slice(0, 3) ?? [];
-  const suggestionDateFormatter = useMemo(() => new Intl.DateTimeFormat(language === "en" ? "en-US" : "zh-CN", {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-  }), [language]);
-  function formatSuggestionTime(iso: string) {
-    const date = new Date(iso);
-    return Number.isNaN(date.getTime()) ? iso : suggestionDateFormatter.format(date);
-  }
   const explorePrompts = [
     {
       icon: <BriefcaseBusiness className="size-5" />,
@@ -1023,55 +984,6 @@ export function ChatPage({
                   <h2 className={cn("max-w-4xl font-semibold leading-tight tracking-normal", embedded ? "text-lg sm:text-xl" : "text-2xl sm:text-3xl")}>
                     {greeting}
                   </h2>
-                  <section aria-busy={quickPrompts.loading} aria-label={uiCopy.suggestionsTitle} className="max-w-4xl space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-semibold text-muted-foreground">{uiCopy.suggestionsTitle}</p>
-                      <Button
-                        className="h-8 gap-1.5 px-2 text-xs"
-                        disabled={quickPrompts.loading}
-                        onClick={quickPrompts.refresh}
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        {quickPrompts.loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                        {quickPrompts.error !== null ? uiCopy.suggestionsRetry : uiCopy.suggestionsRefresh}
-                      </Button>
-                    </div>
-                    {quickPrompts.loading && !suggestionPrompts.length ? (
-                      <p className="flex items-center gap-2 rounded-2xl bg-muted/35 px-4 py-5 text-sm text-muted-foreground" role="status">
-                        <Loader2 className="size-4 animate-spin" />{uiCopy.suggestionsLoading}
-                      </p>
-                    ) : null}
-                    {suggestionPrompts.map((item) => (
-                      <button
-                        className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-2xl bg-muted/35 px-4 py-3 text-left text-base font-medium text-foreground transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5"
-                        key={item}
-                        onClick={() => sendPrompt(item)}
-                        type="button"
-                      >
-                        <span className="min-w-0 break-words">{item}</span>
-                        <span className={cn("grid shrink-0 place-items-center rounded-full bg-background/65 text-muted-foreground transition-colors group-hover:text-primary", embedded ? "size-8" : "size-10")}>
-                          <Search className={embedded ? "size-4" : "size-5"} />
-                        </span>
-                      </button>
-                    ))}
-                    {quickPrompts.error !== null ? (
-                      <p className="text-xs leading-5 text-amber-700 dark:text-amber-300" role="status">
-                        {suggestionPrompts.length ? uiCopy.suggestionsStale : uiCopy.suggestionsFailed}
-                        {quickPrompts.error ? <span className="mt-0.5 block">{quickPrompts.error}</span> : null}
-                      </p>
-                    ) : null}
-                    {quickPrompts.data?.generated_at ? (
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-[11px] leading-4 text-muted-foreground">
-                        <span>{formatTemplate(uiCopy.suggestionsGeneratedAt, { time: formatSuggestionTime(quickPrompts.data.generated_at) })}</span>
-                        <span>{formatTemplate(uiCopy.suggestionsInterval, { minutes: Number((quickPrompts.data.refresh_interval_seconds / 60).toFixed(2)) })}</span>
-                        {!quickPrompts.error && !quickPrompts.data.stale && quickPrompts.data.expires_at ? (
-                          <span>{formatTemplate(uiCopy.suggestionsExpiresAt, { time: formatSuggestionTime(quickPrompts.data.expires_at) })}</span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </section>
                 </div>
                 <div className={cn("space-y-4", embedded && "space-y-2")}>
                   <p className={cn("font-semibold text-muted-foreground", embedded ? "text-sm" : "text-lg sm:text-xl")}>{uiCopy.exploreTitle}</p>

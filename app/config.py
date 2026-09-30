@@ -43,8 +43,6 @@ DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
     "get_financial_reports",
     "get_security_news",
     "get_security_insights",
-    "get_research_context",
-    "get_investment_labs",
     "get_longbridge_realtime_quotes",
     "get_longbridge_history_candlesticks",
     "get_longbridge_candlesticks",
@@ -71,8 +69,6 @@ DEFAULT_AGENT_TOOL_ALLOWLIST = [
     "get_financial_reports",
     "get_security_news",
     "get_security_insights",
-    "get_research_context",
-    "get_investment_labs",
     "get_portfolio_positions",
     "portfolio",
     "watchlist",
@@ -135,11 +131,9 @@ USER_CONFIG_KEYS = {
     "longbridge_access_token",
     "longbridge_http_url",
     "longbridge_quote_ws_url",
-    "guardian_api_key",
     "search_api_url",
     "search_api_key",
     "app_language",
-    "research_quick_prompts_refresh_seconds",
     "agent_max_steps",
     "agent_max_context_tokens",
     "agent_max_context_turns",
@@ -266,11 +260,6 @@ class Settings(BaseSettings):
     workspace_dir: str = "~/stocks-assistant"  # 工作空间根目录
     app_language: str = "zh"  # UI 语言：zh / en
 
-    # ---- Research 快速问答 ----
-    research_quick_prompts_refresh_seconds: int = Field(
-        default=3600, ge=60, le=604800
-    )  # AI 问题缓存有效期（秒）
-
     # ---- 认证安全配置 ----
     auth_max_devices_per_user: int = Field(default=5, ge=1, le=50)  # 单账号最多保留的活跃登录设备数
 
@@ -335,9 +324,6 @@ class Settings(BaseSettings):
     longbridge_access_token: str = ""
     longbridge_http_url: str = ""
     longbridge_quote_ws_url: str = ""
-
-    # ---- Guardian Open Platform 配置 ----
-    guardian_api_key: str = ""  # 获取 Guardian 正文时使用；RSS 列表无需配置
 
     # ---- Web Search 配置 ----
     search_api_url: str = "https://api.bocha.cn/v1/web-search"

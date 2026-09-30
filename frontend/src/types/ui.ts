@@ -5,7 +5,6 @@ export type Page =
   | "security"
   | "watchlist"
   | "portfolio"
-  | "labs"
   | "news"
   | "config"
   | "fundamentals"

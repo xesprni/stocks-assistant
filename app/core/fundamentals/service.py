@@ -219,7 +219,6 @@ class FundamentalService:
         sections = {
             "filings": self._error_section("not loaded"),
             "company": self._error_section("not loaded"),
-            "valuation": self._error_section("not loaded"),
             "dividends": self._error_section("not loaded"),
             "institution_rating": self._error_section("not loaded"),
             "corporate_actions": self._error_section("not loaded"),
@@ -231,10 +230,6 @@ class FundamentalService:
             ),
             "company": (
                 lambda: get_fundamental_ctx().company(normalized_symbol),
-                ("list", "items"),
-            ),
-            "valuation": (
-                lambda: get_fundamental_ctx().valuation(normalized_symbol),
                 ("list", "items"),
             ),
             "dividends": (

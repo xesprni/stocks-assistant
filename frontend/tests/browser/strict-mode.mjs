@@ -20,9 +20,7 @@ let order = [1, 2, 3];
 const stock = (id, category = "US") => ({ id, symbol: `${["AAPL", "MSFT", "NVDA"][id - 1]}.${category}`, category,
   name: ["Apple", "Microsoft", "Nvidia"][id - 1], name_en: "", name_cn: "", name_hk: "", exchange: "NASDAQ", currency: "USD",
   last_done: "100", change_value: "1", change_rate: "1", note: "", created_at: "2026-09-09T01:00:00Z", updated_at: "2026-09-09T01:00:00Z" });
-const session = { id: "session", title: "Fixture research", created_at: "2026-09-09T01:00:00Z", updated_at: "2026-09-09T01:00:00Z", message_count: 0, messages: [], inputs: [], active_run: null };
-const document = (symbol) => ({ id: `${symbol}-doc`, symbol, title: `${symbol} filing`, document_type: "filing", latest_version: 1,
-  updated_at: "2026-09-09T01:00:00Z", versions: [] });
+const session = { id: "session", title: "Fixture chat", created_at: "2026-09-09T01:00:00Z", updated_at: "2026-09-09T01:00:00Z", message_count: 0, messages: [], inputs: [], active_run: null };
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://fixture");
   const json = (value, status = 200) => { response.writeHead(status, { "Content-Type": "application/json" }); response.end(JSON.stringify(value)); };
@@ -36,8 +34,6 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/v1/watchlist/groups") { json({ groups: [] }); return; }
   if (url.pathname === "/api/v1/watchlist/overview") { json({ items: order.map((id) => stock(id)), quote_error: null, error: null }); return; }
   if (url.pathname === "/api/v1/watchlist/reorder") { order = payload.ids; json({ status: "ok" }); return; }
-  const listDocuments = url.pathname.match(/^\/api\/v1\/research\/security\/([^/]+)\/documents$/);
-  if (listDocuments) { if (listDocuments[1] === "AAPL.US") await new Promise((resolve) => setTimeout(resolve, 200)); json([document(listDocuments[1])]); return; }
   if (url.pathname === "/api/v1/agent/sessions" && request.method === "GET") { json({ sessions: [session], total: 1 }); return; }
   if (url.pathname === "/api/v1/agent/sessions/session") { json(session); return; }
   if (url.pathname === "/api/v1/agent/stream") {
@@ -83,11 +79,6 @@ try {
   await page.waitForFunction(() => !document.querySelector('[data-dragging="true"]'));
   // dnd-kit's pointer sensor intentionally suppresses document clicks for 50 ms after drag end.
   await page.waitForTimeout(75);
-  await page.getByRole("button", { name: "documents", exact: true }).press("Enter");
-  await page.getByRole("button", { name: "Switch company", exact: true }).click();
-  await page.getByRole("button", { name: /MSFT.US filing/ }).waitFor();
-  await page.waitForTimeout(250);
-  assert.equal(await page.getByRole("button", { name: /AAPL.US filing/ }).count(), 0);
   await page.getByRole("button", { name: "chat", exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[data-testid="chat-ready"]')?.textContent === "Ready");
   await page.getByRole("textbox", { name: "Prompt" }).fill("Fixture question");
@@ -100,7 +91,7 @@ try {
   if (process.env.STRICT_MODE_SCREENSHOT) await page.screenshot({ path: process.env.STRICT_MODE_SCREENSHOT, fullPage: true });
   assert.deepEqual(errors, []);
   assert.deepEqual(failures, []);
-  console.log("PASS: StrictMode double mount, one drag/one reorder, company response isolation, one chat submission and persisted assistant; no external requests or page errors.");
+  console.log("PASS: StrictMode double mount, one drag/one reorder, one chat submission and persisted assistant; no external requests or page errors.");
 } catch (error) {
   if (process.env.STRICT_MODE_SCREENSHOT && page) await page.screenshot({ path: process.env.STRICT_MODE_SCREENSHOT, fullPage: true });
   throw error;

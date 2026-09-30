@@ -102,18 +102,3 @@ def parse_execution_time(value: object) -> datetime | None:
 def format_scheduled_telegram_message(task: dict[str, Any], body: str) -> str:
     name = str(task.get("name") or task.get("id") or "Scheduled task")
     return f"# 定时任务：{name}\n\n{body}".strip()
-
-
-class ScheduledAlertEvaluator:
-    def __init__(self, providers: dict[str, Callable[[], Any]]) -> None:
-        self.providers = providers
-
-    def __call__(self) -> Any:
-        from app.core.research.evaluator import evaluate_due_alerts
-
-        return evaluate_due_alerts(
-            self.providers["research"](),
-            market_service=self.providers["market"](),
-            fundamental_service=self.providers["fundamentals"](),
-            news_service=self.providers["news"](),
-        )

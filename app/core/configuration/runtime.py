@@ -56,9 +56,6 @@ WORKSPACE_DEPENDENCIES = (
     "get_watchlist_service",
     "get_market_service",
     "get_portfolio_service",
-    "get_research_service",
-    "get_research_quick_prompts_service",
-    "get_investment_lab_service",
     "get_session_store",
     "get_trace_store",
 )
@@ -85,9 +82,6 @@ def runtime_bindings() -> tuple[RuntimeBinding, ...]:
         deps.get_watchlist_service,
         deps.get_market_service,
         deps.get_portfolio_service,
-        deps.get_research_service,
-        deps.get_research_quick_prompts_service,
-        deps.get_investment_lab_service,
         deps.get_session_store,
         deps.get_trace_store,
     )
@@ -136,7 +130,6 @@ def _invalidate_longbridge(user_id: str | None) -> None:
     if deps.get_fundamental_service.cache_info().currsize:
         deps.get_fundamental_service().clear_cache()
     deps.get_fundamental_service.cache_clear()
-    deps.get_investment_lab_service.cache_clear()
     for clear in (clear_context_cache, clear_dashboard_cache):
         try:
             clear()

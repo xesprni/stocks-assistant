@@ -22,7 +22,7 @@ class ProductEventRequest(BaseModel):
                 token in lowered_key
                 for token in ("prompt", "content", "response", "symbol", "ticker", "url", "query")
             ):
-                raise ValueError("event properties cannot contain research content or identifiers")
+                raise ValueError("event properties cannot contain private content or identifiers")
             if isinstance(item, (bool, int, float)) or item is None:
                 sanitized[normalized_key] = item
             elif isinstance(item, str):

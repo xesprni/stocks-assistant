@@ -1,12 +1,6 @@
 import type {
   AppConfig,
-  LabAIKind,
-  LabAIRequest,
-  LabAIRun,
-  LabAIStreamEvent,
   LongbridgeOAuthStatus,
-  AlertEvent,
-  AlertRule,
   AuthTokenResponse,
   AuthUser,
   CandlesticksResponse,
@@ -34,22 +28,10 @@ import type {
   DashboardResponse,
   DashboardSymbolInsightsResponse,
   DashboardWatchlistModule,
-  ResearchDecision,
-  ResearchEvidence,
-  ResearchDocument,
-  ResearchQuickPromptsResponse,
   RenderedImageFile,
-  SecurityWorkspaceSummary,
-  SourceReference,
-  ThesisPayload,
-  ThesisSnapshot,
   FinancialReportKind,
   FinancialReportPeriod,
   FinancialReportsResponse,
-  GuardianArticleResponse,
-  GuardianFeedResponse,
-  GuardianTranslateRequest,
-  GuardianTranslateResponse,
   IntradayResponse,
   KnowledgeFileContent,
   KnowledgeGraph,
@@ -74,10 +56,6 @@ import type {
   PortfolioSellDraft,
   PortfolioSellResponse,
   PortfolioTransactionListResponse,
-  PortfolioLabResult,
-  ValuationModel,
-  PeerComparisonResult,
-  GreaterChinaContext,
   PagePermissionUpdateRequest,
   RoleListResponse,
   RoleUpdateRequest,
@@ -470,169 +448,6 @@ export function trackProductEvent(event: string, properties: Record<string, stri
   });
 }
 
-export function getSecurityWorkspaceSummary(symbol: string, init?: RequestInit) {
-  return request<SecurityWorkspaceSummary>(`/api/v1/research/security/${encodeURIComponent(symbol)}/summary`, init);
-}
-
-export function listThesisSnapshots(symbol: string, init?: RequestInit) {
-  return request<ThesisSnapshot[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`, init);
-}
-
-export function createThesisSnapshot(symbol: string, payload: { payload: ThesisPayload; reason: string; source_ids?: string[] }) {
-  return request<ThesisSnapshot>(`/api/v1/research/security/${encodeURIComponent(symbol)}/theses`, { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function listResearchDecisions(symbol: string, init?: RequestInit) {
-  return request<ResearchDecision[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`, init);
-}
-
-export function createResearchDecision(symbol: string, payload: { action: string; rationale: string; evidence_ids?: string[]; thesis_snapshot_id?: string | null }) {
-  return request<ResearchDecision>(`/api/v1/research/security/${encodeURIComponent(symbol)}/decisions`, { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function listResearchEvidence(symbol: string, init?: RequestInit) {
-  return request<ResearchEvidence[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`, init);
-}
-
-export function getResearchQuickPrompts(language: "zh" | "en", forceRefresh = false) {
-  const query = new URLSearchParams({ language, force_refresh: String(forceRefresh) });
-  return request<ResearchQuickPromptsResponse>(`/api/v1/research/quick-prompts?${query}`);
-}
-
-export function saveResearchEvidence(symbol: string, payload: { source_id: string; source: SourceReference; relation?: "supports" | "weakens" | "neutral"; note?: string }) {
-  return request<ResearchEvidence>(`/api/v1/research/security/${encodeURIComponent(symbol)}/evidence`, { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function updateResearchDecision(decisionId: string, outcome: string) {
-  return request<ResearchDecision>(`/api/v1/research/decisions/${encodeURIComponent(decisionId)}`, { method: "PATCH", body: JSON.stringify({ outcome }) });
-}
-
-export function listResearchDocuments(symbol: string, init?: RequestInit) {
-  return request<ResearchDocument[]>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents`, init);
-}
-
-export function getResearchDocument(documentId: string, init?: RequestInit) {
-  return request<ResearchDocument>(`/api/v1/research/documents/${encodeURIComponent(documentId)}`, init);
-}
-
-export function createResearchDocument(symbol: string, payload: Record<string, unknown>) {
-  return request<ResearchDocument>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents`, { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function uploadResearchDocument(symbol: string, form: FormData) {
-  return request<ResearchDocument>(`/api/v1/research/security/${encodeURIComponent(symbol)}/documents/upload`, { method: "POST", body: form });
-}
-
-export function listAlertRules(symbol?: string) {
-  return request<AlertRule[]>(`/api/v1/alerts/rules${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`);
-}
-
-export function createAlertRule(payload: Record<string, unknown>) {
-  return request<AlertRule>("/api/v1/alerts/rules", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function updateAlertRule(ruleId: string, payload: Record<string, unknown>) {
-  return request<AlertRule>(`/api/v1/alerts/rules/${encodeURIComponent(ruleId)}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-
-export function deleteAlertRule(ruleId: string) {
-  return request<{ status: string }>(`/api/v1/alerts/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
-}
-
-export function evaluateLiveAlerts() {
-  return request<{ checked: number; created: number; events: AlertEvent[]; errors: Array<Record<string, unknown>> }>("/api/v1/alerts/evaluate-live", { method: "POST" });
-}
-
-export function listAlertEvents(symbol?: string, status?: string, limit?: number) {
-  const params = new URLSearchParams();
-  if (symbol) params.set("symbol", symbol);
-  if (status) params.set("status", status);
-  if (limit) params.set("limit", String(limit));
-  return request<AlertEvent[]>(`/api/v1/alerts/events${params.size ? `?${params.toString()}` : ""}`);
-}
-
-export function analyzePortfolioLab(payload: {
-  markets?: PortfolioMarket[];
-  benchmark_symbol?: string;
-  lookback_days?: number;
-  scenario_shocks?: Record<string, number>;
-  target_weights?: Record<string, number>;
-  cash_flows?: Array<{ date: string; amount: number; currency?: string }>;
-  base_currency?: string;
-  fx_rates?: Record<string, number>;
-}) {
-  return request<PortfolioLabResult>("/api/v1/labs/portfolio/analyze", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function listValuationModels(symbol?: string, init?: RequestInit) {
-  const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
-  return request<ValuationModel[]>(`/api/v1/labs/valuation/models${query}`, init);
-}
-
-export function createValuationModel(symbol: string, payload: Record<string, unknown>) {
-  return request<ValuationModel>(`/api/v1/labs/valuation/${encodeURIComponent(symbol)}/models`, { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function compareValuationPeers(symbols: string[], metrics?: string[]) {
-  return request<PeerComparisonResult>("/api/v1/labs/valuation/peers", { method: "POST", body: JSON.stringify({ symbols, metrics }) });
-}
-
-export function getGreaterChinaContext(payload: { symbol: string; paired_symbol?: string; china_related_us_listing?: boolean }) {
-  return request<GreaterChinaContext>("/api/v1/labs/greater-china/context", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function listLabAIRuns(lab: LabAIKind, init?: RequestInit) {
-  return request<LabAIRun[]>(`/api/v1/labs/ai/runs?${new URLSearchParams({ lab, limit: "20" })}`, init);
-}
-
-export function getLabAIRun(id: string, init?: RequestInit) {
-  return request<LabAIRun>(`/api/v1/labs/ai/runs/${encodeURIComponent(id)}`, init);
-}
-
-export async function streamLabAI(requestBody: LabAIRequest, onEvent: (event: LabAIStreamEvent) => void, signal?: AbortSignal) {
-  signal = sessionSignal(signal);
-  const response = await authenticatedFetch("/api/v1/labs/ai/stream", {
-    method: "POST", signal, body: JSON.stringify(requestBody),
-  });
-  if (!response.ok) throw new Error(apiErrorDetail(await response.json().catch(() => null), response.statusText));
-  if (!response.body) throw new Error("This browser does not support streaming responses");
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let terminal = false;
-  const flush = (block: string) => {
-    const parsed = parseSseBlock(block);
-    if (!parsed) return;
-    const event = parsed as unknown as LabAIStreamEvent;
-    if (event.type === "run_completed" || event.type === "error") terminal = true;
-    onEvent(event);
-  };
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() ?? "";
-      blocks.forEach(flush);
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) flush(buffer);
-    if (!terminal && !signal?.aborted) throw new Error(requestBody.locale === "en-US" ? "The analysis connection ended early. Check recent runs before retrying." : "分析连接提前结束，请先查看最近记录，再决定是否重试。");
-  } finally {
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
-}
-
-export function setAlertEventStatus(eventId: string, status: AlertEvent["status"]) {
-  return request<AlertEvent>(`/api/v1/alerts/events/${encodeURIComponent(eventId)}/status?status=${encodeURIComponent(status)}`, { method: "PATCH" });
-}
-
-export function retryAlertDelivery(eventId: string) {
-  return request<AlertEvent>(`/api/v1/alerts/events/${encodeURIComponent(eventId)}/retry`, { method: "POST" });
-}
-
 export function sendTelegramTestMessage(payload: { message: string; photos?: string[] }) {
   return request<TelegramTestResponse>("/api/v1/config/telegram/test", {
     method: "POST",
@@ -901,8 +716,8 @@ export function setWatchlistGroupMembers(id: number, itemIds: number[]) {
 
 // ── Portfolio ───────────────────────────────────────────────────────────────
 
-export function listPortfolio(market: PortfolioMarket) {
-  return request<PortfolioListResponse>(`/api/v1/portfolio?market=${market}`);
+export function listPortfolio(market: PortfolioMarket, init?: RequestInit) {
+  return request<PortfolioListResponse>(`/api/v1/portfolio?market=${market}`, init);
 }
 
 export function searchPortfolioSymbols(query: string, market: PortfolioMarket) {
@@ -1017,24 +832,6 @@ export function getMarketTemperature(market: string = "US") {
 export function getSecurityNews(symbol: string, limit = 50, init?: RequestInit) {
   const params = new URLSearchParams({ symbol, limit: String(limit) });
   return request<SecurityNewsResponse>(`/api/v1/news?${params.toString()}`, init);
-}
-
-export function getGuardianFeed(url: string, limit = 30, init?: RequestInit) {
-  const params = new URLSearchParams({ url, limit: String(limit) });
-  return request<GuardianFeedResponse>(`/api/v1/news/guardian/feed?${params.toString()}`, init);
-}
-
-export function getGuardianArticle(url: string, init?: RequestInit) {
-  const params = new URLSearchParams({ url });
-  return request<GuardianArticleResponse>(`/api/v1/news/guardian/article?${params.toString()}`, init);
-}
-
-export function translateGuardianArticle(payload: GuardianTranslateRequest, init?: RequestInit) {
-  return request<GuardianTranslateResponse>("/api/v1/news/guardian/translate", {
-    ...init,
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
 }
 
 // ── Fundamentals ─────────────────────────────────────────────────────────────

@@ -17,7 +17,6 @@ dependencies = [
     "croniter>=2.0.0",
     "mcp>=1.0.0",
     "longbridge==4.1.0",
-    "pypdf>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -57,7 +56,6 @@ files = [
     "app/core/market/errors.py",
     "app/core/memory/search_filters.py",
     "app/core/portfolio/valuation.py",
-    "app/core/research/utils.py",
     "app/core/agent/context.py",
     "app/core/agent/stream_state.py",
     "app/core/agent/run_service.py",
@@ -87,10 +85,6 @@ files = [
     "app/core/llm/errors.py",
     "app/core/llm/client_pool.py",
     "app/core/agent/run_resources.py",
-    "app/core/labs/calculators.py",
-    "app/core/labs/database.py",
-    "app/core/labs/completion.py",
-    "app/core/research/records.py",
     "app/core/market/config_repository.py",
 ]
 

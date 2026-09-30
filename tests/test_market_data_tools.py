@@ -253,8 +253,8 @@ class MarketDataToolsTest(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("get_security_news", names)
         self.assertIn("get_security_insights", names)
-        self.assertIn("get_research_context", names)
-        self.assertIn("get_investment_labs", names)
+        self.assertNotIn("get_research_context", names)
+        self.assertNotIn("get_investment_labs", names)
 
 
 if __name__ == "__main__":

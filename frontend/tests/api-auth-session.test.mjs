@@ -38,20 +38,20 @@ test("an old unauthorized write is never replayed with a newly logged-in identit
   assert.equal(calls[0].auth, "Bearer old");
 });
 
-test("normal JSON and Lab SSE share the same authentication retry boundary", async (t) => {
+test("normal JSON and chat SSE share the same authentication retry boundary", async (t) => {
   const api = await loadApi();
   let rotations = 0;
   t.mock.method(globalThis, "fetch", async (url, init) => {
     if (url === "/api/v1/auth/refresh") { rotations++; return Response.json({ access_token: "new", refresh_token: "next", user: {} }); }
     if (new Headers(init.headers).get("Authorization") === "Bearer old") return Response.json({ detail: "Expired" }, { status: 401 });
-    if (url.endsWith("/labs/ai/stream")) return new Response('data: {"type":"run_completed","data":{}}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+    if (url.endsWith("/agent/stream")) return new Response('data: {"type":"agent_end","data":{}}\n\n', { headers: { "Content-Type": "text/event-stream" } });
     return Response.json({ id: "user" });
   });
   api.setAuthTokens({ access_token: "old", refresh_token: "refresh" });
   const events = [];
-  await Promise.all([api.getMe(), api.streamLabAI({ kind: "valuation", prompt: "Research" }, (event) => events.push(event))]);
+  await Promise.all([api.getMe(), api.streamChat("Hello", "session", (event) => events.push(event))]);
   assert.equal(rotations, 1);
-  assert.equal(events.at(-1).type, "run_completed");
+  assert.equal(events.at(-1).type, "agent_end");
 });
 
 test("identity is checked after a slow authentication response body is decoded", async (t) => {

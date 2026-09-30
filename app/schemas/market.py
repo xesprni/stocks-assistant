@@ -102,6 +102,5 @@ class MarketTemperatureResponse(BaseModel):
     market: str
     temperature: int | None = None
     description: str = ""
-    valuation: int | None = None
     sentiment: int | None = None
     updated_at: int | None = None

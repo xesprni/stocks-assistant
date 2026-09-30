@@ -133,20 +133,6 @@ export function MarketPulse() {
           {/* Metrics */}
           <div className="flex-1 space-y-3">
             <div>
-              <p className="text-[10px] text-muted-foreground">Valuation</p>
-              <div className="mt-0.5 flex items-center gap-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: hasData && active.valuation != null ? `${active.valuation}%` : "0%" }}
-                  />
-                </div>
-                <span className="text-xs font-semibold">
-                  {hasData && active.valuation != null ? active.valuation : "--"}
-                </span>
-              </div>
-            </div>
-            <div>
               <p className="text-[10px] text-muted-foreground">Sentiment</p>
               <div className="mt-0.5 flex items-center gap-2">
                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">

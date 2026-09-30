@@ -9,7 +9,7 @@ npm run build
 
 The test loader uses esbuild with `node:test` so both `.mjs` and `.ts` tests, including extensionless TypeScript imports, run through one entry point.
 
-The optional browser check mounts the real watchlist and research document views, plus the chat hooks, in React development StrictMode. It checks one drag produces one reorder, old company responses cannot populate a new company, and one chat submission produces one persisted assistant reply. A temporary server supplies every API response from memory, and external browser requests are blocked. It never uses a real account or backend.
+The optional browser check mounts the real watchlist view and chat hooks, in React development StrictMode. It checks one drag produces one reorder, one chat submission produces one persisted assistant reply. A temporary server supplies every API response from memory, and external browser requests are blocked. It never uses a real account or backend.
 
 ```sh
 # Requires Playwright and a Chromium browser in the test environment.
@@ -26,3 +26,12 @@ npm run test:browser:watchlist
 ```
 
 The same Playwright environment variables apply. Screenshots are saved as `/tmp/stocks-watchlist-desktop.png`, `/tmp/stocks-capital-landscape.png`, `/tmp/stocks-watchlist-portrait.png`, or `/tmp/stocks-watchlist-failure.png` on failure.
+
+The built-workspace smoke test checks the company chart, holdings, news and financials, plus navigation, knowledge, scheduler, settings and general chat. It also asserts that no removed research, labs, alerts or Guardian endpoints are requested, including with old browser preferences. API responses are entirely fixtures.
+
+```sh
+npm run build
+npm run test:browser:workspace
+```
+
+The same Playwright environment variables apply. Screenshots are saved as `/tmp/stocks-company-after-removal.png` or `/tmp/stocks-workspace-removal-failure.png`.

@@ -15,7 +15,7 @@ from app.core.memory.manager import MemoryManager
 from app.core.portfolio.service import PortfolioService
 from app.core.tools.knowledge_get import KnowledgeGetTool
 from app.core.tools.knowledge_search import KnowledgeSearchTool
-from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
+from app.core.tools.security_data import GetSecurityInsightsTool, GetSecurityNewsTool
 from app.core.tools.web_search import WebSearchTool
 from app.core.watchlist.service import WatchlistService
 from app.schemas.telemetry import ProductEventRequest
@@ -57,7 +57,7 @@ class Phase0EvidenceTest(unittest.TestCase):
         self.assertTrue(result.ext_data["sources"][0]["fetched_at"])
         post.assert_called_once()
 
-    def test_longbridge_research_tools_return_source_and_symbol(self):
+    def test_longbridge_security_tools_return_source_and_symbol(self):
         news_service = SimpleNamespace(
             get_security_news=lambda symbol, limit, settings: {
                 "symbol": symbol,
@@ -68,7 +68,7 @@ class Phase0EvidenceTest(unittest.TestCase):
         insight_service = SimpleNamespace(
             get_security_insights=lambda symbol, settings: {
                 "symbol": symbol,
-                "valuation": {"items": []},
+                "company": {"items": []},
             }
         )
 
@@ -149,9 +149,9 @@ class Phase0ReadinessAndPrivacyTest(unittest.TestCase):
 
     def test_product_event_rejects_nested_or_prompt_payloads(self):
         with self.assertRaises(ValidationError):
-            ProductEventRequest(event="research_done", properties={"prompt": {"raw": "secret"}})
+            ProductEventRequest(event="chat_completed", properties={"prompt": {"raw": "secret"}})
         with self.assertRaises(ValidationError):
-            ProductEventRequest(event="research_done", properties={"symbol": "AAPL.US"})
+            ProductEventRequest(event="chat_completed", properties={"symbol": "AAPL.US"})
 
     def test_sample_watchlist_and_portfolio_are_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:

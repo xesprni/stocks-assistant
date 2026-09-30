@@ -112,7 +112,7 @@ export function useChatRunController({ chatHistory, language, productAnalyticsEn
     isSendingRef.current = true;
     setIsSending(true);
     if (!options.resumeRun && productAnalyticsEnabled) {
-      void trackProductEvent("research_started").catch(() => undefined);
+      void trackProductEvent("chat_started").catch(() => undefined);
     }
 
     const shouldCreateNewSession = options.forceNewSession === true || options.newSession === true;
@@ -203,7 +203,7 @@ export function useChatRunController({ chatHistory, language, productAnalyticsEn
         updateAssistant(view.message);
         if (view.sawAgentEnd && convId) chatHistory.updateRun(convId, null);
         if (streamEvent.type === "agent_end" && productAnalyticsEnabled) {
-          void trackProductEvent("research_response_completed", { source_count: view.message.sources?.length ?? 0 }).catch(() => undefined);
+          void trackProductEvent("chat_response_completed", { source_count: view.message.sources?.length ?? 0 }).catch(() => undefined);
         }
         if (view.error) throw new Error(view.error);
       };

@@ -106,7 +106,7 @@ async def get_dashboard_symbol_insights(
     symbol: str,
     current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
 ):
-    """Return Longbridge disclosures, company, financial, valuation and action data for one symbol."""
+    """Return Longbridge disclosures, company, dividends, ratings and action data for one symbol."""
 
     service = get_fundamental_service()
     try:

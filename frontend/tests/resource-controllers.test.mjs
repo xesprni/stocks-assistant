@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { WatchlistController } from "../src/lib/watchlist-controller.ts";
-import { ResearchDocumentsController } from "../src/lib/research-documents-controller.ts";
 import { reconcileConversationClear } from "../src/lib/conversation-reconciliation.ts";
 
 function deferred() { let resolve, reject; const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; }); return { promise, resolve, reject }; }
@@ -86,66 +85,6 @@ test("a failed final order restores order without resurrecting a removed entity"
   await controller.add(item(4));
   sort.reject(new Error("Reorder failed")); await tick();
   assert.deepEqual(controller.snapshot().items.map((row) => row.id), [1, 3, 4]);
-});
-
-function documents(overrides = {}) {
-  return new ResearchDocumentsController("AAPL.US", {
-    list: async () => [], get: async (id) => ({ id, title: id }), create: async () => ({}), upload: async () => ({}), changed: async () => {}, ...overrides,
-  });
-}
-
-test("company changes reset document selection and drafts and reject old list/detail responses", async () => {
-  const oldList = deferred(), oldDetail = deferred();
-  const controller = documents({ list: (symbol) => symbol === "AAPL.US" ? oldList.promise : Promise.resolve([{ id: "new" }]), get: () => oldDetail.promise });
-  controller.activate("AAPL.US");
-  controller.setForm({ ...controller.snapshot().form, document_id: "old", title: "Old draft" });
-  const opening = controller.open({ id: "old" });
-  controller.activate("MSFT.US"); await tick();
-  oldList.resolve([{ id: "old" }]); oldDetail.resolve({ id: "old" }); await opening; await tick();
-  assert.deepEqual(controller.snapshot().documents, [{ id: "new" }]);
-  assert.equal(controller.snapshot().detail, null);
-  assert.equal(controller.snapshot().form.document_id, "");
-  assert.equal(controller.snapshot().form.title, "");
-});
-
-test("only the latest selected document may populate the detail pane", async () => {
-  const old = deferred();
-  const controller = documents({ get: (id) => id === "old" ? old.promise : Promise.resolve({ id }) });
-  const first = controller.open({ id: "old" });
-  await controller.open({ id: "new" });
-  old.resolve({ id: "old" }); await first;
-  assert.equal(controller.snapshot().detail.id, "new");
-});
-
-test("failed document ingestion retains the draft and exposes an actionable error", async () => {
-  const controller = documents({ create: async () => { throw new Error("Source unavailable"); } });
-  controller.setForm({ ...controller.snapshot().form, title: "Research", content: "Evidence" });
-  await controller.save();
-  assert.equal(controller.snapshot().saving, false);
-  assert.equal(controller.snapshot().form.content, "Evidence");
-  assert.equal(controller.snapshot().error, "Source unavailable");
-});
-
-test("an old company save cannot erase the new company draft or refresh its summary", async () => {
-  const result = deferred(); let changed = 0;
-  const controller = documents({ create: () => result.promise, changed: async () => { changed++; } });
-  controller.setForm({ ...controller.snapshot().form, title: "Old research", content: "Old evidence" });
-  const saving = controller.save();
-  controller.activate("MSFT.US");
-  controller.setForm({ ...controller.snapshot().form, title: "New research", content: "New evidence" });
-  result.resolve({}); await saving;
-  assert.equal(controller.snapshot().form.title, "New research");
-  assert.equal(changed, 0);
-});
-
-test("successful ingestion does not erase newer edits in the same company draft", async () => {
-  const result = deferred();
-  const controller = documents({ create: () => result.promise });
-  controller.setForm({ ...controller.snapshot().form, title: "Research", content: "Evidence" });
-  const saving = controller.save();
-  controller.setForm({ ...controller.snapshot().form, content: "New evidence" });
-  result.resolve({}); await saving;
-  assert.equal(controller.snapshot().form.content, "New evidence");
 });
 
 test("bulk-clear reconciliation preserves new sessions, newer local edits and later deletions", () => {

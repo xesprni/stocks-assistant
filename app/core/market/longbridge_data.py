@@ -377,7 +377,6 @@ class LongbridgeMarketDataMixin:
                 "market": market,
                 "temperature": getattr(resp, "temperature", None),
                 "description": getattr(resp, "description", ""),
-                "valuation": getattr(resp, "valuation", None),
                 "sentiment": getattr(resp, "sentiment", None),
                 "updated_at": getattr(resp, "updated_at", None),
             }
@@ -410,7 +409,6 @@ class LongbridgeMarketDataMixin:
                 "market": market,
                 "temperature": None,
                 "description": "",
-                "valuation": None,
                 "sentiment": None,
                 "updated_at": None,
             }
@@ -422,7 +420,6 @@ class LongbridgeMarketDataMixin:
                 "market": market,
                 "temperature": None,
                 "description": "",
-                "valuation": None,
                 "sentiment": None,
                 "updated_at": None,
             }
@@ -440,7 +437,6 @@ class LongbridgeMarketDataMixin:
                 "market": market,
                 "temperature": None,
                 "description": "",
-                "valuation": None,
                 "sentiment": None,
                 "updated_at": None,
             }
@@ -450,8 +446,6 @@ class LongbridgeMarketDataMixin:
         # 涨跌幅映射到温度：0% → 50（中性），+3% → ~100（过热），-3% → ~0（冰点）
         temperature = max(0, min(100, round(50 + avg_cr * 16.5)))
         sentiment = max(0, min(100, round(50 + avg_cr * 16.5)))
-        # 估值水平用较小倍率，避免单日波动过度影响
-        valuation = max(0, min(100, round(50 + avg_cr * 8)))
 
         if temperature >= 80:
             desc = "市场情绪高涨"
@@ -468,7 +462,6 @@ class LongbridgeMarketDataMixin:
             "market": market,
             "temperature": temperature,
             "description": f"{desc}（基于指数涨跌幅估算）",
-            "valuation": valuation,
             "sentiment": sentiment,
             "updated_at": int(datetime.now().timestamp()),
         }

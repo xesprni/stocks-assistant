@@ -1,0 +1,127 @@
+// Smoke-test the built workspace after removing the investment research features.
+// Every request uses fixtures. No real account, backend or external service is contacted.
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE_PATH || "playwright");
+const dist = new URL("../../dist/", import.meta.url);
+const origin = "http://127.0.0.1:4178";
+const failures = [], errors = [], calls = [];
+const user = { id: "fixture", username: "fixture", display_name: "Fixture", roles: ["admin"], permissions: ["*"], is_active: true };
+const config = {
+  app_language: "zh", workspace_dir: "/fixture", llm_provider: "openai_compatible", llm_auth_mode: "api_key", llm_model: "fixture",
+  llm_api_base: "https://example.invalid/v1", llm_temperature: 0, llm_max_output_tokens: 4096,
+  llm_reasoning_effort: "medium", llm_tool_choice: "auto", agent_max_steps: 20, agent_max_context_tokens: 50000, agent_max_context_turns: 20,
+  agent_tool_allowlist: [], embedding_provider: "openai", embedding_model: "fixture", embedding_api_base: "", embedding_api_key_masked: "",
+  memory_enabled: true, memory_auto_curate_enabled: false, memory_curator_min_importance: 0.5, multi_agent_roles: {}, multi_agent_enabled: true,
+  multi_agent_max_parallel_agents: 3, multi_agent_max_depth: 1, multi_agent_max_tasks_per_batch: 12, multi_agent_task_timeout_seconds: 180,
+  telegram_enabled: false, telegram_chat_id: "", mcp_servers: {}, product_analytics_enabled: false, tracing_enabled: false,
+  debug: false, log_level: "INFO", auth_max_devices_per_user: 5,
+};
+const marketConfig = { refresh_interval: 60, indices: [], stocks: [], use_watchlist: true };
+const symbol = "AAPL.US";
+const position = { id: 1, symbol, name: "Apple", market: "US", shares: "12", cost_price: "100", currency: "USD", current_price: "110", stock_value: "1320", note: "", change_rate: "1%", valuation_price_source: "live" };
+const session = { id: "session", title: "Fixture chat", created_at: "2026-09-30T00:00:00Z", updated_at: "2026-09-30T00:00:00Z", messages: [], inputs: [], message_count: 0, active_run: null };
+const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
+await context.addInitScript(() => {
+  localStorage.setItem("stocks_assistant_access_token", "fixture");
+  localStorage.setItem("stocks_assistant_refresh_token", "fixture");
+  localStorage.setItem("stocks-assistant.news.mode", "guardian"); // Old preferences must not revive removed features.
+});
+await context.route("**/*", async (route) => {
+  const request = route.request(), url = new URL(request.url()), path = url.pathname;
+  const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+  if (url.origin !== origin) { failures.push(request.url()); return route.abort(); }
+  if (!path.startsWith("/api/")) {
+    const asset = path.startsWith("/assets/") ? path.slice(1) : "index.html";
+    return route.fulfill({ body: await readFile(new URL(asset, dist)), contentType: asset.endsWith(".css") ? "text/css" : asset.endsWith(".js") ? "application/javascript" : "text/html" });
+  }
+  calls.push(path);
+  if (path === "/api/v1/auth/setup/status") return json({ setup_required: false });
+  if (path === "/api/v1/auth/me") return json(user);
+  if (path === "/api/v1/auth/device/heartbeat") return json({ status: "ok" });
+  if (path === "/api/v1/config") return json(config);
+  if (path === "/api/v1/tools") return json({ tools: [], total: 0 });
+  if (path === "/api/v1/config/readiness") return json({ ready: true, checks: [] });
+  if (path === "/api/v1/config/longbridge/oauth/status") return json({ auth_mode: "apikey", status: "disconnected", client_id: "", error: null });
+  if (path === "/api/v1/market/config") return json(marketConfig);
+  if (path === "/api/v1/agent/sessions") return json({ sessions: [session], total: 1 });
+  if (path === "/api/v1/agent/sessions/session") return json(session);
+  if (path === "/api/v1/agent/stream") {
+    const message = request.postDataJSON().message;
+    session.messages = [{ id: "question", role: "user", content: message, created_at: session.created_at }, { id: "answer", role: "assistant", content: "Fixture reply", created_at: session.created_at }];
+    session.message_count = 2;
+    const data = [{ type: "run_started", data: {} }, { type: "message_update", data: { delta: "Fixture reply" } }, { type: "agent_end", data: { message_id: "answer", final_response: "Fixture reply", sources: [] } }];
+    return route.fulfill({ contentType: "text/event-stream", body: data.map((event, i) => `data: ${JSON.stringify({ ...event, event_id: i + 1, run_id: "run" })}\n\n`).join("") });
+  }
+  if (path === "/api/v1/watchlist") return json({ items: [], total: 0 });
+  if (path === "/api/v1/market/candlesticks") return json({ symbol, bars: Array.from({ length: 500 }, (_, i) => ({ timestamp: 1720000000 + i * 86400, open: String(100 + i / 10), high: String(103 + i / 10), low: String(98 + i / 10), close: String(101 + i / 10), volume: "10000", turnover: "1000000" })) });
+  if (path === "/api/v1/news") return json({ symbol, news: [{ id: "story", title: "Fixture company news", description: "Longbridge news remains available", published_at: "2026-09-30", url: "https://example.invalid/story", likes_count: 0, comments_count: 0, shares_count: 0 }], total: 1 });
+  if (path === "/api/v1/fundamentals/financial-reports") return json({ symbol, kind: "All", statements: [] });
+  if (path === "/api/v1/portfolio") return json({ market: "US", total_capital: "2000", total_assets: "2120", cash_ratio: "30%", items: [position], total: 1, valuation_complete: true, unpriced_symbols: [] });
+  if (path === "/api/v1/knowledge/tree") return json({ tree: { root_files: [{ name: "note.md", title: "Fixture note", size: 20 }], tree: [], stats: { pages: 1, size: 20 }, enabled: true } });
+  if (path === "/api/v1/knowledge/graph") return json({ nodes: [], links: [] });
+  if (path === "/api/v1/knowledge/read") return json({ path: "note.md", content: "Knowledge is retained", size: 20 });
+  if (path === "/api/v1/scheduler/tasks") return json({ tasks: [], total: 0 });
+  if (path === "/api/v1/market/temperature") return json({ market: url.searchParams.get("market"), temperature: 50, sentiment: 50, description: "Fixture", updated_at: 1780000000 });
+  if (path === "/api/v1/dashboard") return json({
+    market: { status: "ok", indices: [] },
+    watchlist: { status: "ok", items: [], views: { movers: [], gainers: [], losers: [], active: [] }, total: 0, counts_by_category: {} },
+    portfolio: { status: "ok", markets: [] },
+  });
+  if (path === "/api/v1/dashboard/market") return json({ status: "ok", indices: [], fetched_at: "2026-09-30" });
+  if (path === "/api/v1/dashboard/watchlist") return json({ status: "ok", items: [], views: { movers: [], gainers: [], losers: [], active: [] }, total: 0, counts_by_category: {} });
+  if (path === "/api/v1/dashboard/portfolio") return json({ status: "ok", markets: [] });
+  failures.push(`${request.method()} ${path}`); return json({ detail: "Unexpected request" }, 500);
+});
+const page = await context.newPage();
+page.setDefaultTimeout(10000);
+page.on("pageerror", (error) => errors.push(error.message));
+page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+async function absentRemovedUI() {
+  assert.equal(await page.getByRole("button", { name: /^(AI 研究|Thesis|估值|Guardian|实验室|保存为证据|保存证据)$/i }).count(), 0);
+  assert.equal(await page.locator('a[href="/labs"],a[href$="/thesis"],a[href$="/ai-research"]').count(), 0);
+}
+try {
+  await page.goto(`${origin}/security/${symbol}`);
+  await page.getByRole("button", { name: "MA250", exact: true }).waitFor();
+  await page.waitForFunction(() => (document.querySelector(".technical-native-chart canvas")?.width ?? 0) > 300);
+  await absentRemovedUI();
+  await page.screenshot({ path: "/tmp/stocks-company-after-removal.png" });
+  await page.getByRole("button", { name: "持仓", exact: true }).click();
+  await page.getByText("12", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "新闻", exact: true }).click();
+  await page.getByText("Fixture company news", { exact: true }).waitFor();
+  await absentRemovedUI();
+  await Promise.all([page.waitForResponse((response) => response.url().includes("/fundamentals/financial-reports")), page.getByRole("button", { name: "财务", exact: true }).click()]);
+  await absentRemovedUI();
+  await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  await page.locator('a[href="/knowledge"]').first().waitFor();
+  assert.match(await page.locator('a[href="/knowledge"]').first().textContent(), /知识库/);
+  await absentRemovedUI();
+  await page.locator('a[href="/knowledge"]').first().click();
+  await page.getByText("Fixture note", { exact: true }).click();
+  await page.getByText("Knowledge is retained", { exact: true }).waitFor();
+  await page.goto(`${origin}/scheduler`);
+  await page.getByText("暂无定时任务", { exact: true }).waitFor();
+  await absentRemovedUI();
+  await page.goto(`${origin}/settings`);
+  await page.getByRole("tab", { name: "数据源", exact: true }).click();
+  await page.getByPlaceholder("Longbridge app key", { exact: true }).waitFor();
+  await absentRemovedUI();
+  assert.doesNotMatch(await page.locator("body").innerText(), /Guardian|快速问答/);
+  await page.goto(`${origin}/dashboard`);
+  await page.locator("textarea").first().fill("Hello fixture");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.getByText("Fixture reply", { exact: true }).waitFor();
+  await absentRemovedUI();
+  assert.ok(calls.includes("/api/v1/knowledge/read"));
+  assert.equal(calls.filter((path) => /^\/api\/v1\/(research|labs|alerts)(\/|$)|\/guardian\//.test(path)).length, 0);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(errors, []);
+  console.log("PASS: company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; no retired feature requests or page errors.");
+} catch (error) {
+  await page.screenshot({ path: "/tmp/stocks-workspace-removal-failure.png", fullPage: true });
+  console.error({ failures, errors });
+  throw error;
+} finally { await browser.close(); }

@@ -45,7 +45,6 @@ class AppConfig(BaseModel):
 
     workspace_dir: str
     app_language: str = "zh"
-    research_quick_prompts_refresh_seconds: int = Field(default=3600, ge=60, le=604800)
     auth_max_devices_per_user: int = 5
     agent_max_steps: int
     agent_max_context_tokens: int
@@ -93,8 +92,6 @@ class AppConfig(BaseModel):
     has_longbridge_access_token: bool = False
     longbridge_http_url: str = ""
     longbridge_quote_ws_url: str = ""
-    guardian_api_key_masked: str = ""
-    has_guardian_api_key: bool = False
     search_api_url: str = "https://api.bocha.cn/v1/web-search"
     search_api_key_masked: str = ""
     has_search_api_key: bool = False
@@ -131,7 +128,6 @@ class ConfigUpdate(BaseModel):
 
     workspace_dir: str | None = None
     app_language: str | None = None
-    research_quick_prompts_refresh_seconds: int | None = Field(default=None, ge=60, le=604800)
     auth_max_devices_per_user: int | None = Field(default=None, ge=1, le=50)
     agent_max_steps: int | None = None
     agent_max_context_tokens: int | None = None
@@ -173,7 +169,6 @@ class ConfigUpdate(BaseModel):
     longbridge_access_token: str | None = None
     longbridge_http_url: str | None = None
     longbridge_quote_ws_url: str | None = None
-    guardian_api_key: str | None = None
     search_api_url: str | None = None
     search_api_key: str | None = None
 

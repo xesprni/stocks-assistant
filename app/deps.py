@@ -442,7 +442,7 @@ def get_tool_manager():
 @lru_cache
 def get_scheduler_service():
     """装配 SQLite 调度服务；执行与通知编排由独立应用服务负责。"""
-    from app.core.tools.scheduler.execution import ScheduledAlertEvaluator, ScheduledTaskExecutor
+    from app.core.tools.scheduler.execution import ScheduledTaskExecutor
     from app.core.tools.scheduler.service import SchedulerService
     from app.core.tools.scheduler.store import SQLiteRunStore, SQLiteTaskStore
 
@@ -454,14 +454,6 @@ def get_scheduler_service():
                 prompt, user_id=user_id, **options
             ),
             get_effective_settings,
-        ),
-        alert_callback=ScheduledAlertEvaluator(
-            {
-                "research": get_research_service,
-                "market": get_market_service,
-                "fundamentals": get_fundamental_service,
-                "news": get_news_service,
-            }
         ),
     )
 
@@ -534,47 +526,6 @@ def get_news_service():
     from app.core.news import NewsService
 
     return NewsService()
-
-
-@lru_cache
-def get_research_service():
-    """获取 Thesis、材料版本和提醒收件箱的本地研究域服务。"""
-    from app.core.research import ResearchService
-
-    settings = get_settings()
-    return ResearchService(
-        workspace_dir=settings.workspace_dir,
-        portfolio_service=get_portfolio_service(),
-        watchlist_service=get_watchlist_service(),
-    )
-
-
-@lru_cache
-def get_research_quick_prompts_service():
-    """获取用户隔离的 Research AI 快速提问缓存服务。"""
-    from app.core.research.quick_prompts import ResearchQuickPromptsService
-
-    return ResearchQuickPromptsService(
-        workspace_dir=get_settings().workspace_dir,
-        llm_provider_factory=create_llm_provider,
-        portfolio_service=get_portfolio_service(),
-        watchlist_service=get_watchlist_service(),
-    )
-
-
-@lru_cache
-def get_investment_lab_service():
-    """获取组合、估值/同业及大中华市场实验室服务。"""
-    from app.core.labs import InvestmentLabService
-
-    settings = get_settings()
-    return InvestmentLabService(
-        workspace_dir=settings.workspace_dir,
-        portfolio_service=get_portfolio_service(),
-        market_service=get_market_service(),
-        fundamental_service=get_fundamental_service(),
-        research_service=get_research_service(),
-    )
 
 
 @lru_cache

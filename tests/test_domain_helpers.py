@@ -11,7 +11,6 @@ from app.core.knowledge.service import _HTMLTextExtractor as KnowledgeHTML
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.utils import change_rate, change_value
 from app.core.memory.storage import MemoryChunk, MemoryStorage
-from app.core.news.service import _HTMLTextExtractor as NewsHTML
 from app.core.portfolio.service import PortfolioService
 from app.core.portfolio.valuation import money, pnl_ratio, position_ratio, ratio
 from app.core.watchlist.service import LongbridgeUnavailableError as LegacyLongbridgeError
@@ -23,15 +22,13 @@ def test_html_extraction_preserves_domain_title_and_paragraph_policies() -> None
         "<script>secret()</script><style>hidden</style>"
         "<p>Hello <b>world</b></p><p>Next</p>"
     )
-    knowledge, news = KnowledgeHTML(), NewsHTML()
+    knowledge = KnowledgeHTML()
     knowledge.feed(source)
-    news.feed(source)
     assert knowledge.title == "Company & Co"
     assert knowledge.text == "Sidebar\n\nBody\n\nHello world\n\nNext"
-    assert news.text == "Company & Co Sidebar Body\nHello world\n\nNext"
 
 
-@pytest.mark.parametrize("extractor_type", [KnowledgeHTML, NewsHTML])
+@pytest.mark.parametrize("extractor_type", [KnowledgeHTML])
 def test_html_nested_hidden_content_entities_and_empty_blocks(extractor_type: type) -> None:
     extractor = extractor_type()
     extractor.feed("<p></p><svg><svg>hidden</svg>hidden</svg><p>A&nbsp;B</p><p></p>")

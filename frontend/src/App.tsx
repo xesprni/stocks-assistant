@@ -11,7 +11,6 @@ import {
   CircleAlert,
   Clock,
   Cpu,
-  FlaskConical,
   Home,
   Loader2,
   LogOut,
@@ -39,7 +38,6 @@ import {
   type AppNavGroup,
   type AppNavItem,
 } from "@/components/shell/AppNavigation";
-import { ResearchQueueMenu } from "@/components/shell/ResearchQueueMenu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
@@ -76,14 +74,13 @@ const AuthPage = lazy(() => import("@/pages/AuthPage").then((module) => ({ defau
 const ConfigPage = lazy(() => import("@/pages/ConfigPage").then((module) => ({ default: module.ConfigPage })));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const CompanyWorkspacePage = lazy(() => import("@/pages/CompanyWorkspacePage").then((module) => ({ default: module.CompanyWorkspacePage })));
-const AlertsPage = lazy(() => import("@/pages/AlertsPage").then((module) => ({ default: module.AlertsPage })));
+const SchedulerPage = lazy(() => import("@/pages/SchedulerPage").then((module) => ({ default: module.SchedulerPage })));
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
 const MCPPage = lazy(() => import("@/pages/MCPPage").then((module) => ({ default: module.MCPPage })));
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((module) => ({ default: module.MemoryPage })));
 const NewsPage = lazy(() => import("@/pages/NewsPage").then((module) => ({ default: module.NewsPage })));
 const PortfolioPage = lazy(() => import("@/components/PortfolioPage").then((module) => ({ default: module.PortfolioPage })));
-const InvestmentLabsPage = lazy(() => import("@/pages/InvestmentLabsPage").then((module) => ({ default: module.InvestmentLabsPage })));
 const SecurityPage = lazy(() => import("@/pages/SecurityPage").then((module) => ({ default: module.SecurityPage })));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })));
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
@@ -103,7 +100,6 @@ const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
   security: "config:read",
   watchlist: "watchlist:read",
   portfolio: "portfolio:read",
-  labs: "portfolio:read",
   news: "market:read",
   config: "config:read",
   fundamentals: "fundamentals:read",
@@ -123,7 +119,6 @@ const PAGE_PATH: Record<Page, string> = {
   security: "/admin/security",
   watchlist: "/watchlist",
   portfolio: "/portfolio",
-  labs: "/labs",
   news: "/news",
   config: "/settings",
   fundamentals: "/fundamentals",
@@ -175,7 +170,6 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   agent_max_steps: ["agent_max_steps"],
   agent_max_context_tokens: ["agent_max_context_tokens"],
   agent_max_context_turns: ["agent_max_context_turns"],
-  research_quick_prompts_refresh_seconds: ["research_quick_prompts_refresh_seconds"],
   agent_tool_allowlist: ["agent_tool_allowlist"],
   agent_allow_all_mcp_tools: ["agent_allow_all_mcp_tools"],
   multi_agent_enabled: ["multi_agent_enabled"],
@@ -208,7 +202,6 @@ const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string
   longbridge_access_token: ["longbridge_access_token"],
   longbridge_http_url: ["longbridge_http_url"],
   longbridge_quote_ws_url: ["longbridge_quote_ws_url"],
-  guardian_api_key: ["guardian_api_key"],
   search_api_url: ["search_api_url"],
   search_api_key: ["search_api_key"],
   debug: ["debug"],
@@ -248,14 +241,12 @@ const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
   "longbridge_access_token",
   "longbridge_http_url",
   "longbridge_quote_ws_url",
-  "guardian_api_key",
   "search_api_url",
   "search_api_key",
   "app_language",
   "agent_max_steps",
   "agent_max_context_tokens",
   "agent_max_context_turns",
-  "research_quick_prompts_refresh_seconds",
   "multi_agent_enabled",
   "multi_agent_max_parallel_agents",
   "multi_agent_max_tasks_per_batch",
@@ -280,8 +271,8 @@ function navItem(language: AppLanguage, id: Page, icon: ReactNode, labelOverride
 
 function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
   const primary = language === "en"
-    ? { group: "Workspace", today: "Today", companies: "Companies", portfolio: "Portfolio", labs: "Labs", research: "Research", alerts: "Alerts" }
-    : { group: "工作台", today: "今日", companies: "公司", portfolio: "组合", labs: "实验室", research: "研究", alerts: "提醒" };
+    ? { group: "Workspace", today: "Today", companies: "Companies", portfolio: "Portfolio", knowledge: "Knowledge", alerts: "Tasks" }
+    : { group: "工作台", today: "今日", companies: "公司", portfolio: "组合", knowledge: "知识库", alerts: "定时任务" };
   return [
     {
       id: "primary",
@@ -290,8 +281,7 @@ function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
         navItem(language, "overview", <Home />, primary.today),
         navItem(language, "watchlist", <Star />, primary.companies),
         navItem(language, "portfolio", <BriefcaseBusiness />, primary.portfolio),
-        navItem(language, "labs", <FlaskConical />, primary.labs),
-        navItem(language, "knowledge", <BookOpen />, primary.research),
+        navItem(language, "knowledge", <BookOpen />, primary.knowledge),
         navItem(language, "scheduler", <Clock />, primary.alerts),
       ],
     },
@@ -332,13 +322,13 @@ function pathForPage(page: Page) {
   return PAGE_PATH[page] ?? PAGE_PATH.overview;
 }
 
-const COMPANY_TABS = new Set<CompanyTab>(["overview", "chart", "financials", "documents", "news", "ai-research", "thesis", "valuation", "position", "alerts"]);
+const COMPANY_TABS = new Set<CompanyTab>(["chart", "financials", "news", "position"]);
 
 function companyRouteFromPath(pathname: string): { symbol: string; tab: CompanyTab } | null {
   const match = normalizeRoutePath(pathname).match(/^\/security\/([^/]+)(?:\/([^/]+))?$/);
   if (!match) return null;
   const symbol = decodeURIComponent(match[1]).trim().toUpperCase();
-  const tabValue = decodeURIComponent(match[2] || "overview") as CompanyTab;
+  const tabValue = decodeURIComponent(match[2] || "chart") as CompanyTab;
   if (!symbol || !COMPANY_TABS.has(tabValue)) return null;
   return { symbol, tab: tabValue };
 }
@@ -428,9 +418,8 @@ function ConsoleApp() {
   const auth = useAuth();
   const { showToast } = useToast();
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
-  const [companyRoute, setCompanyRoute] = useState(() => companyRouteFromPath(window.location.pathname) ?? { symbol: "AAPL.US", tab: "overview" as CompanyTab });
+  const [companyRoute, setCompanyRoute] = useState(() => companyRouteFromPath(window.location.pathname) ?? { symbol: "AAPL.US", tab: "chart" as CompanyTab });
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
-  const [inboxOpenRequest, setInboxOpenRequest] = useState(0);
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = readStoredValue("stocks-assistant-theme", ["system", "dark", "light"], "system");
     return isTheme(stored) ? stored : "system";
@@ -732,7 +721,6 @@ function ConsoleApp() {
       agent_max_steps: Number(source.agent_max_steps),
       agent_max_context_tokens: Number(source.agent_max_context_tokens),
       agent_max_context_turns: Number(source.agent_max_context_turns),
-      research_quick_prompts_refresh_seconds: Number(source.research_quick_prompts_refresh_seconds),
       agent_tool_allowlist: source.agent_tool_allowlist,
       agent_allow_all_mcp_tools: source.agent_allow_all_mcp_tools,
       multi_agent_enabled: source.multi_agent_enabled,
@@ -782,9 +770,6 @@ function ConsoleApp() {
     }
     if (source.longbridge_access_token.trim()) {
       payload.longbridge_access_token = source.longbridge_access_token.trim();
-    }
-    if (source.guardian_api_key.trim()) {
-      payload.guardian_api_key = source.guardian_api_key.trim();
     }
     if (source.search_api_key.trim()) {
       payload.search_api_key = source.search_api_key.trim();
@@ -881,7 +866,7 @@ function ConsoleApp() {
     handleNavigate("config", tab);
   }
 
-  function openCompany(symbol: string, tab: CompanyTab = "overview") {
+  function openCompany(symbol: string, tab: CompanyTab = "chart") {
     if (!canPage("company")) return false;
     setCompanyRoute({ symbol: symbol.trim().toUpperCase(), tab });
     setSelectedSymbol(symbol.trim().toUpperCase());
@@ -918,8 +903,6 @@ function ConsoleApp() {
         }
       }}
       prompt={prompt}
-      quickPromptsRefreshSeconds={config?.research_quick_prompts_refresh_seconds ?? 3600}
-      userId={auth.user?.id ?? ""}
       chatHistory={chatHistory}
       setPrompt={setPrompt}
     />
@@ -954,18 +937,6 @@ function ConsoleApp() {
           onUpdateProfile={auth.updateProfile}
           navigationGroups={navigationGroups}
           page={activePage}
-          researchQueue={auth.can("scheduler:read") && canPage("scheduler") ? (
-            <ResearchQueueMenu
-              active={!isMobileViewport || isMobileHeaderVisible}
-              key={auth.user?.id}
-              language={language}
-              onOpenEvent={canPage("company") ? (symbol) => { openCompany(symbol, "alerts"); } : undefined}
-              onOpenInbox={() => {
-                if (handleNavigate("scheduler")) setInboxOpenRequest((current) => current + 1);
-              }}
-              page={activePage}
-            />
-          ) : null}
           setPage={handleNavigate}
           onThemeChange={setTheme}
           resolvedTheme={resolvedTheme}
@@ -1026,17 +997,12 @@ function ConsoleApp() {
 
             {activePage === "company" ? (
               <CompanyWorkspacePage
-                confirmAction={confirmDialog.confirm}
                 language={language}
-                onAskAgent={(researchPrompt) => {
-                  setPrompt(researchPrompt);
-                  handleNavigate("overview");
-                }}
+                onSymbolChange={(symbol) => openCompany(symbol, "chart")}
                 onNavigateTab={(tab) => setCompanyRoute((current) => ({ ...current, tab }))}
                 onOpenPortfolio={() => handleNavigate("portfolio")}
                 symbol={companyRoute.symbol}
                 tab={companyRoute.tab}
-                telegramEnabled={Boolean(config?.telegram_enabled)}
               />
             ) : null}
 
@@ -1058,18 +1024,11 @@ function ConsoleApp() {
                 confirmAction={confirmDialog.confirm}
                 language={language}
                 refreshInterval={marketConfig.refresh_interval}
-                onAnalyzeStock={(symbol) => {
-                  if (handleNavigate("overview")) {
-                    setPrompt(formatTemplate(i18n[language].portfolio.analysisPrompt, { symbol }));
-                  }
-                }}
                 onOpenFinancials={(symbol) => {
                   openCompany(symbol, "financials");
                 }}
               />
             ) : null}
-
-            {activePage === "labs" ? <InvestmentLabsPage language={language} /> : null}
 
             {activePage === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
 
@@ -1089,7 +1048,7 @@ function ConsoleApp() {
 
             {activePage === "knowledge" ? <KnowledgePage language={language} /> : null}
 
-            {activePage === "scheduler" ? <AlertsPage confirmAction={confirmDialog.confirm} inboxOpenRequest={inboxOpenRequest} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
+            {activePage === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
 
             {activePage === "mcp" ? <MCPPage language={language} /> : null}
 
@@ -1250,7 +1209,6 @@ function Header({
   onLogout,
   onUpdateProfile,
   page,
-  researchQueue,
   setPage,
   onThemeChange,
   resolvedTheme,
@@ -1265,7 +1223,6 @@ function Header({
   onLogout: () => void;
   onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
   page: Page | null;
-  researchQueue: ReactNode;
   setPage: (page: Page) => void;
   onThemeChange: (theme: Theme) => void;
   resolvedTheme: EffectiveTheme;
@@ -1324,7 +1281,6 @@ function Header({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {researchQueue}
         <Button
           aria-label={hideMobileChromeLabel}
           className="rounded-full lg:hidden"

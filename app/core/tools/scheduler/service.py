@@ -28,12 +28,10 @@ class SchedulerService:
         task_store: TaskStore,
         execute_callback: Callable,
         run_store: RunStore | None = None,
-        alert_callback: Callable | None = None,
     ):
         self.task_store = task_store
         self.run_store = run_store
         self.execute_callback = execute_callback
-        self.alert_callback = alert_callback
         self.running = False
         self._task: asyncio.Task | None = None
         self._executions: dict[asyncio.Task, tuple[threading.Event, threading.Event]] = {}
@@ -100,12 +98,6 @@ class SchedulerService:
                     await self._execute_due_task(task, now)
             except Exception as e:
                 logger.error("Error processing task %s: %s", task.get("id"), e)
-        if self.alert_callback:
-            try:
-                await asyncio.to_thread(self.alert_callback)
-            except Exception as exc:
-                # 条件提醒与普通定时任务隔离，单次数据源失败不应停止调度主循环。
-                logger.error("Alert evaluation error: %s", exc)
 
     async def _execute_due_task(self, task: dict, now: datetime):
         await self._execute_task(task, now, trigger="schedule", update_schedule=True)

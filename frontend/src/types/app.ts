@@ -52,15 +52,6 @@ export interface ChatMessage {
   renderedImages?: RenderedImage[];
 }
 
-export interface ResearchQuickPromptsResponse {
-  prompts: string[];
-  generated_at: string | null;
-  expires_at: string | null;
-  refresh_interval_seconds: number;
-  stale: boolean;
-  error: string | null;
-}
-
 export interface SubAgentRoleConfig {
   description: string;
   system_prompt: string;
@@ -225,7 +216,6 @@ export interface AppConfig {
   agent_max_steps: number;
   agent_max_context_tokens: number;
   agent_max_context_turns: number;
-  research_quick_prompts_refresh_seconds: number;
   agent_tool_allowlist: string[];
   agent_allow_all_mcp_tools: boolean;
   multi_agent_enabled: boolean;
@@ -265,8 +255,6 @@ export interface AppConfig {
   has_longbridge_access_token?: boolean;
   longbridge_http_url?: string;
   longbridge_quote_ws_url?: string;
-  guardian_api_key_masked?: string;
-  has_guardian_api_key?: boolean;
   search_api_url?: string;
   search_api_key_masked?: string;
   has_search_api_key?: boolean;
@@ -280,7 +268,6 @@ export interface ConfigDraft extends AppConfig {
   longbridge_app_key: string;
   longbridge_app_secret: string;
   longbridge_access_token: string;
-  guardian_api_key: string;
   search_api_key: string;
   mcp_servers_text: string;
 }
@@ -384,234 +371,6 @@ export interface ChatInputRequest {
   mode: ChatInputMode;
   target_run_id?: string;
   thinking_enabled?: boolean;
-}
-
-export interface ThesisPayload {
-  business_model: string;
-  key_drivers: string[];
-  kpis: Array<Record<string, unknown>>;
-  bull_case: string;
-  base_case: string;
-  bear_case: string;
-  valuation_assumptions: Record<string, unknown>;
-  expected_range: Record<string, unknown>;
-  catalysts: string[];
-  risks: string[];
-  invalidation_conditions: string[];
-  confidence: number;
-  time_horizon: string;
-  next_review_at?: string | null;
-}
-
-export interface ThesisSnapshot {
-  id: string;
-  symbol: string;
-  version: number;
-  payload: ThesisPayload;
-  change_summary: Record<string, unknown>;
-  reason: string;
-  source_ids: string[];
-  created_at: string;
-}
-
-export interface ResearchDecision {
-  id: string;
-  symbol: string;
-  action: string;
-  rationale: string;
-  evidence_ids: string[];
-  thesis_snapshot_id?: string | null;
-  outcome: string;
-  created_at: string;
-  reviewed_at?: string | null;
-}
-
-export interface ResearchEvidence {
-  id: string;
-  symbol: string;
-  source_id: string;
-  source: SourceReference;
-  relation: "supports" | "weakens" | "neutral" | string;
-  note: string;
-  created_at: string;
-}
-
-export interface ResearchDocumentVersion {
-  id: string;
-  document_id: string;
-  version: number;
-  published_at?: string | null;
-  content_hash: string;
-  content?: string | null;
-  locator: { total_lines?: number; pages?: Array<{ page: number; start_line: number; end_line: number }> };
-  change_summary: { previous_version_id?: string | null; added_lines?: number; removed_lines?: number; diff?: string[] };
-  fetched_at: string;
-  created_at: string;
-}
-
-export interface ResearchDocument {
-  id: string;
-  symbol: string;
-  title: string;
-  document_type: "note" | "pdf" | "filing" | "transcript" | "slides" | "article";
-  source_url?: string | null;
-  latest_version: number;
-  created_at: string;
-  updated_at: string;
-  versions: ResearchDocumentVersion[];
-}
-
-export interface AlertRule {
-  id: string;
-  symbol: string;
-  name: string;
-  condition_type: "price" | "volume" | "valuation" | "kpi" | "technical" | "news" | "filing" | "keyword" | "rating" | "corporate_action" | "portfolio_risk";
-  operator: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "changed" | string;
-  threshold: unknown;
-  severity: "info" | "low" | "medium" | "high" | "critical";
-  thesis_snapshot_id?: string | null;
-  enabled: boolean;
-  channels: string[];
-  evaluation_interval_seconds: number;
-  metadata: Record<string, unknown>;
-  last_evaluated_at?: string | null;
-  next_evaluation_at?: string | null;
-  last_error?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AlertEvent {
-  id: string;
-  rule_id: string;
-  symbol: string;
-  fingerprint: string;
-  severity: AlertRule["severity"];
-  title: string;
-  explanation: string;
-  source: Record<string, unknown>;
-  portfolio_context: Record<string, unknown>;
-  thesis_context: Record<string, unknown>;
-  status: "unread" | "read" | "dismissed";
-  delivery_status: string;
-  retry_count: number;
-  last_error?: string | null;
-  occurred_at: string;
-  created_at: string;
-  read_at?: string | null;
-}
-
-export interface SecurityWorkspaceSummary {
-  symbol: string;
-  watchlisted: boolean;
-  position?: Record<string, unknown> | null;
-  latest_thesis?: ThesisSnapshot | null;
-  thesis_versions: number;
-  documents: number;
-  unread_alerts: number;
-  alert_rules: number;
-  latest_decisions: ResearchDecision[];
-  evidence_count: number;
-}
-
-export interface PortfolioLabResult {
-  as_of: string;
-  methodology: string;
-  lookback_days: number;
-  benchmark_symbol: string;
-  base_currency: string;
-  fx_rates_used: Record<string, number>;
-  total_value: number;
-  equity_value: number;
-  cash_value: number;
-  metrics: Record<string, number | null>;
-  contribution: Array<{ symbol: string; market: string; weight: number; period_return?: number | null; return_contribution?: number | null; data_available: boolean }>;
-  exposures: { market?: Record<string, number>; currency?: Record<string, number>; country_listing?: Record<string, number>; thesis_risk?: Record<string, number> };
-  scenario: { estimated_return?: number; holding_impacts?: Array<Record<string, unknown>>; method?: string };
-  rebalance: Array<{ symbol: string; current_weight: number; target_weight: number; delta_weight: number }>;
-  thesis_links: Array<{ symbol: string; weight: number; thesis_snapshot_id?: string | null; confidence?: number | null; risks: string[]; invalidation_conditions: string[] }>;
-  coverage: { holdings: number; valued_holdings: number; excluded_fx_holdings: number; history_available: number; history_weight: number };
-  warnings: string[];
-  limitations: string[];
-}
-
-export type LabAIKind = "portfolio" | "valuation" | "greater_china";
-
-export interface LabAIArtifact {
-  id: string;
-  kind: string;
-  title: string;
-  data: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface LabAIRun {
-  id: string;
-  lab: LabAIKind;
-  title: string;
-  objective: string;
-  symbols: string[];
-  status: "running" | "completed" | "failed" | "canceled";
-  report: string;
-  artifacts: LabAIArtifact[];
-  warnings: string[];
-  steps: number;
-  created_at: string;
-  completed_at: string | null;
-  error: string | null;
-}
-
-export interface LabAIRequest {
-  lab: LabAIKind;
-  objective: string;
-  symbols?: string[];
-  locale?: "zh-CN" | "en-US";
-}
-
-export interface LabAIStreamEvent {
-  type: "run_started" | "status_update" | "tool_start" | "tool_end" | "message_delta" | "run_completed" | "error";
-  timestamp: number;
-  data: { run?: LabAIRun; message?: string; tool_name?: string; status?: string; delta?: string; reset?: boolean; error?: string };
-}
-
-export interface ValuationModel {
-  id: string;
-  model_key: string;
-  symbol: string;
-  version: number;
-  model_type: "dcf" | "reverse_dcf" | "relative" | string;
-  title: string;
-  assumptions: Record<string, unknown>;
-  peer_symbols: string[];
-  result: Record<string, unknown>;
-  source_ids: string[];
-  thesis_snapshot_id?: string | null;
-  reason: string;
-  created_at: string;
-}
-
-export interface PeerComparisonResult {
-  as_of: string;
-  rows: Array<{ symbol: string; name: string; metrics: Record<string, string | number | null>; source?: string; fetched_at?: string; available: boolean }>;
-  medians: Record<string, number | null>;
-  errors: Array<{ symbol: string; error: string }>;
-  methodology: string;
-}
-
-export interface GreaterChinaContext {
-  symbol: string;
-  market: "HK" | "A" | "US_CHINA" | "OTHER";
-  currency: string;
-  timezone: string;
-  disclosure_languages: string[];
-  static_info: Record<string, unknown>;
-  insights: Record<string, unknown>;
-  paired_comparison?: PeerComparisonResult | null;
-  fetched_at?: string | null;
-  errors: string[];
-  research_checklist: string[];
-  risk_dimensions: string[];
-  source_note: string;
 }
 
 export interface AgentTraceEvent {
@@ -936,7 +695,6 @@ export interface DashboardSymbolInsightsResponse {
   fetched_at: string;
   filings: DashboardSymbolInsightSection;
   company: DashboardSymbolInsightSection;
-  valuation: DashboardSymbolInsightSection;
   dividends: DashboardSymbolInsightSection;
   institution_rating: DashboardSymbolInsightSection;
   corporate_actions: DashboardSymbolInsightSection;
@@ -966,51 +724,6 @@ export interface SecurityNewsResponse {
   symbol: string;
   news: SecurityNewsItem[];
   total: number;
-}
-
-export interface GuardianFeedItem {
-  id: string;
-  title: string;
-  description: string;
-  url: string;
-  published_at: string | null;
-  published_at_ts: number | null;
-  author: string;
-  categories: string[];
-}
-
-export interface GuardianFeedResponse {
-  url: string;
-  feed_url: string;
-  title: string;
-  items: GuardianFeedItem[];
-  total: number;
-}
-
-export interface GuardianArticleResponse {
-  id: string;
-  title: string;
-  description: string;
-  url: string;
-  api_url: string;
-  published_at: string | null;
-  published_at_ts: number | null;
-  author: string;
-  thumbnail: string;
-  body_html: string;
-  body_text: string;
-}
-
-export interface GuardianTranslateRequest {
-  text: string;
-  target_language?: string;
-}
-
-export interface GuardianTranslateResponse {
-  target_language: string;
-  translation: string;
-  source_length: number;
-  model: string;
 }
 
 // ── MCP servers ────────────────────────────────────────────────────────────────

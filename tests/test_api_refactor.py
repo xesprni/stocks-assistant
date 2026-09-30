@@ -215,7 +215,7 @@ def test_workspace_invalidation_covers_all_captured_dependencies(monkeypatch):
     close.assert_called_once_with(None, all_users=True)
     for factory in factories.values():
         factory.reset_mock()
-    invalidate_runtime({"research_quick_prompts_refresh_seconds": 600})
+    invalidate_runtime({"auth_max_devices_per_user": 6})
     for factory in factories.values():
         factory.cache_clear.assert_not_called()
 

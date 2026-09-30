@@ -15,7 +15,6 @@ def builtin_factories(manager: ToolManager) -> dict[type[BaseTool], Callable[[],
     from app.core.tools.bash import BashTool
     from app.core.tools.delegate_agent import DelegateAgentTool
     from app.core.tools.financial_reports import GetFinancialReportsTool
-    from app.core.tools.investment_labs import GetInvestmentLabsTool
     from app.core.tools.knowledge_get import KnowledgeGetTool
     from app.core.tools.knowledge_search import KnowledgeSearchTool
     from app.core.tools.market_data import (
@@ -38,9 +37,8 @@ def builtin_factories(manager: ToolManager) -> dict[type[BaseTool], Callable[[],
     from app.core.tools.read_file import ReadFileTool
     from app.core.tools.read_skill import ReadSkillTool
     from app.core.tools.render_image import RenderImageTool
-    from app.core.tools.research_context import GetResearchContextTool
-    from app.core.tools.research_data import GetSecurityInsightsTool, GetSecurityNewsTool
     from app.core.tools.scheduler.tool import SchedulerTool
+    from app.core.tools.security_data import GetSecurityInsightsTool, GetSecurityNewsTool
     from app.core.tools.view_image import ViewImageTool
     from app.core.tools.watchlist import WatchlistTool
     from app.core.tools.web_fetch import WebFetchTool
@@ -81,8 +79,6 @@ def builtin_factories(manager: ToolManager) -> dict[type[BaseTool], Callable[[],
         GetFinancialReportsTool: with_settings(GetFinancialReportsTool),
         GetSecurityNewsTool: with_settings(GetSecurityNewsTool),
         GetSecurityInsightsTool: with_settings(GetSecurityInsightsTool),
-        GetResearchContextTool: lambda: GetResearchContextTool(user_id=manager.user_id),
-        GetInvestmentLabsTool: with_user_settings(GetInvestmentLabsTool),
         GetLongbridgeRealtimeQuotesTool: with_user_settings(GetLongbridgeRealtimeQuotesTool),
         GetLongbridgeHistoryCandlesticksTool: with_user_settings(
             GetLongbridgeHistoryCandlesticksTool

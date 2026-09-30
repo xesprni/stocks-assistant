@@ -27,18 +27,15 @@
 | 扩展点 | 约定 |
 | --- | --- |
 | 持仓命令 | `PortfolioRepository.sale` 在 `BEGIN IMMEDIATE` 后读取持仓和现金。校验、Decimal 计算、仓位、现金、流水属于同一工作单元，不能传入事务外计算的余额。 |
-| 持仓查询 | 调用 `PortfolioService.get_local_snapshot` 获取本地数据；Dashboard、Research 不直接访问持仓仓储。批量报价在调用方统一获取后交给估值计算器。 |
+| 持仓查询 | 调用 `PortfolioService.get_local_snapshot` 获取本地数据；Dashboard 等调用方不直接访问持仓仓储。批量报价在调用方统一获取后交给估值计算器。 |
 | 估值回退 | `CostBasisValuation` 保留持仓页的成本回退；`HistoricalDisplayValuation` 保留 Dashboard 历史展示值回退。只有相同策略的相同输入才要求同一结果，不能在去重时改变产品口径。 |
 | 行情配置 | `MarketConfigRepository` 明确区分个人 SQLite 与无用户 legacy 文件。不存在使用默认值，存储失败返回错误，不能跨作用域降级写入。 |
-| Labs | `LabsDatabase` 负责连接和 schema；`LabsUnitOfWork` 提供绑定同一事务的模型与运行仓储。完成命令负责一次提交报告和模型，仓储不反向调用业务服务私有成员。 |
-| 估值算法 | DCF、Reverse DCF、Relative 使用独立纯 Calculator；增加算法时扩展计算器注册入口并测试公式，不把计算散落在 API 和 AI 存储层。 |
-| 研究材料 | 保存事务返回明确 `version_id`，写盘与索引使用该版本。对外响应形状保持不变；索引 metadata 保存文档和版本标识。 |
 
 ## 前端状态和副作用
 
-- `api.ts` 继续作为调用门面，`AuthSessionManager` 独占凭据与身份代次。正常续期保留身份代次；账户切换使旧请求失效。JSON、blob 和两类流式请求共享认证边界。
+- `api.ts` 继续作为调用门面，`AuthSessionManager` 独占凭据与身份代次。正常续期保留身份代次；账户切换使旧请求失效。JSON、blob 和聊天流式请求共享认证边界。
 - `chatRunReducer` 负责将服务端事件投影为可展示状态；`useChatRunController` 负责订阅、恢复、取消和队列接续。应用入口保留页面导航与布局。
-- 自选股和研究材料使用领域控制器，资源键与请求代次决定回包是否仍然有效，AbortController 用于取消过时读请求。
+- 自选股、分组和公司持仓查询使用领域控制器，资源键与请求代次决定回包是否仍然有效，AbortController 用于取消过时读请求。
 - reducer 和 React 状态 updater 保持纯计算。写操作由命令处理器发起：删除只回滚对应实体，排序串行提交并合并最新意图，失败不能恢复整张旧快照覆盖后续成功变更。
 
 ## 验证入口

@@ -11,7 +11,6 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  CircleDollarSign,
   FileText,
   Landmark,
   Loader2,
@@ -1277,48 +1276,6 @@ function CompanyInsightSection({ language, section }: { language: AppLanguage; s
   );
 }
 
-function valuationMetricValue(metric: unknown, language: AppLanguage): string {
-  if (!isRecord(metric)) return displayInsightValue(metric, language);
-  const points = Array.isArray(metric.list) ? metric.list.filter(isRecord) : [];
-  const latest = points.length > 0 ? displayInsightValue(points[points.length - 1]?.value, language) : "";
-  return latest || firstInsightText(metric, ["value", "desc"], language);
-}
-
-function valuationMetricMeta(metric: unknown, labels: { high: string; low: string; median: string }, language: AppLanguage): string {
-  if (!isRecord(metric)) return "";
-  return [
-    firstInsightText(metric, ["high"], language) ? `${labels.high} ${firstInsightText(metric, ["high"], language)}` : "",
-    firstInsightText(metric, ["median"], language) ? `${labels.median} ${firstInsightText(metric, ["median"], language)}` : "",
-    firstInsightText(metric, ["low"], language) ? `${labels.low} ${firstInsightText(metric, ["low"], language)}` : "",
-  ].filter(Boolean).join(" · ");
-}
-
-function ValuationInsightSection({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
-  const labels = language === "en"
-    ? { title: "Valuation", high: "High", low: "Low", median: "Median", pe: "PE", pb: "PB", ps: "PS", dvd_yld: "Dividend yield" }
-    : { title: "估值", high: "高", low: "低", median: "中位", pe: "PE", pb: "PB", ps: "PS", dvd_yld: "股息率" };
-  const metrics = isRecord(section.data.metrics) ? section.data.metrics : section.data;
-  const rows = (["pe", "pb", "ps", "dvd_yld"] as const)
-    .map((key) => ({ key, label: labels[key], value: valuationMetricValue(metrics[key], language), meta: valuationMetricMeta(metrics[key], labels, language) }))
-    .filter((row) => row.value);
-
-  return (
-    <InsightBlock icon={<CircleDollarSign />} section={section} title={labels.title}>
-      {rows.length > 0 ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {rows.map((row) => (
-            <div className="min-w-0 rounded-md bg-muted/20 px-3 py-2" key={row.key}>
-              <p className="truncate text-[11px] text-muted-foreground">{row.label}</p>
-              <p className="mt-1 truncate text-sm font-semibold tabular-nums">{row.value}</p>
-              {row.meta ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{row.meta}</p> : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </InsightBlock>
-  );
-}
-
 function RatingInsightSection({ language, section }: { language: AppLanguage; section: DashboardSymbolInsightSection }) {
   const labels = language === "en"
     ? { title: "Institution rating", recommend: "Consensus", target: "Target", change: "Change", updated: "Updated", buy: "Buy", hold: "Hold", sell: "Sell" }
@@ -1427,7 +1384,7 @@ function SymbolInsightsPanel({
   const labels = language === "en"
     ? {
       title: "Longbridge insights",
-      subtitle: "Company profile, valuation and events",
+      subtitle: "Company profile and events",
       loading: "Loading company data...",
       empty: "No company insight data",
       hidden: "This account cannot view company fundamentals",
@@ -1438,7 +1395,7 @@ function SymbolInsightsPanel({
     }
     : {
       title: "长桥公司信息",
-      subtitle: "公司资料、估值和事件",
+      subtitle: "公司资料和事件",
       loading: "加载公司信息中...",
       empty: "暂无公司信息数据",
       hidden: "当前账号无权限查看公司基本面",
@@ -1449,7 +1406,6 @@ function SymbolInsightsPanel({
     };
   const hasAnyContent = Boolean(insights && [
     insights.company,
-    insights.valuation,
     insights.institution_rating,
     insights.dividends,
     insights.corporate_actions,
@@ -1481,7 +1437,6 @@ function SymbolInsightsPanel({
       ) : (
         <div className="space-y-4">
           <CompanyInsightSection language={language} section={insights.company} />
-          <ValuationInsightSection language={language} section={insights.valuation} />
           <RatingInsightSection language={language} section={insights.institution_rating} />
           <ListInsightSection icon={<CalendarDays />} kind="dividend" language={language} section={insights.dividends} title={labels.dividends} />
           <ListInsightSection icon={<Landmark />} kind="action" language={language} section={insights.corporate_actions} title={labels.actions} />
