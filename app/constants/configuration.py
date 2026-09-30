@@ -1,6 +1,17 @@
 """configuration 领域常量的唯一定义。"""
 
+from enum import StrEnum
 from typing import Any
+
+
+class ThemeColor(StrEnum):
+    BLUE = "blue"
+    VIOLET = "violet"
+    TEAL = "teal"
+    GREEN = "green"
+    ORANGE = "orange"
+    ROSE = "rose"
+
 
 DEFAULT_SYSTEM_PROMPT = """You are Stocks Assistant, an AI agent specialized in stocks, finance, and market analysis.
 
@@ -121,6 +132,7 @@ USER_CONFIG_KEYS = {
     "search_api_url",
     "search_api_key",
     "app_language",
+    "app_theme_color",
     "agent_max_steps",
     "agent_max_context_tokens",
     "agent_max_context_turns",
@@ -143,6 +155,7 @@ USER_CONFIG_KEYS = {
 
 ALWAYS_USER_CONFIG_KEYS = {
     "app_language",
+    "app_theme_color",
     "knowledge_enabled",
     "memory_enabled",
     "scheduler_enabled",
@@ -280,6 +293,7 @@ DEFAULT_EMBEDDING_AUTH_MODE = "api_key"
 DEFAULT_EMBEDDING_API_BASE = "https://api.openai.com/v1"
 DEFAULT_WORKSPACE_DIR = "~/stocks-assistant"
 DEFAULT_APP_LANGUAGE = "zh"
+DEFAULT_APP_THEME_COLOR = ThemeColor.BLUE
 DEFAULT_AUTH_MAX_DEVICES_PER_USER = 5
 MAX_AUTH_MAX_DEVICES_PER_USER = 50
 DEFAULT_AGENT_MAX_STEPS = 20
@@ -320,6 +334,7 @@ _PUBLIC_CONFIG_FIELDS = (
     "embedding_auth_mode",
     "workspace_dir",
     "app_language",
+    "app_theme_color",
     "auth_max_devices_per_user",
     "agent_max_steps",
     "agent_max_context_tokens",

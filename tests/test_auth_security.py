@@ -949,6 +949,71 @@ class AuthSecurityTest(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 403)
 
+    def test_theme_color_is_personal_for_admin_and_regular_user_and_survives_relogin(self):
+        admin = self.setup_admin()
+        admin_headers = {"Authorization": f"Bearer {admin['access_token']}"}
+        created = self.client.post(
+            "/api/v1/users",
+            json={"username": "theme-user", "password": "Password123!", "roles": ["user"]},
+            headers=admin_headers,
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        user_id = created.json()["id"]
+        user = self.login_device("theme-user", "first-device")
+        user_headers = {"Authorization": f"Bearer {user['access_token']}"}
+
+        default = self.client.get("/api/v1/config", headers=user_headers)
+        self.assertEqual(default.json()["app_theme_color"], "blue")
+        self.assertNotIn("app_theme_color", default.json()["personal_config_keys"])
+
+        # 管理员也只更新自己的主题，不能把个人偏好写成其他账号的系统默认值。
+        for color in ("blue", "violet", "teal", "green", "orange", "rose"):
+            saved = self.client.patch(
+                "/api/v1/config", json={"app_theme_color": color}, headers=admin_headers
+            )
+            self.assertEqual(saved.status_code, 200, saved.text)
+            self.assertEqual(saved.json()["app_theme_color"], color)
+            self.assertIn("app_theme_color", saved.json()["personal_config_keys"])
+        self.assertNotIn("app_theme_color", to_payload(self.store.get_config()))
+        self.assertEqual(
+            self.client.get("/api/v1/config", headers=user_headers).json()["app_theme_color"],
+            "blue",
+        )
+        saved = self.client.patch(
+            "/api/v1/config", json={"app_theme_color": "teal"}, headers=user_headers
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["app_theme_color"], "teal")
+        self.assertEqual(self.store.get_user_config(user_id)["app_theme_color"], "teal")
+
+        # 重建 store 和配置缓存，再用另一设备登录，确保恢复来自 SQLite。
+        self.store = reset_app_store_for_tests(self.db_path)
+        config_module.reset_settings_cache()
+        other_device = self.login_device("theme-user", "second-device")
+        restored = self.client.get(
+            "/api/v1/config",
+            headers={"Authorization": f"Bearer {other_device['access_token']}"},
+        )
+        self.assertEqual(restored.json()["app_theme_color"], "teal")
+        self.assertEqual(
+            self.client.get("/api/v1/config", headers=admin_headers).json()["app_theme_color"],
+            "rose",
+        )
+
+    def test_invalid_theme_color_cannot_replace_saved_preference(self):
+        admin = self.setup_admin()
+        headers = {"Authorization": f"Bearer {admin['access_token']}"}
+        self.client.patch("/api/v1/config", json={"app_theme_color": "violet"}, headers=headers)
+        for invalid in ("unknown", "", "BLUE", 42, ["teal"]):
+            response = self.client.patch(
+                "/api/v1/config", json={"app_theme_color": invalid}, headers=headers
+            )
+            self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(
+            self.client.get("/api/v1/config", headers=headers).json()["app_theme_color"],
+            "violet",
+        )
+
     def test_config_api_masks_sensitive_values(self):
         tokens = self.setup_admin()
         self.store.set_config_values(

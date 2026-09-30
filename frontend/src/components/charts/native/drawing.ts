@@ -194,35 +194,56 @@ export function drawPaneLegend(
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
 
-  let x = layout.x + 8;
-  let y = layout.y + 14;
+  const startX = layout.x + 8;
+  const startY = layout.y + 14;
   const maxX = layout.x + layout.width - 8;
-  const maxY = layout.y + Math.min(layout.height - 8, 48);
+  const maxY = layout.y + layout.height - 8;
+
+  function layoutEntries(valueIndex: number | null) {
+    let x = startX + (layout.label ? ctx.measureText(layout.label).width + 12 : 0);
+    let y = startY;
+    const entries: { item: CachedSeries; text: string; x: number; y: number; marker: boolean }[] = [];
+    for (const item of paneSeries) {
+      const text = legendTextForSeries(item, valueIndex);
+      const point = valueIndex == null ? null : item.points[valueIndex];
+      // 窄屏将 OHLC 按完整的字段和值换行，不能把整段文本裁掉或挤掉后面的长周期均线。
+      const parts = item.type === "candlestick" && point && "open" in point && ctx.measureText(text).width + 30 > maxX - startX
+        ? [item.title ?? item.id, `O ${formatNumber(point.open)}`, `H ${formatNumber(point.high)}`, `L ${formatNumber(point.low)}`, `C ${formatNumber(point.close)}`]
+        : [text];
+      parts.forEach((part, partIndex) => {
+        const marker = partIndex === 0;
+        const entryWidth = (marker ? 18 : 0) + ctx.measureText(part).width + 12;
+        if (x + entryWidth > maxX && x > startX) {
+          x = startX;
+          y += 15;
+        }
+        entries.push({ item, text: part, x, y, marker });
+        x += entryWidth;
+      });
+    }
+    return entries;
+  }
+
+  let entries = layoutEntries(index);
+  // 使用面板实际高度而不是固定三行；极矮副图优先保留全部曲线名称。
+  if (entries.some((entry) => entry.y > maxY)) entries = layoutEntries(null);
 
   if (layout.label) {
     ctx.fillStyle = theme.mutedText;
-    ctx.fillText(layout.label, x, y);
-    x += ctx.measureText(layout.label).width + 12;
+    ctx.fillText(layout.label, startX, startY);
   }
 
-  for (const item of paneSeries) {
-    const text = legendTextForSeries(item, index);
+  for (const { item, text, x, y, marker } of entries) {
     const color = legendColorForSeries(item, index, theme);
-    const textWidth = ctx.measureText(text).width;
-    const entryWidth = 18 + textWidth + 12;
-    if (x + entryWidth > maxX && x > layout.x + 8) {
-      x = layout.x + 8;
-      y += 15;
-    }
     if (y > maxY) break;
 
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = Math.max(1.5, item.lineWidth ?? 1.5);
     ctx.setLineDash(item.dashed ? [5, 4] : []);
-    if (item.type === "histogram") {
+    if (marker && item.type === "histogram") {
       ctx.fillRect(x, y - 4, 12, 8);
-    } else {
+    } else if (marker) {
       ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(x + 12, y);
@@ -230,8 +251,7 @@ export function drawPaneLegend(
     }
     ctx.setLineDash([]);
     ctx.fillStyle = theme.text;
-    ctx.fillText(text, x + 16, y);
-    x += entryWidth;
+    ctx.fillText(text, x + (marker ? 16 : 0), y);
   }
   ctx.restore();
 }

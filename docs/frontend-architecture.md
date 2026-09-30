@@ -25,6 +25,8 @@
 
 语言状态继续来自账号配置 `app_language`，Provider 不另存 localStorage。设置页直接遍历 `supportedLanguages`，`AppLanguage` 从注册表推导；不要在业务代码维护 `"zh" | "en"` 或按语言写条件文案。
 
+主题色使用账号配置 `app_theme_color`，与语言复用配置草稿及自动保存队列；登录时从配置 API 恢复，退出时清理 DOM 主题色。旧版浏览器主题色不再作为配置来源，未设置的账号默认蓝色，用户可重新选择并保存到账号。
+
 ```tsx
 import { useI18n } from "@/i18n/react";
 

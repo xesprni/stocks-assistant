@@ -6,7 +6,7 @@ export default {
   "saving": "Saving",
   "saved": "Saved",
   "personalPreferences": "Personal Preferences",
-  "personalPreferencesHint": "Language is saved to your account; display preferences are saved in this browser.",
+  "personalPreferencesHint": "Language and theme color are saved to your account; market colors are saved in this browser.",
   "accountSecurity": "Account Security",
   "accountSecurityHint": "Change the password for the current signed-in account.",
   "currentPassword": "Current password",
@@ -215,7 +215,7 @@ export default {
   "colorSchemeIntl": "Green up, red down",
   "colorSchemeCn": "Red up, green down",
   "themeColor": "Theme Color",
-  "themeColorHint": "Applies instantly and is saved in this browser, for both light and dark modes.",
+  "themeColorHint": "Applies instantly and saves automatically to your account across devices, for both light and dark modes.",
   "themeColors": {
     "blue": "Blue",
     "violet": "Violet",

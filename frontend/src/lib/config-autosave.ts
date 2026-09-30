@@ -16,6 +16,7 @@ type Options = {
 const IMMEDIATE_KEYS = new Set([
   "llm_provider", "llm_auth_mode", "embedding_auth_mode", "longbridge_auth_mode",
   "llm_reasoning_effort", "llm_tool_choice", "app_language", "agent_tool_allowlist",
+  "app_theme_color",
 ]);
 
 export function configAutosaveDelay(patch: Partial<ConfigDraft>): number {

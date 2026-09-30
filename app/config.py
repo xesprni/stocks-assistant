@@ -31,6 +31,7 @@ from app.constants.configuration import (
     DEFAULT_AGENT_MAX_CONTEXT_TURNS,
     DEFAULT_AGENT_MAX_STEPS,
     DEFAULT_APP_LANGUAGE,
+    DEFAULT_APP_THEME_COLOR,
     DEFAULT_AUTH_MAX_DEVICES_PER_USER,
     DEFAULT_CLAWHUB_REGISTRY_URL,
     DEFAULT_EMBEDDING_API_BASE,
@@ -62,6 +63,7 @@ from app.constants.configuration import (
     MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH,
     MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
     MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    ThemeColor,
 )
 from app.constants.configuration import (
     DEFAULT_AGENT_TOOL_ALLOWLIST as DEFAULT_AGENT_TOOL_ALLOWLIST,
@@ -119,6 +121,7 @@ class Settings(BaseSettings):
     # ---- 工作空间 ----
     workspace_dir: str = DEFAULT_WORKSPACE_DIR  # 工作空间根目录
     app_language: str = DEFAULT_APP_LANGUAGE  # UI 语言：zh / en
+    app_theme_color: ThemeColor = DEFAULT_APP_THEME_COLOR  # 主题色按账号保存。
 
     # ---- 认证安全配置 ----
     auth_max_devices_per_user: int = Field(

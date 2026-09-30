@@ -23,6 +23,7 @@ import { parseJsonObject } from "@/lib/json";
 import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { companyRouteFromPath, configTabFromPath, DEFAULT_PAGE_PERMISSION, normalizeRoutePath, pageFromPath, pathForCompany, pathForPage } from "@/lib/routes";
 import { effectiveTheme, isMobileShellViewport, isTheme, systemTheme } from "@/lib/shell-layout";
+import { useThemeColor } from "@/lib/theme-color";
 import { cn } from "@/lib/utils";
 import type { CompanyTab } from "@/pages/CompanyWorkspacePage";
 import type { ConfigTab } from "@/pages/ConfigPage";
@@ -103,7 +104,7 @@ function App() {
       </Suspense>
     );
   }
-  return <ConsoleApp />;
+  return <ConsoleApp key={auth.user.id} />;
 }
 
 function ConsoleApp() {
@@ -142,6 +143,7 @@ function ConsoleApp() {
   const chatHistory = useConversations();
   const confirmDialog = useConfirmDialog();
   const language = normalizeLanguage(draft?.app_language ?? config?.app_language);
+  useThemeColor(draft?.app_theme_color ?? config?.app_theme_color);
   const ui = i18n[language];
   const marketSettings = useMarketConfig(language, auth.can("market:read"), auth.can("market:write"));
   const configSuccessRef = useRef(() => showConfigToast("success", ui.config.saved));
@@ -392,6 +394,7 @@ function ConsoleApp() {
       embedding_codex_model: source.embedding_codex_model ?? "text-embedding-3-small",
       workspace_dir: source.workspace_dir,
       app_language: source.app_language,
+      app_theme_color: source.app_theme_color,
       auth_max_devices_per_user: Number(source.auth_max_devices_per_user) || 5,
       agent_max_steps: Number(source.agent_max_steps),
       agent_max_context_tokens: Number(source.agent_max_context_tokens),

@@ -61,18 +61,33 @@ async function route(route) {
   failures.push(`${request.method()} ${url.pathname}`); return json({ detail: "Unexpected request" }, 500);
 }
 await context.route("**/*", route);
-await context.addInitScript(() => {
+function installCanvasProbe() {
   const clear = CanvasRenderingContext2D.prototype.clearRect;
   const fillText = CanvasRenderingContext2D.prototype.fillText;
+  const begin = CanvasRenderingContext2D.prototype.beginPath;
+  const move = CanvasRenderingContext2D.prototype.moveTo;
+  const line = CanvasRenderingContext2D.prototype.lineTo;
+  const stroke = CanvasRenderingContext2D.prototype.stroke;
   CanvasRenderingContext2D.prototype.clearRect = function (...args) {
     this.canvas.drawnLabels = [];
+    this.canvas.drawnText = [];
+    this.canvas.drawnLines = [];
     return clear.apply(this, args);
   };
   CanvasRenderingContext2D.prototype.fillText = function (...args) {
     (this.canvas.drawnLabels ??= []).push(args[0]);
+    (this.canvas.drawnText ??= []).push({ text: args[0], x: args[1], y: args[2], width: this.measureText(args[0]).width });
     return fillText.apply(this, args);
   };
-});
+  CanvasRenderingContext2D.prototype.beginPath = function () { this.probePath = []; return begin.call(this); };
+  CanvasRenderingContext2D.prototype.moveTo = function (x, y) { this.probePath?.push({ x, y }); return move.call(this, x, y); };
+  CanvasRenderingContext2D.prototype.lineTo = function (x, y) { this.probePath?.push({ x, y }); return line.call(this, x, y); };
+  CanvasRenderingContext2D.prototype.stroke = function (...args) {
+    if (Math.abs(this.lineWidth - 1.35) < 1e-6 && this.probePath?.length > 1) (this.canvas.drawnLines ??= []).push({ color: this.strokeStyle, points: [...this.probePath] });
+    return stroke.apply(this, args);
+  };
+}
+await context.addInitScript(installCanvasProbe);
 let page;
 const rows = () => page.locator(".watchlist-sortable-row");
 async function select(label, option) { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: option, exact: true }).click(); }
@@ -118,6 +133,34 @@ async function contained(selector, minimumHeight = 0) {
   assert.ok(rect && rect.height > minimumHeight, `${selector} must have usable height`);
   assert.ok(rect.x >= -1 && rect.y >= -1 && rect.x + rect.width <= page.viewportSize().width + 1 && rect.y + rect.height <= page.viewportSize().height + 1,
     `${selector} clipped: ${JSON.stringify(rect)} / ${JSON.stringify(page.viewportSize())}`);
+}
+async function checkMobileMAs(mobile) {
+  for (const period of [60, 120, 250]) {
+    const toggle = page.getByRole("button", { name: `MA${period}`, exact: true });
+    await toggle.tap();
+    assert.equal(await toggle.getAttribute("aria-pressed"), "true");
+  }
+  const cdp = await mobile.newCDPSession(page);
+  try {
+    for (const [width, height] of [[390, 844], [320, 568], [568, 320], [844, 390]]) {
+      await page.setViewportSize({ width, height });
+      const canvas = page.locator(".technical-native-chart canvas");
+      await canvas.scrollIntoViewIfNeeded();
+      await page.waitForFunction(() => document.querySelector(".technical-native-chart canvas")?.drawnLines?.length === 6);
+      const paths = await canvas.evaluate((element) => element.drawnLines);
+      assert.deepEqual(paths.map((path) => path.points.length), [496, 491, 481, 441, 381, 251], "All six real MA paths must retain their warmup windows on mobile");
+      const box = await canvas.boundingBox();
+      const point = { x: box.x + (box.width - 60) * 0.85, y: box.y + box.height * 0.35 };
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+      try {
+        await page.waitForFunction(() => document.querySelector(".technical-native-chart canvas")?.drawnLabels?.some((label) => /^MA250 \d/.test(label)));
+        const labels = await canvas.evaluate((element) => element.drawnText.filter((entry) => /^MA\d+ /.test(entry.text)));
+        assert.equal(labels.length, 6, `Long-press at ${width}px must keep every MA value`);
+        for (const label of labels) assert.ok(label.x >= 0 && label.x + label.width < box.width - 54, `MA text must not enter the price axis: ${label.text}`);
+        await page.screenshot({ path: `/tmp/stocks-ma-mobile-${width}.png` });
+      } finally { await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }); }
+    }
+  } finally { await cdp.detach(); }
 }
 try {
   page = await context.newPage(); page.on("pageerror", (error) => errors.push(error.message)); page.setDefaultTimeout(8000);
@@ -272,9 +315,11 @@ try {
   const longGroupName = "长期观察公司与行业机会跟踪";
   groups = [...groups, { id: 9, name: longGroupName, item_ids: [] }];
   const mobile = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  await mobile.addInitScript(installCanvasProbe);
   await mobile.route("**/*", route); page = await mobile.newPage(); page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(origin);
   await page.getByRole("slider", { name: "查看筹码价位", exact: true }).waitFor();
+  await checkMobileMAs(mobile);
   for (const [width, height] of [[844, 390], [667, 375], [568, 320]]) {
     await page.setViewportSize({ width, height });
     await contained(".technical-chip-panel", 150);

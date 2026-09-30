@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import event
 
+from app.config import Settings
 from app.core.app_store import AppStore
 from app.core.orm.models.app import AuditEvent
 from app.core.serialization import to_payload
@@ -53,6 +54,7 @@ def test_legacy_config_migrates_once_and_stays_encrypted(tmp_path):
     legacy.write_text(json.dumps({"app_language": "zh"}))
     assert store.migrate_config_json_once(legacy) == {}
     assert to_payload(store.get_config())["app_language"] == "en"
+    assert Settings(**to_payload(store.get_config())).app_theme_color == "blue"
     with store.connect() as connection:
         value = connection.execute(
             "SELECT value_json FROM app_config WHERE key='llm_api_key'"

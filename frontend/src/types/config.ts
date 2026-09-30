@@ -1,4 +1,5 @@
 import type { AppLanguage } from "@/i18n";
+import type { ThemeColor } from "@/lib/theme-color";
 export type ColorScheme = "intl" | "cn";
 
 export type LlmReasoningEffort = "minimal" | "low" | "medium" | "high";
@@ -45,6 +46,7 @@ export interface AppConfig {
   has_embedding_api_key: boolean;
   workspace_dir: string;
   app_language: AppLanguage;
+  app_theme_color: ThemeColor;
   auth_max_devices_per_user: number;
   agent_max_steps: number;
   agent_max_context_tokens: number;

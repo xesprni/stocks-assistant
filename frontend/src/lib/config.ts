@@ -1,8 +1,10 @@
 import type { AppConfig, ConfigDraft } from "@/types/app";
+import { normalizeThemeColor } from "@/lib/theme-color";
 
 export function toDraft(config: AppConfig): ConfigDraft {
   return {
     ...config,
+    app_theme_color: normalizeThemeColor(config.app_theme_color),
     llm_provider: config.llm_provider ?? "openai_compatible",
     llm_auth_mode: config.llm_auth_mode ?? "api_key",
     llm_codex_auth_file: config.llm_codex_auth_file ?? "",

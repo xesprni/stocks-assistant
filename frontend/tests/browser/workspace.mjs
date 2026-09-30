@@ -9,7 +9,7 @@ const origin = "http://127.0.0.1:4178";
 const failures = [], errors = [], calls = [];
 const user = { id: "fixture", username: "fixture", display_name: "Fixture", roles: ["admin"], permissions: ["*"], is_active: true };
 const config = {
-  app_language: "zh", workspace_dir: "/fixture", llm_provider: "openai_compatible", llm_auth_mode: "api_key", llm_model: "fixture",
+  app_language: "zh", app_theme_color: "blue", workspace_dir: "/fixture", llm_provider: "openai_compatible", llm_auth_mode: "api_key", llm_model: "fixture",
   llm_api_base: "https://example.invalid/v1", llm_temperature: 0, llm_max_output_tokens: 4096,
   llm_reasoning_effort: "medium", llm_tool_choice: "auto", agent_max_steps: 20, agent_max_context_tokens: 50000, agent_max_context_turns: 20,
   agent_tool_allowlist: [], embedding_provider: "openai", embedding_model: "fixture", embedding_api_base: "", embedding_api_key_masked: "",
@@ -19,6 +19,8 @@ const config = {
   debug: false, log_level: "INFO", auth_max_devices_per_user: 5,
 };
 const marketConfig = { refresh_interval: 60, indices: Array.from({ length: 8 }, (_, i) => ({ symbol: `FIXTURE${i + 1}.US`, name: `Fixture index ${i + 1}`, enabled: true })) };
+const secondUser = { ...user, id: "second", username: "second", roles: ["user"], permissions: ["config:read", "chat:read"] };
+const secondConfig = structuredClone(config);
 const marketWrites = [], configWrites = [];
 let marketSaveGate = null;
 const marketModule = () => ({ available: true, error: null, stale: false, source: "live", fetched_at: "2026-09-30", indices: marketConfig.indices.filter((item) => item.enabled).map((item) => ({ ...item, last_done: "100", change_rate: "1" })) });
@@ -37,7 +39,7 @@ await context.addInitScript(() => {
   localStorage.setItem("stocks_assistant_refresh_token", "fixture");
   localStorage.setItem("stocks-assistant.news.mode", "guardian"); // Old preferences must not revive removed features.
 });
-await context.route("**/*", async (route) => {
+const routeFixture = async (route) => {
   const request = route.request(), url = new URL(request.url()), path = url.pathname;
   const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   if (url.origin !== origin) { failures.push(request.url()); return route.abort(); }
@@ -47,14 +49,21 @@ await context.route("**/*", async (route) => {
   }
   calls.push(path);
   if (path === "/api/v1/auth/setup/status") return json({ setup_required: false });
-  if (path === "/api/v1/auth/me") return json(user);
+  const currentUser = request.headers().authorization === "Bearer second" ? secondUser : user;
+  if (path === "/api/v1/auth/me") return json(currentUser);
+  if (path === "/api/v1/auth/login") {
+    const account = request.postDataJSON().username === "second" ? secondUser : user;
+    return json({ access_token: account.id, refresh_token: account.id, token_type: "bearer", user: account });
+  }
+  if (path === "/api/v1/auth/logout") return json({ status: "ok" });
   if (path === "/api/v1/auth/device/heartbeat") return json({ status: "ok" });
   if (path === "/api/v1/config") {
+    const accountConfig = currentUser.id === "second" ? secondConfig : config;
     if (request.method() === "PATCH" || request.method() === "PUT") {
       configWrites.push(request.postDataJSON());
-      Object.assign(config, request.postDataJSON());
+      Object.assign(accountConfig, request.postDataJSON());
     }
-    return json(config);
+    return json(accountConfig);
   }
   if (path === "/api/v1/tools") return json({ tools: [], total: 0 });
   if (path === "/api/v1/config/readiness") return json({ ready: true, checks: [] });
@@ -100,7 +109,8 @@ await context.route("**/*", async (route) => {
   if (path === "/api/v1/dashboard/watchlist") return json({ status: "ok", items: [], views: { movers: [], gainers: [], losers: [], active: [] }, total: 0, counts_by_category: {} });
   if (path === "/api/v1/dashboard/portfolio") return json({ status: "ok", markets: [] });
   failures.push(`${request.method()} ${path}`); return json({ detail: "Unexpected request" }, 500);
-});
+};
+await context.route("**/*", routeFixture);
 const page = await context.newPage();
 page.setDefaultTimeout(10000);
 page.on("pageerror", (error) => errors.push(error.message));
@@ -226,6 +236,8 @@ async function checkThemePreferences() {
       await radio.locator("..").click();
       await page.waitForFunction((value) => document.documentElement.dataset.themeColor === value, color);
       assert.ok(await radio.isChecked());
+      await page.getByRole("button", { name: "保存中", exact: true }).waitFor({ state: "hidden" });
+      assert.equal(config.app_theme_color, color, "Every theme choice must persist to the account API");
       const current = await readTheme();
       assert.equal(current.primary, current.accent);
       assert.equal(current.primary, current.ring);
@@ -243,6 +255,7 @@ async function checkThemePreferences() {
   await page.keyboard.press("ArrowLeft");
   await page.waitForFunction(() => document.documentElement.dataset.themeColor === "violet");
   const selected = await readTheme();
+  await page.getByRole("button", { name: "保存中", exact: true }).waitFor({ state: "hidden" });
   await page.screenshot({ path: "/tmp/stocks-theme-dark.png" });
   await page.reload();
   await page.getByRole("tab", { name: "偏好与能力", exact: true }).click();
@@ -255,6 +268,7 @@ async function checkThemePreferences() {
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await page.getByRole("radio", { name: "橙色", exact: true }).locator("..").click();
+    await page.getByRole("button", { name: "保存中", exact: true }).waitFor({ state: "hidden" });
     for (const label of Object.values(colors)) {
       const box = await page.getByRole("radio", { name: label, exact: true }).locator("..").boundingBox();
       assert.ok(box && box.x >= 0 && box.x + box.width <= width && box.width >= 44 && box.height >= 44, `Swatch ${label} must fit and remain touchable at ${width}px`);
@@ -262,12 +276,59 @@ async function checkThemePreferences() {
   }
   await readTheme();
   await page.screenshot({ path: "/tmp/stocks-theme-mobile.png" });
-  await page.evaluate(() => localStorage.setItem("stocks-assistant-theme-color", "unknown-old-value"));
+  await page.evaluate(() => localStorage.setItem("stocks-assistant-theme-color", "rose"));
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.reload();
+  await page.getByRole("tab", { name: "偏好与能力", exact: true }).click();
+  assert.ok(await page.getByRole("radio", { name: "橙色", exact: true }).isChecked(), "Legacy browser preference must not override the account");
+  await checkThemeAccounts();
+  config.app_theme_color = "unknown-old-value";
   await page.reload();
   await page.getByRole("tab", { name: "偏好与能力", exact: true }).click();
   assert.ok(await page.getByRole("radio", { name: "蓝色", exact: true }).isChecked());
   assert.equal((await readTheme()).color, "blue", "Invalid saved colors must recover to the default");
+  config.app_theme_color = "blue";
+}
+
+async function signIn(target, username) {
+  await target.getByLabel("Username", { exact: true }).fill(username);
+  await target.getByLabel("Password", { exact: true }).fill("FixturePassword!");
+  await target.getByRole("button", { name: "Sign in", exact: true }).click();
+  await target.getByRole("tab", { name: "偏好与能力", exact: true }).click();
+}
+
+async function signOut() {
+  await page.getByRole("button", { name: "打开账号菜单", exact: true }).click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.themeColor), undefined, "Signing out must clear the previous account's color");
+}
+
+async function checkThemeAccounts() {
+  // A new browser profile has no theme storage, but restores the same account preference.
+  const fresh = await browser.newContext();
+  await fresh.route("**/*", routeFixture);
+  const otherDevice = await fresh.newPage();
+  try {
+    await otherDevice.goto(`${origin}/settings`);
+    await signIn(otherDevice, "fixture");
+    assert.ok(await otherDevice.getByRole("radio", { name: "橙色", exact: true }).isChecked());
+    assert.equal(await otherDevice.evaluate(() => localStorage.getItem("stocks-assistant-theme-color")), null);
+  } finally { await fresh.close(); }
+
+  await signOut();
+  await signIn(page, "second");
+  assert.ok(await page.getByRole("radio", { name: "蓝色", exact: true }).isChecked(), "Another account must start with its own preference");
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/v1/config") && response.request().method() === "PATCH"),
+    page.getByRole("radio", { name: "绿色", exact: true }).locator("..").click(),
+  ]);
+  await page.getByRole("button", { name: "保存中", exact: true }).waitFor({ state: "hidden" });
+  assert.equal(secondConfig.app_theme_color, "green", "Regular users can save their theme without config:write");
+  assert.equal(config.app_theme_color, "orange");
+  await signOut();
+  await signIn(page, "fixture");
+  assert.ok(await page.getByRole("radio", { name: "橙色", exact: true }).isChecked());
 }
 try {
   await checkMobileScroll(page, { origin, config });

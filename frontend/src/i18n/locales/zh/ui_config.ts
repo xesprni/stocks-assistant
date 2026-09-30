@@ -6,7 +6,7 @@ export default {
   "saving": "保存中",
   "saved": "已保存",
   "personalPreferences": "个人偏好",
-  "personalPreferencesHint": "语言按当前用户保存，显示偏好保存在当前浏览器。",
+  "personalPreferencesHint": "语言和主题色按当前账号保存，涨跌配色保存在当前浏览器。",
   "accountSecurity": "账号安全",
   "accountSecurityHint": "修改当前登录账号的密码。",
   "currentPassword": "当前密码",
@@ -215,7 +215,7 @@ export default {
   "colorSchemeIntl": "绿涨红跌",
   "colorSchemeCn": "红涨绿跌",
   "themeColor": "主题色",
-  "themeColorHint": "即时生效并保存在当前浏览器，适用于浅色与深色模式。",
+  "themeColorHint": "即时生效并自动保存到当前账号，换设备登录后也会恢复，适用于浅色与深色模式。",
   "themeColors": {
     "blue": "蓝色",
     "violet": "紫色",

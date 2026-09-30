@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator
 
 from app.constants.configuration import (
+    DEFAULT_APP_THEME_COLOR,
     DEFAULT_AUTH_MAX_DEVICES_PER_USER,
     DEFAULT_MCP_TOOL_TIMEOUT_SECONDS,
     DEFAULT_MEMORY_CURATOR_MIN_CONFIDENCE,
@@ -22,6 +23,7 @@ from app.constants.configuration import (
     MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH,
     MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
     MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    ThemeColor,
 )
 from app.constants.notifications import TELEGRAM_MESSAGE_LIMIT
 from app.schemas.base import AppModel as BaseModel
@@ -66,6 +68,7 @@ class AppConfig(BaseModel):
 
     workspace_dir: str
     app_language: str = "zh"
+    app_theme_color: ThemeColor = DEFAULT_APP_THEME_COLOR
     auth_max_devices_per_user: int = DEFAULT_AUTH_MAX_DEVICES_PER_USER
     agent_max_steps: int
     agent_max_context_tokens: int
@@ -163,6 +166,7 @@ class ConfigUpdate(BaseModel):
 
     workspace_dir: str | None = None
     app_language: str | None = None
+    app_theme_color: ThemeColor | None = None
     auth_max_devices_per_user: int | None = Field(
         default=None, ge=1, le=MAX_AUTH_MAX_DEVICES_PER_USER
     )

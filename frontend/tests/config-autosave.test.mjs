@@ -70,6 +70,34 @@ test("save delays distinguish text, long text, booleans and discrete options", (
   assert.equal(configAutosaveDelay({ llm_provider: "anthropic" }), 0);
   assert.equal(configAutosaveDelay({ llm_reasoning_effort: "high" }), 0);
   assert.equal(configAutosaveDelay({ agent_tool_allowlist: ["read_file"] }), 0);
+  assert.equal(configAutosaveDelay({ app_theme_color: "violet" }), 0);
+});
+
+test("theme changes preview immediately, serialize rapid selections and retain failures for retry", async (t) => {
+  const h = setup(t, { app_theme_color: "blue" });
+  h.controller.patch({ app_theme_color: "violet" });
+  assert.equal(h.draft().app_theme_color, "violet");
+  await settle();
+  assert.deepEqual(h.calls[0].patch, { app_theme_color: "violet" });
+  h.controller.patch({ app_theme_color: "teal" });
+  h.controller.patch({ app_theme_color: "rose" });
+  await settle();
+  assert.equal(h.calls.length, 1);
+  await h.succeed(0);
+  assert.equal(h.draft().app_theme_color, "rose", "Old response must not repaint the latest selection");
+  assert.deepEqual(h.calls[1].patch, { app_theme_color: "rose" });
+  h.calls[1].reject(new Error("Save failed"));
+  await settle();
+  assert.equal(h.states.at(-1), "error");
+  assert.equal(h.draft().app_theme_color, "rose");
+  assert.equal(h.saved.at(-1).app_theme_color, "violet");
+  const retry = h.controller.flush();
+  await settle();
+  assert.deepEqual(h.calls[2].patch, { app_theme_color: "rose" });
+  await h.succeed(2);
+  await retry;
+  assert.equal(h.saved.at(-1).app_theme_color, "rose");
+  assert.equal(h.controller.isDirty(), false);
 });
 
 test("success feedback fires after auto and manual saves, never hydration, no-op or failure", async (t) => {

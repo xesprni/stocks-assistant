@@ -34,7 +34,7 @@ export function SettingsFeatures({ copy, draft, patchDraft, language }: Props) {
         <ColorSchemeRow language={language} />
       </div>
       <div className="mt-5 border-t border-border/50 pt-5">
-        <ThemeColorPicker language={language} />
+        <ThemeColorPicker language={language} themeColor={draft.app_theme_color} onChange={(color) => patchDraft({ app_theme_color: color })} />
       </div>
     </ConfigSection>
     <ConfigSection

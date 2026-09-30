@@ -1,32 +1,18 @@
-import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
-import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
+import { useLayoutEffect } from "react";
 
 export const THEME_COLORS = ["blue", "violet", "teal", "green", "orange", "rose"] as const;
-type ThemeColor = typeof THEME_COLORS[number];
-const STORAGE_KEY = "stocks-assistant-theme-color";
+export type ThemeColor = typeof THEME_COLORS[number];
+export const DEFAULT_THEME_COLOR: ThemeColor = "blue";
 
-const ThemeColorContext = createContext<{
-  themeColor: ThemeColor;
-  setThemeColor: (color: ThemeColor) => void;
-}>({ themeColor: "blue", setThemeColor: () => {} });
-
-export function ThemeColorProvider({ children }: { children: ReactNode }) {
-  const [themeColor, setThemeColor] = useState<ThemeColor>(() => (
-    readStoredValue(STORAGE_KEY, THEME_COLORS, "blue")
-  ));
-
-  useLayoutEffect(() => {
-    document.documentElement.dataset.themeColor = themeColor;
-    writeStoredValue(STORAGE_KEY, themeColor);
-  }, [themeColor]);
-
-  return (
-    <ThemeColorContext.Provider value={{ themeColor, setThemeColor }}>
-      {children}
-    </ThemeColorContext.Provider>
-  );
+export function normalizeThemeColor(value: unknown): ThemeColor {
+  return THEME_COLORS.includes(value as ThemeColor) ? value as ThemeColor : DEFAULT_THEME_COLOR;
 }
 
-export function useThemeColor() {
-  return useContext(ThemeColorContext);
+// 账号配置草稿是唯一状态来源；退出账号时清理 DOM，避免下一位用户继承颜色。
+export function useThemeColor(value: unknown) {
+  const themeColor = normalizeThemeColor(value);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.themeColor = themeColor;
+    return () => { delete document.documentElement.dataset.themeColor; };
+  }, [themeColor]);
 }

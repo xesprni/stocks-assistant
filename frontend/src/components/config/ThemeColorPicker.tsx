@@ -1,9 +1,14 @@
 import { i18n, type AppLanguage } from "@/i18n";
-import { THEME_COLORS, useThemeColor } from "@/lib/theme-color";
+import { THEME_COLORS, type ThemeColor } from "@/lib/theme-color";
 import { Check } from "lucide-react";
 
-export function ThemeColorPicker({ language }: { language: AppLanguage }) {
-  const { themeColor, setThemeColor } = useThemeColor();
+type Props = {
+  language: AppLanguage;
+  themeColor: ThemeColor;
+  onChange: (color: ThemeColor) => void;
+};
+
+export function ThemeColorPicker({ language, themeColor, onChange }: Props) {
   const copy = i18n[language].config;
 
   return (
@@ -19,7 +24,7 @@ export function ThemeColorPicker({ language }: { language: AppLanguage }) {
               name="theme-color"
               value={color}
               checked={themeColor === color}
-              onChange={() => setThemeColor(color)}
+              onChange={() => onChange(color)}
             />
             <span className="flex min-h-20 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-background/50 p-2 text-xs transition-colors hover:bg-muted/60 peer-checked:border-primary peer-checked:bg-primary/5 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background">
               <span data-theme-color={color} className="theme-color-swatch grid size-7 place-items-center rounded-full" aria-hidden="true">
