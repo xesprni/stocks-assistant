@@ -8,6 +8,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.constants.common import OperationStatus
+from app.constants.market import DEFAULT_SYMBOL_SEARCH_LIMIT, MAX_SYMBOL_SEARCH_LIMIT
+from app.constants.tools import PORTFOLIO_ACTION_ALIASES, PORTFOLIO_MARKET_ALIASES
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.portfolio.symbols import canonical_portfolio_symbol
 from app.core.tools.base_tool import BaseTool, ToolResult
@@ -18,7 +21,23 @@ from app.core.tools.portfolio_output import (
     sanitize_portfolio_item,
     sanitize_portfolio_list,
 )
-from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate
+from app.schemas.portfolio import (
+    PortfolioItem,
+    PortfolioItemCreate,
+    PortfolioItemUpdate,
+    PortfolioListResponse,
+    PortfolioPositionFields,
+    PortfolioSearchResult,
+    PortfolioSettings,
+)
+from app.schemas.tool_outputs import (
+    PortfolioDeletionResult,
+    PortfolioMutationResult,
+    PortfolioSettingsResult,
+    PortfolioToolList,
+    PortfolioToolSearch,
+    ToolItemResult,
+)
 
 
 class PortfolioTool(BaseTool):
@@ -102,7 +121,12 @@ class PortfolioTool(BaseTool):
                 "description": "Search query for Longbridge symbol lookup.",
             },
             "q": {"type": "string", "description": "Alias for query."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_SYMBOL_SEARCH_LIMIT,
+                "default": DEFAULT_SYMBOL_SEARCH_LIMIT,
+            },
         },
         "required": ["action"],
     }
@@ -156,7 +180,7 @@ class PortfolioTool(BaseTool):
         except Exception:
             return None
 
-    def _list(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _list(self, service: Any, params: dict[str, Any]) -> PortfolioToolList:
         market = self._market(params.get("market") or "US", allow_all=True)
         markets = ["US", "A", "H"] if market == "ALL" else [market]
         results = [
@@ -165,19 +189,25 @@ class PortfolioTool(BaseTool):
             )
             for item_market in markets
         ]
-        return {**portfolio_snapshot(results), "market": market}
+        return PortfolioToolList(market=market, **portfolio_snapshot(results).model_dump())
 
-    def _get(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _get(self, service: Any, params: dict[str, Any]) -> ToolItemResult[PortfolioPositionFields]:
         item = self._find_item(service, params)
-        return {"source": "portfolio", "item": self._sanitize_item(item)}
+        return ToolItemResult[PortfolioPositionFields](
+            source="portfolio", item=self._sanitize_item(item)
+        )
 
-    def _search(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _search(self, service: Any, params: dict[str, Any]) -> PortfolioToolSearch:
         query = str(params.get("query") or params.get("q") or params.get("symbol") or "").strip()
         if not query:
             raise ValueError("query is required for search")
         market = self._market(params.get("market") or "US")
         limit = self._bounded_int(
-            params.get("limit"), default=10, minimum=1, maximum=20, name="limit"
+            params.get("limit"),
+            default=DEFAULT_SYMBOL_SEARCH_LIMIT,
+            minimum=1,
+            maximum=MAX_SYMBOL_SEARCH_LIMIT,
+            name="limit",
         )
         results = [
             self._sanitize_search_result(item)
@@ -185,38 +215,46 @@ class PortfolioTool(BaseTool):
                 query=query, market=market, limit=limit, settings=self.settings
             )
         ]
-        return {
-            "source": "longbridge",
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "query": query,
-            "market": market,
-            "results": results,
-            "total": len(results),
-        }
+        return PortfolioToolSearch(
+            source="longbridge",
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+            query=query,
+            market=market,
+            results=results,
+            total=len(results),
+        )
 
-    def _upsert(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _upsert(self, service: Any, params: dict[str, Any]) -> PortfolioMutationResult:
         existing = self._try_find_item(service, params)
         if existing:
             item = self._update_existing(service, existing, params, allow_symbol_replacement=False)
             operation = "update"
         else:
-            item = service.add_item(
-                PortfolioItemCreate(**self._create_payload(params)), user_id=self.user_id
+            item = PortfolioItem.model_validate(
+                service.add_item(self._create_payload(params), user_id=self.user_id)
             )
             operation = "create"
-        return {"status": "ok", "operation": operation, "item": self._sanitize_item(item)}
+        return PortfolioMutationResult(
+            status=OperationStatus.OK, operation=operation, item=self._sanitize_item(item)
+        )
 
-    def _update(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _update(self, service: Any, params: dict[str, Any]) -> PortfolioMutationResult:
         current = self._find_item(service, params)
         item = self._update_existing(service, current, params, allow_symbol_replacement=True)
-        return {"status": "ok", "operation": "update", "item": self._sanitize_item(item)}
+        return PortfolioMutationResult(
+            status=OperationStatus.OK, operation="update", item=self._sanitize_item(item)
+        )
 
-    def _delete(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _delete(self, service: Any, params: dict[str, Any]) -> PortfolioDeletionResult:
         item = self._find_item(service, params)
-        service.delete_item(int(item["id"]), user_id=self.user_id)
-        return {"status": "ok", "operation": "delete", "deleted_item": self._sanitize_item(item)}
+        service.delete_item(int(item.id), user_id=self.user_id)
+        return PortfolioDeletionResult(
+            status=OperationStatus.OK, operation="delete", deleted_item=self._sanitize_item(item)
+        )
 
-    def _adjust_shares(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _adjust_shares(
+        self, service: Any, params: dict[str, Any]
+    ) -> PortfolioMutationResult | PortfolioDeletionResult:
         delta = self._decimal(
             params.get("shares_delta")
             if params.get("shares_delta") is not None
@@ -232,20 +270,22 @@ class PortfolioTool(BaseTool):
             if delta < 0:
                 raise LookupError("Portfolio item not found")
             payload = self._create_payload({**params, "shares": self._decimal_text(delta)})
-            item = service.add_item(PortfolioItemCreate(**payload), user_id=self.user_id)
-            return {"status": "ok", "operation": "create", "item": self._sanitize_item(item)}
+            item = PortfolioItem.model_validate(service.add_item(payload, user_id=self.user_id))
+            return PortfolioMutationResult(
+                status=OperationStatus.OK, operation="create", item=self._sanitize_item(item)
+            )
 
-        current_shares = self._decimal(current.get("shares"), "current shares") or Decimal("0")
+        current_shares = self._decimal(current.shares, "current shares") or Decimal("0")
         next_shares = current_shares + delta
         if next_shares < 0:
             raise ValueError("shares_delta would make shares negative")
         if next_shares == 0 and self._bool(params.get("delete_when_zero")):
-            service.delete_item(int(current["id"]), user_id=self.user_id)
-            return {
-                "status": "ok",
-                "operation": "delete",
-                "deleted_item": self._sanitize_item(current),
-            }
+            service.delete_item(int(current.id), user_id=self.user_id)
+            return PortfolioDeletionResult(
+                status=OperationStatus.OK,
+                operation="delete",
+                deleted_item=self._sanitize_item(current),
+            )
 
         patch: dict[str, Any] = {"shares": self._decimal_text(next_shares)}
         next_cost = self._adjusted_cost_price(current, delta, next_shares, params)
@@ -253,12 +293,14 @@ class PortfolioTool(BaseTool):
             patch["cost_price"] = self._decimal_text(next_cost)
         if "note" in params:
             patch["note"] = str(params.get("note") or "")
-        item = service.update_item(
-            int(current["id"]), PortfolioItemUpdate(**patch), user_id=self.user_id
+        item = PortfolioItem.model_validate(
+            service.update_item(int(current.id), PortfolioItemUpdate(**patch), user_id=self.user_id)
         )
-        return {"status": "ok", "operation": "adjust_shares", "item": self._sanitize_item(item)}
+        return PortfolioMutationResult(
+            status=OperationStatus.OK, operation="adjust_shares", item=self._sanitize_item(item)
+        )
 
-    def _set_total_capital(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _set_total_capital(self, service: Any, params: dict[str, Any]) -> PortfolioSettingsResult:
         market = self._market(params.get("market") or "US")
         amount = (
             params.get("total_capital")
@@ -267,29 +309,29 @@ class PortfolioTool(BaseTool):
         )
         if amount is None or str(amount).strip() == "":
             raise ValueError("total_capital or cash is required")
-        saved = service.save_settings(market, str(amount), user_id=self.user_id)
-        return {
-            "status": "ok",
-            "operation": "set_total_capital",
-            "settings": self._sanitize_settings(saved),
-        }
+        saved = PortfolioSettings.model_validate(
+            service.save_settings(market, str(amount), user_id=self.user_id)
+        )
+        return PortfolioSettingsResult(
+            status=OperationStatus.OK,
+            operation="set_total_capital",
+            settings=self._sanitize_settings(saved),
+        )
 
     def _update_existing(
         self,
         service: Any,
-        current: dict[str, Any],
+        current: PortfolioItem,
         params: dict[str, Any],
         *,
         allow_symbol_replacement: bool,
-    ) -> dict[str, Any]:
+    ) -> PortfolioItem:
         patch: dict[str, Any] = {}
         if allow_symbol_replacement and params.get("new_market") not in (None, ""):
             patch["market"] = self._market(params.get("new_market"))
         if allow_symbol_replacement and params.get("new_symbol"):
             patch["symbol"] = str(params.get("new_symbol") or "").strip().upper()
-            patch.setdefault(
-                "market", self._market(params.get("new_market") or current.get("market"))
-            )
+            patch.setdefault("market", self._market(params.get("new_market") or current.market))
         for field in ("name", "shares", "cost_price", "note"):
             if field not in params:
                 continue
@@ -300,11 +342,11 @@ class PortfolioTool(BaseTool):
                 patch[field] = "" if value is None and field in {"name", "note"} else value
         if not patch:
             return current
-        return service.update_item(
-            int(current["id"]), PortfolioItemUpdate(**patch), user_id=self.user_id
+        return PortfolioItem.model_validate(
+            service.update_item(int(current.id), PortfolioItemUpdate(**patch), user_id=self.user_id)
         )
 
-    def _create_payload(self, params: dict[str, Any]) -> dict[str, Any]:
+    def _create_payload(self, params: dict[str, Any]) -> PortfolioItemCreate:
         market = self._market(params.get("market"), required=True)
         symbol = str(params.get("symbol") or "").strip().upper()
         if not symbol:
@@ -312,22 +354,22 @@ class PortfolioTool(BaseTool):
         cost_price = params.get("cost_price")
         if cost_price is None and params.get("trade_price") is not None:
             cost_price = params.get("trade_price")
-        return {
-            "market": market,
-            "symbol": symbol,
-            "name": str(params.get("name") or ""),
-            "shares": str(params.get("shares")) if params.get("shares") is not None else None,
-            "cost_price": str(cost_price) if cost_price is not None else None,
-            "note": str(params.get("note") or ""),
-        }
+        return PortfolioItemCreate(
+            market=market,
+            symbol=symbol,
+            name=str(params.get("name") or ""),
+            shares=str(params.get("shares")) if params.get("shares") is not None else None,
+            cost_price=str(cost_price) if cost_price is not None else None,
+            note=str(params.get("note") or ""),
+        )
 
-    def _find_item(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _find_item(self, service: Any, params: dict[str, Any]) -> PortfolioItem:
         raw_item_id = (
             params.get("item_id") if params.get("item_id") is not None else params.get("id")
         )
         item_id = self._optional_int(raw_item_id, "item_id")
         if item_id is not None:
-            return service.get_item(item_id, user_id=self.user_id)
+            return PortfolioItem.model_validate(service.get_item(item_id, user_id=self.user_id))
 
         symbol = str(params.get("symbol") or "").strip().upper()
         if not symbol:
@@ -340,7 +382,7 @@ class PortfolioTool(BaseTool):
             raise LookupError("Portfolio item not found")
         return candidates[0]
 
-    def _try_find_item(self, service: Any, params: dict[str, Any]) -> dict[str, Any] | None:
+    def _try_find_item(self, service: Any, params: dict[str, Any]) -> PortfolioItem | None:
         try:
             return self._find_item(service, params)
         except (KeyError, LookupError, ValueError):
@@ -348,29 +390,34 @@ class PortfolioTool(BaseTool):
 
     def _find_symbol_matches(
         self, service: Any, symbol: str, market_value: Any
-    ) -> list[dict[str, Any]]:
+    ) -> list[PortfolioItem]:
         markets = self._candidate_markets(symbol, market_value)
-        matches: list[dict[str, Any]] = []
+        matches: list[PortfolioItem] = []
         for market in markets:
             canonical = self._canonical_symbol(symbol, market)
             for item in self._local_items(service, market):
-                item_symbol = str(item.get("symbol") or "").upper()
+                item_symbol = str(item.symbol or "").upper()
                 if item_symbol == canonical or (
                     "." not in symbol and item_symbol.split(".", 1)[0] == symbol
                 ):
                     matches.append(item)
         return matches
 
-    def _local_items(self, service: Any, market: str) -> list[dict[str, Any]]:
+    def _local_items(self, service: Any, market: str) -> list[PortfolioItem]:
         repository = getattr(service, "repository", None)
         if repository is not None and hasattr(repository, "list_items"):
-            return repository.list_items(market, user_id=self.user_id)
-        data = service.list_items(market, user_id=self.user_id, settings=None)
-        return list(data.get("items", [])) if isinstance(data, dict) else list(data or [])
+            return [
+                PortfolioItem.model_validate(row)
+                for row in repository.list_items(market, user_id=self.user_id)
+            ]
+        data = PortfolioListResponse.model_validate(
+            service.list_items(market, user_id=self.user_id, settings=None)
+        )
+        return data.items
 
     def _adjusted_cost_price(
         self,
-        current: dict[str, Any],
+        current: PortfolioItem,
         delta: Decimal,
         next_shares: Decimal,
         params: dict[str, Any],
@@ -379,8 +426,8 @@ class PortfolioTool(BaseTool):
             return self._decimal(params.get("cost_price"), "cost_price")
 
         trade_price = self._decimal(params.get("trade_price"), "trade_price")
-        current_cost = self._decimal(current.get("cost_price"), "current cost_price")
-        current_shares = self._decimal(current.get("shares"), "current shares") or Decimal("0")
+        current_cost = self._decimal(current.cost_price, "current cost_price")
+        current_shares = self._decimal(current.shares, "current shares") or Decimal("0")
         if trade_price is None:
             return current_cost
         if delta <= 0 or next_shares <= 0:
@@ -392,15 +439,7 @@ class PortfolioTool(BaseTool):
     @staticmethod
     def _normalize_action(value: Any) -> str:
         action = str(value or "").strip().lower().replace("-", "_")
-        aliases = {
-            "create": "upsert",
-            "add": "upsert",
-            "remove": "delete",
-            "set_cash": "set_total_capital",
-            "set_capital": "set_total_capital",
-            "cash": "set_total_capital",
-            "adjust": "adjust_shares",
-        }
+        aliases = PORTFOLIO_ACTION_ALIASES
         return aliases.get(action, action)
 
     @staticmethod
@@ -410,23 +449,7 @@ class PortfolioTool(BaseTool):
                 raise ValueError("market is required")
             return None
         normalized = str(value).strip().upper().replace("-", "").replace("_", "")
-        aliases = {
-            "美股": "US",
-            "美国": "US",
-            "USTOCK": "US",
-            "USTOCKS": "US",
-            "A股": "A",
-            "沪深": "A",
-            "中国": "A",
-            "CN": "A",
-            "CHINA": "A",
-            "ASHARE": "A",
-            "ASHARES": "A",
-            "港股": "H",
-            "香港": "H",
-            "HK": "H",
-            "HKSTOCK": "H",
-        }
+        aliases = PORTFOLIO_MARKET_ALIASES
         market = aliases.get(normalized, normalized)
         allowed = {"US", "A", "H"} | ({"ALL"} if allow_all else set())
         if market not in allowed:
@@ -483,13 +506,11 @@ class PortfolioTool(BaseTool):
     _sanitize_item = staticmethod(sanitize_portfolio_item)
 
     @staticmethod
-    def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "market": settings.get("market"),
-            "total_capital": settings.get("total_capital", "0"),
-        }
+    def _sanitize_settings(settings: PortfolioSettings | dict[str, Any]) -> PortfolioSettings:
+        return PortfolioSettings.model_validate(settings)
 
     @staticmethod
-    def _sanitize_search_result(item: dict[str, Any]) -> dict[str, Any]:
-        fields = ("market", "symbol", "name", "currency", "last_done", "change_rate")
-        return {field: item.get(field) for field in fields if field in item}
+    def _sanitize_search_result(
+        item: PortfolioSearchResult | dict[str, Any],
+    ) -> PortfolioSearchResult:
+        return PortfolioSearchResult.model_validate(item)

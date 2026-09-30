@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from app.core.serialization import to_payload
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import (
     evidence_for_source,
@@ -85,7 +86,9 @@ class GetSecurityNewsTool(BaseTool):
                 from app.deps import get_news_service
 
                 self.service = get_news_service()
-            payload = self.service.get_security_news(symbol, limit=limit, settings=self.settings)
+            payload = to_payload(
+                self.service.get_security_news(symbol, limit=limit, settings=self.settings)
+            )
             evidence = _linked_record_evidence(payload, symbol=symbol, source_type="news")
             return ToolResult.success(
                 payload,
@@ -133,7 +136,7 @@ class GetSecurityInsightsTool(BaseTool):
                 from app.deps import get_fundamental_service
 
                 self.service = get_fundamental_service()
-            payload = self.service.get_security_insights(symbol, settings=self.settings)
+            payload = to_payload(self.service.get_security_insights(symbol, settings=self.settings))
             evidence = _linked_record_evidence(
                 payload, symbol=symbol, source_type="company_profile"
             )

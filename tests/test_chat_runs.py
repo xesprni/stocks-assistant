@@ -14,6 +14,7 @@ from app.api import agent as agent_api
 from app.core.agent.executor import AgentCancelledError
 from app.core.agent.run_service import ChatRunCapacityError, ChatRunManager
 from app.core.security import CurrentUser, get_current_user
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 
 SOURCES = [{"id": "source", "url": "https://example.test/source", "title": "Source"}]
@@ -157,12 +158,12 @@ def test_asgi_disconnect_keeps_running_and_replay_completes_once(chat_runs, befo
     async def scenario():
         sent = await disconnect_post(h.app, payload, before_first_event=before_first_event)
         assert await asyncio.to_thread(h.started.wait, 2)
-        sessions = h.store.list_sessions(user_id="alice")
+        sessions = to_payload(h.store.list_sessions(user_id="alice"))
         assert len(sessions) == 1
         run = h.manager.active_for_session(sessions[0]["id"])
         assert run is not None and run.status == "running"
         assert not run.cancel_event.is_set()
-        assert h.store.get_messages(run.session_id) == []
+        assert to_payload(h.store.get_messages(run.session_id)) == []
         if before_first_event:
             assert not any(message["type"] == "http.response.body" for message in sent)
         # 原任务仍被 gate 阻塞时重发相同请求，也必须复用会话和 Agent。
@@ -174,7 +175,7 @@ def test_asgi_disconnect_keeps_running_and_replay_completes_once(chat_runs, befo
 
     run = asyncio.run(scenario())
     assert run.status == "done"
-    messages = h.store.get_messages(run.session_id)
+    messages = to_payload(h.store.get_messages(run.session_id))
     assert [(message["role"], message["content"]) for message in messages] == [
         ("user", "hello"),
         ("assistant", "partial answer"),
@@ -196,7 +197,7 @@ def test_asgi_disconnect_keeps_running_and_replay_completes_once(chat_runs, befo
         assert response.text.count('"type": "agent_end"') == 1
         assert "PRIVATE_" not in response.text and "premature" not in response.text
     assert h.store.count_sessions(user_id="alice") == 1
-    assert h.store.get_messages(run.session_id) == messages
+    assert to_payload(h.store.get_messages(run.session_id)) == messages
     assert len(h.calls) == h.curated.call_count == h.recorder.finish.call_count == 1
     assert h.recorder.handle_event.call_count == trace_event_count
     assert h.curated.call_args.kwargs["user_id"] == "alice"
@@ -270,8 +271,8 @@ def test_run_endpoints_require_chat_permissions(chat_runs):
 
 def test_active_session_rejects_second_turn_and_cancel_is_cooperative(chat_runs):
     h = chat_runs
-    session_id = h.store.create_session(user_id="alice")["id"]
-    previous = h.store.append_message(session_id, "assistant", "previous answer")
+    session_id = to_payload(h.store.create_session(user_id="alice"))["id"]
+    previous = to_payload(h.store.append_message(session_id, "assistant", "previous answer"))
     h.gate.clear()
 
     async def start_and_cancel():
@@ -326,7 +327,7 @@ def test_active_session_rejects_second_turn_and_cancel_is_cooperative(chat_runs)
             "/agent/sessions",
         ):
             assert h.client.delete(path).status_code == 409
-        assert h.store.get_messages(session_id) == [previous]
+        assert to_payload(h.store.get_messages(session_id)) == [previous]
         stopped = h.client.post(f"/agent/runs/{run.id}/cancel")
         assert stopped.status_code == 200
         assert stopped.json()["status"] == "stopping"
@@ -340,7 +341,7 @@ def test_active_session_rejects_second_turn_and_cancel_is_cooperative(chat_runs)
     replay = h.client.get(f"/agent/runs/{run.id}/stream")
     assert parse_events(replay.text)[-1]["type"] == "agent_stopped"
     assert run.status == "cancelled"
-    assert h.store.get_messages(session_id) == [previous]
+    assert to_payload(h.store.get_messages(session_id)) == [previous]
     h.curated.assert_not_called()
     assert h.recorder.finish.call_count == 1
     assert h.recorder.finish.call_args.kwargs["status"] == "cancelled"

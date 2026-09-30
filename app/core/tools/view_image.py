@@ -7,11 +7,14 @@ import io
 from pathlib import Path
 from typing import Any
 
+from app.constants.tools import (
+    MAX_IMAGE_BYTES as MAX_IMAGE_BYTES,
+)
+from app.constants.tools import (
+    MAX_IMAGE_PIXELS as MAX_IMAGE_PIXELS,
+)
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.paths import resolve_workspace_path
-
-MAX_IMAGE_BYTES = 20 * 1024 * 1024
-MAX_IMAGE_PIXELS = 50_000_000
 
 
 class ViewImageTool(BaseTool):

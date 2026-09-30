@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from app.constants.portfolio import DEFAULT_TRANSACTION_LIMIT, MAX_TRANSACTION_LIMIT
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.orm.repositories.portfolio import PortfolioRepository
 from app.core.portfolio.symbols import canonical_portfolio_symbol
@@ -15,10 +16,17 @@ from app.core.portfolio.valuation import money as _money
 from app.core.portfolio.valuation import ratio as _ratio
 from app.core.watchlist.service import LongbridgeSearchClient
 from app.schemas.portfolio import (
+    PortfolioItem,
     PortfolioItemCreate,
     PortfolioItemUpdate,
+    PortfolioListResponse,
+    PortfolioLocalSnapshot,
     PortfolioMarket,
+    PortfolioSearchResult,
     PortfolioSellRequest,
+    PortfolioSellResponse,
+    PortfolioSettings,
+    PortfolioTransactionListResponse,
 )
 
 
@@ -88,7 +96,7 @@ class PortfolioService:
 
     def list_items(
         self, market: PortfolioMarket, user_id: str | None = None, settings: Any = None
-    ) -> dict[str, Any]:
+    ) -> PortfolioListResponse:
         rows, cash_amount = self.repository.snapshot(market, user_id=user_id)
 
         quote_error = None
@@ -108,58 +116,67 @@ class PortfolioService:
             unpriced_symbols = [row["symbol"] for row in rows]
             items, total_assets, cash_ratio = self._build_enriched_items(rows, cash_amount, {}, {})
 
-        return {
-            "market": market,
-            "total_capital": cash_amount,
-            "total_assets": total_assets,
-            "cash_ratio": cash_ratio,
-            "items": items,
-            "total": len(items),
-            "quote_error": quote_error,
-            "valuation_complete": not unpriced_symbols,
-            "unpriced_symbols": unpriced_symbols,
-        }
+        return PortfolioListResponse(
+            market=market,
+            total_capital=cash_amount,
+            total_assets=total_assets,
+            cash_ratio=cash_ratio,
+            items=items,
+            total=len(items),
+            quote_error=quote_error,
+            valuation_complete=not unpriced_symbols,
+            unpriced_symbols=unpriced_symbols,
+        )
 
     def get_local_snapshot(
         self, market: PortfolioMarket, user_id: str | None = None
-    ) -> dict[str, Any]:
+    ) -> PortfolioLocalSnapshot:
         """Expose local holdings and cash without requesting quotes or applying valuation."""
         rows, cash_amount = self.repository.snapshot(market, user_id=user_id)
-        return {
-            "market": market,
-            "total_capital": cash_amount,
-            "total_assets": None,
-            "cash_ratio": None,
-            "items": [self._empty_enriched_item(row) for row in rows],
-            "total": len(rows),
-            "quote_error": None,
-        }
+        return PortfolioLocalSnapshot(
+            market=market,
+            total_capital=cash_amount,
+            total_assets=None,
+            cash_ratio=None,
+            items=[self._empty_enriched_item(row) for row in rows],
+            total=len(rows),
+            quote_error=None,
+        )
 
-    def get_settings(self, market: PortfolioMarket, user_id: str | None = None) -> dict[str, str]:
+    def get_settings(
+        self, market: PortfolioMarket, user_id: str | None = None
+    ) -> PortfolioSettings:
         row = self.repository.get_settings(market, user_id=user_id)
         if row:
-            return row
-        return {"market": market, "user_id": user_id or "", "total_capital": "0"}
+            return PortfolioSettings.model_validate(row)
+        return PortfolioSettings(market=market, total_capital="0")
 
     def save_settings(
         self, market: PortfolioMarket, total_capital: str, user_id: str | None = None
-    ) -> dict[str, str]:
+    ) -> PortfolioSettings:
         number = _decimal(total_capital)
         if number is None or not number.is_finite() or number < 0:
             raise ValueError("total_capital must be a finite non-negative number")
         value = _decimal_text(number) or "0"
-        return self.repository.save_settings(market, value, user_id, _now())
+        return PortfolioSettings.model_validate(
+            self.repository.save_settings(market, value, user_id, _now())
+        )
 
     def list_transactions(
-        self, market: PortfolioMarket, user_id: str | None = None, limit: int = 100
-    ) -> dict[str, Any]:
-        normalized_limit = min(max(int(limit), 1), 200)
+        self,
+        market: PortfolioMarket,
+        user_id: str | None = None,
+        limit: int = DEFAULT_TRANSACTION_LIMIT,
+    ) -> PortfolioTransactionListResponse:
+        normalized_limit = min(max(int(limit), 1), MAX_TRANSACTION_LIMIT)
         transactions = self.repository.list_transactions(
             market, user_id=user_id, limit=normalized_limit
         )
-        return {"market": market, "transactions": transactions, "total": len(transactions)}
+        return PortfolioTransactionListResponse(
+            market=market, transactions=transactions, total=len(transactions)
+        )
 
-    def add_item(self, item: PortfolioItemCreate, user_id: str | None = None) -> dict[str, Any]:
+    def add_item(self, item: PortfolioItemCreate, user_id: str | None = None) -> PortfolioItem:
         now = _now()
         payload = item.model_dump()
         payload["user_id"] = user_id or ""
@@ -170,7 +187,7 @@ class PortfolioService:
         payload["created_at"] = now
         return self._empty_enriched_item(self.repository.add_item(payload))
 
-    def seed_sample_items(self, user_id: str) -> list[dict[str, Any]]:
+    def seed_sample_items(self, user_id: str) -> list[PortfolioItem]:
         """仅为空组合创建显式标记的教学持仓，不请求行情也不覆盖真实数据。"""
         existing = sum(
             (self.repository.list_items(market, user_id=user_id) for market in ("US", "A", "H")), []
@@ -199,7 +216,7 @@ class PortfolioService:
 
     def update_item(
         self, item_id: int, item: PortfolioItemUpdate, user_id: str | None = None
-    ) -> dict[str, Any]:
+    ) -> PortfolioItem:
         patch = item.model_dump(exclude_unset=True)
         if not patch:
             return self.get_item(item_id, user_id=user_id)
@@ -208,7 +225,7 @@ class PortfolioService:
             market = patch.get("market")
             if market is None:
                 current = self.get_item(item_id, user_id=user_id)
-                market = current.get("market")
+                market = current.market
             patch["symbol"] = _canonical_symbol(patch["symbol"], market)
         elif "market" in patch:
             raise ValueError("changing market requires an explicit matching symbol")
@@ -225,7 +242,7 @@ class PortfolioService:
 
     def sell_item(
         self, item_id: int, request: PortfolioSellRequest, user_id: str | None = None
-    ) -> dict[str, Any]:
+    ) -> PortfolioSellResponse:
         with self.repository.sale(item_id, user_id=user_id) as sale:
             current = sale.item
             shares_to_sell = _decimal(request.shares)
@@ -268,13 +285,13 @@ class PortfolioService:
                 transaction=transaction,
                 updated_at=updated_at,
             )
-        return {
-            "item": self._empty_enriched_item(item),
-            "transaction": saved_transaction,
-            "total_capital": setting["total_capital"],
-        }
+        return PortfolioSellResponse(
+            item=self._empty_enriched_item(item),
+            transaction=saved_transaction,
+            total_capital=setting["total_capital"],
+        )
 
-    def get_item(self, item_id: int, user_id: str | None = None) -> dict[str, Any]:
+    def get_item(self, item_id: int, user_id: str | None = None) -> PortfolioItem:
         return self._empty_enriched_item(self.repository.get_item(item_id, user_id=user_id))
 
     def delete_item(self, item_id: int, user_id: str | None = None) -> None:
@@ -283,22 +300,22 @@ class PortfolioService:
 
     def search(
         self, query: str, market: PortfolioMarket, limit: int, settings: Any = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[PortfolioSearchResult]:
         results = []
         for item in self.longbridge.search(
             query=query, category=market, limit=limit, settings=settings
         ):
-            if item.get("category") not in ("US", "A", "H"):
+            if item.category not in ("US", "A", "H"):
                 continue
             results.append(
-                {
-                    "market": item.get("category"),
-                    "symbol": item.get("symbol", ""),
-                    "name": item.get("name") or item.get("name_cn") or item.get("name_en") or "",
-                    "currency": item.get("currency", ""),
-                    "last_done": item.get("last_done"),
-                    "change_rate": item.get("change_rate"),
-                }
+                PortfolioSearchResult(
+                    market=item.category,
+                    symbol=item.symbol,
+                    name=item.name or item.name_cn or item.name_en or "",
+                    currency=item.currency,
+                    last_done=item.last_done,
+                    change_rate=item.change_rate,
+                )
             )
         return results
 
@@ -307,7 +324,7 @@ class PortfolioService:
         rows: list[dict[str, Any]],
         cash_amount: str,
         settings: Any = None,
-    ) -> tuple[list[dict[str, Any]], str, str | None, list[str]]:
+    ) -> tuple[list[PortfolioItem], str, str | None, list[str]]:
         if not rows:
             cash = _decimal(cash_amount) or Decimal("0")
             return [], _money(cash) or "0.00", _ratio(Decimal("100")) if cash > 0 else None, []
@@ -330,47 +347,40 @@ class PortfolioService:
         cash_amount: str,
         quotes: dict[str, dict[str, Any]],
         calc_indexes: dict[str, dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], str, str | None]:
+    ) -> tuple[list[PortfolioItem], str, str | None]:
         valuation = value_portfolio(
             rows, quotes, _decimal(cash_amount) or Decimal("0"), CostBasisValuation()
         )
         enriched = []
         for item in valuation.items:
-            enriched.append(
-                {
-                    **item.row,
-                    "shares": _decimal_text(item.shares),
-                    "cost_price": _decimal_text(item.cost_price),
-                    "currency": item.quote.get("currency", ""),
-                    "current_price": _decimal_text(item.current_price),
-                    "change_value": item.quote.get("change_value"),
-                    "change_rate": item.quote.get("change_rate"),
-                    "pe_ttm_ratio": calc_indexes.get(item.symbol, {}).get("pe_ttm_ratio"),
-                    "stock_value": _money(item.stock_value),
-                    "position_ratio": _ratio(item.position),
-                    "pnl_ratio": _ratio(item.pnl),
-                    "valuation_price_source": item.source,
-                }
-            )
+            row = self._empty_enriched_item(item.row)
+            row.shares = _decimal_text(item.shares)
+            row.cost_price = _decimal_text(item.cost_price)
+            row.currency = item.quote.get("currency", "")
+            row.current_price = _decimal_text(item.current_price)
+            row.change_value = item.quote.get("change_value")
+            row.change_rate = item.quote.get("change_rate")
+            row.pe_ttm_ratio = calc_indexes.get(item.symbol, {}).get("pe_ttm_ratio")
+            row.stock_value = _money(item.stock_value)
+            row.position_ratio = _ratio(item.position)
+            row.pnl_ratio = _ratio(item.pnl)
+            row.valuation_price_source = item.source
+            enriched.append(row)
         return enriched, _money(valuation.total_assets) or "0.00", _ratio(valuation.cash_ratio)
 
-    def _empty_enriched_item(self, row: dict[str, Any]) -> dict[str, Any]:
-        shares = _non_negative_decimal(row.get("shares"))
-        cost_price = _non_negative_decimal(row.get("cost_price"))
-        return {
-            **row,
-            "shares": _decimal_text(shares),
-            "cost_price": _decimal_text(cost_price),
-            "currency": "",
-            "current_price": None,
-            "change_value": None,
-            "change_rate": None,
-            "pe_ttm_ratio": None,
-            "stock_value": None,
-            "position_ratio": None,
-            "pnl_ratio": None,
-            "valuation_price_source": "unavailable",
-        }
+    def _empty_enriched_item(self, row: dict[str, Any]) -> PortfolioItem:
+        # ORM 行只在适配边界解析；后续调用方持有明确的业务模型。
+        return PortfolioItem(
+            id=row["id"],
+            market=row["market"],
+            symbol=row["symbol"],
+            name=row.get("name", ""),
+            note=row.get("note", ""),
+            shares=_decimal_text(_non_negative_decimal(row.get("shares"))),
+            cost_price=_decimal_text(_non_negative_decimal(row.get("cost_price"))),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     @staticmethod
     def _validated_optional_amount(value: Any, field: str) -> str | None:

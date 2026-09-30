@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from app.constants.tools import WEB_REQUEST_TIMEOUT_SECONDS
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import (
     evidence_for_source,
@@ -62,7 +63,7 @@ class WebSearchTool(BaseTool):
                 api_url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={"query": query, "count": count},
-                timeout=30,
+                timeout=WEB_REQUEST_TIMEOUT_SECONDS,
             )
             resp.raise_for_status()
             data = resp.json()

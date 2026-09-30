@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.market.errors import LongbridgeUnavailableError
+from app.core.serialization import to_payload
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import longbridge_evidence
 
@@ -53,7 +54,7 @@ class _LongbridgeMarketTool(BaseTool):
         if service is None:
             return ToolResult.fail("Market service not initialized")
         try:
-            data = getattr(service, func_name)(*args, settings=self.settings, **kwargs)
+            data = to_payload(getattr(service, func_name)(*args, settings=self.settings, **kwargs))
         except (ValueError, LongbridgeUnavailableError) as exc:
             return ToolResult.fail(str(exc))
         symbols: list[str] = []

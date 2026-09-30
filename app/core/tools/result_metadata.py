@@ -7,8 +7,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-METADATA_GROUPS = ("evidence", "sources", "rendered_images")
-ARTIFACT_FIELDS = ("artifact_id", "width", "height", "files")
+from app.constants.tools import (
+    ARTIFACT_FIELDS as ARTIFACT_FIELDS,
+)
+from app.constants.tools import (
+    METADATA_GROUPS as METADATA_GROUPS,
+)
 
 
 def unique_metadata_items(values: Iterable[Mapping[str, Any]], group: str) -> list[dict[str, Any]]:

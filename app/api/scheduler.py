@@ -6,9 +6,12 @@
 
 import uuid
 from datetime import datetime
+from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.constants.common import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from app.constants.security import Permission
 from app.core.security import CurrentUser, require_permissions
 from app.core.tools.scheduler.helpers import (
     notification_metadata,
@@ -17,6 +20,7 @@ from app.core.tools.scheduler.helpers import (
     task_to_response,
 )
 from app.deps import get_scheduler_service
+from app.schemas.common import StatusResponse, ToggleResponse
 from app.schemas.scheduler import (
     TaskCreateRequest,
     TaskListResponse,
@@ -30,15 +34,17 @@ router = APIRouter()
 
 
 def _task_to_response(task: dict) -> TaskResponse:
-    return TaskResponse(**task_to_response(task))
+    return task_to_response(task)
 
 
 def _run_to_response(run: dict) -> TaskRunResponse:
-    return TaskRunResponse(**run_to_response(run))
+    return run_to_response(run)
 
 
 @router.get("/tasks", response_model=TaskListResponse)
-def list_tasks(current_user: CurrentUser = Depends(require_permissions("scheduler:read"))):
+def list_tasks(
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_READ)),
+) -> TaskListResponse:
     service = get_scheduler_service()
     tasks = service.task_store.for_user(current_user.id).list_tasks()
     return TaskListResponse(
@@ -50,8 +56,8 @@ def list_tasks(current_user: CurrentUser = Depends(require_permissions("schedule
 @router.post("/tasks", response_model=TaskResponse)
 def create_task(
     request: TaskCreateRequest,
-    current_user: CurrentUser = Depends(require_permissions("scheduler:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_WRITE)),
+) -> TaskResponse:
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task_id = str(uuid.uuid4())[:8]
@@ -65,14 +71,14 @@ def create_task(
             telegram_photos=request.telegram_photos,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     task = {
         "id": task_id,
         "user_id": current_user.id,
         "name": request.name,
         "prompt": request.prompt,
-        "schedule": schedule,
+        "schedule": schedule.model_dump(),
         "enabled": request.enabled,
         "created_at": now,
         "updated_at": now,
@@ -87,17 +93,18 @@ def create_task(
         task_store.add_task(task)
         return _task_to_response(task)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e)) from e
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(
-    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:read"))
-):
+    task_id: str,
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_READ)),
+) -> TaskResponse:
     service = get_scheduler_service()
     task = service.task_store.for_user(current_user.id).get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found")
     return _task_to_response(task)
 
 
@@ -105,13 +112,13 @@ def get_task(
 def update_task(
     task_id: str,
     request: TaskUpdateRequest,
-    current_user: CurrentUser = Depends(require_permissions("scheduler:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_WRITE)),
+) -> TaskResponse:
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task = task_store.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found")
 
     updates = {}
     if request.name is not None:
@@ -119,7 +126,7 @@ def update_task(
     if request.prompt is not None:
         updates["prompt"] = request.prompt
     if request.schedule is not None:
-        updates["schedule"] = parse_schedule_expression(request.schedule)
+        updates["schedule"] = parse_schedule_expression(request.schedule).model_dump()
     if request.enabled is not None:
         updates["enabled"] = request.enabled
 
@@ -138,7 +145,9 @@ def update_task(
                 telegram_photos=request.telegram_photos,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=HTTPStatus.UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
 
     if "schedule" in updates or "enabled" in updates:
         next_task = {**task, **updates}
@@ -148,42 +157,42 @@ def update_task(
     try:
         task_store.update_task(task_id, updates)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Task not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found") from None
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e)) from e
 
     updated = task_store.get_task(task_id)
     if not updated:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found")
     return _task_to_response(updated)
 
 
 @router.post("/tasks/{task_id}/run", response_model=TaskRunResponse)
 async def run_task_now(
-    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:run"))
-):
+    task_id: str, current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_RUN))
+) -> TaskRunResponse:
     service = get_scheduler_service()
     try:
         if not service.task_store.for_user(current_user.id).get_task(task_id):
             raise ValueError("Task not found")
         run = await service.execute_task_now(task_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Task not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found") from None
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e)) from e
     return _run_to_response(run)
 
 
 @router.get("/tasks/{task_id}/runs", response_model=TaskRunListResponse)
 def list_task_runs(
     task_id: str,
-    limit: int = Query(default=50, ge=1, le=200),
-    current_user: CurrentUser = Depends(require_permissions("scheduler:read")),
-):
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_READ)),
+) -> TaskRunListResponse:
     service = get_scheduler_service()
     task = service.task_store.for_user(current_user.id).get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found")
     runs = (
         service.run_store.for_user(current_user.id).list_runs(task_id=task_id, limit=limit)
         if service.run_store
@@ -194,9 +203,9 @@ def list_task_runs(
 
 @router.get("/runs", response_model=TaskRunListResponse)
 def list_runs(
-    limit: int = Query(default=50, ge=1, le=200),
-    current_user: CurrentUser = Depends(require_permissions("scheduler:read")),
-):
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_READ)),
+) -> TaskRunListResponse:
     service = get_scheduler_service()
     runs = (
         service.run_store.for_user(current_user.id).list_runs(limit=limit)
@@ -208,25 +217,27 @@ def list_runs(
 
 @router.delete("/tasks/{task_id}")
 def delete_task(
-    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))
-):
+    task_id: str,
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_WRITE)),
+) -> StatusResponse:
     service = get_scheduler_service()
     try:
         service.task_store.for_user(current_user.id).delete_task(task_id)
-        return {"status": "ok"}
+        return StatusResponse()
     except ValueError:
-        raise HTTPException(status_code=404, detail="Task not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found") from None
 
 
 @router.post("/tasks/{task_id}/toggle")
 def toggle_task(
-    task_id: str, current_user: CurrentUser = Depends(require_permissions("scheduler:write"))
-):
+    task_id: str,
+    current_user: CurrentUser = Depends(require_permissions(Permission.SCHEDULER_WRITE)),
+) -> ToggleResponse:
     service = get_scheduler_service()
     task_store = service.task_store.for_user(current_user.id)
     task = task_store.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Task not found")
     new_enabled = not task.get("enabled", True)
     task_store.update_task(task_id, {"enabled": new_enabled})
-    return {"status": "ok", "enabled": new_enabled}
+    return ToggleResponse(enabled=new_enabled)

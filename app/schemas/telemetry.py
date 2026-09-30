@@ -2,11 +2,16 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
+
+from app.constants.telemetry import (
+    MAX_EVENT_LENGTH,
+)
+from app.schemas.base import AppModel as BaseModel
 
 
 class ProductEventRequest(BaseModel):
-    event: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    event: str = Field(min_length=1, max_length=MAX_EVENT_LENGTH, pattern=r"^[a-z][a-z0-9_]*$")
     properties: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("properties")

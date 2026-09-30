@@ -2,8 +2,29 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
+from app.constants.configuration import (
+    DEFAULT_AUTH_MAX_DEVICES_PER_USER,
+    DEFAULT_MCP_TOOL_TIMEOUT_SECONDS,
+    DEFAULT_MEMORY_CURATOR_MIN_CONFIDENCE,
+    DEFAULT_MEMORY_CURATOR_MIN_IMPORTANCE,
+    DEFAULT_MULTI_AGENT_DEFAULT_MAX_STEPS,
+    DEFAULT_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+    DEFAULT_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+    DEFAULT_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    DEFAULT_SEARCH_API_URL,
+    DEFAULT_TELEGRAM_API_BASE,
+    MAX_AUTH_MAX_DEVICES_PER_USER,
+    MAX_LLM_TEMPERATURE,
+    MAX_MULTI_AGENT_DEFAULT_MAX_STEPS,
+    MAX_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+    MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+    MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+)
+from app.constants.notifications import TELEGRAM_MESSAGE_LIMIT
+from app.schemas.base import AppModel as BaseModel
 from app.schemas.notifications import TelegramPhotos
 
 
@@ -45,17 +66,31 @@ class AppConfig(BaseModel):
 
     workspace_dir: str
     app_language: str = "zh"
-    auth_max_devices_per_user: int = 5
+    auth_max_devices_per_user: int = DEFAULT_AUTH_MAX_DEVICES_PER_USER
     agent_max_steps: int
     agent_max_context_tokens: int
     agent_max_context_turns: int
     agent_tool_allowlist: list[str] = Field(default_factory=list)
     agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True
-    multi_agent_max_parallel_agents: int = Field(default=3, ge=1, le=8)
-    multi_agent_max_tasks_per_batch: int = Field(default=12, ge=1, le=32)
-    multi_agent_task_timeout_seconds: int = Field(default=180, ge=10, le=1800)
-    multi_agent_default_max_steps: int = Field(default=8, ge=1, le=100)
+    multi_agent_max_parallel_agents: int = Field(
+        default=DEFAULT_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+        ge=1,
+        le=MAX_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+    )
+    multi_agent_max_tasks_per_batch: int = Field(
+        default=DEFAULT_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+        ge=1,
+        le=MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+    )
+    multi_agent_task_timeout_seconds: int = Field(
+        default=DEFAULT_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+        ge=MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+        le=MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    )
+    multi_agent_default_max_steps: int = Field(
+        default=DEFAULT_MULTI_AGENT_DEFAULT_MAX_STEPS, ge=1, le=MAX_MULTI_AGENT_DEFAULT_MAX_STEPS
+    )
     multi_agent_max_depth: int = Field(default=1, ge=0, le=1)
     multi_agent_dangerous_tools: list[str] = Field(default_factory=list)
     multi_agent_roles: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -63,8 +98,8 @@ class AppConfig(BaseModel):
     knowledge_enabled: bool
     memory_enabled: bool
     memory_auto_curate_enabled: bool = True
-    memory_curator_min_importance: float = 0.7
-    memory_curator_min_confidence: float = 0.7
+    memory_curator_min_importance: float = DEFAULT_MEMORY_CURATOR_MIN_IMPORTANCE
+    memory_curator_min_confidence: float = DEFAULT_MEMORY_CURATOR_MIN_CONFIDENCE
     scheduler_enabled: bool
     tracing_enabled: bool = False
     product_analytics_enabled: bool = False
@@ -74,12 +109,12 @@ class AppConfig(BaseModel):
     telegram_bot_token_masked: str = ""
     has_telegram_bot_token: bool = False
     telegram_chat_id: str = ""
-    telegram_api_base: str = "https://api.telegram.org"
+    telegram_api_base: str = DEFAULT_TELEGRAM_API_BASE
     telegram_parse_mode: str = ""
 
     system_prompt: str
     mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    mcp_tool_timeout_seconds: float = 60.0
+    mcp_tool_timeout_seconds: float = DEFAULT_MCP_TOOL_TIMEOUT_SECONDS
 
     longbridge_auth_mode: Literal["apikey", "oauth"] = "apikey"
     longbridge_oauth_client_id: str = ""
@@ -92,7 +127,7 @@ class AppConfig(BaseModel):
     has_longbridge_access_token: bool = False
     longbridge_http_url: str = ""
     longbridge_quote_ws_url: str = ""
-    search_api_url: str = "https://api.bocha.cn/v1/web-search"
+    search_api_url: str = DEFAULT_SEARCH_API_URL
     search_api_key_masked: str = ""
     has_search_api_key: bool = False
     personal_config_keys: list[str] = Field(default_factory=list)
@@ -112,7 +147,7 @@ class ConfigUpdate(BaseModel):
     llm_codex_auth_file: str | None = None
     llm_codex_api_base: str | None = None
     llm_codex_model: str | None = None
-    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    llm_temperature: float | None = Field(default=None, ge=0.0, le=MAX_LLM_TEMPERATURE)
     llm_max_output_tokens: int | None = Field(default=None, ge=0)
     llm_reasoning_effort: str | None = None
     llm_tool_choice: str | None = None
@@ -128,17 +163,29 @@ class ConfigUpdate(BaseModel):
 
     workspace_dir: str | None = None
     app_language: str | None = None
-    auth_max_devices_per_user: int | None = Field(default=None, ge=1, le=50)
+    auth_max_devices_per_user: int | None = Field(
+        default=None, ge=1, le=MAX_AUTH_MAX_DEVICES_PER_USER
+    )
     agent_max_steps: int | None = None
     agent_max_context_tokens: int | None = None
     agent_max_context_turns: int | None = None
     agent_tool_allowlist: list[str] | None = None
     agent_allow_all_mcp_tools: bool | None = None
     multi_agent_enabled: bool | None = None
-    multi_agent_max_parallel_agents: int | None = Field(default=None, ge=1, le=8)
-    multi_agent_max_tasks_per_batch: int | None = Field(default=None, ge=1, le=32)
-    multi_agent_task_timeout_seconds: int | None = Field(default=None, ge=10, le=1800)
-    multi_agent_default_max_steps: int | None = Field(default=None, ge=1, le=100)
+    multi_agent_max_parallel_agents: int | None = Field(
+        default=None, ge=1, le=MAX_MULTI_AGENT_MAX_PARALLEL_AGENTS
+    )
+    multi_agent_max_tasks_per_batch: int | None = Field(
+        default=None, ge=1, le=MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH
+    )
+    multi_agent_task_timeout_seconds: int | None = Field(
+        default=None,
+        ge=MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+        le=MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    )
+    multi_agent_default_max_steps: int | None = Field(
+        default=None, ge=1, le=MAX_MULTI_AGENT_DEFAULT_MAX_STEPS
+    )
     multi_agent_max_depth: int | None = Field(default=None, ge=0, le=1)
     multi_agent_dangerous_tools: list[str] | None = None
     multi_agent_roles: dict[str, dict[str, Any]] | None = None
@@ -174,7 +221,7 @@ class ConfigUpdate(BaseModel):
 
     @field_validator("llm_reasoning_effort", mode="before")
     @classmethod
-    def validate_llm_reasoning_effort(cls, value):
+    def validate_llm_reasoning_effort(cls, value: Any) -> str | None:
         if value is None:
             return value
         normalized = str(value or "medium").strip().lower().replace("-", "_")
@@ -184,7 +231,7 @@ class ConfigUpdate(BaseModel):
 
     @field_validator("llm_tool_choice", mode="before")
     @classmethod
-    def validate_llm_tool_choice(cls, value):
+    def validate_llm_tool_choice(cls, value: Any) -> str | None:
         if value is None:
             return value
         normalized = str(value or "auto").strip().lower().replace("-", "_")
@@ -196,7 +243,7 @@ class ConfigUpdate(BaseModel):
 
     @field_validator("mcp_servers", mode="before")
     @classmethod
-    def validate_mcp_servers(cls, value):
+    def validate_mcp_servers(cls, value: Any) -> dict[str, dict[str, Any]]:
         from app.core.tools.mcp.config import normalize_mcp_servers
 
         return normalize_mcp_servers(value)
@@ -205,7 +252,9 @@ class ConfigUpdate(BaseModel):
 class TelegramTestRequest(BaseModel):
     """Telegram 测试消息请求。"""
 
-    message: str = Field(default="Stocks Assistant Telegram test message.", max_length=4096)
+    message: str = Field(
+        default="Stocks Assistant Telegram test message.", max_length=TELEGRAM_MESSAGE_LIMIT
+    )
     photos: TelegramPhotos = Field(default_factory=list)
 
 
@@ -246,3 +295,10 @@ class DemoDataResponse(BaseModel):
     watchlist_created: int = 0
     portfolio_created: int = 0
     detail: str = ""
+
+
+class CodexOAuthStatus(BaseModel):
+    available: bool
+    account_id: str
+    auth_path: str = ""
+    error: str = ""

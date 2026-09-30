@@ -3,12 +3,21 @@
 提供记忆搜索、添加、同步、状态查询、文件列表和内容读取接口。
 """
 
+from http import HTTPStatus
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.constants.security import Permission
 from app.core.security import CurrentUser, require_permissions
 from app.deps import get_memory_manager, get_memory_manager_for_user
+from app.schemas.common import StatusResponse
 from app.schemas.memory import (
     MemoryAddRequest,
+    MemoryClearResponse,
+    MemoryDeleteResponse,
+    MemoryFileInfo,
+    MemoryFileResponse,
+    MemoryFilesResponse,
     MemorySearchResult,
     MemoryStatusResponse,
 )
@@ -42,8 +51,8 @@ async def search_memory(
     user_id: str | None = None,
     limit: int | None = None,
     min_score: float | None = None,
-    current_user: CurrentUser = Depends(require_permissions("memory:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_READ)),
+) -> list[MemorySearchResult]:
     effective_user_id = user_id if (user_id and current_user.is_admin) else current_user.id
     mgr = get_memory_manager_for_user(effective_user_id)
     try:
@@ -54,16 +63,16 @@ async def search_memory(
             min_score=min_score,
             include_shared=False,
         )
-        return [MemorySearchResult(**r.__dict__) for r in results]
+        return [MemorySearchResult.model_validate(r.__dict__) for r in results]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
 @router.post("/add")
 async def add_memory(
     request: MemoryAddRequest,
-    current_user: CurrentUser = Depends(require_permissions("memory:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_WRITE)),
+) -> StatusResponse:
     try:
         effective_user_id = (
             request.user_id if (request.user_id and current_user.is_admin) else current_user.id
@@ -78,42 +87,52 @@ async def add_memory(
             path=request.path,
             metadata=request.metadata,
         )
-        return {"status": "ok"}
+        return StatusResponse()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
 @router.post("/sync")
-async def sync_memory(current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+async def sync_memory(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_WRITE)),
+) -> StatusResponse:
     if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Only admins can run full memory sync")
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, detail="Only admins can run full memory sync"
+        )
     mgr = get_memory_manager()
     try:
         await mgr.sync()
-        return {"status": "ok"}
+        return StatusResponse()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
 @router.get("/status", response_model=MemoryStatusResponse)
-def memory_status(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
+def memory_status(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_READ)),
+) -> MemoryStatusResponse:
     mgr = get_memory_manager_for_user(current_user.id)
-    return MemoryStatusResponse(**mgr.get_status())
+    return mgr.get_status()
 
 
 @router.delete("/clear")
-def clear_memory(current_user: CurrentUser = Depends(require_permissions("memory:write"))):
+def clear_memory(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_WRITE)),
+) -> MemoryClearResponse:
     mgr = get_memory_manager_for_user(current_user.id)
     try:
         # 一键清除只作用于当前账号的用户记忆，避免误删共享记忆或其他用户数据。
         result = mgr.clear_user_memory(current_user.id)
-        return {"status": "ok", **result}
+        return MemoryClearResponse.model_validate(result.model_dump())
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.get("/files")
-def list_memory_files(current_user: CurrentUser = Depends(require_permissions("memory:read"))):
+@router.get("/files", response_model=MemoryFilesResponse, response_model_exclude_unset=True)
+def list_memory_files(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_READ)),
+) -> MemoryFilesResponse:
     from pathlib import Path
 
     from app.config import get_settings
@@ -137,7 +156,7 @@ def list_memory_files(current_user: CurrentUser = Depends(require_permissions("m
     for f in disk_files:
         rel = str(f.relative_to(workspace))
         stat = f.stat()
-        files_by_path[rel] = {"path": rel, "size": stat.st_size, "modified": stat.st_mtime}
+        files_by_path[rel] = MemoryFileInfo(path=rel, size=stat.st_size, modified=stat.st_mtime)
 
     try:
         rows = mgr.storage.list_indexed_files(source="memory")
@@ -149,53 +168,56 @@ def list_memory_files(current_user: CurrentUser = Depends(require_permissions("m
                 continue
             files_by_path.setdefault(
                 path,
-                {
-                    "path": path,
-                    "size": row["size"],
-                    "modified": row["mtime"],
-                    "indexed_only": True,
-                },
+                MemoryFileInfo(
+                    path=path, size=row["size"], modified=row["mtime"], indexed_only=True
+                ),
             )
     except Exception:
         pass
 
-    files = sorted(files_by_path.values(), key=lambda item: item.get("modified", 0), reverse=True)
-    return {"files": files}
+    files = sorted(files_by_path.values(), key=lambda item: item.modified, reverse=True)
+    return MemoryFilesResponse(files=files)
 
 
 @router.delete("/files/{name:path}")
 def delete_memory_file(
-    name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))
-):
+    name: str, current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_WRITE))
+) -> MemoryDeleteResponse:
     if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
-        raise HTTPException(status_code=403, detail="Cannot delete another user's memory")
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, detail="Cannot delete another user's memory"
+        )
     mgr = _manager_for_memory_path(name, current_user)
     try:
         result = mgr.delete_memory_path(name, delete_file=True)
-        return {"status": "ok", **result}
+        return MemoryDeleteResponse.model_validate(result.model_dump())
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="File not found") from exc
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="File not found") from exc
 
 
 @router.delete("/index/{name:path}")
 def delete_memory_index(
-    name: str, current_user: CurrentUser = Depends(require_permissions("memory:write"))
-):
+    name: str, current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_WRITE))
+) -> MemoryDeleteResponse:
     if not current_user.is_admin and not name.startswith(f"memory/users/{current_user.id}/"):
-        raise HTTPException(status_code=403, detail="Cannot delete another user's memory")
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, detail="Cannot delete another user's memory"
+        )
     mgr = _manager_for_memory_path(name, current_user)
     result = mgr.storage.delete_indexed_file(name)
-    if result["deleted_chunks"] == 0 and result["deleted_index_files"] == 0:
-        raise HTTPException(status_code=404, detail="Indexed memory not found")
-    return {"status": "ok", "deleted_file": False, **result}
+    if result.deleted_chunks == 0 and result.deleted_index_files == 0:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Indexed memory not found")
+    return MemoryDeleteResponse(deleted_file=False, **result.model_dump())
 
 
-@router.get("/files/{name:path}")
+@router.get(
+    "/files/{name:path}", response_model=MemoryFileResponse, response_model_exclude_unset=True
+)
 def get_memory_file(
-    name: str, current_user: CurrentUser = Depends(require_permissions("memory:read"))
-):
+    name: str, current_user: CurrentUser = Depends(require_permissions(Permission.MEMORY_READ))
+) -> MemoryFileResponse:
     from pathlib import Path
 
     from app.config import get_settings
@@ -205,19 +227,21 @@ def get_memory_file(
     file_path = (workspace / name).resolve()
 
     if not file_path.is_relative_to(workspace.resolve()):
-        raise HTTPException(status_code=403, detail="Path outside workspace")
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="Path outside workspace")
     # 必须按解析后的路径检查归属，原始前缀无法拦住 ../ 或跨用户符号链接。
     user_root = workspace.resolve() / "memory" / "users" / current_user.id
     if not current_user.is_admin and not file_path.is_relative_to(user_root):
-        raise HTTPException(status_code=403, detail="Cannot read another user's memory")
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, detail="Cannot read another user's memory"
+        )
 
     if not file_path.exists():
         mgr = _manager_for_memory_path(name, current_user)
         rows = mgr.storage.get_chunks_by_path(name)
         if not rows:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="File not found")
         content = "\n\n".join(row["text"] for row in rows)
-        return {"path": name, "content": content, "size": len(content), "indexed_only": True}
+        return MemoryFileResponse(path=name, content=content, size=len(content), indexed_only=True)
 
     content = file_path.read_text(encoding="utf-8")
-    return {"path": name, "content": content, "size": len(content)}
+    return MemoryFileResponse(path=name, content=content, size=len(content))

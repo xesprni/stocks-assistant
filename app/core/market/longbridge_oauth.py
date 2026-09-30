@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import socket
 import threading
 import time
@@ -24,15 +23,22 @@ from typing import Any
 
 import httpx
 
+from app.constants.longbridge import (
+    _CLIENT_ID as _CLIENT_ID,
+)
+from app.constants.longbridge import (
+    AUTH_TIMEOUT as AUTH_TIMEOUT,
+)
+from app.constants.longbridge import (
+    REGISTER_URL as REGISTER_URL,
+)
+from app.constants.security import Permission
 from app.core.app_store import get_app_store
 from app.core.security import CurrentUser
 from app.core.watchlist.service import LongbridgeUnavailableError
 from app.schemas.longbridge_oauth import LongbridgeOAuthStatus
 
 logger = logging.getLogger("stocks-assistant.longbridge-oauth")
-AUTH_TIMEOUT = 300
-REGISTER_URL = "https://openapi.longbridge.com/oauth2/register"
-_CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{8,128}\Z")
 _handles: dict[str, Any] = {}
 _handles_lock = threading.RLock()
 _restorations: dict[str, Future] = {}
@@ -225,14 +231,16 @@ class LongbridgeOAuthService:
     def _key(current: CurrentUser) -> tuple[str, str]:
         return (
             str(get_app_store().db_path),
-            "system" if current.can("config:write") else current.id,
+            "system" if current.can(Permission.CONFIG_WRITE) else current.id,
         )
 
     @staticmethod
     def _stored(current: CurrentUser) -> dict[str, Any]:
         store = get_app_store()
         return (
-            store.get_config() if current.can("config:write") else store.get_user_config(current.id)
+            store.get_config()
+            if current.can(Permission.CONFIG_WRITE)
+            else store.get_user_config(current.id)
         )
 
     def status(self, current: CurrentUser) -> LongbridgeOAuthStatus:
@@ -273,7 +281,7 @@ class LongbridgeOAuthService:
             callback_url=session.callback_url if pending else None,
             expires_at=expiry,
             error=session.error if session else None,
-            scope="system" if current.can("config:write") else "personal",
+            scope="system" if current.can(Permission.CONFIG_WRITE) else "personal",
         )
 
     async def start(self, current: CurrentUser) -> LongbridgeOAuthStatus:
@@ -343,7 +351,7 @@ class LongbridgeOAuthService:
                 raise LongbridgeUnavailableError("授权用户不可用")
             from app.core.security import to_current_user
 
-            if not to_current_user(user).can("config:read"):
+            if not to_current_user(user).can(Permission.CONFIG_READ):
                 raise LongbridgeUnavailableError("配置权限已改变")
             old = (
                 session.store.get_config()
@@ -352,7 +360,7 @@ class LongbridgeOAuthService:
             )
             patch = {"longbridge_auth_mode": "oauth", "longbridge_oauth_client_id": client_id}
             if key[1] == "system":
-                if not to_current_user(user).can("config:write"):
+                if not to_current_user(user).can(Permission.CONFIG_WRITE):
                     raise LongbridgeUnavailableError("配置权限已改变")
                 session.store.set_config_values(patch)
             else:
@@ -399,7 +407,7 @@ class LongbridgeOAuthService:
             "longbridge_auth_mode": stored.get("longbridge_auth_mode", "apikey"),
         }
         store = get_app_store()
-        if current.can("config:write"):
+        if current.can(Permission.CONFIG_WRITE):
             store.set_config_values(patch)
         else:
             store.set_user_config_values(current.id, patch)
@@ -407,7 +415,7 @@ class LongbridgeOAuthService:
             current.id,
             "longbridge.oauth_disconnect",
             "config",
-            {"scope": "system" if current.can("config:write") else "personal"},
+            {"scope": "system" if current.can(Permission.CONFIG_WRITE) else "personal"},
         )
         _refresh_caches()
         _forget_client(str(stored.get("longbridge_oauth_client_id") or ""))

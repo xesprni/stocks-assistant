@@ -11,6 +11,7 @@ from app.api.config import router
 from app.config import Settings, get_effective_settings
 from app.core.app_store import APP_DB_ENV, reset_app_store_for_tests
 from app.core.security import CurrentUser, get_current_user
+from app.core.serialization import to_payload
 from app.schemas.config import ConfigUpdate
 
 LIMITS = {
@@ -76,7 +77,7 @@ def test_runtime_settings_exposed_persisted_and_isolated_per_user(multi_agent_co
     assert response.status_code == 200, response.text
     for field, value in system.items():
         assert response.json()[field] == value
-        assert store.get_config()[field] == value
+        assert to_payload(store.get_config())[field] == value
         assert getattr(get_effective_settings(users["alice"].id), field) == value
 
     current["user"] = users["alice"]

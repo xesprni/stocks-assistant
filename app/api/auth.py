@@ -5,10 +5,26 @@ import binascii
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.config import get_settings
+from app.constants.security import (
+    AVATAR_DATA_URL_PREFIXES as AVATAR_DATA_URL_PREFIXES,
+)
+from app.constants.security import (
+    DEV_AUTH_DISPLAY_NAME_ENV as DEV_AUTH_DISPLAY_NAME_ENV,
+)
+from app.constants.security import (
+    DEV_AUTH_ENV as DEV_AUTH_ENV,
+)
+from app.constants.security import (
+    DEV_AUTH_USERNAME_ENV as DEV_AUTH_USERNAME_ENV,
+)
+from app.constants.security import (
+    MAX_AVATAR_BYTES as MAX_AVATAR_BYTES,
+)
 from app.core.app_store import PERMISSION_DESCRIPTIONS, get_app_store
 from app.core.security import (
     ACCESS_TOKEN_MINUTES,
@@ -31,6 +47,8 @@ from app.core.security import (
 from app.schemas.auth import (
     AuthTokenResponse,
     ChangePasswordRequest,
+    DeleteDeviceResponse,
+    DeleteLoginRecordResponse,
     DeviceHeartbeatRequest,
     DeviceHeartbeatResponse,
     LoginRecordResponse,
@@ -40,25 +58,15 @@ from app.schemas.auth import (
     LogoutRequest,
     RefreshRequest,
     RevokeOtherSessionsResponse,
+    RevokeSessionResponse,
     SetupRequest,
     SetupStatusResponse,
     UserProfileUpdateRequest,
     UserPublic,
 )
+from app.schemas.common import StatusResponse
 
 router = APIRouter()
-
-DEV_AUTH_ENV = "STOCKS_ASSISTANT_DEV_AUTH"
-DEV_AUTH_USERNAME_ENV = "STOCKS_ASSISTANT_DEV_AUTH_USERNAME"
-DEV_AUTH_DISPLAY_NAME_ENV = "STOCKS_ASSISTANT_DEV_AUTH_DISPLAY_NAME"
-
-AVATAR_DATA_URL_PREFIXES = (
-    "data:image/png;base64,",
-    "data:image/jpeg;base64,",
-    "data:image/webp;base64,",
-    "data:image/gif;base64,",
-)
-MAX_AVATAR_BYTES = 512 * 1024
 
 
 def _env_truthy(name: str) -> bool:
@@ -81,15 +89,20 @@ def _normalize_avatar_base64(value: str | None) -> str | None:
         return ""
     if not clean.startswith(AVATAR_DATA_URL_PREFIXES):
         raise HTTPException(
-            status_code=400, detail="Avatar must be a PNG, JPEG, WebP or GIF data URL"
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Avatar must be a PNG, JPEG, WebP or GIF data URL",
         )
     _, _, encoded = clean.partition(",")
     try:
         decoded = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Avatar data is not valid base64") from exc
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail="Avatar data is not valid base64"
+        ) from exc
     if len(decoded) > MAX_AVATAR_BYTES:
-        raise HTTPException(status_code=400, detail="Avatar image must be 512KB or smaller")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail="Avatar image must be 512KB or smaller"
+        )
     return clean
 
 
@@ -100,7 +113,7 @@ def _token_response(
         access_token=create_access_token(user, session_id=session_id),
         refresh_token=refresh_token,
         expires_in=ACCESS_TOKEN_MINUTES * 60,
-        user=UserPublic(**public_user(user)),
+        user=UserPublic.model_validate(public_user(user)),
     )
 
 
@@ -226,12 +239,12 @@ def _enforce_device_limit(user_id: str, session_id: str) -> None:
 
 
 @router.get("/setup/status", response_model=SetupStatusResponse)
-def setup_status():
+def setup_status() -> SetupStatusResponse:
     return SetupStatusResponse(setup_required=not get_app_store().has_users())
 
 
 @router.post("/setup", response_model=AuthTokenResponse)
-def setup(request: SetupRequest, http_request: Request):
+def setup(request: SetupRequest, http_request: Request) -> AuthTokenResponse:
     store = get_app_store()
     if store.has_users():
         raise HTTPException(
@@ -247,7 +260,7 @@ def setup(request: SetupRequest, http_request: Request):
             role_names=["admin"],
         )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
 
     settings = get_settings()
     store.migrate_legacy_user_data(user["id"], settings.workspace_dir)
@@ -261,7 +274,7 @@ def setup(request: SetupRequest, http_request: Request):
 
 
 @router.post("/dev-login", response_model=AuthTokenResponse)
-def dev_login(http_request: Request):
+def dev_login(http_request: Request) -> AuthTokenResponse:
     if not _dev_auth_enabled():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Development auth is disabled"
@@ -273,7 +286,8 @@ def dev_login(http_request: Request):
     display_name = os.environ.get(DEV_AUTH_DISPLAY_NAME_ENV, "Dev Admin").strip() or "Dev Admin"
     if len(username) < 3:
         raise HTTPException(
-            status_code=400, detail=f"{DEV_AUTH_USERNAME_ENV} must be at least 3 characters"
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"{DEV_AUTH_USERNAME_ENV} must be at least 3 characters",
         )
 
     user = store.get_user_by_username(username)
@@ -298,7 +312,7 @@ def dev_login(http_request: Request):
 
 
 @router.post("/login", response_model=AuthTokenResponse)
-def login(request: LoginRequest, http_request: Request):
+def login(request: LoginRequest, http_request: Request) -> AuthTokenResponse:
     user = authenticate_user(request.username, request.password)
     if not user:
         raise HTTPException(
@@ -310,7 +324,7 @@ def login(request: LoginRequest, http_request: Request):
 
 
 @router.post("/refresh", response_model=AuthTokenResponse)
-def refresh(request: RefreshRequest, http_request: Request):
+def refresh(request: RefreshRequest, http_request: Request) -> AuthTokenResponse:
     try:
         access_token, refresh_token, user = refresh_tokens(
             request.refresh_token,
@@ -324,23 +338,25 @@ def refresh(request: RefreshRequest, http_request: Request):
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=ACCESS_TOKEN_MINUTES * 60,
-        user=UserPublic(**public_user(user)),
+        user=UserPublic.model_validate(public_user(user)),
     )
 
 
 @router.post("/logout")
-def logout(request: LogoutRequest):
+def logout(request: LogoutRequest) -> StatusResponse:
     record = get_app_store().get_refresh_token(hash_refresh_token(request.refresh_token))
     if record and not record.get("revoked_at"):
         if record.get("session_id"):
             get_app_store().revoke_login_session(record["session_id"])
         else:
             get_app_store().revoke_refresh_token(record["id"])
-    return {"status": "ok"}
+    return StatusResponse()
 
 
 @router.get("/sessions", response_model=LoginSessionListResponse)
-def list_login_sessions(http_request: Request, current_user=Depends(get_current_user)):
+def list_login_sessions(
+    http_request: Request, current_user=Depends(get_current_user)
+) -> LoginSessionListResponse:
     sessions = [
         _session_response(
             session,
@@ -365,7 +381,7 @@ def heartbeat_login_device(
     http_request: Request,
     payload: DeviceHeartbeatRequest | None = None,
     current_user=Depends(get_current_user),
-):
+) -> DeviceHeartbeatResponse:
     device_id = resolve_device_id(payload.device_id if payload else None, request=http_request)
     device = get_app_store().heartbeat_login_device(
         current_user.id,
@@ -385,7 +401,9 @@ def heartbeat_login_device(
 
 
 @router.post("/sessions/revoke-others", response_model=RevokeOtherSessionsResponse)
-def revoke_other_login_sessions(current_user=Depends(get_current_user)):
+def revoke_other_login_sessions(
+    current_user=Depends(get_current_user),
+) -> RevokeOtherSessionsResponse:
     try:
         # 用户范围和保留设备均来自已验证的登录会话，管理员也不能借此批量操作其他用户。
         result = get_app_store().revoke_other_login_devices(
@@ -394,7 +412,7 @@ def revoke_other_login_sessions(current_user=Depends(get_current_user)):
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    return RevokeOtherSessionsResponse(**result)
+    return RevokeOtherSessionsResponse.model_validate(result)
 
 
 @router.delete("/sessions/{session_id}")
@@ -403,7 +421,7 @@ def revoke_login_session(
     http_request: Request,
     user_id: str | None = Query(default=None),
     current_user=Depends(get_current_user),
-):
+) -> RevokeSessionResponse:
     store = get_app_store()
     target_user_id = user_id if current_user.is_admin else current_user.id
     session = store.get_login_device(session_id, user_id=target_user_id)
@@ -416,10 +434,9 @@ def revoke_login_session(
         "login_sessions",
         {"device_id": session.get("device_id") or session_id, "user_id": session.get("user_id")},
     )
-    return {
-        "status": "ok",
-        "revoked_current": _device_matches_current(session, current_user, http_request),
-    }
+    return RevokeSessionResponse(
+        revoked_current=_device_matches_current(session, current_user, http_request)
+    )
 
 
 @router.delete("/sessions/{device_id}/device")
@@ -428,7 +445,7 @@ def delete_login_device(
     http_request: Request,
     user_id: str | None = Query(default=None),
     current_user=Depends(get_current_user),
-):
+) -> DeleteDeviceResponse:
     store = get_app_store()
     target_user_id = user_id if current_user.is_admin else current_user.id
     device = store.get_login_device(device_id, user_id=target_user_id)
@@ -446,7 +463,7 @@ def delete_login_device(
             "deleted_session_ids": deleted_ids,
         },
     )
-    return {"status": "ok", "deleted": len(deleted_ids), "deleted_current": deleted_current}
+    return DeleteDeviceResponse(deleted=len(deleted_ids), deleted_current=deleted_current)
 
 
 @router.delete("/sessions/{device_id}/records/{record_id}")
@@ -456,7 +473,7 @@ def delete_login_record(
     http_request: Request,
     user_id: str | None = Query(default=None),
     current_user=Depends(get_current_user),
-):
+) -> DeleteLoginRecordResponse:
     store = get_app_store()
     target_user_id = user_id if current_user.is_admin else current_user.id
     device = store.get_login_device(device_id, user_id=target_user_id)
@@ -478,19 +495,21 @@ def delete_login_record(
             "user_id": device.get("user_id"),
         },
     )
-    return {"status": "ok", "deleted_current": deleted_current}
+    return DeleteLoginRecordResponse(deleted_current=deleted_current)
 
 
 @router.get("/me", response_model=UserPublic)
-def me(user=Depends(get_current_user)):
+def me(user=Depends(get_current_user)) -> UserPublic:
     record = get_app_store().get_user_by_id(user.id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return UserPublic(**public_user(record))
+    return UserPublic.model_validate(public_user(record))
 
 
 @router.patch("/me/profile", response_model=UserPublic)
-def update_profile(request: UserProfileUpdateRequest, current_user=Depends(get_current_user)):
+def update_profile(
+    request: UserProfileUpdateRequest, current_user=Depends(get_current_user)
+) -> UserPublic:
     avatar_base64 = _normalize_avatar_base64(request.avatar_base64)
     try:
         user = get_app_store().update_user(
@@ -503,11 +522,13 @@ def update_profile(request: UserProfileUpdateRequest, current_user=Depends(get_c
     get_app_store().audit(
         current_user.id, "auth.profile_update", "users", {"avatar": avatar_base64 is not None}
     )
-    return UserPublic(**public_user(user))
+    return UserPublic.model_validate(public_user(user))
 
 
 @router.patch("/me/password")
-def change_password(request: ChangePasswordRequest, current_user=Depends(get_current_user)):
+def change_password(
+    request: ChangePasswordRequest, current_user=Depends(get_current_user)
+) -> StatusResponse:
     store = get_app_store()
     user = store.get_user_by_id(current_user.id)
     if not user or not verify_password(request.current_password, user["password_hash"]):
@@ -521,4 +542,4 @@ def change_password(request: ChangePasswordRequest, current_user=Depends(get_cur
         )
     store.update_user(current_user.id, password_hash=hash_password(request.new_password))
     store.audit(current_user.id, "auth.password_change", "users")
-    return {"status": "ok"}
+    return StatusResponse()

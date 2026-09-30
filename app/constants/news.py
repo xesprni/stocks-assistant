@@ -1,0 +1,4 @@
+"""news 领域常量。"""
+
+DEFAULT_NEWS_LIMIT = 50
+MAX_NEWS_LIMIT = 100

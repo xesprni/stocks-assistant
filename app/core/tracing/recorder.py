@@ -89,7 +89,7 @@ class TraceRecorder:
     @classmethod
     def start(cls, store: TraceStore, session_id: str, user_message: str) -> TraceRecorder:
         created = store.create_run(session_id=session_id, user_message=user_message)
-        return cls(store=store, run_id=created["run_id"], root_event_id=created["root_event_id"])
+        return cls(store=store, run_id=created.run_id, root_event_id=created.root_event_id)
 
     def handle_event(self, event: dict[str, Any]) -> None:
         if self._closed:

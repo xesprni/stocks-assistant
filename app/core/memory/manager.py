@@ -19,6 +19,7 @@ from app.core.memory.embedding import (
 )
 from app.core.memory.storage import MemoryChunk, MemoryStorage, SearchResult
 from app.core.memory.summarizer import MemoryFlushManager, create_memory_files_if_needed
+from app.schemas.memory import MemoryClearResult, MemoryDeleteResult, MemoryStatusResponse
 
 logger = logging.getLogger("stocks-assistant.memory")
 
@@ -449,23 +450,21 @@ class MemoryManager:
             self._dirty = True
         return success
 
-    def get_status(self) -> dict[str, Any]:
+    def get_status(self) -> MemoryStatusResponse:
         stats = self.storage.get_stats()
         vector_available = self.embedding_provider is not None and not self._embedding_in_cooldown()
-        return {
-            "chunks": stats["chunks"],
-            "files": stats["files"],
-            "workspace": str(self.config.get_workspace()),
-            "dirty": self._dirty,
-            "embedding_enabled": self.embedding_provider is not None,
-            "embedding_provider": self.config.embedding_provider
+        return MemoryStatusResponse(
+            chunks=stats.chunks,
+            files=stats.files,
+            workspace=str(self.config.get_workspace()),
+            dirty=self._dirty,
+            embedding_enabled=self.embedding_provider is not None,
+            embedding_provider=self.config.embedding_provider
             if self.embedding_provider
             else "disabled",
-            "embedding_model": self.config.embedding_model if self.embedding_provider else "N/A",
-            "search_mode": "hybrid (vector + keyword)"
-            if vector_available
-            else "keyword only (FTS5)",
-        }
+            embedding_model=self.config.embedding_model if self.embedding_provider else "N/A",
+            search_mode="hybrid (vector + keyword)" if vector_available else "keyword only (FTS5)",
+        )
 
     def _embedding_in_cooldown(self) -> bool:
         return bool(getattr(self.embedding_provider, "in_cooldown", False))
@@ -473,7 +472,7 @@ class MemoryManager:
     def mark_dirty(self):
         self._dirty = True
 
-    def delete_memory_path(self, path: str, delete_file: bool = True) -> dict[str, Any]:
+    def delete_memory_path(self, path: str, delete_file: bool = True) -> MemoryDeleteResult:
         """Delete a memory path from the index and optionally from disk."""
         workspace_dir = self.config.get_workspace().resolve()
         file_path = (workspace_dir / path).resolve()
@@ -492,9 +491,13 @@ class MemoryManager:
         deleted_index = self.storage.delete_indexed_file(path)
         self._pending_embeddings.discard(path)
         self._dirty = False
-        return {"deleted_file": deleted_file, **deleted_index}
+        return MemoryDeleteResult(
+            deleted_file=deleted_file,
+            deleted_chunks=deleted_index.deleted_chunks,
+            deleted_index_files=deleted_index.deleted_index_files,
+        )
 
-    def clear_user_memory(self, user_id: str) -> dict[str, int]:
+    def clear_user_memory(self, user_id: str) -> MemoryClearResult:
         """Clear all markdown memory files and indexed chunks for one user."""
         if not user_id:
             raise ValueError("user_id is required")
@@ -520,15 +523,15 @@ class MemoryManager:
                 continue
             result = self.storage.delete_indexed_file(path)
             self._pending_embeddings.discard(path)
-            deleted_chunks += result["deleted_chunks"]
-            deleted_index_files += result["deleted_index_files"]
+            deleted_chunks += result.deleted_chunks
+            deleted_index_files += result.deleted_index_files
 
         self._dirty = False
-        return {
-            "deleted_files": deleted_files,
-            "deleted_chunks": deleted_chunks,
-            "deleted_index_files": deleted_index_files,
-        }
+        return MemoryClearResult(
+            deleted_files=deleted_files,
+            deleted_chunks=deleted_chunks,
+            deleted_index_files=deleted_index_files,
+        )
 
     def close(self):
         self.storage.close()

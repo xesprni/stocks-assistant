@@ -13,6 +13,7 @@ from app.config import Settings
 from app.core.memory.config import MemoryConfig
 from app.core.memory.manager import MemoryManager
 from app.core.portfolio.service import PortfolioService
+from app.core.serialization import to_payload
 from app.core.tools.knowledge_get import KnowledgeGetTool
 from app.core.tools.knowledge_search import KnowledgeSearchTool
 from app.core.tools.security_data import GetSecurityInsightsTool, GetSecurityNewsTool
@@ -158,12 +159,15 @@ class Phase0ReadinessAndPrivacyTest(unittest.TestCase):
             watchlist = WatchlistService(tmp)
             portfolio = PortfolioService(tmp)
 
-            self.assertEqual(2, len(watchlist.seed_sample_items("user-1")))
-            self.assertEqual(2, len(portfolio.seed_sample_items("user-1")))
-            self.assertEqual([], watchlist.seed_sample_items("user-1"))
-            self.assertEqual([], portfolio.seed_sample_items("user-1"))
+            self.assertEqual(2, len(to_payload(watchlist.seed_sample_items("user-1"))))
+            self.assertEqual(2, len(to_payload(portfolio.seed_sample_items("user-1"))))
+            self.assertEqual([], to_payload(watchlist.seed_sample_items("user-1")))
+            self.assertEqual([], to_payload(portfolio.seed_sample_items("user-1")))
             self.assertTrue(
-                all("[Sample]" in item["note"] for item in watchlist.list_items(user_id="user-1"))
+                all(
+                    "[Sample]" in item["note"]
+                    for item in to_payload(watchlist.list_items(user_id="user-1"))
+                )
             )
 
 

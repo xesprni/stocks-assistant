@@ -14,215 +14,73 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-DEFAULT_SYSTEM_PROMPT = """You are Stocks Assistant, an AI agent specialized in stocks, finance, and market analysis.
-
-Your goal is to help users understand markets more clearly, not to make final investment decisions on their behalf. Follow these principles:
-
-1. Focus primarily on stocks, ETFs, indexes, sectors, macroeconomics, company fundamentals, earnings reports, valuation, liquidity, technical analysis, market news, and risk management.
-2. Before giving a view, try to clarify the market, ticker, time horizon, investment objective, and risk tolerance. If information is incomplete, state your assumptions and provide conditional analysis.
-3. Clearly distinguish facts, data, inferences, and opinions. For real-time prices, news, earnings, policy updates, or trading calendars, use available tools whenever possible, and state the data timestamp and source.
-4. Do not fabricate prices, financial metrics, filings, news, or sources. If something cannot be verified, say so directly and suggest how to validate it.
-5. Structure analysis around key drivers, upside and downside scenarios, major risks, catalysts, indicators to monitor, and an observation list or action plan suited to the user's objective.
-6. For buy, sell, or hold questions, use cautious and conditional language. Do not guarantee returns, promise outcomes, or give absolute instructions beyond the available evidence.
-7. Do not assist with insider trading, market manipulation, regulatory evasion, or any other unlawful financial activity.
-8. Keep responses clear, concise, and actionable. Use tables, bullet points, and summary conclusions when helpful. Reply in the user's language unless they request otherwise.
-
-Always remind users that your analysis is for research and educational purposes only and does not constitute personalized investment advice."""
-
-
-DEFAULT_MULTI_AGENT_SAFE_TOOLS = [
-    "web_search",
-    "web_fetch",
-    "read_file",
-    "view_image",
-    "read_skill",
-    "memory_search",
-    "memory_get",
-    "knowledge_search",
-    "knowledge_get",
-    "get_financial_reports",
-    "get_security_news",
-    "get_security_insights",
-    "get_longbridge_realtime_quotes",
-    "get_longbridge_history_candlesticks",
-    "get_longbridge_candlesticks",
-    "get_longbridge_intraday",
-    "get_longbridge_capital_flow",
-    "get_longbridge_trades",
-    "get_longbridge_depth",
-    "get_longbridge_market_status",
-    "get_longbridge_trading_days",
-    "get_longbridge_quote_indicators",
-    "get_technical_indicators",
-]
-
-
-DEFAULT_AGENT_TOOL_ALLOWLIST = [
-    "bash",
-    "web_search",
-    "web_fetch",
-    "read_file",
-    "read_skill",
-    "write_file",
-    "render_image",
-    "view_image",
-    "get_financial_reports",
-    "get_security_news",
-    "get_security_insights",
-    "get_portfolio_positions",
-    "portfolio",
-    "watchlist",
-    "delegate_agent",
-    "memory_search",
-    "memory_get",
-    "knowledge_search",
-    "knowledge_get",
-    "scheduler",
-    "get_longbridge_realtime_quotes",
-    "get_longbridge_history_candlesticks",
-    "get_longbridge_candlesticks",
-    "get_longbridge_intraday",
-    "get_longbridge_capital_flow",
-    "get_longbridge_trades",
-    "get_longbridge_depth",
-    "get_longbridge_market_status",
-    "get_longbridge_trading_days",
-    "get_longbridge_quote_indicators",
-    "get_technical_indicators",
-]
-
-CODEX_OAUTH_API_BASE = "https://chatgpt.com/backend-api/codex"
-CODEX_DEFAULT_MODEL = "gpt-5.2-codex"
-EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small"
-
-
-USER_CONFIG_KEYS = {
-    "llm_provider",
-    "llm_auth_mode",
-    "llm_api_key",
-    "llm_api_base",
-    "llm_model",
-    "llm_codex_auth_file",
-    "llm_codex_api_base",
-    "llm_codex_model",
-    "llm_temperature",
-    "llm_max_output_tokens",
-    "llm_reasoning_effort",
-    "llm_tool_choice",
-    "embedding_auth_mode",
-    "embedding_api_key",
-    "embedding_api_base",
-    "embedding_model",
-    "embedding_provider",
-    "embedding_codex_auth_file",
-    "embedding_codex_api_base",
-    "embedding_codex_model",
-    "telegram_enabled",
-    "telegram_bot_token",
-    "telegram_chat_id",
-    "telegram_api_base",
-    "telegram_parse_mode",
-    "mcp_servers",
-    "mcp_tool_timeout_seconds",
-    "longbridge_app_key",
-    "longbridge_auth_mode",
-    "longbridge_oauth_client_id",
-    "longbridge_app_secret",
-    "longbridge_access_token",
-    "longbridge_http_url",
-    "longbridge_quote_ws_url",
-    "search_api_url",
-    "search_api_key",
-    "app_language",
-    "agent_max_steps",
-    "agent_max_context_tokens",
-    "agent_max_context_turns",
-    "multi_agent_enabled",
-    "multi_agent_max_parallel_agents",
-    "multi_agent_max_tasks_per_batch",
-    "multi_agent_task_timeout_seconds",
-    "multi_agent_default_max_steps",
-    "multi_agent_max_depth",
-    "knowledge_enabled",
-    "memory_enabled",
-    "memory_auto_curate_enabled",
-    "memory_curator_min_importance",
-    "memory_curator_min_confidence",
-    "scheduler_enabled",
-    "tracing_enabled",
-    "product_analytics_enabled",
-    "debug",
-}
-
-ALWAYS_USER_CONFIG_KEYS = {
-    "app_language",
-    "knowledge_enabled",
-    "memory_enabled",
-    "scheduler_enabled",
-    "tracing_enabled",
-    "product_analytics_enabled",
-}
-
-
-DEFAULT_MULTI_AGENT_ROLES: dict[str, dict[str, Any]] = {
-    "researcher": {
-        "description": "Gather facts, source context, and relevant background before analysis.",
-        "system_prompt": (
-            "You are a focused research sub-agent for Stocks Assistant. Gather verifiable facts, "
-            "cite tool outputs when available, distinguish confirmed information from inference, "
-            "and return a concise research brief for the orchestrating agent."
-        ),
-        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
-        "max_steps": 8,
-        "allow_dangerous_tools": False,
-        "allow_all_mcp_tools": False,
-    },
-    "fundamental_analyst": {
-        "description": "Analyze company fundamentals, reports, profitability, balance sheet, and valuation drivers.",
-        "system_prompt": (
-            "You are a fundamentals analysis sub-agent. Focus on financial statements, business quality, "
-            "growth, profitability, cash flow, leverage, valuation context, and material risks. "
-            "Return a structured brief with facts, assumptions, and watch items."
-        ),
-        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
-        "max_steps": 8,
-        "allow_dangerous_tools": False,
-        "allow_all_mcp_tools": False,
-    },
-    "technical_analyst": {
-        "description": "Analyze price action, trend, momentum, support/resistance, and market structure.",
-        "system_prompt": (
-            "You are a technical analysis sub-agent. Focus on trend, momentum, levels, volume context, "
-            "and invalidation points. Be explicit about timeframe assumptions and avoid certainty."
-        ),
-        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
-        "max_steps": 8,
-        "allow_dangerous_tools": False,
-        "allow_all_mcp_tools": False,
-    },
-    "risk_critic": {
-        "description": "Challenge assumptions, identify downside scenarios, blind spots, and missing evidence.",
-        "system_prompt": (
-            "You are a risk critic sub-agent. Challenge the thesis, identify missing evidence, downside "
-            "scenarios, concentration risks, data quality issues, and conditions that would invalidate the view."
-        ),
-        "tool_allowlist": DEFAULT_MULTI_AGENT_SAFE_TOOLS,
-        "max_steps": 6,
-        "allow_dangerous_tools": False,
-        "allow_all_mcp_tools": False,
-    },
-    "summarizer": {
-        "description": "Condense sub-agent findings into a concise synthesis for the orchestrating agent.",
-        "system_prompt": (
-            "You are a synthesis sub-agent. Condense provided findings into concise, non-redundant points, "
-            "separating facts, inferences, risks, and suggested next checks."
-        ),
-        "tool_allowlist": ["read_skill", "memory_search", "memory_get"],
-        "max_steps": 5,
-        "allow_dangerous_tools": False,
-        "allow_all_mcp_tools": False,
-    },
-}
+from app.constants.configuration import (
+    _EFFECTIVE_CONFIG_TTL as _EFFECTIVE_CONFIG_TTL,
+)
+from app.constants.configuration import (
+    ALWAYS_USER_CONFIG_KEYS as ALWAYS_USER_CONFIG_KEYS,
+)
+from app.constants.configuration import (
+    CODEX_DEFAULT_MODEL as CODEX_DEFAULT_MODEL,
+)
+from app.constants.configuration import (
+    CODEX_OAUTH_API_BASE as CODEX_OAUTH_API_BASE,
+)
+from app.constants.configuration import (
+    DEFAULT_AGENT_MAX_CONTEXT_TOKENS,
+    DEFAULT_AGENT_MAX_CONTEXT_TURNS,
+    DEFAULT_AGENT_MAX_STEPS,
+    DEFAULT_APP_LANGUAGE,
+    DEFAULT_AUTH_MAX_DEVICES_PER_USER,
+    DEFAULT_CLAWHUB_REGISTRY_URL,
+    DEFAULT_EMBEDDING_API_BASE,
+    DEFAULT_EMBEDDING_AUTH_MODE,
+    DEFAULT_EMBEDDING_PROVIDER,
+    DEFAULT_HOST,
+    DEFAULT_LLM_API_BASE,
+    DEFAULT_LLM_AUTH_MODE,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_PROVIDER,
+    DEFAULT_LLM_REASONING_EFFORT,
+    DEFAULT_LLM_TOOL_CHOICE,
+    DEFAULT_LONGBRIDGE_AUTH_MODE,
+    DEFAULT_MCP_TOOL_TIMEOUT_SECONDS,
+    DEFAULT_MEMORY_CURATOR_MIN_CONFIDENCE,
+    DEFAULT_MEMORY_CURATOR_MIN_IMPORTANCE,
+    DEFAULT_MULTI_AGENT_DEFAULT_MAX_STEPS,
+    DEFAULT_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+    DEFAULT_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+    DEFAULT_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    DEFAULT_PORT,
+    DEFAULT_SEARCH_API_URL,
+    DEFAULT_TELEGRAM_API_BASE,
+    DEFAULT_WORKSPACE_DIR,
+    MAX_AUTH_MAX_DEVICES_PER_USER,
+    MAX_LLM_TEMPERATURE,
+    MAX_MULTI_AGENT_DEFAULT_MAX_STEPS,
+    MAX_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+    MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+    MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+)
+from app.constants.configuration import (
+    DEFAULT_AGENT_TOOL_ALLOWLIST as DEFAULT_AGENT_TOOL_ALLOWLIST,
+)
+from app.constants.configuration import (
+    DEFAULT_MULTI_AGENT_ROLES as DEFAULT_MULTI_AGENT_ROLES,
+)
+from app.constants.configuration import (
+    DEFAULT_MULTI_AGENT_SAFE_TOOLS as DEFAULT_MULTI_AGENT_SAFE_TOOLS,
+)
+from app.constants.configuration import (
+    DEFAULT_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
+)
+from app.constants.configuration import (
+    EMBEDDING_DEFAULT_MODEL as EMBEDDING_DEFAULT_MODEL,
+)
+from app.constants.configuration import (
+    USER_CONFIG_KEYS as USER_CONFIG_KEYS,
+)
 
 
 class Settings(BaseSettings):
@@ -232,51 +90,69 @@ class Settings(BaseSettings):
     """
 
     # ---- LLM 大模型配置 ----
-    llm_provider: str = "openai_compatible"  # openai_compatible / openai_responses
-    llm_auth_mode: str = "api_key"  # api_key / codex
+    llm_provider: str = DEFAULT_LLM_PROVIDER  # openai_compatible / openai_responses
+    llm_auth_mode: str = DEFAULT_LLM_AUTH_MODE  # api_key / codex
     llm_api_key: str = ""  # API 密钥
-    llm_api_base: str = "https://api.openai.com/v1"  # API 地址（兼容 OpenAI 接口）
-    llm_model: str = "gpt-4o"  # 模型名称
+    llm_api_base: str = DEFAULT_LLM_API_BASE  # API 地址（兼容 OpenAI 接口）
+    llm_model: str = DEFAULT_LLM_MODEL  # 模型名称
     llm_codex_auth_file: str = (
         ""  # Codex OAuth 登录态文件；为空时读取 $CODEX_HOME/auth.json 或 ~/.codex/auth.json
     )
     llm_codex_api_base: str = CODEX_OAUTH_API_BASE  # Codex OAuth API 地址
     llm_codex_model: str = CODEX_DEFAULT_MODEL  # Codex OAuth 模型名称
-    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)  # 主 Agent 生成温度
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=MAX_LLM_TEMPERATURE)  # 主 Agent 生成温度
     llm_max_output_tokens: int = Field(default=0, ge=0)  # 主 Agent 单次回复上限；0 表示使用模型默认
-    llm_reasoning_effort: str = "medium"  # 思考模式强度：minimal / low / medium / high
-    llm_tool_choice: str = "auto"  # 工具选择策略：auto / none / required
+    llm_reasoning_effort: str = (
+        DEFAULT_LLM_REASONING_EFFORT  # 思考模式强度：minimal / low / medium / high
+    )
+    llm_tool_choice: str = DEFAULT_LLM_TOOL_CHOICE  # 工具选择策略：auto / none / required
 
     # ---- Embedding 向量化配置 ----
-    embedding_auth_mode: str = "api_key"  # api_key / codex
+    embedding_auth_mode: str = DEFAULT_EMBEDDING_AUTH_MODE  # api_key / codex
     embedding_api_key: str = ""  # 向量化 API 密钥（为空时使用 llm_api_key）
-    embedding_api_base: str = "https://api.openai.com/v1"
+    embedding_api_base: str = DEFAULT_EMBEDDING_API_BASE
     embedding_model: str = EMBEDDING_DEFAULT_MODEL  # 向量化模型
     embedding_codex_auth_file: str = ""  # Embedding Codex OAuth 登录态文件
     embedding_codex_api_base: str = CODEX_OAUTH_API_BASE
     embedding_codex_model: str = EMBEDDING_DEFAULT_MODEL
 
     # ---- 工作空间 ----
-    workspace_dir: str = "~/stocks-assistant"  # 工作空间根目录
-    app_language: str = "zh"  # UI 语言：zh / en
+    workspace_dir: str = DEFAULT_WORKSPACE_DIR  # 工作空间根目录
+    app_language: str = DEFAULT_APP_LANGUAGE  # UI 语言：zh / en
 
     # ---- 认证安全配置 ----
-    auth_max_devices_per_user: int = Field(default=5, ge=1, le=50)  # 单账号最多保留的活跃登录设备数
+    auth_max_devices_per_user: int = Field(
+        default=DEFAULT_AUTH_MAX_DEVICES_PER_USER, ge=1, le=MAX_AUTH_MAX_DEVICES_PER_USER
+    )  # 单账号最多保留的活跃登录设备数
 
     # ---- Agent 智能体配置 ----
-    agent_max_steps: int = 20  # 单次对话最大工具调用轮数
-    agent_max_context_tokens: int = 50000  # 上下文窗口最大 token 数
-    agent_max_context_turns: int = 20  # 上下文最大对话轮数
+    agent_max_steps: int = DEFAULT_AGENT_MAX_STEPS  # 单次对话最大工具调用轮数
+    agent_max_context_tokens: int = DEFAULT_AGENT_MAX_CONTEXT_TOKENS  # 上下文窗口最大 token 数
+    agent_max_context_turns: int = DEFAULT_AGENT_MAX_CONTEXT_TURNS  # 上下文最大对话轮数
     agent_tool_allowlist: list[str] = Field(
         default_factory=lambda: list(DEFAULT_AGENT_TOOL_ALLOWLIST)
     )
     agent_allow_all_mcp_tools: bool = True
     multi_agent_enabled: bool = True  # 是否启用多 Agent 委派工具
     # 批次容量与并发分开限制，依赖任务排队时不占用执行名额。
-    multi_agent_max_parallel_agents: int = Field(default=3, ge=1, le=8)
-    multi_agent_max_tasks_per_batch: int = Field(default=12, ge=1, le=32)
-    multi_agent_task_timeout_seconds: int = Field(default=180, ge=10, le=1800)
-    multi_agent_default_max_steps: int = Field(default=8, ge=1, le=100)
+    multi_agent_max_parallel_agents: int = Field(
+        default=DEFAULT_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+        ge=1,
+        le=MAX_MULTI_AGENT_MAX_PARALLEL_AGENTS,
+    )
+    multi_agent_max_tasks_per_batch: int = Field(
+        default=DEFAULT_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+        ge=1,
+        le=MAX_MULTI_AGENT_MAX_TASKS_PER_BATCH,
+    )
+    multi_agent_task_timeout_seconds: int = Field(
+        default=DEFAULT_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+        ge=MIN_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+        le=MAX_MULTI_AGENT_TASK_TIMEOUT_SECONDS,
+    )
+    multi_agent_default_max_steps: int = Field(
+        default=DEFAULT_MULTI_AGENT_DEFAULT_MAX_STEPS, ge=1, le=MAX_MULTI_AGENT_DEFAULT_MAX_STEPS
+    )
     multi_agent_max_depth: int = Field(default=1, ge=0, le=1)  # 0 禁用，1 避免递归委派
     multi_agent_dangerous_tools: list[str] = Field(
         default_factory=lambda: [
@@ -296,28 +172,34 @@ class Settings(BaseSettings):
     knowledge_enabled: bool = True  # 是否启用知识库
     memory_enabled: bool = True  # 是否启用长期记忆
     memory_auto_curate_enabled: bool = True  # 是否从对话中自动筛选长期记忆
-    memory_curator_min_importance: float = 0.7  # 自动记忆重要性阈值
-    memory_curator_min_confidence: float = 0.7  # 自动记忆置信度阈值
+    memory_curator_min_importance: float = (
+        DEFAULT_MEMORY_CURATOR_MIN_IMPORTANCE  # 自动记忆重要性阈值
+    )
+    memory_curator_min_confidence: float = (
+        DEFAULT_MEMORY_CURATOR_MIN_CONFIDENCE  # 自动记忆置信度阈值
+    )
     scheduler_enabled: bool = True  # 是否启用定时任务
     tracing_enabled: bool = False  # 是否启用 Agent 调用追踪
     product_analytics_enabled: bool = False  # 隐私优先的本地产品事件，仅在用户明确开启后记录
-    clawhub_registry_url: str = "https://clawhub.ai"  # ClawHub HTTP API 根地址
+    clawhub_registry_url: str = DEFAULT_CLAWHUB_REGISTRY_URL  # ClawHub HTTP API 根地址
 
     # ---- Telegram 通知配置 ----
     telegram_enabled: bool = False  # 是否允许定时任务发送 Telegram 消息
     telegram_bot_token: str = ""  # Telegram Bot Token
     telegram_chat_id: str = ""  # 默认发送目标 chat_id
-    telegram_api_base: str = "https://api.telegram.org"  # Telegram Bot API 地址
+    telegram_api_base: str = DEFAULT_TELEGRAM_API_BASE  # Telegram Bot API 地址
     telegram_parse_mode: str = ""  # 可选：留空/auto 将 Markdown 转 HTML；plain 纯文本
 
     # ---- MCP 服务器配置 ----
     # 格式: {"server_name": {"transport": "streamable_http", "url": "..."}}
     mcp_servers: dict[str, dict[str, Any]] = {}
-    mcp_tool_timeout_seconds: float = Field(default=60.0, gt=0)  # 单次 MCP 工具调用超时时间
+    mcp_tool_timeout_seconds: float = Field(
+        default=DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, gt=0
+    )  # 单次 MCP 工具调用超时时间
 
     # ---- Longbridge OpenAPI 配置 ----
     # API Key 模式为空时 SDK 会读取 LONGBRIDGE_*；OAuth ID 仅由授权服务写入。
-    longbridge_auth_mode: Literal["apikey", "oauth"] = "apikey"
+    longbridge_auth_mode: Literal["apikey", "oauth"] = DEFAULT_LONGBRIDGE_AUTH_MODE
     longbridge_oauth_client_id: str = ""
     longbridge_app_key: str = ""
     longbridge_app_secret: str = ""
@@ -326,19 +208,19 @@ class Settings(BaseSettings):
     longbridge_quote_ws_url: str = ""
 
     # ---- Web Search 配置 ----
-    search_api_url: str = "https://api.bocha.cn/v1/web-search"
+    search_api_url: str = DEFAULT_SEARCH_API_URL
     search_api_key: str = ""  # 仅在服务端使用，不会明文返回前端
 
     # ---- 系统提示词 ----
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
 
     # ---- 向量化服务商标识 ----
-    embedding_provider: str = "openai"
+    embedding_provider: str = DEFAULT_EMBEDDING_PROVIDER
 
     # ---- 其他配置 ----
     debug: bool = False  # 调试模式
-    host: str = "0.0.0.0"  # 服务监听地址
-    port: int = 8000  # 服务监听端口
+    host: str = DEFAULT_HOST  # 服务监听地址
+    port: int = DEFAULT_PORT  # 服务监听端口
 
     # 只接收显式 init 数据；不再读取 .env、APP_* 或 config.json。
     model_config = {
@@ -555,7 +437,6 @@ _effective_config_cache: dict[tuple[str | None], tuple[float, dict[str, Any]]] =
 _effective_config_generation = 0
 _user_config_generations: dict[str | None, int] = {}
 _effective_config_cache_lock = threading.Lock()
-_EFFECTIVE_CONFIG_TTL = 30.0
 
 
 def clear_effective_settings_cache(user_id: str | None = None) -> None:

@@ -11,6 +11,7 @@ import httpx
 from app.core.memory.config import MemoryConfig
 from app.core.memory.embedding import OpenAIEmbeddingProvider
 from app.core.memory.manager import MemoryManager
+from app.core.serialization import to_payload
 
 
 class FlakyEmbeddingProvider:
@@ -99,7 +100,7 @@ class MemoryManagerWriteTest(unittest.TestCase):
                     ),
                 )
 
-                result = manager.clear_user_memory("user-1")
+                result = to_payload(manager.clear_user_memory("user-1"))
 
                 self.assertEqual(2, result["deleted_files"])
                 self.assertGreaterEqual(result["deleted_chunks"], 1)
@@ -108,7 +109,7 @@ class MemoryManagerWriteTest(unittest.TestCase):
                 self.assertFalse(
                     (workspace / "memory" / "users" / "user-1" / "memory_legacy.md").exists()
                 )
-                self.assertEqual({"chunks": 0, "files": 0}, manager.storage.get_stats())
+                self.assertEqual({"chunks": 0, "files": 0}, to_payload(manager.storage.get_stats()))
             finally:
                 manager.close()
 
@@ -197,7 +198,7 @@ class MemoryManagerEmbeddingFallbackTest(unittest.TestCase):
 
     def _search(self, manager: MemoryManager, query: str = "长期投资"):
         return asyncio.run(
-            manager.search(query, user_id="user-1", include_shared=False, min_score=0.4)
+            to_payload(manager.search(query, user_id="user-1", include_shared=False, min_score=0.4))
         )
 
     def test_first_search_indexes_all_files_without_repeating_unavailable_requests(self):
@@ -226,8 +227,10 @@ class MemoryManagerEmbeddingFallbackTest(unittest.TestCase):
                         self.assertTrue(all(result.user_id == "user-1" for result in results))
                         self.assertTrue(all(result.score >= 0.4 for result in results))
                     self.assertEqual(1, post.call_count)
-                    self.assertFalse(manager.get_status()["dirty"])
-                    self.assertEqual("keyword only (FTS5)", manager.get_status()["search_mode"])
+                    self.assertFalse(to_payload(manager.get_status())["dirty"])
+                    self.assertEqual(
+                        "keyword only (FTS5)", to_payload(manager.get_status())["search_mode"]
+                    )
                 finally:
                     manager.close()
 
@@ -273,7 +276,9 @@ class MemoryManagerEmbeddingFallbackTest(unittest.TestCase):
                 self.assertIsNotNone(manager.storage.get_chunks_by_path(path)[0]["embedding"])
                 self.assertNotEqual(keyword_hash, manager.storage.get_file_hash(path))
                 self.assertFalse(manager._pending_embeddings)
-                self.assertEqual("hybrid (vector + keyword)", manager.get_status()["search_mode"])
+                self.assertEqual(
+                    "hybrid (vector + keyword)", to_payload(manager.get_status())["search_mode"]
+                )
                 self.assertEqual(3, post.call_count)
             finally:
                 manager.close()

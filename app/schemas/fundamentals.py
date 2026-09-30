@@ -1,6 +1,8 @@
 """Fundamental data API schemas."""
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import AppModel as BaseModel
 
 
 class FinancialReportColumn(BaseModel):

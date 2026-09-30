@@ -13,6 +13,7 @@ import pytest
 from app.core.agent.executor import AgentCancelledError, AgentStreamExecutor
 from app.core.agent.models import LLMRequest
 from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
+from app.core.serialization import to_payload
 from app.core.session.store import ChatSessionStore
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.mcp.mcp_tool import MCPManager
@@ -538,7 +539,7 @@ def test_mcp_failed_session_closes_without_publishing_ready(failure_at):
 
 
 def test_trace_finish_drains_messages_and_keeps_request_result_separate(tmp_path):
-    session = ChatSessionStore(str(tmp_path)).create_session(title="trace")
+    session = to_payload(ChatSessionStore(str(tmp_path)).create_session(title="trace"))
     store = TraceStore(str(tmp_path))
     recorder = TraceRecorder.start(store, session["id"], "hello")
     events = [
@@ -577,7 +578,7 @@ def test_trace_finish_drains_messages_and_keeps_request_result_separate(tmp_path
     recorder.finish("done", final_response="hello world")
     recorder.finish("error")
     recorder.handle_event({"type": "error", "data": {"error": "late"}})
-    run = store.get_session_traces(session["id"])["runs"][0]
+    run = to_payload(store.get_session_traces(session["id"]))["runs"][0]
     nodes = run["events"]
     assert [node["node_type"] for node in nodes] == [
         "agent_run",
@@ -601,7 +602,7 @@ def test_trace_finish_drains_messages_and_keeps_request_result_separate(tmp_path
 
 
 def test_trace_parallel_children_with_reused_ids_keep_distinct_parents(tmp_path):
-    session = ChatSessionStore(str(tmp_path)).create_session(title="parallel trace")
+    session = to_payload(ChatSessionStore(str(tmp_path)).create_session(title="parallel trace"))
     store = TraceStore(str(tmp_path))
     recorder = TraceRecorder.start(store, session["id"], "research")
     recorder.handle_event(
@@ -640,7 +641,7 @@ def test_trace_parallel_children_with_reused_ids_keep_distinct_parents(tmp_path)
                 }
             )
     recorder.finish("done")
-    nodes = store.get_session_traces(session["id"])["runs"][0]["events"]
+    nodes = to_payload(store.get_session_traces(session["id"]))["runs"][0]["events"]
     by_id = {node["id"]: node for node in nodes}
     assert len([node for node in nodes if node["node_type"] == "subagent"]) == 2
     assert len([node for node in nodes if node["node_type"] == "subagent_turn"]) == 2
@@ -659,7 +660,7 @@ def test_trace_parallel_children_with_reused_ids_keep_distinct_parents(tmp_path)
 
 
 def test_trace_error_and_missing_start_fallbacks(tmp_path):
-    session = ChatSessionStore(str(tmp_path)).create_session(title="trace errors")
+    session = to_payload(ChatSessionStore(str(tmp_path)).create_session(title="trace errors"))
     store = TraceStore(str(tmp_path))
     recorder = TraceRecorder.start(store, session["id"], "hello")
     events = [
@@ -703,7 +704,7 @@ def test_trace_error_and_missing_start_fallbacks(tmp_path):
         )
     recorder.handle_event({"type": "unknown"})
     recorder.finish("error", error="failed")
-    nodes = store.get_session_traces(session["id"])["runs"][0]["events"]
+    nodes = to_payload(store.get_session_traces(session["id"]))["runs"][0]["events"]
     assert len(nodes) == 14
     llm_calls = [node for node in nodes if node["node_type"] == "llm_call"]
     assert [node["status"] for node in llm_calls] == ["error", "done"]

@@ -5,6 +5,7 @@ from app.core.news.service import (
     NewsService,
     normalize_news_symbol,
 )
+from app.core.serialization import to_payload
 
 
 class FakeNewsItem:
@@ -42,7 +43,7 @@ class NewsServiceTest(unittest.TestCase):
         fake_context = FakeContentContext()
         service._content_context = lambda settings=None: fake_context
 
-        result = service.get_security_news("aapl", limit=10)
+        result = to_payload(service.get_security_news("aapl", limit=10))
 
         self.assertEqual(result["symbol"], "AAPL.US")
         self.assertEqual(fake_context.symbol, "AAPL.US")

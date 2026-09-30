@@ -3,53 +3,40 @@
 from datetime import datetime
 from typing import Any
 
-PORTFOLIO_FIELDS = (
-    "id",
-    "market",
-    "symbol",
-    "name",
-    "shares",
-    "cost_price",
-    "currency",
-    "current_price",
-    "change_value",
-    "change_rate",
-    "pe_ttm_ratio",
-    "stock_value",
-    "position_ratio",
-    "pnl_ratio",
-    "note",
-    "created_at",
-    "updated_at",
+from app.constants.tools import (
+    PORTFOLIO_FIELDS as PORTFOLIO_FIELDS,
 )
+from app.schemas.portfolio import PortfolioItem, PortfolioListResponse, PortfolioPositionFields
+from app.schemas.tool_outputs import PortfolioQuoteError, PortfolioSnapshot, PortfolioToolMarket
 
 
-def sanitize_portfolio_item(item: dict[str, Any]) -> dict[str, Any]:
-    # 只投影持仓业务字段，内部用户标识和存储信息不得进入 LLM 上下文。
-    return {field: item.get(field) for field in PORTFOLIO_FIELDS if field in item}
+def sanitize_portfolio_item(item: PortfolioItem | dict[str, Any]) -> PortfolioPositionFields:
+    # 较窄的模型声明公开字段，不会自动带入数据库用户标识或新增内部字段。
+    return PortfolioPositionFields.model_validate(item)
 
 
-def sanitize_portfolio_list(data: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "market": data.get("market"),
-        "total_capital": data.get("total_capital", "0"),
-        "total_assets": data.get("total_assets", "0"),
-        "cash_ratio": data.get("cash_ratio"),
-        "items": [sanitize_portfolio_item(item) for item in data.get("items", [])],
-        "total": data.get("total", 0),
-        "quote_error": data.get("quote_error"),
-    }
+def sanitize_portfolio_list(data: dict[str, Any] | PortfolioListResponse) -> PortfolioToolMarket:
+    payload = PortfolioListResponse.model_validate(data)
+    return PortfolioToolMarket(
+        market=payload.market,
+        total_capital=payload.total_capital,
+        total_assets=payload.total_assets,
+        cash_ratio=payload.cash_ratio,
+        items=[sanitize_portfolio_item(item) for item in payload.items],
+        total=payload.total,
+        quote_error=payload.quote_error,
+    )
 
 
-def portfolio_snapshot(results: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
-        "source": "portfolio",
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "markets": results,
-        "total_positions": sum(int(item.get("total", 0) or 0) for item in results),
-        "quote_errors": [
-            {"market": item["market"], "error": item["quote_error"]}
+def portfolio_snapshot(results: list[PortfolioToolMarket]) -> PortfolioSnapshot:
+    return PortfolioSnapshot(
+        source="portfolio",
+        generated_at=datetime.now().isoformat(timespec="seconds"),
+        markets=results,
+        total_positions=sum(int(item.total or 0) for item in results),
+        quote_errors=[
+            PortfolioQuoteError(market=item.market, error=item.quote_error)
             for item in results
-            if item.get("quote_error")
+            if item.quote_error
         ],
-    }
+    )

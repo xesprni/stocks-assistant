@@ -2,6 +2,7 @@ import unittest
 
 from app.api.watchlist import _strip_watchlist_quote_payload
 from app.core.dashboard.service import DashboardService, clear_dashboard_cache
+from app.core.serialization import to_payload
 from app.core.watchlist.service import LongbridgeUnavailableError
 
 
@@ -162,7 +163,7 @@ class DashboardServiceTest(unittest.TestCase):
             FakeMarketService(quotes), FakeWatchlistService(items), FakePortfolioService()
         )
 
-        payload = service.build(user=FakeUser(), settings=None)
+        payload = to_payload(service.build(user=FakeUser(), settings=None))
         watchlist = payload["watchlist"]
 
         self.assertEqual(watchlist["total"], 10)
@@ -179,7 +180,7 @@ class DashboardServiceTest(unittest.TestCase):
             FakeMarketService(fail_quotes=True), FakeWatchlistService(items), FakePortfolioService()
         )
 
-        payload = service.build(user=FakeUser(), settings=None)
+        payload = to_payload(service.build(user=FakeUser(), settings=None))
         watchlist = payload["watchlist"]
 
         self.assertEqual(watchlist["total"], 3)
@@ -196,7 +197,7 @@ class DashboardServiceTest(unittest.TestCase):
             FakeMarketService(), FakeWatchlistService(items), FakePortfolioService()
         )
 
-        payload = service.watchlist(user=FakeUser(), settings=None, mode="bootstrap")
+        payload = to_payload(service.watchlist(user=FakeUser(), settings=None, mode="bootstrap"))
         row = payload["items"][0]
 
         self.assertEqual(row["id"], 1)
@@ -227,8 +228,8 @@ class DashboardServiceTest(unittest.TestCase):
             market_service, FakeWatchlistService(items), FakePortfolioService()
         )
 
-        payload = service.watchlist(user=FakeUser(), settings=None)
-        cached_payload = service.watchlist(user=FakeUser(), settings=None)
+        payload = to_payload(service.watchlist(user=FakeUser(), settings=None))
+        cached_payload = to_payload(service.watchlist(user=FakeUser(), settings=None))
         row = payload["items"][0]
 
         self.assertEqual(market_service.static_info_calls, 1)
@@ -253,13 +254,15 @@ class DashboardServiceTest(unittest.TestCase):
             "change_rate": "10.10%",
         }
 
-        payload = _strip_watchlist_quote_payload(
-            {
-                "items": [row],
-                "views": {"movers": [row], "gainers": [row], "losers": [row], "active": [row]},
-                "source": "cache",
-                "stale": True,
-            }
+        payload = to_payload(
+            _strip_watchlist_quote_payload(
+                {
+                    "items": [row],
+                    "views": {"movers": [row], "gainers": [row], "losers": [row], "active": [row]},
+                    "source": "cache",
+                    "stale": True,
+                }
+            )
         )
 
         self.assertEqual(payload["source"], "local")
@@ -290,7 +293,7 @@ class DashboardServiceTest(unittest.TestCase):
             ),
         )
 
-        payload = service.build(user=FakeUser(), settings=None)
+        payload = to_payload(service.build(user=FakeUser(), settings=None))
         us = payload["portfolio"]["markets"][0]
 
         self.assertEqual(us["market"], "US")
@@ -308,7 +311,7 @@ class DashboardServiceTest(unittest.TestCase):
         )
         user = FakeUser({"config:read", "market:read"})
 
-        payload = service.build(user=user, settings=None)
+        payload = to_payload(service.build(user=user, settings=None))
 
         self.assertFalse(payload["watchlist"]["available"])
         self.assertFalse(payload["portfolio"]["available"])
@@ -332,7 +335,7 @@ class DashboardServiceTest(unittest.TestCase):
             market_service, FakeWatchlistService(items), FakePortfolioService()
         )
 
-        payload = service.build(user=FakeUser(), settings=None, mode="bootstrap")
+        payload = to_payload(service.build(user=FakeUser(), settings=None, mode="bootstrap"))
 
         self.assertEqual(market_service.quote_calls, 0)
         self.assertEqual(market_service.static_info_calls, 0)
@@ -357,8 +360,8 @@ class DashboardServiceTest(unittest.TestCase):
         )
         user = FakeUser()
 
-        first = service.watchlist(user=user, settings=None)
-        second = service.watchlist(user=user, settings=None)
+        first = to_payload(service.watchlist(user=user, settings=None))
+        second = to_payload(service.watchlist(user=user, settings=None))
 
         self.assertEqual(market_service.quote_calls, 1)
         self.assertEqual(first["items"][0]["last_done"], "120")

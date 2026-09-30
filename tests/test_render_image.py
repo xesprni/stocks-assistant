@@ -98,7 +98,20 @@ def test_artifacts_are_unique_and_manifest_records_review_required(tmp_path, mon
         assert "<h1>同一数据快照</h1>" in (job_path.parent / "source.html").read_text()
         for name in ("image", "top", "middle", "bottom", "mobile"):
             (job_path.parent / f"{name}.png").write_bytes(b"fake tested separately in browser")
-        return {"width": 2400, "height": 3000, "layout": {"issues": []}}
+        return {
+            "width": 2400,
+            "height": 3000,
+            "logical_height": 1000,
+            "layout": {"issues": []},
+            "render_checks": {
+                "fonts_ready": True,
+                "images_decoded": True,
+                "native_resolution": True,
+                "network_requests_blocked": True,
+                "scripts_disabled": True,
+                "visual_inspection_completed": False,
+            },
+        }
 
     monkeypatch.setattr(service, "_run_worker", worker)
     tool = RenderImageTool(str(tmp_path))

@@ -8,19 +8,23 @@ from html import escape
 from html.parser import HTMLParser
 from typing import Any
 
+from app.constants.rendering import (
+    CONTENT_SECURITY_POLICY as CONTENT_SECURITY_POLICY,
+)
+from app.constants.rendering import (
+    MAX_LOGICAL_HEIGHT as MAX_LOGICAL_HEIGHT,
+)
+from app.constants.rendering import (
+    MAX_OUTPUT_PIXELS as MAX_OUTPUT_PIXELS,
+)
+from app.constants.rendering import (
+    MAX_SOURCE_BYTES as MAX_SOURCE_BYTES,
+)
+from app.constants.rendering import (
+    RENDER_ORIGIN as RENDER_ORIGIN,
+)
 from app.core.rendering.layout import DEFAULT_CSS
 from app.schemas.rendering import RenderSnapshot
-
-MAX_SOURCE_BYTES = 2_000_000
-MAX_OUTPUT_PIXELS = 50_000_000
-MAX_LOGICAL_HEIGHT = 12_000
-RENDER_ORIGIN = "https://render.invalid/"
-CONTENT_SECURITY_POLICY = (
-    "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
-    "img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; "
-    "object-src 'none'; base-uri 'none'; form-action 'none'; "
-    "frame-ancestors 'none'"
-)
 
 
 class _PassiveFragment(HTMLParser):

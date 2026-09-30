@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("stocks-assistant.agent")
-
-_SYNTH_TOOL_ERR = (
-    "Error: Missing tool_result adjacent to tool_use (session repair). "
-    "The conversation history was inconsistent; continue from here."
+from app.constants.agent import (
+    _SYNTH_TOOL_ERR as _SYNTH_TOOL_ERR,
 )
+
+logger = logging.getLogger("stocks-assistant.agent")
 
 
 def _has_block_type(content: list, block_type: str) -> bool:

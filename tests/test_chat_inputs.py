@@ -15,6 +15,7 @@ from app.core.agent.executor import AgentCancelledError
 from app.core.agent.input_service import ChatInputService
 from app.core.agent.run_service import ChatRun, ChatRunManager
 from app.core.security import CurrentUser, get_current_user
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 from app.schemas import ChatRequest
 from app.schemas.chat_inputs import ChatInputRequest
@@ -69,7 +70,7 @@ def inputs(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(agent_api.router, prefix="/agent")
     app.dependency_overrides[get_current_user] = user
-    session_id = store.create_session(user_id="alice")["id"]
+    session_id = to_payload(store.create_session(user_id="alice"))["id"]
     base = f"/agent/sessions/{session_id}/inputs"
     with TestClient(app) as client:
 
@@ -120,11 +121,11 @@ def test_queue_fifo_steer_history_and_curator(inputs):
     third = h.submit("third").json()
     steer = h.submit("use CNY", mode="steer", target_run_id=first.id).json()
     assert second["status"] == third["status"] == steer["status"] == "pending"
-    assert h.store.get_messages(h.session_id) == []
+    assert to_payload(h.store.get_messages(h.session_id)) == []
     h.release("main")
     h.wait_started("second")
     assert first.wait_result()["final_response"] == "answer:main"
-    messages = h.store.get_messages(h.session_id)
+    messages = to_payload(h.store.get_messages(h.session_id))
     assert [(m["role"], m["content"]) for m in messages] == [
         ("user", "main"),
         ("user", "use CNY"),
@@ -192,7 +193,7 @@ def test_concurrent_identical_submissions_start_exactly_one_run(inputs):
     assert len(h.calls) == 1
     h.release("same input")
     run.wait_result()
-    assert len(h.store.get_messages(h.session_id)) == 2
+    assert len(to_payload(h.store.get_messages(h.session_id))) == 2
 
 
 @pytest.mark.parametrize("stop", [True, False])
@@ -320,7 +321,7 @@ def test_sync_chat_holds_the_same_slot_and_accepts_steer(inputs):
         assert h.submit("correct", mode="steer", target_run_id=run.id).status_code == 200
         h.release("main")
         assert sync.result(timeout=3).status_code == 200
-    assert [m["content"] for m in h.store.get_messages(h.session_id)] == [
+    assert [m["content"] for m in to_payload(h.store.get_messages(h.session_id))] == [
         "main",
         "correct",
         "answer:main",
@@ -329,7 +330,7 @@ def test_sync_chat_holds_the_same_slot_and_accepts_steer(inputs):
 
 def test_recovery_keeps_pending_and_never_replays_running(tmp_path):
     store = ChatSessionStore(str(tmp_path))
-    sid = store.create_session(user_id="alice")["id"]
+    sid = to_payload(store.create_session(user_id="alice"))["id"]
     manager = ChatRunManager()
     service = ChatInputService(store, manager)
     service.recover()
@@ -341,30 +342,30 @@ def test_recovery_keeps_pending_and_never_replays_running(tmp_path):
     running = service.submit(
         sid, ChatInputRequest(request_id="running", message="running", mode="queue"), starter
     )
-    store.repository.update_input(running["id"], status="running", run_id="lost-run")
+    store.repository.update_input(running.id, status="running", run_id="lost-run")
     applied = service.submit(
         sid, ChatInputRequest(request_id="applied", message="applied", mode="queue"), starter
     )
     store.repository.update_input(
-        applied["id"], mode="steer", status="applied", run_id="lost-run", target_run_id="lost-run"
+        applied.id, mode="steer", status="applied", run_id="lost-run", target_run_id="lost-run"
     )
     late = service.submit(
         sid, ChatInputRequest(request_id="late", message="late", mode="queue"), starter
     )
-    store.repository.update_input(late["id"], mode="steer", target_run_id="lost-run")
+    store.repository.update_input(late.id, mode="steer", target_run_id="lost-run")
     restart = ChatInputService(ChatSessionStore(str(tmp_path)), ChatRunManager())
     restart.recover()
     statuses = {item["id"]: item for item in store.repository.list_inputs(sid)}
-    assert statuses[queued["id"]]["status"] == "pending"
+    assert statuses[queued.id]["status"] == "pending"
     for item in (running, applied, late):
-        assert statuses[item["id"]]["status"] == "failed"
-        assert "process restart" in statuses[item["id"]]["error"]
+        assert statuses[item.id]["status"] == "failed"
+        assert "process restart" in statuses[item.id]["error"]
     assert restart.start_next(sid, starter) is None
     starter.assert_not_called()
     store.clear_messages(sid)
     assert store.repository.list_inputs(sid) == []
-    assert store.get_session(sid)["input_queue_paused"] is False
-    other = store.create_session(user_id="alice")["id"]
+    assert to_payload(store.get_session(sid))["input_queue_paused"] is False
+    other = to_payload(store.create_session(user_id="alice"))["id"]
     store.repository.pause_inputs(other, True)
     restart.submit(other, ChatInputRequest(request_id="x", message="x", mode="queue"), starter)
     store.delete_session(other)
@@ -373,12 +374,12 @@ def test_recovery_keeps_pending_and_never_replays_running(tmp_path):
 
 def test_long_run_finalizes_all_inputs_and_retains_visible_pending(tmp_path):
     store = ChatSessionStore(str(tmp_path))
-    sid = store.create_session(user_id="alice")["id"]
+    sid = to_payload(store.create_session(user_id="alice"))["id"]
     manager = ChatRunManager()
     service = ChatInputService(store, manager)
     run = ChatRun("alice", "main", "main", sid, "main")
     manager._runs[run.id] = run
-    service.install(run)
+    to_payload(service.install(run))
     try:
         pending = service.submit(
             sid, ChatInputRequest(request_id="next", message="next", mode="queue"), MagicMock()
@@ -396,7 +397,7 @@ def test_long_run_finalizes_all_inputs_and_retains_visible_pending(tmp_path):
             )
             run.input_channel.drain()
         visible = store.repository.list_inputs(sid)
-        assert len(visible) == 100 and visible[0]["id"] == pending["id"]
+        assert len(visible) == 100 and visible[0]["id"] == pending.id
         service.finish_run(run, success=True)
         assert store.repository.unfinished_run_inputs(sid, run.id) == []
         assert len(run.input_channel.applied) == 105
@@ -416,7 +417,7 @@ def test_legacy_sessions_migrate_queue_state_without_changing_history(tmp_path):
             "INSERT INTO sessions VALUES ('legacy', 'alice', '旧会话', 'old', 'old')"
         )
     store = ChatSessionStore(str(tmp_path))
-    legacy = store.get_detail("legacy")
+    legacy = to_payload(store.get_detail("legacy"))
     assert legacy["title"] == "旧会话" and legacy["input_queue_paused"] is False
     assert legacy["inputs"] == []
     service = ChatInputService(store, ChatRunManager())
@@ -432,4 +433,4 @@ def test_legacy_sessions_migrate_queue_state_without_changing_history(tmp_path):
         MagicMock(),
     )
     reopened = ChatSessionStore(str(tmp_path))
-    assert reopened.get_detail("legacy")["inputs"][0]["id"] == item["id"]
+    assert to_payload(reopened.get_detail("legacy"))["inputs"][0]["id"] == item.id

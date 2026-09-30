@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.core.market.service import MarketService
+from app.core.serialization import to_payload
 
 
 class FakeQuoteContext:
@@ -199,7 +200,7 @@ class MarketServiceConfigTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = MarketService(tmp).get_config()
+            config = to_payload(MarketService(tmp).get_config())
 
         self.assertEqual(
             [index["symbol"] for index in config["indices"]],
@@ -211,14 +212,16 @@ class MarketServiceConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             service = MarketService(tmp)
 
-            saved = service.save_config(
-                {
-                    "indices": [
-                        {"symbol": ".HSI.HK", "name": "恒生指数", "enabled": True},
-                        {"symbol": "hsi.hk", "name": "重复旧配置", "enabled": True},
-                    ],
-                    "refresh_interval": 45,
-                }
+            saved = to_payload(
+                service.save_config(
+                    {
+                        "indices": [
+                            {"symbol": ".HSI.HK", "name": "恒生指数", "enabled": True},
+                            {"symbol": "hsi.hk", "name": "重复旧配置", "enabled": True},
+                        ],
+                        "refresh_interval": 45,
+                    }
+                )
             )
 
             stored = json.loads(service.config_path.read_text(encoding="utf-8"))
@@ -233,10 +236,12 @@ class MarketServiceConfigTest(unittest.TestCase):
             quote_context = FakeQuoteContext()
             service = FakeMarketService(tmp, quote_context)
 
-            quotes = service._fetch_quotes(
-                [".HSI.HK", "HSI.HK"],
-                name_map={".HSI.HK": "恒生指数"},
-                category_map={".HSI.HK": "HK"},
+            quotes = to_payload(
+                service._fetch_quotes(
+                    [".HSI.HK", "HSI.HK"],
+                    name_map={".HSI.HK": "恒生指数"},
+                    category_map={".HSI.HK": "HK"},
+                )
             )
 
         self.assertEqual(quote_context.requested_symbols, ["HSI.HK"])
@@ -250,7 +255,7 @@ class MarketServiceConfigTest(unittest.TestCase):
             quote_context = FakeQuoteContext()
             service = FakeMarketService(tmp, quote_context)
 
-            payload = service.get_realtime_quotes([".HSI.HK", "HSI.HK"])
+            payload = to_payload(service.get_realtime_quotes([".HSI.HK", "HSI.HK"]))
 
         self.assertEqual(quote_context.requested_symbols, ["HSI.HK"])
         self.assertEqual(payload["source"], "Longbridge QuoteContext.quote")
@@ -265,8 +270,10 @@ class MarketServiceConfigTest(unittest.TestCase):
             quote_context = FakeQuoteContext()
             service = FakeMarketService(tmp, quote_context)
 
-            payload = service.get_candlesticks(
-                "hsi.hk", "5min", count=1200, adjust_type="none", trade_sessions="all"
+            payload = to_payload(
+                service.get_candlesticks(
+                    "hsi.hk", "5min", count=1200, adjust_type="none", trade_sessions="all"
+                )
             )
 
         self.assertEqual(quote_context.candlestick_args[0], "HSI.HK")
@@ -281,13 +288,15 @@ class MarketServiceConfigTest(unittest.TestCase):
             quote_context = FakeQuoteContext()
             service = FakeMarketService(tmp, quote_context)
 
-            payload = service.get_technical_indicators(
-                "hsi.hk",
-                "1D",
-                count=60,
-                indicators=["MA", "MACD"],
-                params={"ma_periods": [5]},
-                series_limit=3,
+            payload = to_payload(
+                service.get_technical_indicators(
+                    "hsi.hk",
+                    "1D",
+                    count=60,
+                    indicators=["MA", "MACD"],
+                    params={"ma_periods": [5]},
+                    series_limit=3,
+                )
             )
 
         self.assertEqual(quote_context.candlestick_args[0], "HSI.HK")
@@ -302,15 +311,17 @@ class MarketServiceConfigTest(unittest.TestCase):
             quote_context = FakeQuoteContext()
             service = FakeMarketService(tmp, quote_context)
 
-            history = service.get_history_candlesticks(
-                "HSI.HK", start="2026-01-01", end="2026-01-31"
+            history = to_payload(
+                service.get_history_candlesticks("HSI.HK", start="2026-01-01", end="2026-01-31")
             )
-            trades = service.get_trades("HSI.HK", count=999)
-            depth = service.get_depth("HSI.HK")
-            days = service.get_trading_days("US", "2026-01-01", "2026-01-31")
-            status = service.get_market_status()
-            indicators = service.get_quote_indicators(["HSI.HK"], ["LastDone", "pe_ttm_ratio"])
-            capital_flow = service.get_capital_flow(".HSI.HK")
+            trades = to_payload(service.get_trades("HSI.HK", count=999))
+            depth = to_payload(service.get_depth("HSI.HK"))
+            days = to_payload(service.get_trading_days("US", "2026-01-01", "2026-01-31"))
+            status = to_payload(service.get_market_status())
+            indicators = to_payload(
+                service.get_quote_indicators(["HSI.HK"], ["LastDone", "pe_ttm_ratio"])
+            )
+            capital_flow = to_payload(service.get_capital_flow(".HSI.HK"))
 
         self.assertEqual(quote_context.history_args[3], date(2026, 1, 1))
         self.assertEqual(history["bars"][0]["close"], "10")

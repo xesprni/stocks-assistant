@@ -17,7 +17,9 @@ from datetime import datetime, timedelta
 
 from croniter import croniter
 
+from app.constants.scheduler import SCHEDULER_POLL_SECONDS
 from app.core.tools.scheduler.store import RunStore, TaskStore
+from app.schemas.scheduler import TaskRunResponse
 
 logger = logging.getLogger("stocks-assistant.scheduler")
 
@@ -87,7 +89,7 @@ class SchedulerService:
                 await self._check_and_execute()
             except Exception as e:
                 logger.error("Scheduler loop error: %s", e)
-            await asyncio.sleep(30)
+            await asyncio.sleep(SCHEDULER_POLL_SECONDS)
 
     async def _check_and_execute(self):
         now = datetime.now()
@@ -102,7 +104,7 @@ class SchedulerService:
     async def _execute_due_task(self, task: dict, now: datetime):
         await self._execute_task(task, now, trigger="schedule", update_schedule=True)
 
-    async def execute_task_now(self, task_id: str) -> dict:
+    async def execute_task_now(self, task_id: str) -> TaskRunResponse:
         task = self.task_store.get_task(task_id)
         if not task:
             raise ValueError("Task not found")
@@ -112,7 +114,7 @@ class SchedulerService:
 
     async def _execute_task(
         self, task: dict, now: datetime, trigger: str, update_schedule: bool
-    ) -> dict:
+    ) -> TaskRunResponse:
         with self._execution_lock:
             if self._stopping:
                 raise RuntimeError("Scheduler is stopping; retry after shutdown completes")
@@ -141,7 +143,7 @@ class SchedulerService:
         trigger: str,
         update_schedule: bool,
         cancel_event: threading.Event,
-    ) -> dict:
+    ) -> TaskRunResponse:
         task_id = task["id"]
         # 使用调用方注入的运行时间作为业务时间；另用墙钟差计算耗时，保证补跑和测试可复现。
         started = now
@@ -205,7 +207,7 @@ class SchedulerService:
         ended: datetime,
         result: str | None,
         error: str | None,
-    ) -> dict:
+    ) -> TaskRunResponse:
         output = (result or "").strip()
         record = {
             "task_id": task.get("id", ""),
@@ -219,8 +221,8 @@ class SchedulerService:
             "error": error,
         }
         if self.run_store:
-            return self.run_store.add_run(record)
-        return {"id": "", **record}
+            return TaskRunResponse.model_validate(self.run_store.add_run(record))
+        return TaskRunResponse(id="", **record)
 
     def _is_due(self, task: dict, now: datetime) -> bool:
         next_str = task.get("next_run_at")

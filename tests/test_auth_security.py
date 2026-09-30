@@ -18,6 +18,7 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
+from app.core.serialization import to_payload
 from app.core.tracing import TraceStore
 from app.deps import get_session_store, get_trace_store
 from app.main import app
@@ -758,11 +759,13 @@ class AuthSecurityTest(unittest.TestCase):
 
         session_id = first.json()["id"]
         trace_store = TraceStore(str(self.workspace))
-        run = trace_store.create_run(session_id=session_id, user_message="trace me")
+        run = to_payload(trace_store.create_run(session_id=session_id, user_message="trace me"))
         trace_store.add_event(
             run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"]
         )
-        self.assertEqual(len(trace_store.get_session_traces(session_id=session_id)["runs"]), 1)
+        self.assertEqual(
+            len(to_payload(trace_store.get_session_traces(session_id=session_id))["runs"]), 1
+        )
 
         cleared = self.client.delete("/api/v1/agent/sessions", headers=headers)
         self.assertEqual(cleared.status_code, 200, cleared.text)
@@ -772,7 +775,9 @@ class AuthSecurityTest(unittest.TestCase):
         listed = self.client.get("/api/v1/agent/sessions", headers=headers)
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(listed.json()["total"], 0)
-        self.assertEqual(trace_store.get_session_traces(session_id=session_id)["runs"], [])
+        self.assertEqual(
+            to_payload(trace_store.get_session_traces(session_id=session_id))["runs"], []
+        )
 
     def test_user_can_change_own_password(self):
         admin_tokens = self.setup_admin()
@@ -925,7 +930,7 @@ class AuthSecurityTest(unittest.TestCase):
         self.assertIn("agent_max_steps", body["personal_config_keys"])
         self.assertIn("memory_auto_curate_enabled", body["personal_config_keys"])
 
-        self.assertEqual(self.store.get_config()["llm_model"], "system-model")
+        self.assertEqual(to_payload(self.store.get_config())["llm_model"], "system-model")
         personal_config = self.store.get_user_config(user_id)
         self.assertEqual(personal_config["llm_model"], "personal-model")
         self.assertFalse(personal_config["memory_enabled"])
@@ -996,7 +1001,7 @@ class AuthSecurityTest(unittest.TestCase):
             headers={"Authorization": f"Bearer {tokens['access_token']}"},
         )
         self.assertEqual(patched.status_code, 200, patched.text)
-        stored = self.store.get_config()["mcp_servers"]["remote"]
+        stored = to_payload(self.store.get_config())["mcp_servers"]["remote"]
         self.assertEqual(stored["headers"]["Authorization"], "Bearer server-token")
         self.assertEqual(stored["auth"]["value"], "mcp-header-secret")
 

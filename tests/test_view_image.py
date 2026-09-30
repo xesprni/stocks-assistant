@@ -12,6 +12,7 @@ from app.core.agent.context import omit_image_data
 from app.core.agent.executor import AgentCancelledError, AgentStreamExecutor
 from app.core.agent.models import LLMRequest
 from app.core.llm.provider import OpenAICompatibleProvider, OpenAIResponsesProvider
+from app.core.serialization import to_payload
 from app.core.tools import view_image
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.view_image import ViewImageTool
@@ -202,7 +203,7 @@ def test_render_artifact_references_are_persisted_and_reloaded(tmp_path, monkeyp
     from app.schemas import ChatRequest
 
     store = ChatSessionStore(str(tmp_path))
-    session = store.create_session(user_id="alice")
+    session = to_payload(store.create_session(user_id="alice"))
     artifacts = [
         {
             "artifact_id": "one",
@@ -213,10 +214,13 @@ def test_render_artifact_references_are_persisted_and_reloaded(tmp_path, monkeyp
     ]
     monkeypatch.setattr(api, "get_session_store", lambda: store)
     api._persist_exchange(session["id"], "draw", "done", True, rendered_images=artifacts)
-    history = store.get_messages(session["id"])
+    history = to_payload(store.get_messages(session["id"]))
     assert history[-1]["metadata"]["rendered_images"] == artifacts
     monkeypatch.setattr(api, "_build_agent", lambda user_id: SimpleNamespace(messages=[]))
-    agent = api._init_agent(ChatRequest(message="inspect again", user_id="alice"), history)
+    agent = api._init_agent(
+        ChatRequest(message="inspect again", user_id="alice"),
+        store.get_messages(session["id"]),
+    )
     assert "artifacts/renderings/one/image.png" in json.dumps(agent.messages)
 
 
@@ -229,7 +233,7 @@ def test_sync_chat_response_keeps_artifact_references(tmp_path, monkeypatch):
     store = ChatSessionStore(str(tmp_path))
     manager = ChatRunManager()
     monkeypatch.setattr(api, "chat_runs", manager)
-    session = store.create_session(user_id="alice")
+    session = to_payload(store.create_session(user_id="alice"))
     artifacts = [
         {
             "artifact_id": "one",
@@ -249,7 +253,10 @@ def test_sync_chat_response_keeps_artifact_references(tmp_path, monkeypatch):
     try:
         response = api.chat(ChatRequest(message="draw"), SimpleNamespace(id="alice"))
         assert response.rendered_images == artifacts
-        assert store.get_messages(session["id"])[-1]["metadata"]["rendered_images"] == artifacts
+        assert (
+            to_payload(store.get_messages(session["id"]))[-1]["metadata"]["rendered_images"]
+            == artifacts
+        )
     finally:
         manager.close()
 
@@ -261,7 +268,7 @@ def test_stream_completion_keeps_artifact_references(tmp_path, monkeypatch):
     from app.schemas import ChatRequest
 
     store = ChatSessionStore(str(tmp_path))
-    session = store.create_session(user_id="alice")
+    session = to_payload(store.create_session(user_id="alice"))
     artifacts = [
         {
             "artifact_id": "one",
@@ -284,6 +291,9 @@ def test_stream_completion_keeps_artifact_references(tmp_path, monkeypatch):
         assert done
         assert events[-1]["type"] == "agent_end"
         assert events[-1]["data"]["rendered_images"] == artifacts
-        assert store.get_messages(session["id"])[-1]["metadata"]["rendered_images"] == artifacts
+        assert (
+            to_payload(store.get_messages(session["id"]))[-1]["metadata"]["rendered_images"]
+            == artifacts
+        )
     finally:
         run.close()

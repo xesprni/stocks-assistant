@@ -3,7 +3,9 @@
 from pathlib import Path
 from re import fullmatch
 
-_IMAGE_FILES = frozenset({"image.png", "top.png", "middle.png", "bottom.png", "mobile.png"})
+from app.constants.rendering import (
+    _IMAGE_FILES as _IMAGE_FILES,
+)
 
 
 def rendered_image_path(workspace_dir: str, artifact_id: str, filename: str) -> Path:

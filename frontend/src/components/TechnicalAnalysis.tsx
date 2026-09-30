@@ -13,8 +13,11 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { BarChart2, RefreshCw, TrendingUp } from "lucide-react";
+import { ChipDistributionPanel } from "@/components/charts/ChipDistributionPanel";
+import { KLineController } from "@/lib/kline-controller";
 import { CapitalFlowChart } from "@/components/CapitalFlowChart";
 import {
   NativeStockChart,
@@ -45,7 +48,6 @@ import {
   calcBBIBOLL,
   calcDMI,
   calcOSC,
-  calcChipDistribution,
 } from "@/lib/indicators";
 import { useChartColors } from "@/lib/color-scheme";
 
@@ -54,9 +56,8 @@ import { useChartColors } from "@/lib/color-scheme";
 type Period = "1D" | "1W" | "1M";
 const MA_PERIODS = [5, 10, 20, 60, 120, 250] as const;
 type MAPeriod = (typeof MA_PERIODS)[number];
+const DEFAULT_MA_PERIODS: readonly MAPeriod[] = [5, 10, 20];
 const MA_SELECTION_STORAGE_KEY = "stocks-assistant.chart-ma-periods";
-// 预留均线起算历史，使 MA250 在首次打开时就能显示一段有效曲线。
-const INITIAL_KLINE_COUNT = 500;
 
 function maDefinitions(theme: NativeChartTheme) {
   return [
@@ -98,10 +99,6 @@ const technicalCopy = {
     refreshIntervalAria: "自动刷新间隔秒数",
     updated: "更新 {time}",
     refresh: "刷新",
-    chipDistribution: "筹码分布",
-    profitRatio: "获利比例",
-    locked: "套牢 {value}%",
-    profit: "获利 {value}%",
     kline: "K线",
     intraday: "分时",
     capitalFlow: "资金",
@@ -129,10 +126,6 @@ const technicalCopy = {
     refreshIntervalAria: "Auto-refresh interval in seconds",
     updated: "Updated {time}",
     refresh: "Refresh",
-    chipDistribution: "Chip Distribution",
-    profitRatio: "Profit Ratio",
-    locked: "Locked {value}%",
-    profit: "Profit {value}%",
     kline: "K-line",
     intraday: "Intraday",
     capitalFlow: "Flow",
@@ -272,7 +265,8 @@ function useNativeChartTheme(isDark: boolean, upColor: string, downColor: string
       axisBackground: cssHsl(styles, "--background", 0.92),
       up: upColor,
       down: downColor,
-      blue: cssHsl(styles, "--primary"),
+      // 指标线保持独立配色，避免主题色与其他指标线混淆。
+      blue: cssHsl(styles, "--chart-blue"),
       orange: cssHsl(styles, "--secondary"),
       purple: isDark ? "#c58af9" : "#7e57c2",
       yellow: isDark ? "#fdd663" : "#b7791f",
@@ -688,8 +682,6 @@ function KLineChart({
   copy,
   language,
   isDark,
-  onParsedBars,
-  onVisibleRangeChange,
 }: {
   symbol: string;
   activeIndicators: Set<IndicatorKey>;
@@ -698,28 +690,24 @@ function KLineChart({
   copy: TechnicalCopy;
   language: AppLanguage;
   isDark: boolean;
-  onParsedBars: (bars: ReturnType<typeof parseBars>) => void;
-  onVisibleRangeChange: (range: { min: number; max: number } | null) => void;
 }) {
   const { upColor, downColor } = useChartColors();
   const theme = useNativeChartTheme(isDark, upColor, downColor);
   const [period, setPeriod] = useState<Period>(() =>
     readStoredValue(TECHNICAL_KLINE_PERIOD_STORAGE_KEY, ["1D", "1W", "1M"], "1D"),
   );
-  const [loading, setLoading] = useState(false);
-  const [bars, setBars] = useState<ReturnType<typeof parseBars>>([]);
-  const symbolRef = useRef(symbol);
-  const periodRef = useRef(period);
-  const dataCountRef = useRef(INITIAL_KLINE_COUNT);
-  const isLoadingMoreRef = useRef(false);
-  const isRefreshingLatestRef = useRef(false);
-  const allDataLoadedRef = useRef(false);
-
-  useEffect(() => { symbolRef.current = symbol; }, [symbol]);
-  useEffect(() => { periodRef.current = period; }, [period]);
+  const [controller] = useState(() => new KLineController(getCandlesticks));
+  const state = useSyncExternalStore(controller.subscribe, controller.snapshot);
+  const matches = state.symbol === symbol && state.period === period;
+  const loading = !matches || state.loading;
+  const bars = useMemo(() => matches ? parseBars(state.bars) : [], [matches, state.bars]);
+  const [visiblePriceRange, setVisiblePriceRange] = useState<{ min: number; max: number } | null>(null);
   useEffect(() => {
     writeStoredValue(TECHNICAL_KLINE_PERIOD_STORAGE_KEY, period);
-  }, [period]);
+    setVisiblePriceRange(null);
+    controller.activate(symbol, period);
+    return () => controller.dispose();
+  }, [controller, period, symbol]);
 
   const chartModel = useMemo(
     () => buildKLineChartModel(bars, activeIndicators, activeMAPeriods, theme),
@@ -759,91 +747,13 @@ function KLineChart({
     );
   }, [bars, chartModel.series, copy.changeRate, copy.close, copy.lineChangeRate, copy.open, copy.volume, language]);
 
-  const loadMore = useCallback(() => {
-    if (!symbolRef.current || isLoadingMoreRef.current || allDataLoadedRef.current || bars.length === 0) return;
-    isLoadingMoreRef.current = true;
-    const currentCount = dataCountRef.current;
-    const nextCount = currentCount + 200;
-    getCandlesticks(symbolRef.current, periodRef.current, nextCount)
-      .then((res) => {
-        const nextBars = parseBars(res.bars);
-        if (nextBars.length <= currentCount) {
-          allDataLoadedRef.current = true;
-          return;
-        }
-        dataCountRef.current = nextCount;
-        setBars(nextBars);
-        onParsedBars(nextBars);
-      })
-      .catch(() => {})
-      .finally(() => {
-        isLoadingMoreRef.current = false;
-      });
-  }, [bars.length, onParsedBars]);
-
-  const refreshLatest = useCallback(() => {
-    if (!symbolRef.current || isRefreshingLatestRef.current || bars.length === 0) return;
-    isRefreshingLatestRef.current = true;
-    const currentCount = Math.max(dataCountRef.current, bars.length);
-    getCandlesticks(symbolRef.current, periodRef.current, currentCount)
-      .then((res) => {
-        const nextBars = parseBars(res.bars);
-        if (nextBars.length === 0) return;
-        const currentLast = bars[bars.length - 1]?.time;
-        const nextLast = nextBars[nextBars.length - 1]?.time;
-        const currentFirst = bars[0]?.time;
-        const nextFirst = nextBars[0]?.time;
-        if (nextLast !== currentLast || nextFirst !== currentFirst || nextBars.length !== bars.length) {
-          dataCountRef.current = Math.max(currentCount, nextBars.length);
-          setBars(nextBars);
-          onParsedBars(nextBars);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        isRefreshingLatestRef.current = false;
-      });
-  }, [bars, onParsedBars]);
-
-  useEffect(() => {
-    if (!symbol) {
-      setBars([]);
-      onParsedBars([]);
-      onVisibleRangeChange(null);
-      return;
-    }
-    let cancelled = false;
-    dataCountRef.current = INITIAL_KLINE_COUNT;
-    allDataLoadedRef.current = false;
-    setLoading(true);
-    getCandlesticks(symbol, period, INITIAL_KLINE_COUNT)
-      .then((res) => {
-        if (cancelled) return;
-        const parsed = parseBars(res.bars);
-        setBars(parsed);
-        onParsedBars(parsed);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBars([]);
-          onParsedBars([]);
-          onVisibleRangeChange(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [onParsedBars, onVisibleRangeChange, period, symbol]);
-
   const handleVisibleRangeChange = useCallback((range: NativeVisibleRange | null) => {
-    onVisibleRangeChange(range?.price ?? null);
-  }, [onVisibleRangeChange]);
+    setVisiblePriceRange(range?.price ?? null);
+  }, []);
 
   return (
-    <div className="technical-chart-panel flex min-h-[520px] flex-1 flex-col bg-background lg:min-h-0">
+    <div className="technical-kline-content flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row lg:overflow-hidden">
+    <div className="technical-chart-panel flex min-h-[520px] min-w-0 flex-1 flex-col bg-background lg:min-h-0">
       <div className="technical-kline-toolbar flex shrink-0 items-center gap-3 overflow-x-auto border-b border-border bg-background px-3 py-1">
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/70">
           {(["1D", "1W", "1M"] as Period[]).map((p) => (
@@ -895,12 +805,14 @@ function KLineChart({
         primaryRangeSeriesId="candles"
         formatCrosshairValueLabel={formatCrosshairValueLabel}
         onVisibleRangeChange={handleVisibleRangeChange}
-        onNearStart={loadMore}
-        onNearEnd={refreshLatest}
+        onNearStart={controller.loadMore}
+        onNearEnd={controller.refresh}
         renderTooltip={renderTooltip}
         enableTouchCrosshairHaptics
         className="technical-native-chart min-h-[440px] flex-1 lg:min-h-0"
       />
+    </div>
+    <ChipDistributionPanel bars={bars} period={period} language={language} loading={loading} visibleRange={visiblePriceRange} />
     </div>
   );
 }
@@ -1136,123 +1048,6 @@ function IntradayCharts({
   );
 }
 
-// ── Chip Distribution Panel ───────────────────────────────────────────────────
-
-function ChipDistributionPanel({
-  bars,
-  copy,
-  isDark,
-  visibleRange,
-}: {
-  bars: ReturnType<typeof parseBars>;
-  copy: TechnicalCopy;
-  isDark: boolean;
-  visibleRange: { min: number; max: number } | null;
-}) {
-  const { upColor, downColor } = useChartColors();
-  const result = useMemo(() => {
-    if (bars.length === 0) return { chips: [], profitRatio: 0 };
-    const lastClose = bars[bars.length - 1].close;
-    let step = 0.01;
-    if (lastClose > 100) step = 0.5;
-    if (lastClose > 500) step = 1;
-    if (lastClose > 1000) step = 2;
-    if (lastClose > 5000) step = 5;
-    if (lastClose > 10000) step = 10;
-    return calcChipDistribution(bars, step, 0.95, 50);
-  }, [bars]);
-
-  const lastClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
-
-  // Filter chips to visible range and compute layout
-  const { visibleChips, priceMin, priceMax } = useMemo(() => {
-    const all = result.chips;
-    if (all.length === 0) return { visibleChips: [], priceMin: 0, priceMax: 0 };
-    const lo = visibleRange ? visibleRange.min : Math.min(...all.map((c) => c.price));
-    const hi = visibleRange ? visibleRange.max : Math.max(...all.map((c) => c.price));
-    const margin = (hi - lo) * 0.05;
-    const pMin = lo - margin;
-    const pMax = hi + margin;
-    const filtered = all.filter((c) => c.price >= pMin && c.price <= pMax);
-    return { visibleChips: filtered, priceMin: pMin, priceMax: pMax };
-  }, [result.chips, visibleRange]);
-
-  const maxPercent = visibleChips.length > 0 ? Math.max(...visibleChips.map((c) => c.percent)) : 1;
-  const priceSpan = priceMax - priceMin || 1;
-
-  const profitColor = upColor;
-  const lossColor = downColor;
-
-  return (
-    <div className="technical-chip-panel flex h-44 w-full shrink-0 flex-col border-t border-border/70 bg-background/80 lg:h-full lg:w-40 lg:border-l lg:border-t-0">
-      <div className="shrink-0 border-b border-border/60 bg-muted/10 px-3 py-2">
-        <div className="text-[11px] font-semibold text-foreground">{copy.chipDistribution}</div>
-      </div>
-
-      <div className="shrink-0 border-b border-border/60 px-3 py-2">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-muted-foreground">{copy.profitRatio}</span>
-          <span
-            className="text-sm font-bold"
-            style={{ color: result.profitRatio >= 50 ? profitColor : lossColor }}
-          >
-            {result.profitRatio.toFixed(1)}%
-          </span>
-        </div>
-        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted/45">
-          <div
-            className="h-full rounded-full transition-all"
-            style={{
-              width: `${Math.min(100, result.profitRatio)}%`,
-              background: `linear-gradient(90deg, ${profitColor}, ${profitColor}88)`,
-            }}
-          />
-        </div>
-        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-          <span style={{ color: lossColor }}>{formatTemplate(copy.locked, { value: (100 - result.profitRatio).toFixed(0) })}</span>
-          <span style={{ color: profitColor }}>{formatTemplate(copy.profit, { value: result.profitRatio.toFixed(0) })}</span>
-        </div>
-      </div>
-
-      <div className="relative flex-1 overflow-hidden bg-card/30">
-        {lastClose >= priceMin && lastClose <= priceMax && (
-          <div
-            className="absolute left-2 right-2 border-t border-dashed border-primary/55"
-            style={{ bottom: `${((lastClose - priceMin) / priceSpan) * 100}%` }}
-          >
-            <span className="absolute -top-2.5 right-0 rounded-sm bg-background/95 px-1 font-mono text-[8px] text-primary">
-              {lastClose.toFixed(2)}
-            </span>
-          </div>
-        )}
-        {visibleChips.map((chip) => {
-          const widthPct = maxPercent > 0 ? (chip.percent / maxPercent) * 100 : 0;
-          const isProfit = chip.price <= lastClose;
-          // Position from bottom: price maps to bottom%
-          const bottomPct = ((chip.price - priceMin) / priceSpan) * 100;
-          const barHeight = Math.max(2, (100 / visibleChips.length) * 0.8);
-          return (
-            <div
-              key={chip.price.toFixed(4)}
-              className="absolute left-2 right-8 flex items-center"
-              style={{ bottom: `${bottomPct}%`, height: `${barHeight}%` }}
-            >
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${widthPct}%`,
-                  backgroundColor: isProfit ? profitColor + "88" : lossColor + "88",
-                  minWidth: widthPct > 0 ? 2 : 0,
-                }}
-              />
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ── Indicator selector + display ──────────────────────────────────────────────
 
 const SUB_INDICATORS: { key: SubIndicatorKey; label: string; color: string }[] = [
@@ -1294,13 +1089,11 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
       const stored: unknown = JSON.parse(window.localStorage.getItem(MA_SELECTION_STORAGE_KEY) ?? "null");
       if (Array.isArray(stored)) return new Set(MA_PERIODS.filter((period) => stored.includes(period)));
     } catch { /* 存储不可用时显示默认均线组合。 */ }
-    return new Set(MA_PERIODS);
+    return new Set(DEFAULT_MA_PERIODS);
   });
   const [activeTab, setActiveTab] = useState<"kline" | "intraday" | "capital">(() =>
     readStoredValue(TECHNICAL_ACTIVE_TAB_STORAGE_KEY, ["kline", "intraday", "capital"], "kline"),
   );
-  const [parsedBars, setParsedBars] = useState<ReturnType<typeof parseBars>>([]);
-  const [visiblePriceRange, setVisiblePriceRange] = useState<{ min: number; max: number } | null>(null);
 
   useEffect(() => {
     if (!displayName && symbol) setDisplayName(symbol);
@@ -1469,15 +1262,9 @@ export default function TechnicalAnalysis({ language, symbol, onSymbolChange, on
                   copy={copy}
                   language={language}
                   isDark={isDark}
-                  onParsedBars={setParsedBars}
-                  onVisibleRangeChange={setVisiblePriceRange}
                 />
               </div>
 
-              {/* Right: Chip distribution */}
-              {parsedBars.length > 0 && (
-                <ChipDistributionPanel bars={parsedBars} copy={copy} isDark={isDark} visibleRange={visiblePriceRange} />
-              )}
             </div>
           ) : activeTab === "intraday" ? (
             /* Intraday mode */

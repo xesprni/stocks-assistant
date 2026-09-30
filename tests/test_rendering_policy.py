@@ -13,6 +13,7 @@ from app.core.agent.agent import Agent
 from app.core.agent.factory import create_agent
 from app.core.agent.models import LLMRequest
 from app.core.agent.subagent import SubAgentRunner
+from app.core.serialization import to_payload
 from app.core.tools.base_tool import BaseTool, ToolResult, ToolStage
 from app.core.tools.tool_manager import ToolManager
 
@@ -107,7 +108,7 @@ def test_factory_injects_policy_after_saved_prompt_and_skills_and_respects_allow
     monkeypatch.setattr(
         ToolManager, "get_all_tools", lambda self: [NamedTool(name) for name in available_names]
     )
-    saved_prompt = persisted_config.get_config()["system_prompt"]
+    saved_prompt = to_payload(persisted_config.get_config())["system_prompt"]
 
     agent = create_agent()
     assert agent.run_stream("把这份报告生成图片") == "done"
@@ -134,8 +135,8 @@ def test_factory_injects_policy_after_saved_prompt_and_skills_and_respects_allow
     assert "render_image is not available to this Agent" in next_policy
     assert "Agent tool configuration" in next_policy
     assert "silently switch to bash" in next_policy
-    assert persisted_config.get_config()["agent_tool_allowlist"] == narrowed
-    assert persisted_config.get_config()["system_prompt"] == saved_prompt
+    assert to_payload(persisted_config.get_config())["agent_tool_allowlist"] == narrowed
+    assert to_payload(persisted_config.get_config())["system_prompt"] == saved_prompt
 
 
 @pytest.mark.parametrize("view_stage", [None, ToolStage.POST_PROCESS])
@@ -205,7 +206,7 @@ def test_subagent_policy_uses_filtered_child_tools_and_returns_work_to_parent():
     result = SubAgentRunner(parent).run_batch(
         [{"role": "reviewer", "task": "Review the data and prepare an image layout"}]
     )
-    assert result["results"][0]["status"] == "success"
+    assert result.results[0].status == "success"
     assert len(model.requests) == 1
     request = model.requests[0]
     assert tool_names(request) == {"read_file", "view_image"}

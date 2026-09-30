@@ -2,12 +2,27 @@
 
 import asyncio
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
 from app.config import Settings, get_effective_settings
+from app.constants.configuration import (
+    _PERSONAL_CONFIG_DEFAULTS as _PERSONAL_CONFIG_DEFAULTS,
+)
+from app.constants.configuration import (
+    _PUBLIC_CONFIG_FIELDS as _PUBLIC_CONFIG_FIELDS,
+)
+from app.constants.configuration import (
+    _SECRET_CONFIG_FIELDS as _SECRET_CONFIG_FIELDS,
+)
+from app.constants.configuration import (
+    CONNECTION_CHECK_TIMEOUT_SECONDS,
+    LLM_CONNECTION_CHECK_TIMEOUT_SECONDS,
+)
+from app.constants.security import Permission
 from app.core.app_store import get_app_store
 from app.core.configuration.runtime import invalidate_runtime
 from app.core.configuration.service import ConfigPermissionError, persist_config_update
@@ -16,6 +31,7 @@ from app.core.notifications.telegram import TelegramConfigError, TelegramSender
 from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 from app.schemas.config import (
     AppConfig,
+    CodexOAuthStatus,
     ConfigReadinessResponse,
     ConfigUpdate,
     ConnectionCheck,
@@ -32,12 +48,12 @@ router = APIRouter()
 def _readiness_checks(settings: Settings) -> list[ConnectionCheck]:
     llm_codex = settings.llm_auth_mode == "codex"
     llm_configured = bool(
-        (llm_codex and _codex_oauth_status(settings).get("available"))
+        (llm_codex and _codex_oauth_status(settings).available)
         or (not llm_codex and settings.llm_api_key and settings.llm_api_base and settings.llm_model)
     )
     embedding_codex = settings.embedding_auth_mode == "codex"
     embedding_configured = bool(
-        (embedding_codex and _embedding_codex_oauth_status(settings).get("available"))
+        (embedding_codex and _embedding_codex_oauth_status(settings).available)
         or (
             not embedding_codex
             and (settings.embedding_api_key or settings.llm_api_key)
@@ -106,76 +122,6 @@ def _mask_secret(value: str) -> str:
     return f"{value[:4]}{'*' * 8}{value[-4:]}"
 
 
-# 只从明确的公开字段白名单构造响应，新增 Settings 密钥不会自动出现在 API 中。
-_PUBLIC_CONFIG_FIELDS = (
-    "llm_provider",
-    "llm_auth_mode",
-    "llm_temperature",
-    "llm_max_output_tokens",
-    "llm_reasoning_effort",
-    "llm_tool_choice",
-    "embedding_auth_mode",
-    "workspace_dir",
-    "app_language",
-    "auth_max_devices_per_user",
-    "agent_max_steps",
-    "agent_max_context_tokens",
-    "agent_max_context_turns",
-    "agent_tool_allowlist",
-    "agent_allow_all_mcp_tools",
-    "multi_agent_enabled",
-    "multi_agent_max_parallel_agents",
-    "multi_agent_max_tasks_per_batch",
-    "multi_agent_task_timeout_seconds",
-    "multi_agent_default_max_steps",
-    "multi_agent_max_depth",
-    "multi_agent_dangerous_tools",
-    "multi_agent_roles",
-    "knowledge_enabled",
-    "memory_enabled",
-    "memory_auto_curate_enabled",
-    "memory_curator_min_importance",
-    "memory_curator_min_confidence",
-    "scheduler_enabled",
-    "tracing_enabled",
-    "product_analytics_enabled",
-    "debug",
-    "telegram_enabled",
-    "system_prompt",
-    "longbridge_auth_mode",
-)
-_PERSONAL_CONFIG_DEFAULTS = {
-    "llm_api_base": "",
-    "llm_model": "",
-    "llm_codex_auth_file": "",
-    "llm_codex_api_base": "",
-    "llm_codex_model": "",
-    "embedding_api_base": "",
-    "embedding_model": "",
-    "embedding_provider": "openai",
-    "embedding_codex_auth_file": "",
-    "embedding_codex_api_base": "",
-    "embedding_codex_model": "",
-    "telegram_chat_id": "",
-    "telegram_api_base": "https://api.telegram.org",
-    "telegram_parse_mode": "",
-    "mcp_tool_timeout_seconds": 60.0,
-    "longbridge_oauth_client_id": "",
-    "longbridge_http_url": "",
-    "longbridge_quote_ws_url": "",
-    "search_api_url": "",
-}
-_SECRET_CONFIG_FIELDS = (
-    "llm_api_key",
-    "embedding_api_key",
-    "telegram_bot_token",
-    "longbridge_app_key",
-    "longbridge_app_secret",
-    "longbridge_access_token",
-    "search_api_key",
-)
-
-
 def _settings_to_response(
     settings: Settings,
     *,
@@ -224,12 +170,14 @@ def _settings_to_response(
         ),
     ):
         show_status = any(visible(key) for key in keys)
-        oauth_status = status_reader(settings) if show_status else {}
-        values[f"has_{prefix}"] = bool(oauth_status.get("available"))
-        values[f"{prefix}_account_id_masked"] = _mask_secret(
-            str(oauth_status.get("account_id") or "")
+        oauth_status = (
+            CodexOAuthStatus.model_validate(status_reader(settings))
+            if show_status
+            else CodexOAuthStatus(available=False, account_id="")
         )
-        values[f"{prefix}_error"] = str(oauth_status.get("error") or "")
+        values[f"has_{prefix}"] = bool(oauth_status.available)
+        values[f"{prefix}_account_id_masked"] = _mask_secret(str(oauth_status.account_id or ""))
+        values[f"{prefix}_error"] = str(oauth_status.error or "")
     values.update(
         mcp_servers=_mask_mcp_servers(settings.mcp_servers) if visible("mcp_servers") else {},
         longbridge_oauth_connected=oauth_connected(settings)
@@ -237,7 +185,7 @@ def _settings_to_response(
         else False,
         personal_config_keys=sorted(personal_keys),
     )
-    return AppConfig(**values)
+    return AppConfig.model_validate(values)
 
 
 def _mask_mcp_servers(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -249,23 +197,23 @@ def _mask_mcp_servers(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str,
         return {}
 
 
-def _codex_oauth_status(settings: Settings) -> dict[str, Any]:
+def _codex_oauth_status(settings: Settings) -> CodexOAuthStatus:
     try:
         from app.core.llm.codex_auth import inspect_codex_oauth
 
         return inspect_codex_oauth(settings.llm_codex_auth_file or None)
     except Exception as exc:
-        return {"available": False, "account_id": "", "error": str(exc)}
+        return CodexOAuthStatus(available=False, account_id="", error=str(exc))
 
 
-def _embedding_codex_oauth_status(settings: Settings) -> dict[str, Any]:
+def _embedding_codex_oauth_status(settings: Settings) -> CodexOAuthStatus:
     try:
         from app.core.llm.codex_auth import inspect_codex_oauth
 
         auth_file = settings.embedding_codex_auth_file or settings.llm_codex_auth_file or None
         return inspect_codex_oauth(auth_file)
     except Exception as exc:
-        return {"available": False, "account_id": "", "error": str(exc)}
+        return CodexOAuthStatus(available=False, account_id="", error=str(exc))
 
 
 def _refresh_runtime_caches(patch: dict[str, Any]) -> None:
@@ -274,13 +222,15 @@ def _refresh_runtime_caches(patch: dict[str, Any]) -> None:
 
 
 @router.get("", response_model=AppConfig)
-def get_config(current: CurrentUser = Depends(require_permissions("config:read"))):
+def get_config(
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> AppConfig:
     """读取当前用户的有效配置。"""
     personal_keys = set(get_app_store().get_user_config(current.id).keys())
     return _settings_to_response(
         get_effective_settings(current.id),
         personal_keys=personal_keys,
-        hide_inherited_personal=not current.can("config:write"),
+        hide_inherited_personal=not current.can(Permission.CONFIG_WRITE),
     )
 
 
@@ -288,53 +238,61 @@ async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> 
     try:
         settings = await persist_config_update(update, current)
     except ConfigPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail=str(exc)) from exc
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_CONTENT, detail=exc.errors()
+        ) from exc
     return _settings_to_response(
         settings,
         personal_keys=set(get_app_store().get_user_config(current.id)),
-        hide_inherited_personal=not current.can("config:write"),
+        hide_inherited_personal=not current.can(Permission.CONFIG_WRITE),
     )
 
 
 @router.patch("", response_model=AppConfig)
 async def patch_config(
-    update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))
-):
+    update: ConfigUpdate,
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> AppConfig:
     """局部更新并持久化应用配置。"""
     return await _persist_config_update(update, current)
 
 
 @router.get("/longbridge/oauth/status", response_model=LongbridgeOAuthStatus)
-def longbridge_oauth_status(current: CurrentUser = Depends(require_permissions("config:read"))):
+def longbridge_oauth_status(
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> LongbridgeOAuthStatus:
     return longbridge_oauth_service.status(current)
 
 
 @router.post("/longbridge/oauth/start", response_model=LongbridgeOAuthStatus)
 async def start_longbridge_oauth(
-    current: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> LongbridgeOAuthStatus:
     return await longbridge_oauth_service.start(current)
 
 
 @router.delete("/longbridge/oauth/disconnect", response_model=LongbridgeOAuthStatus)
 async def disconnect_longbridge_oauth(
-    current: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> LongbridgeOAuthStatus:
     return await longbridge_oauth_service.disconnect(current)
 
 
 @router.put("", response_model=AppConfig)
 async def update_config(
-    update: ConfigUpdate, current: CurrentUser = Depends(require_permissions("config:read"))
-):
+    update: ConfigUpdate,
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> AppConfig:
     """兼容旧前端：PUT 仍按局部更新处理。"""
     return await _persist_config_update(update, current)
 
 
 @router.get("/readiness", response_model=ConfigReadinessResponse)
-def config_readiness(current: CurrentUser = Depends(require_permissions("config:read"))):
+def config_readiness(
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> ConfigReadinessResponse:
     """返回首次使用所需依赖的配置就绪状态，不发起外部请求。"""
     checks = _readiness_checks(get_effective_settings(current.id))
     required = [check for check in checks if check.component in {"llm", "embedding", "longbridge"}]
@@ -344,16 +302,18 @@ def config_readiness(current: CurrentUser = Depends(require_permissions("config:
 @router.post("/connections/{component}/test", response_model=ConnectionTestResponse)
 async def test_connection(
     component: str,
-    current: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> ConnectionTestResponse:
     """在用户明确点击测试后，对已保存的外部依赖执行最小只读检查。"""
     component = component.strip().lower()
     if component not in {"llm", "embedding", "longbridge"}:
-        raise HTTPException(status_code=404, detail="Unsupported connection component")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Unsupported connection component"
+        )
     settings = get_effective_settings(current.id)
     readiness = {item.component: item for item in _readiness_checks(settings)}[component]
     if not readiness.configured:
-        raise HTTPException(status_code=400, detail=readiness.detail)
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=readiness.detail)
 
     try:
         if component == "llm":
@@ -371,7 +331,10 @@ async def test_connection(
                 temperature=0,
                 max_tokens=8,
             )
-            await asyncio.wait_for(asyncio.to_thread(provider.call, request), timeout=45)
+            await asyncio.wait_for(
+                asyncio.to_thread(provider.call, request),
+                timeout=LLM_CONNECTION_CHECK_TIMEOUT_SECONDS,
+            )
             detail = "主模型连接成功"
         elif component == "embedding":
             from app.deps import create_embedding_provider_from_settings
@@ -380,7 +343,8 @@ async def test_connection(
             if provider is None:
                 raise ValueError("Embedding provider could not be initialized")
             vector = await asyncio.wait_for(
-                asyncio.to_thread(provider.embed, "connection check"), timeout=30
+                asyncio.to_thread(provider.embed, "connection check"),
+                timeout=CONNECTION_CHECK_TIMEOUT_SECONDS,
             )
             if not vector:
                 raise ValueError("Embedding provider returned an empty vector")
@@ -390,12 +354,12 @@ async def test_connection(
 
             await asyncio.wait_for(
                 asyncio.to_thread(get_market_service().get_market_status, settings=settings),
-                timeout=30,
+                timeout=CONNECTION_CHECK_TIMEOUT_SECONDS,
             )
             detail = "Longbridge 行情连接成功"
     except Exception as exc:
         raise HTTPException(
-            status_code=502, detail=f"{component} connection test failed: {exc}"
+            status_code=HTTPStatus.BAD_GATEWAY, detail=f"{component} connection test failed: {exc}"
         ) from exc
 
     return ConnectionTestResponse(
@@ -408,8 +372,10 @@ async def test_connection(
 
 @router.post("/demo-data", response_model=DemoDataResponse)
 def seed_demo_data(
-    current_user: CurrentUser = Depends(require_permissions("watchlist:write", "portfolio:write")),
-):
+    current_user: CurrentUser = Depends(
+        require_permissions(Permission.WATCHLIST_WRITE, Permission.PORTFOLIO_WRITE)
+    ),
+) -> DemoDataResponse:
     """用户明确触发后初始化教学数据；已有自选或组合时不会写入。"""
     from app.deps import get_portfolio_service, get_watchlist_service
 
@@ -431,8 +397,8 @@ def seed_demo_data(
 @router.post("/telegram/test", response_model=TelegramTestResponse)
 async def test_telegram(
     request: TelegramTestRequest,
-    current: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> TelegramTestResponse:
     """使用已保存的 Telegram 配置发送测试消息。"""
     settings = get_effective_settings(current.id)
     # 图片只允许从当前用户工作空间读取，不能使用系统根目录作为文件边界。
@@ -440,9 +406,11 @@ async def test_telegram(
         settings, workspace_dir=user_workspace_dir(settings.workspace_dir, current.id)
     )
     if not sender.enabled:
-        raise HTTPException(status_code=400, detail="Telegram 通知未启用")
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Telegram 通知未启用")
     if not sender.bot_token or not sender.chat_id:
-        raise HTTPException(status_code=400, detail="Telegram Bot Token 或 Chat ID 未配置")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail="Telegram Bot Token 或 Chat ID 未配置"
+        )
 
     message = request.message.strip()
     if not message and not request.photos:
@@ -450,13 +418,13 @@ async def test_telegram(
     try:
         result = await asyncio.to_thread(sender.send_message, message, photos=request.photos)
     except (TelegramConfigError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_GATEWAY, detail=str(exc)) from exc
 
     return TelegramTestResponse(
         ok=True,
-        chunks=int(result.get("chunks", 0) or 0),
-        photos=int(result.get("photos", 0) or 0),
+        chunks=int(result.chunks or 0),
+        photos=int(result.photos or 0),
         detail="测试消息已发送",
     )

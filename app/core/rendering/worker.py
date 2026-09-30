@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from app.constants.rendering_layout import (
+    _READY_JS as _READY_JS,
+)
 from app.core.rendering.document import (
     CONTENT_SECURITY_POLICY,
     MAX_LOGICAL_HEIGHT,
@@ -16,34 +19,7 @@ from app.core.rendering.document import (
     RENDER_ORIGIN,
 )
 from app.core.rendering.layout import LAYOUT_AUDIT_JS
-
-_READY_JS = r"""async () => {
-  const timeout = new Promise((_, reject) => setTimeout(
-    () => reject(new Error('Images or fonts did not become ready within 10 seconds')), 10000));
-  await Promise.race([timeout, (async () => {
-    await document.fonts.ready;
-    await Promise.all([...document.images].map(async image => {
-      image.loading = 'eager';
-      await image.decode();
-      if (!image.naturalWidth) throw new Error('Image has no decoded pixels');
-    }));
-    const failedFonts = [...document.fonts].filter(font => font.status === 'error');
-    if (failedFonts.length) {
-      // 只回传有界字体描述符，清除控制字符；不包含 CSS 源码或字体 data URI。
-      const clean = (value, limit) => String(value)
-        .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0, limit);
-      const details = failedFonts.slice(0, 4).map(font => JSON.stringify({
-        family: clean(font.family, 80),
-        weight: clean(font.weight, 24),
-        style: clean(font.style, 32),
-        status: clean(font.status, 16),
-      })).join('; ');
-      const omitted = failedFonts.length > 4 ? `; +${failedFonts.length - 4} more` : '';
-      throw new Error(`An embedded font failed to load: ${details}${omitted}`);
-    }
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  })()]);
-}"""
+from app.schemas.rendering import RenderChecks, RenderWorkerResult
 
 
 def render(job_path: Path) -> dict[str, Any]:
@@ -158,20 +134,20 @@ def render(job_path: Path) -> dict[str, Any]:
             image.crop((0, top, image.width, top + crop_height)).save(work / f"{name}.png")
         mobile_height = max(1, round(image.height * 390 / image.width))
         image.resize((390, mobile_height), Image.Resampling.LANCZOS).save(work / "mobile.png")
-    return {
-        "width": width * scale,
-        "height": height * scale,
-        "logical_height": height,
-        "layout": audit,
-        "render_checks": {
-            "fonts_ready": True,
-            "images_decoded": True,
-            "native_resolution": True,
-            "network_requests_blocked": True,
-            "scripts_disabled": True,
-            "visual_inspection_completed": False,
-        },
-    }
+    return RenderWorkerResult(
+        width=width * scale,
+        height=height * scale,
+        logical_height=height,
+        layout=audit,
+        render_checks=RenderChecks(
+            fonts_ready=True,
+            images_decoded=True,
+            native_resolution=True,
+            network_requests_blocked=True,
+            scripts_disabled=True,
+            visual_inspection_completed=False,
+        ),
+    )
 
 
 def main() -> None:
@@ -193,7 +169,7 @@ def main() -> None:
         raise SystemExit(1) from None
     finally:
         signal.signal(signal.SIGTERM, previous_handler)
-    print(json.dumps(result, ensure_ascii=False))
+    print(result.model_dump_json())
 
 
 if __name__ == "__main__":

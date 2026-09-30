@@ -6,6 +6,7 @@ from pathlib import Path
 
 import app.core.app_store as app_store_module
 from app.core.app_store import APP_DB_ENV, AppStore, reset_app_store_for_tests
+from app.core.serialization import to_payload
 
 
 class AppStoreSecurityTest(unittest.TestCase):
@@ -64,7 +65,7 @@ class AppStoreSecurityTest(unittest.TestCase):
         ):
             self.assertNotIn(secret, raw)
 
-        config = self.store.get_config()
+        config = to_payload(self.store.get_config())
         self.assertEqual(config["llm_api_key"], "sk-live-secret")
         self.assertEqual(config["telegram_bot_token"], "telegram-bot-secret")
         self.assertEqual(config["longbridge_access_token"], "lb-access-token")
@@ -110,7 +111,7 @@ class AppStoreSecurityTest(unittest.TestCase):
 
         self.assertIsNone(app_config_row)
         self.assertIsNotNone(role_row)
-        self.assertEqual(self.store.get_config()["multi_agent_roles"], roles)
+        self.assertEqual(to_payload(self.store.get_config())["multi_agent_roles"], roles)
 
     def test_legacy_refresh_token_table_is_upgraded_before_session_index(self):
         legacy_db = Path(self.tmp.name) / "legacy.db"

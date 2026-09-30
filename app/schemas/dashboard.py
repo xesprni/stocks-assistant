@@ -2,8 +2,9 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.schemas.base import AppModel as BaseModel
 from app.schemas.market import QuoteItem
 from app.schemas.portfolio import PortfolioItem, PortfolioMarket
 
@@ -123,3 +124,41 @@ class DashboardResponse(BaseModel):
     market: DashboardMarketModule
     watchlist: DashboardWatchlistModule
     portfolio: DashboardPortfolioModule
+
+
+class MarketLoadContext(BaseModel):
+    available: bool
+    error: str | None
+    rows: list[QuoteItem]
+
+
+class WatchlistLoadContext(BaseModel):
+    available: bool
+    error: str | None
+    rows: list[DashboardWatchlistRow]
+    counts: dict[str, int]
+
+
+class DashboardPortfolioSnapshot(BaseModel):
+    market: PortfolioMarket
+    total_capital: str
+    total_assets: str | None = None
+    cash_ratio: str | None = None
+    items: list[PortfolioItem]
+    total: int
+    quote_error: str | None = None
+
+
+class PortfolioLoadContext(BaseModel):
+    available: bool
+    error: str | None
+    payloads: list[DashboardPortfolioSnapshot]
+
+
+class DashboardLoadContext(BaseModel):
+    market: MarketLoadContext
+    watchlist: WatchlistLoadContext
+    portfolio: PortfolioLoadContext
+    symbols: list[str]
+    name_map: dict[str, str]
+    category_map: dict[str, str]

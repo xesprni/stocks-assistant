@@ -8,9 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.constants.agent import (
+    VALID_MESSAGE_ROLES as VALID_MESSAGE_ROLES,
+)
 from app.core.orm.repositories.session import ChatSessionRepository
-
-VALID_MESSAGE_ROLES = {"user", "assistant"}
+from app.schemas import ChatSessionDetail, ChatSessionMessage, StoredChatSession
+from app.schemas.chat_inputs import ChatInput
 
 
 class ChatSessionNotFound(KeyError):
@@ -49,38 +52,40 @@ class ChatSessionStore:
         user_id: str | None = None,
         title: str = "新对话",
         session_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> StoredChatSession:
         sid = session_id or _new_id()
         clean_title = title.strip() or "新对话"
         created = self.repository.create_session(sid, user_id, clean_title, _now())
-        return self._session_row_to_dict(created)
+        return self._session_row_to_model(created)
 
     def count_sessions(self, user_id: str | None = None) -> int:
         return self.repository.count_sessions(user_id=user_id)
 
     def list_sessions(
         self, user_id: str | None = None, limit: int = 50, offset: int = 0
-    ) -> list[dict[str, Any]]:
+    ) -> list[StoredChatSession]:
         return [
-            self._session_row_to_dict(row)
+            self._session_row_to_model(row)
             for row in self.repository.list_sessions(user_id=user_id, limit=limit, offset=offset)
         ]
 
-    def get_session(self, session_id: str) -> dict[str, Any]:
+    def get_session(self, session_id: str) -> StoredChatSession:
         row = self.repository.get_session(session_id)
         if row is None:
             raise ChatSessionNotFound(session_id)
-        return self._session_row_to_dict(row)
+        return self._session_row_to_model(row)
 
-    def get_detail(self, session_id: str) -> dict[str, Any]:
-        session = self.get_session(session_id)
-        session["messages"] = self.get_messages(session_id)
-        session["inputs"] = self.repository.list_inputs(session_id)
+    def get_detail(self, session_id: str) -> ChatSessionDetail:
+        session = ChatSessionDetail.model_validate(self.get_session(session_id))
+        session.messages = self.get_messages(session_id)
+        session.inputs = [
+            ChatInput.model_validate(item) for item in self.repository.list_inputs(session_id)
+        ]
         return session
 
-    def get_messages(self, session_id: str) -> list[dict[str, Any]]:
+    def get_messages(self, session_id: str) -> list[ChatSessionMessage]:
         self.get_session(session_id)
-        return [self._message_row_to_dict(row) for row in self.repository.get_messages(session_id)]
+        return [self._message_row_to_model(row) for row in self.repository.get_messages(session_id)]
 
     def append_message(
         self,
@@ -88,7 +93,7 @@ class ChatSessionStore:
         role: str,
         content: str,
         metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> ChatSessionMessage:
         if role not in VALID_MESSAGE_ROLES:
             raise ValueError(f"Invalid chat message role: {role}")
         try:
@@ -102,14 +107,14 @@ class ChatSessionStore:
             )
         except KeyError as exc:
             raise ChatSessionNotFound(session_id) from exc
-        return self._message_row_to_dict(row)
+        return self._message_row_to_model(row)
 
-    def update_title(self, session_id: str, title: str) -> dict[str, Any]:
+    def update_title(self, session_id: str, title: str) -> StoredChatSession:
         clean_title = title.strip() or "新对话"
         row = self.repository.update_title(session_id, clean_title, _now())
         if row is None:
             raise ChatSessionNotFound(session_id)
-        return self._session_row_to_dict(row)
+        return self._session_row_to_model(row)
 
     def clear_messages(self, session_id: str, reset_title: bool = True) -> int:
         deleted = self.repository.clear_messages(session_id, _now(), reset_title=reset_title)
@@ -125,26 +130,26 @@ class ChatSessionStore:
         return self.repository.delete_sessions(user_id=user_id)
 
     @staticmethod
-    def _session_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": row["id"],
-            "user_id": row["user_id"],
-            "title": row["title"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-            "message_count": row["message_count"],
-            "last_message": row["last_message"],
-            "input_queue_paused": row.get("input_queue_paused", False),
-        }
+    def _session_row_to_model(row: dict[str, Any]) -> StoredChatSession:
+        return StoredChatSession(
+            id=row["id"],
+            user_id=row["user_id"],
+            title=row["title"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            message_count=row["message_count"],
+            last_message=row["last_message"],
+            input_queue_paused=row.get("input_queue_paused", False),
+        )
 
     @staticmethod
-    def _message_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": row["id"],
-            "session_id": row["session_id"],
-            "role": row["role"],
-            "content": row["content"],
-            "seq": row["seq"],
-            "metadata": _decode_metadata(row["metadata"]),
-            "created_at": row["created_at"],
-        }
+    def _message_row_to_model(row: dict[str, Any]) -> ChatSessionMessage:
+        return ChatSessionMessage(
+            id=row["id"],
+            session_id=row["session_id"],
+            role=row["role"],
+            content=row["content"],
+            seq=row["seq"],
+            metadata=_decode_metadata(row["metadata"]),
+            created_at=row["created_at"],
+        )

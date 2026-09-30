@@ -1,6 +1,7 @@
 """MCP 服务器状态和工具查询 API。"""
 
 from html import escape
+from http import HTTPStatus
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,6 +9,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_effective_settings
+from app.constants.security import Permission
 from app.core.security import CurrentUser, require_permissions
 from app.core.tools.mcp.config import (
     LEGACY_SSE_TRANSPORT,
@@ -16,6 +18,7 @@ from app.core.tools.mcp.config import (
     mask_mcp_server_config,
     normalize_transport,
 )
+from app.schemas.common import MessageResponse
 from app.schemas.mcp import (
     MCPOAuthAuthorizeResponse,
     MCPServerStatus,
@@ -54,9 +57,13 @@ async def _start_mcp_oauth_authorization(
 ) -> str:
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
-        raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail=f"MCP server '{server_name}' not found"
+        )
     if not is_mcp_server_enabled(settings.mcp_servers.get(server_name)):
-        raise HTTPException(status_code=409, detail=f"MCP server '{server_name}' is disabled")
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT, detail=f"MCP server '{server_name}' is disabled"
+        )
 
     try:
         from app.deps import lease_mcp_manager_for_user
@@ -74,7 +81,7 @@ async def _start_mcp_oauth_authorization(
         raise
     except Exception as exc:
         raise HTTPException(
-            status_code=409, detail=f"MCP OAuth authorization failed: {exc}"
+            status_code=HTTPStatus.CONFLICT, detail=f"MCP OAuth authorization failed: {exc}"
         ) from exc
 
 
@@ -164,7 +171,9 @@ def _build_server_statuses(user: CurrentUser) -> list[MCPServerStatus]:
 
 
 @router.get("/status", response_model=MCPStatusResponse)
-def get_mcp_status(current_user: CurrentUser = Depends(require_permissions("mcp:read"))):
+def get_mcp_status(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MCP_READ)),
+) -> MCPStatusResponse:
     """获取所有 MCP 服务器的连接状态。"""
     servers = _build_server_statuses(current_user)
     return MCPStatusResponse(servers=servers, total=len(servers))
@@ -174,8 +183,8 @@ def get_mcp_status(current_user: CurrentUser = Depends(require_permissions("mcp:
 async def create_mcp_oauth_authorization(
     server_name: str,
     request: Request,
-    current_user: CurrentUser = Depends(require_permissions("mcp:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MCP_WRITE)),
+) -> MCPOAuthAuthorizeResponse:
     """以当前用户身份启动 MCP OAuth 授权流程，返回外部授权 URL。"""
     authorization_url = await _start_mcp_oauth_authorization(server_name, request, current_user)
     return MCPOAuthAuthorizeResponse(authorization_url=authorization_url)
@@ -185,8 +194,8 @@ async def create_mcp_oauth_authorization(
 async def authorize_mcp_server(
     server_name: str,
     request: Request,
-    current_user: CurrentUser = Depends(require_permissions("mcp:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MCP_WRITE)),
+) -> RedirectResponse:
     """启动需要浏览器登录的 MCP OAuth 授权流程。"""
     authorization_url = await _start_mcp_oauth_authorization(server_name, request, current_user)
     return RedirectResponse(authorization_url)
@@ -198,7 +207,7 @@ async def mcp_oauth_callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
-):
+) -> HTMLResponse:
     """接收 MCP OAuth 授权码回调。"""
     try:
         from app.deps import lease_mcp_manager_for_user
@@ -226,7 +235,7 @@ async def mcp_oauth_callback(
               <p>{detail}</p>
             </body>
             """,
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
 
     return HTMLResponse(
@@ -243,7 +252,9 @@ async def mcp_oauth_callback(
 
 
 @router.post("/reconnect", response_model=MCPStatusResponse)
-def reconnect_mcp_servers(current_user: CurrentUser = Depends(require_permissions("mcp:write"))):
+def reconnect_mcp_servers(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MCP_WRITE)),
+) -> MCPStatusResponse:
     """重新连接所有已配置 MCP 服务器。"""
     settings = get_effective_settings(current_user.id)
     try:
@@ -255,18 +266,22 @@ def reconnect_mcp_servers(current_user: CurrentUser = Depends(require_permission
             # 个人 manager 工厂已经启动连接，重复 reconnect 会相互取消连接任务。
             servers = _build_server_statuses(current_user)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"MCP reconnect failed: {exc}") from exc
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"MCP reconnect failed: {exc}"
+        ) from exc
     return MCPStatusResponse(servers=servers, total=len(servers))
 
 
 @router.delete("/{server_name}/oauth")
 async def delete_mcp_oauth(
-    server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:write"))
-):
+    server_name: str, current_user: CurrentUser = Depends(require_permissions(Permission.MCP_WRITE))
+) -> MessageResponse:
     """删除指定 MCP 服务器的 OAuth 令牌和客户端信息。"""
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
-        raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail=f"MCP server '{server_name}' not found"
+        )
 
     try:
         from app.deps import lease_mcp_manager_for_user
@@ -276,17 +291,19 @@ async def delete_mcp_oauth(
     except Exception:
         pass
 
-    return {"status": "ok", "message": f"OAuth tokens for '{server_name}' cleared"}
+    return MessageResponse(message=f"OAuth tokens for '{server_name}' cleared")
 
 
 @router.get("/{server_name}/tools", response_model=MCPServerToolsResponse)
 def get_mcp_server_tools(
-    server_name: str, current_user: CurrentUser = Depends(require_permissions("mcp:read"))
-):
+    server_name: str, current_user: CurrentUser = Depends(require_permissions(Permission.MCP_READ))
+) -> MCPServerToolsResponse:
     """获取指定 MCP 服务器的工具列表。"""
     settings = get_effective_settings(current_user.id)
     if server_name not in settings.mcp_servers:
-        raise HTTPException(status_code=404, detail=f"MCP server '{server_name}' not found")
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail=f"MCP server '{server_name}' not found"
+        )
     if not is_mcp_server_enabled(settings.mcp_servers.get(server_name)):
         return MCPServerToolsResponse(server_name=server_name, tools=[], total=0)
 

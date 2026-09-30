@@ -16,6 +16,7 @@ from app.core.notifications.telegram import (
     TelegramConfigError,
     TelegramSender,
 )
+from app.core.serialization import to_payload
 
 
 def _png_chunk(kind: bytes, data: bytes) -> bytes:
@@ -62,7 +63,7 @@ def sender(tmp_path: Path) -> TelegramSender:
 def test_photo_url_uses_caption_and_original_text_path_stays_compatible(
     sender: TelegramSender, http_client: MagicMock
 ) -> None:
-    result = sender.send_photo("https://example.org/chart.png", "**行情**")
+    result = to_payload(sender.send_photo("https://example.org/chart.png", "**行情**"))
     assert result["chunks"] == result["photos"] == 1
     assert http_client.post.call_args.args[0].endswith("/sendPhoto")
     assert http_client.post.call_args.kwargs == {
@@ -73,7 +74,7 @@ def test_photo_url_uses_caption_and_original_text_path_stays_compatible(
             "parse_mode": "HTML",
         }
     }
-    result = sender.send_message("**报告**")
+    result = to_payload(sender.send_message("**报告**"))
     assert result["chunks"] == 1 and result["photos"] == 0
     assert http_client.post.call_args.args[0].endswith("/sendMessage")
     assert http_client.post.call_args.kwargs["json"]["text"] == "<b>报告</b>"
@@ -93,7 +94,7 @@ def test_local_photo_upload_uses_file_signature(
 ) -> None:
     photo = tmp_path / "chart.bin"
     photo.write_bytes(content)
-    result = sender.send_photo(str(photo) if absolute else "chart.bin")
+    result = to_payload(sender.send_photo(str(photo) if absolute else "chart.bin"))
     assert result["photos"] == 1
     assert http_client.post.call_args.kwargs == {
         "data": {"chat_id": "42"},
@@ -105,7 +106,9 @@ def test_multiple_photos_share_only_first_caption(
     sender: TelegramSender, http_client: MagicMock, tmp_path: Path
 ) -> None:
     (tmp_path / "chart.png").write_bytes(PNG)
-    result = sender.send_message("报告", photos=["chart.png", "https://example.org/next.png"])
+    result = to_payload(
+        sender.send_message("报告", photos=["chart.png", "https://example.org/next.png"])
+    )
     calls = http_client.post.call_args_list
     assert result["chunks"] == result["photos"] == 2
     assert calls[0].kwargs["data"]["caption"] == "报告"
@@ -116,7 +119,7 @@ def test_multiple_photos_share_only_first_caption(
 def test_long_caption_preserves_full_text_outside_photo(
     sender: TelegramSender, http_client: MagicMock, text: str
 ) -> None:
-    result = sender.send_photo("https://example.org/chart.png", text)
+    result = to_payload(sender.send_photo("https://example.org/chart.png", text))
     calls = http_client.post.call_args_list
     assert result["chunks"] == 2 and result["photos"] == 1
     assert calls[0].args[0].endswith("/sendMessage")
@@ -129,7 +132,7 @@ def test_long_unicode_caption_is_split_within_message_limit(
     sender: TelegramSender, http_client: MagicMock
 ) -> None:
     text = "😀" * 5000
-    result = sender.send_photo("https://example.org/chart.png", text)
+    result = to_payload(sender.send_photo("https://example.org/chart.png", text))
     messages = [call.kwargs["json"]["text"] for call in http_client.post.call_args_list[:-1]]
     assert "".join(messages) == text
     assert all(len(message.encode("utf-16-le")) // 2 <= 4096 for message in messages)
@@ -148,7 +151,7 @@ def test_caption_parse_failure_retries_plain_text_with_same_photo(
         httpx.Response(400, json={"ok": False, "description": "Bad Request: can't parse entities"}),
         httpx.Response(200, json={"ok": True}),
     ]
-    result = sender.send_photo(photo, "**报告**")
+    result = to_payload(sender.send_photo(photo, "**报告**"))
     assert result["chunks"] == 1
     first, second = http_client.post.call_args_list
     payload_key = "data" if local else "json"
@@ -179,7 +182,7 @@ def test_local_file_boundaries_before_any_delivery(
     if kind == "fifo":
         os.mkfifo(tmp_path / source)
     with pytest.raises(ValueError):
-        sender.send_message("文字" * 1200, photos=["valid.png", source])
+        to_payload(sender.send_message("文字" * 1200, photos=["valid.png", source]))
     http_client.post.assert_not_called()
 
 
@@ -198,7 +201,7 @@ def test_invalid_or_animated_files_are_rejected(
 ) -> None:
     (tmp_path / "fake.png").write_bytes(content)
     with pytest.raises(ValueError, match="static JPEG or PNG"):
-        sender.send_photo("fake.png")
+        to_payload(sender.send_photo("fake.png"))
     http_client.post.assert_not_called()
 
 
@@ -210,7 +213,7 @@ def test_oversized_photo_rejected(
         file.write(PNG)
         file.truncate(TELEGRAM_PHOTO_MAX_BYTES + 1)
     with pytest.raises(ValueError, match="10 MB"):
-        sender.send_photo("large.png")
+        to_payload(sender.send_photo("large.png"))
     http_client.post.assert_not_called()
 
 
@@ -230,7 +233,7 @@ def test_bad_photo_parameters_rejected(
     sender: TelegramSender, http_client: MagicMock, photos: list[str]
 ) -> None:
     with pytest.raises(ValueError):
-        sender.send_message("报告", photos=photos)
+        to_payload(sender.send_message("报告", photos=photos))
     http_client.post.assert_not_called()
 
 
@@ -246,7 +249,7 @@ def test_local_photos_require_explicit_user_workspace(
     sender = TelegramSender.from_settings(settings)
     assert sender.workspace_dir is None
     with pytest.raises(ValueError, match="user workspace"):
-        sender.send_photo("chart.png")
+        to_payload(sender.send_photo("chart.png"))
     assert TelegramSender.from_settings(settings, workspace_dir=str(tmp_path)).workspace_dir == str(
         tmp_path
     )
@@ -261,9 +264,9 @@ def test_network_failure_does_not_expose_token_or_url(
     http_client.post.side_effect = httpx.ConnectError(f"Network failed: {url}")
     with pytest.raises(RuntimeError) as error:
         if photo:
-            sender.send_photo("https://example.org/chart.png")
+            to_payload(sender.send_photo("https://example.org/chart.png"))
         else:
-            sender.send_message("报告")
+            to_payload(sender.send_message("报告"))
     assert sender.bot_token not in str(error.value)
     assert "https://" not in str(error.value)
     assert error.value.__suppress_context__
@@ -281,7 +284,7 @@ def test_api_failure_redacts_sensitive_detail(
         },
     )
     with pytest.raises(RuntimeError) as error:
-        sender.send_photo("https://example.org/chart.png")
+        to_payload(sender.send_photo("https://example.org/chart.png"))
     assert sender.bot_token not in str(error.value)
     assert "https://" not in str(error.value)
     assert "secret=123" not in str(error.value)
@@ -292,17 +295,17 @@ def test_disabled_and_missing_config_avoid_delivery(
     sender: TelegramSender, http_client: MagicMock
 ) -> None:
     sender.enabled = False
-    assert sender.send_photo("https://example.org/chart.png")["skipped"] is True
+    assert to_payload(sender.send_photo("https://example.org/chart.png"))["skipped"] is True
     sender.enabled = True
     sender.bot_token = ""
     with pytest.raises(TelegramConfigError):
-        sender.send_photo("https://example.org/chart.png")
+        to_payload(sender.send_photo("https://example.org/chart.png"))
     http_client.post.assert_not_called()
 
 
 def test_markdown_image_syntax_does_not_trigger_implicit_photo_upload(
     sender: TelegramSender, http_client: MagicMock
 ) -> None:
-    result = sender.send_message("![chart](https://example.org/chart.png)")
+    result = to_payload(sender.send_message("![chart](https://example.org/chart.png)"))
     assert result["photos"] == 0
     assert http_client.post.call_args.args[0].endswith("/sendMessage")

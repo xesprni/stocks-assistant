@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.core.orm.repositories.portfolio import PortfolioRepository
 from app.core.orm.repositories.watchlist import WatchlistRepository
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 from app.core.tracing import TraceStore
 
@@ -13,17 +14,21 @@ class ORMRepositoryMigrationTest(unittest.TestCase):
     def test_session_delete_cascades_trace_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             chat = ChatSessionStore(tmp)
-            session = chat.create_session(title="trace")
+            session = to_payload(chat.create_session(title="trace"))
             trace = TraceStore(tmp)
-            run = trace.create_run(session_id=session["id"], user_message="hello")
+            run = to_payload(trace.create_run(session_id=session["id"], user_message="hello"))
             trace.add_event(
                 run_id=run["run_id"], node_type="llm", title="LLM", parent_id=run["root_event_id"]
             )
-            self.assertEqual(len(trace.get_session_traces(session_id=session["id"])["runs"]), 1)
+            self.assertEqual(
+                len(to_payload(trace.get_session_traces(session_id=session["id"]))["runs"]), 1
+            )
 
             chat.delete_session(session["id"])
 
-            self.assertEqual(trace.get_session_traces(session_id=session["id"])["runs"], [])
+            self.assertEqual(
+                to_payload(trace.get_session_traces(session_id=session["id"]))["runs"], []
+            )
 
     def test_watchlist_repository_rebuilds_legacy_symbol_unique_table(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -55,30 +60,32 @@ class ORMRepositoryMigrationTest(unittest.TestCase):
                 )
 
             repository = WatchlistRepository(db_path)
-            legacy = repository.list_items(user_id="")
+            legacy = to_payload(repository.list_items(user_id=""))
             self.assertEqual(legacy[0]["user_id"], "")
             self.assertEqual(legacy[0]["sort_order"], 1)
 
-            repository.add_item(
-                {
-                    "user_id": "user-2",
-                    "category": "US",
-                    "symbol": "MSFT.US",
-                    "name": "Microsoft",
-                    "name_cn": "",
-                    "name_en": "",
-                    "name_hk": "",
-                    "exchange": "",
-                    "currency": "",
-                    "last_done": None,
-                    "change_value": None,
-                    "change_rate": None,
-                    "note": "",
-                    "created_at": "2026-01-02T00:00:00",
-                    "updated_at": "2026-01-02T00:00:00",
-                }
+            to_payload(
+                repository.add_item(
+                    {
+                        "user_id": "user-2",
+                        "category": "US",
+                        "symbol": "MSFT.US",
+                        "name": "Microsoft",
+                        "name_cn": "",
+                        "name_en": "",
+                        "name_hk": "",
+                        "exchange": "",
+                        "currency": "",
+                        "last_done": None,
+                        "change_value": None,
+                        "change_rate": None,
+                        "note": "",
+                        "created_at": "2026-01-02T00:00:00",
+                        "updated_at": "2026-01-02T00:00:00",
+                    }
+                )
             )
-            self.assertEqual(len(repository.list_items()), 2)
+            self.assertEqual(len(to_payload(repository.list_items())), 2)
 
     def test_portfolio_repository_rebuilds_legacy_user_scope_tables(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -112,24 +119,28 @@ class ORMRepositoryMigrationTest(unittest.TestCase):
                 )
 
             repository = PortfolioRepository(db_path)
-            self.assertEqual(repository.list_items("US", user_id="")[0]["user_id"], "")
-            self.assertEqual(repository.get_settings("US", user_id="")["total_capital"], "10000")
-
-            repository.add_item(
-                {
-                    "user_id": "user-2",
-                    "market": "US",
-                    "symbol": "MSFT.US",
-                    "name": "Microsoft",
-                    "shares": "1",
-                    "cost_price": "2",
-                    "note": "",
-                    "created_at": "2026-01-02T00:00:00",
-                    "updated_at": "2026-01-02T00:00:00",
-                }
+            self.assertEqual(to_payload(repository.list_items("US", user_id=""))[0]["user_id"], "")
+            self.assertEqual(
+                to_payload(repository.get_settings("US", user_id=""))["total_capital"], "10000"
             )
-            self.assertEqual(len(repository.list_items("US")), 1)
-            self.assertEqual(len(repository.list_items("US", user_id="user-2")), 1)
+
+            to_payload(
+                repository.add_item(
+                    {
+                        "user_id": "user-2",
+                        "market": "US",
+                        "symbol": "MSFT.US",
+                        "name": "Microsoft",
+                        "shares": "1",
+                        "cost_price": "2",
+                        "note": "",
+                        "created_at": "2026-01-02T00:00:00",
+                        "updated_at": "2026-01-02T00:00:00",
+                    }
+                )
+            )
+            self.assertEqual(len(to_payload(repository.list_items("US"))), 1)
+            self.assertEqual(len(to_payload(repository.list_items("US", user_id="user-2"))), 1)
 
 
 if __name__ == "__main__":

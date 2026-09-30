@@ -17,13 +17,35 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 
+from app.constants.common import OperationStatus
+from app.constants.knowledge import (
+    KNOWLEDGE_FETCH_TIMEOUT_SECONDS,
+    MAX_KNOWLEDGE_FILENAME_CHARS,
+    MAX_KNOWLEDGE_NAME_ATTEMPTS,
+)
+from app.constants.knowledge import (
+    MAX_KNOWLEDGE_CHARS as MAX_KNOWLEDGE_CHARS,
+)
+from app.constants.knowledge import (
+    MAX_URL_BYTES as MAX_URL_BYTES,
+)
+from app.constants.knowledge import (
+    TEXT_EXTENSIONS as TEXT_EXTENSIONS,
+)
 from app.core.html_text import HTMLTextExtractor
+from app.schemas.knowledge import (
+    KnowledgeContent,
+    KnowledgeDirectory,
+    KnowledgeFileEntry,
+    KnowledgeGraph,
+    KnowledgeLink,
+    KnowledgeNode,
+    KnowledgeSaveResponse,
+    KnowledgeStats,
+    KnowledgeTree,
+)
 
 logger = logging.getLogger("stocks-assistant.knowledge")
-
-MAX_KNOWLEDGE_CHARS = 2_000_000
-MAX_URL_BYTES = 5_000_000
-TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".csv", ".json", ".log", ".html", ".htm"}
 
 
 class _HTMLTextExtractor(HTMLTextExtractor):
@@ -65,15 +87,17 @@ class KnowledgeService:
         self.knowledge_dir = os.path.join(workspace_root, "knowledge")
         self.knowledge_path = Path(self.knowledge_dir).resolve()
 
-    def list_tree(self) -> dict:
+    def list_tree(self) -> KnowledgeTree:
         """获取知识库目录树"""
         if not os.path.isdir(self.knowledge_dir):
-            return {"tree": [], "stats": {"pages": 0, "size": 0}, "enabled": True}
-        stats = {"pages": 0, "size": 0}
+            return KnowledgeTree(tree=[], stats=KnowledgeStats(pages=0, size=0), enabled=True)
+        stats = KnowledgeStats(pages=0, size=0)
         root_files, tree = self._scan_dir(self.knowledge_dir, stats, is_root=True)
-        return {"root_files": root_files, "tree": tree, "stats": stats, "enabled": True}
+        return KnowledgeTree(root_files=root_files, tree=tree, stats=stats, enabled=True)
 
-    def _scan_dir(self, dir_path: str, stats: dict, is_root: bool = False) -> tuple:
+    def _scan_dir(
+        self, dir_path: str, stats: KnowledgeStats, is_root: bool = False
+    ) -> tuple[list[KnowledgeFileEntry], list[KnowledgeDirectory]]:
         """递归扫描目录，返回文件列表和子目录树"""
         files, children = [], []
         for name in sorted(os.listdir(dir_path)):
@@ -82,11 +106,13 @@ class KnowledgeService:
             full = os.path.join(dir_path, name)
             if os.path.isdir(full):
                 sub_files, sub_children = self._scan_dir(full, stats)
-                children.append({"dir": name, "files": sub_files, "children": sub_children})
+                children.append(
+                    KnowledgeDirectory(dir=name, files=sub_files, children=sub_children)
+                )
             elif name.endswith(".md"):
                 size = os.path.getsize(full)
-                stats["pages"] += 1
-                stats["size"] += size
+                stats.pages += 1
+                stats.size += size
                 title = name.replace(".md", "")
                 try:
                     with open(full, encoding="utf-8") as f:
@@ -95,10 +121,10 @@ class KnowledgeService:
                         title = first_line[2:].strip()
                 except Exception:
                     pass
-                files.append({"name": name, "title": title, "size": size})
+                files.append(KnowledgeFileEntry(name=name, title=title, size=size))
         return files, children
 
-    def read_file(self, rel_path: str) -> dict:
+    def read_file(self, rel_path: str) -> KnowledgeContent:
         """读取知识文件内容（含路径安全检查）"""
         if not rel_path or ".." in rel_path:
             raise ValueError("invalid path")
@@ -110,7 +136,7 @@ class KnowledgeService:
             raise FileNotFoundError(f"file not found: {rel_path}")
         with open(full_path, encoding="utf-8") as f:
             content = f.read()
-        return {"content": content, "path": rel_path}
+        return KnowledgeContent(content=content, path=rel_path)
 
     def save_text_file(
         self,
@@ -119,7 +145,7 @@ class KnowledgeService:
         directory: str | None = None,
         *,
         source_url: str | None = None,
-    ) -> dict:
+    ) -> KnowledgeSaveResponse:
         """Save user-provided text as a Markdown knowledge file."""
         if not isinstance(content, str) or not content.strip():
             raise ValueError("content is required")
@@ -141,9 +167,13 @@ class KnowledgeService:
 
         size = full_path.stat().st_size
         logger.info("Saved knowledge file: %s", rel_saved)
-        return {"status": "ok", "path": rel_saved, "size": size, "source": source_url}
+        return KnowledgeSaveResponse(
+            status=OperationStatus.OK, path=rel_saved, size=size, source=source_url
+        )
 
-    def save_url(self, url: str, filename: str | None = None, directory: str | None = None) -> dict:
+    def save_url(
+        self, url: str, filename: str | None = None, directory: str | None = None
+    ) -> KnowledgeSaveResponse:
         """Fetch an HTTP(S) URL and save its readable content as Markdown."""
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -168,7 +198,7 @@ class KnowledgeService:
         return self.save_text_file(target_name, text, directory, source_url=final_url)
 
     def _fetch_url(self, url: str) -> tuple[str, bytes, str]:
-        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+        with httpx.Client(timeout=KNOWLEDGE_FETCH_TIMEOUT_SECONDS, follow_redirects=True) as client:
             try:
                 with client.stream(
                     "GET", url, headers={"User-Agent": "stocks-assistant/knowledge-import"}
@@ -212,7 +242,7 @@ class KnowledgeService:
         stem = full_path.stem
         suffix = full_path.suffix
         parent = full_path.parent
-        for idx in range(2, 10_000):
+        for idx in range(2, MAX_KNOWLEDGE_NAME_ATTEMPTS):
             candidate = parent / f"{stem}-{idx}{suffix}"
             if not candidate.exists():
                 return candidate
@@ -249,7 +279,7 @@ class KnowledgeService:
         normalized = re.sub(r"\s+", "-", value.strip())
         normalized = re.sub(r"[^\w.\-]+", "-", normalized, flags=re.UNICODE)
         normalized = normalized.strip(".-")
-        return normalized[:120]
+        return normalized[:MAX_KNOWLEDGE_FILENAME_CHARS]
 
     def _format_markdown_document(self, title: str, content: str, source_url: str | None) -> str:
         body = content.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "").strip()
@@ -267,11 +297,11 @@ class KnowledgeService:
         match = re.search(r"charset=([^;\s]+)", content_type, flags=re.IGNORECASE)
         return match.group(1).strip("\"'") if match else None
 
-    def build_graph(self) -> dict:
+    def build_graph(self) -> KnowledgeGraph:
         """构建知识图谱（基于 Markdown 内部链接 [[target]] 或 [text](target.md)）"""
         knowledge_path = Path(self.knowledge_dir)
         if not knowledge_path.is_dir():
-            return {"nodes": [], "links": []}
+            return KnowledgeGraph(nodes=[], links=[])
         nodes, links = {}, []
         link_re = re.compile(r"\[([^\]]*)\]\(([^)]+\.md)\)")
         for md_file in knowledge_path.rglob("*.md"):
@@ -293,16 +323,16 @@ class KnowledgeService:
                     except ValueError:
                         continue
                     if target_rel != rel:
-                        links.append({"source": rel, "target": target_rel})
+                        links.append(KnowledgeLink(source=rel, target=target_rel))
             except Exception:
                 pass
-            nodes[rel] = {"id": rel, "label": title, "category": category}
+            nodes[rel] = KnowledgeNode(id=rel, label=title, category=category)
         valid_ids = set(nodes.keys())
         seen, deduped = set(), []
         for link in links:
-            if link["source"] in valid_ids and link["target"] in valid_ids:
-                key = tuple(sorted([link["source"], link["target"]]))
+            if link.source in valid_ids and link.target in valid_ids:
+                key = tuple(sorted([link.source, link.target]))
                 if key not in seen:
                     seen.add(key)
                     deduped.append(link)
-        return {"nodes": list(nodes.values()), "links": deduped}
+        return KnowledgeGraph(nodes=list(nodes.values()), links=deduped)

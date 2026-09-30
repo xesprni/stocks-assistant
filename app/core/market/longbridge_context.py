@@ -12,6 +12,9 @@ import os
 import threading
 from typing import Any
 
+from app.constants.longbridge import (
+    _CONTEXT_CLASSES as _CONTEXT_CLASSES,
+)
 from app.core.market.errors import LongbridgeUnavailableError
 
 # context_type -> credential_sig (HTTP Context 附加语言) -> context_instance
@@ -113,14 +116,6 @@ def credential_signature(settings: Any = None) -> str:
         )
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-
-_CONTEXT_CLASSES = {
-    "QuoteContext",
-    "MarketContext",
-    "FundamentalContext",
-    "ContentContext",
-}
 
 
 def get_cached_context(context_type: str, settings: Any = None):

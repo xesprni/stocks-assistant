@@ -16,6 +16,7 @@ from app.core.app_store import AppStore
 from app.core.configuration.resources import ManagedResource
 from app.core.configuration.runtime import invalidate_runtime
 from app.core.orm.models.app import AuditEvent
+from app.core.serialization import to_payload
 
 
 @pytest.mark.parametrize("user_id", [None, "alice"])
@@ -89,7 +90,7 @@ def test_config_and_audit_are_atomic_across_system_and_user_scope(tmp_path):
             )
     finally:
         event.remove(store.session_factory, "before_flush", reject_audit)
-    assert store.get_config()["app_language"] == "zh"
+    assert to_payload(store.get_config())["app_language"] == "zh"
     assert store.get_user_config(user_id)["llm_model"] == "old"
     store.apply_config_update(
         user_id, user_patch={"llm_api_key": "test-secret"}, system_patch={"app_language": "en"}

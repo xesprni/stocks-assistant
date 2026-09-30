@@ -2,14 +2,23 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
+
+from app.constants.agent import (
+    MAX_MESSAGE_LENGTH,
+    MAX_REQUEST_ID_LENGTH,
+    MAX_TARGET_RUN_ID_LENGTH,
+)
+from app.schemas.base import AppModel as BaseModel
 
 
 class ChatInputRequest(BaseModel):
-    request_id: str = Field(min_length=1, max_length=128)
-    message: str = Field(min_length=1, max_length=20000)
+    request_id: str = Field(min_length=1, max_length=MAX_REQUEST_ID_LENGTH)
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
     mode: Literal["queue", "steer"]
-    target_run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    target_run_id: str | None = Field(
+        default=None, min_length=1, max_length=MAX_TARGET_RUN_ID_LENGTH
+    )
     thinking_enabled: bool = False
 
     @field_validator("message")

@@ -7,6 +7,7 @@
 import logging
 import time
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -14,6 +15,9 @@ from fastapi.responses import JSONResponse
 
 from app.api import router
 from app.config import get_settings
+from app.constants.security import (
+    PUBLIC_API_PATHS as PUBLIC_API_PATHS,
+)
 from app.core.app_store import get_app_store
 from app.core.logging import setup_logging
 from app.core.security import (
@@ -22,6 +26,7 @@ from app.core.security import (
     decode_access_token,
     ensure_legacy_device_active,
 )
+from app.schemas.common import StatusResponse
 
 
 @asynccontextmanager
@@ -96,17 +101,6 @@ app = FastAPI(
 app.include_router(router)
 
 
-PUBLIC_API_PATHS = {
-    "/api/v1/health",
-    "/api/v1/auth/setup/status",
-    "/api/v1/auth/setup",
-    "/api/v1/auth/login",
-    "/api/v1/auth/dev-login",
-    "/api/v1/auth/refresh",
-    "/api/v1/auth/logout",
-}
-
-
 def _is_public_api_path(path: str) -> bool:
     if path in PUBLIC_API_PATHS:
         return True
@@ -124,14 +118,14 @@ async def enforce_api_auth(request: Request, call_next):
     if not store.has_users():
         return JSONResponse(
             {"detail": "Setup required", "setup_required": True},
-            status_code=503,
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
         )
 
     token = bearer_from_header(request.headers.get("authorization"))
     if not token:
         return JSONResponse(
             {"detail": "Authentication required"},
-            status_code=401,
+            status_code=HTTPStatus.UNAUTHORIZED,
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
@@ -141,7 +135,7 @@ async def enforce_api_auth(request: Request, call_next):
     except AuthError as exc:
         return JSONResponse(
             {"detail": str(exc) or "Invalid token"},
-            status_code=401,
+            status_code=HTTPStatus.UNAUTHORIZED,
             headers={"WWW-Authenticate": "Bearer"},
         )
     return await call_next(request)
@@ -172,6 +166,6 @@ async def log_api_requests(request: Request, call_next):
 
 
 @app.get("/api/v1/health")
-async def health():
+async def health() -> StatusResponse:
     """健康检查接口"""
-    return {"status": "ok"}
+    return StatusResponse()

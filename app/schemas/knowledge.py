@@ -1,6 +1,8 @@
 """知识库 API Schema"""
 
-from pydantic import BaseModel
+from pydantic import Field
+
+from app.schemas.base import AppModel as BaseModel
 
 
 class KnowledgeTreeNode(BaseModel):
@@ -72,3 +74,52 @@ class KnowledgeGraphResponse(BaseModel):
 
     nodes: list[KnowledgeGraphNode]  # 节点列表
     edges: list[KnowledgeGraphEdge]  # 边列表
+
+
+class KnowledgeFileEntry(BaseModel):
+    name: str
+    title: str
+    size: int
+
+
+class KnowledgeDirectory(BaseModel):
+    dir: str
+    files: list[KnowledgeFileEntry]
+    children: list["KnowledgeDirectory"]
+
+
+class KnowledgeStats(BaseModel):
+    pages: int = 0
+    size: int = 0
+
+
+class KnowledgeTree(BaseModel):
+    root_files: list[KnowledgeFileEntry] = Field(default_factory=list)
+    tree: list[KnowledgeDirectory]
+    stats: KnowledgeStats
+    enabled: bool
+
+
+class KnowledgeTreeEnvelope(BaseModel):
+    tree: KnowledgeTree
+
+
+class KnowledgeContent(BaseModel):
+    content: str
+    path: str
+
+
+class KnowledgeLink(BaseModel):
+    source: str
+    target: str
+
+
+class KnowledgeNode(BaseModel):
+    id: str
+    label: str
+    category: str
+
+
+class KnowledgeGraph(BaseModel):
+    nodes: list[KnowledgeNode]
+    links: list[KnowledgeLink]

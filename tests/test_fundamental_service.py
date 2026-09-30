@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.core.fundamentals.service import FundamentalService, _plain
+from app.core.serialization import to_payload
 from app.schemas.dashboard import DashboardSymbolInsightsResponse
 
 
@@ -71,7 +72,7 @@ class FakeFundamentalService(FundamentalService):
 
     def get_financial_reports(self, *args, **kwargs):
         self.financial_report_calls += 1
-        return super().get_financial_reports(*args, **kwargs)
+        return to_payload(super().get_financial_reports(*args, **kwargs))
 
 
 def test_plain_serializes_descriptor_backed_sdk_objects():
@@ -89,16 +90,18 @@ def test_plain_handles_sdk_objects_with_non_mapping_dict_attribute():
 
     assert isinstance(plain, str)
 
-    section = FundamentalService._section_from_raw(WeirdDictObject())
+    section = to_payload(FundamentalService._section_from_raw(WeirdDictObject()))
     assert section["available"] is True
     assert section["data"] == {}
     assert section["items"] == []
 
 
 def test_section_from_raw_extracts_items_and_preserves_statement_data():
-    section = FundamentalService._section_from_raw(
-        {"statements": [{"code": "IS"}, {"code": "BS"}], "symbol": "AAPL.US"},
-        collection_keys=("statements",),
+    section = to_payload(
+        FundamentalService._section_from_raw(
+            {"statements": [{"code": "IS"}, {"code": "BS"}], "symbol": "AAPL.US"},
+            collection_keys=("statements",),
+        )
     )
 
     assert section["available"] is True
@@ -108,9 +111,11 @@ def test_section_from_raw_extracts_items_and_preserves_statement_data():
 
 
 def test_section_from_raw_extracts_list_items_from_sdk_payload():
-    section = FundamentalService._section_from_raw(
-        {"list": [{"desc": "Dividend"}], "symbol": "AAPL.US"},
-        collection_keys=("list",),
+    section = to_payload(
+        FundamentalService._section_from_raw(
+            {"list": [{"desc": "Dividend"}], "symbol": "AAPL.US"},
+            collection_keys=("list",),
+        )
     )
 
     assert section["available"] is True
@@ -122,7 +127,7 @@ def test_section_from_raw_extracts_list_items_from_sdk_payload():
 def test_security_insights_skip_financial_reports_and_parse_descriptor_sections():
     service = FakeFundamentalService()
 
-    payload = service.get_security_insights("aapl.us")
+    payload = to_payload(service.get_security_insights("aapl.us"))
 
     assert service.financial_report_calls == 0
     assert "financial_reports" not in payload
@@ -138,15 +143,15 @@ def test_security_insights_skip_financial_reports_and_parse_descriptor_sections(
 def test_security_insights_uses_process_cache_for_repeated_symbol():
     service = FakeFundamentalService()
 
-    first = service.get_security_insights("aapl.us")
-    second = service.get_security_insights("AAPL.US")
+    first = to_payload(service.get_security_insights("aapl.us"))
+    second = to_payload(service.get_security_insights("AAPL.US"))
 
     assert first == second
     assert service.fundamental_context_calls == 1
     assert service.quote_context_calls == 1
 
     service.clear_cache()
-    service.get_security_insights("AAPL.US")
+    to_payload(service.get_security_insights("AAPL.US"))
     assert service.fundamental_context_calls == 2
     assert service.quote_context_calls == 2
 
@@ -176,12 +181,12 @@ def test_security_insights_cache_keeps_each_users_content_language():
     chinese = SimpleNamespace(**credentials, app_language="zh")
     english = SimpleNamespace(**credentials, app_language="en")
 
-    zh_payload = service.get_security_insights("AAPL.US", settings=chinese)
-    en_payload = service.get_security_insights("AAPL.US", settings=english)
+    zh_payload = to_payload(service.get_security_insights("AAPL.US", settings=chinese))
+    en_payload = to_payload(service.get_security_insights("AAPL.US", settings=english))
     assert zh_payload["company"]["data"]["profile"] == "公司简介"
     assert en_payload["company"]["data"]["profile"] == "Company profile"
 
     # 切回原语言应命中对应缓存，不能串用英文结果，也不必再次调用长桥。
-    assert service.get_security_insights("AAPL.US", settings=chinese) == zh_payload
-    assert service.get_security_insights("AAPL.US", settings=english) == en_payload
+    assert to_payload(service.get_security_insights("AAPL.US", settings=chinese)) == zh_payload
+    assert to_payload(service.get_security_insights("AAPL.US", settings=english)) == en_payload
     assert service.fundamental_context_calls == 2

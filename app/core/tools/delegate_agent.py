@@ -11,6 +11,7 @@ from app.core.agent.subagent import (
     SubAgentRunner,
     SubAgentValidationError,
 )
+from app.core.serialization import to_payload
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.call_context import ToolCallContext
 from app.schemas.delegation import DelegateAgentRequest
@@ -52,7 +53,7 @@ class DelegateAgentTool(BaseTool):
                 request.shared_context,
             )
         except SubAgentCancelledError as exc:
-            _, exc.metadata = compact_batch_results(exc.batch_result["results"])
+            _, exc.metadata = compact_batch_results(to_payload(exc.batch_result.results))
             raise
         except AgentCancelledError:
             raise
@@ -60,6 +61,8 @@ class DelegateAgentTool(BaseTool):
             return ToolResult.fail(str(exc))
         except Exception as exc:
             return ToolResult.fail(f"delegate_agent failed: {exc}")
+        # 从这里开始构造发给 LLM 的限长 JSON 协议，内部 Runner 始终返回具名模型。
+        result = to_payload(result)
         result["results"], metadata = compact_batch_results(result["results"])
         metadata["preserve_partial"] = True
         result["metadata_truncated"] = metadata["metadata_truncated"]

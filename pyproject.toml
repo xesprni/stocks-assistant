@@ -52,6 +52,9 @@ follow_imports = "silent"
 warn_unused_configs = true
 # 首批严格检查独立辅助模块；结构重构完成后按职责逐步扩大覆盖。
 files = [
+    "app/constants/",
+    "app/schemas/",
+    "app/core/serialization.py",
     "app/core/html_text.py",
     "app/core/market/errors.py",
     "app/core/memory/search_filters.py",
@@ -61,11 +64,9 @@ files = [
     "app/core/agent/run_service.py",
     "app/core/agent/input_service.py",
     "app/core/agent/input_channel.py",
-    "app/schemas/chat_inputs.py",
     "app/core/agent/delegation_runtime.py",
     "app/core/agent/delegation_graph.py",
     "app/core/agent/delegation_results.py",
-    "app/schemas/delegation.py",
     "app/core/llm/message_codec.py",
     "app/core/tools/builtin_registry.py",
     "app/core/tools/paths.py",
@@ -73,11 +74,9 @@ files = [
     "app/core/rendering/document.py",
     "app/core/rendering/layout.py",
     "app/core/rendering/service.py",
-    "app/schemas/rendering.py",
     "app/core/tools/parameters.py",
     "app/core/tools/portfolio_output.py",
     "app/core/tracing/payloads.py",
-    "app/schemas/notifications.py",
     "app/core/configuration/resources.py",
     "app/core/tools/call_context.py",
     "app/core/tools/batch_executor.py",

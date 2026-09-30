@@ -3,27 +3,17 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from typing import Any
 
-_SENSITIVE_ERROR_KEYS = (
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "token",
-    "access_token",
-    "refresh_token",
-    "secret",
-    "password",
-    "api_key",
-    "apikey",
-    "x-api-key",
+from app.constants.mcp import (
+    _SENSITIVE_ERROR_KEYS as _SENSITIVE_ERROR_KEYS,
 )
-_SENSITIVE_TEXT_PATTERNS = (
-    (re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"), r"\1***"),
-    (re.compile(r"(?i)((?:access|refresh)[_-]?token\s*[:=]\s*)[^\s,;]+"), r"\1***"),
-    (re.compile(r"(?i)((?:api[_-]?key|x-api-key|secret|password)\s*[:=]\s*)[^\s,;]+"), r"\1***"),
+from app.constants.mcp import (
+    _SENSITIVE_TEXT_PATTERNS as _SENSITIVE_TEXT_PATTERNS,
+)
+from app.constants.mcp import (
+    MAX_MCP_ERROR_CHARS,
 )
 
 
@@ -171,7 +161,7 @@ class MCPErrorFormatterMixin:
         return redacted
 
     @staticmethod
-    def _truncate_error_text(text: str, limit: int = 2000) -> str:
+    def _truncate_error_text(text: str, limit: int = MAX_MCP_ERROR_CHARS) -> str:
         if len(text) <= limit:
             return text
         return text[:limit] + "..."

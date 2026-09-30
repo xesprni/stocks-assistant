@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.api import watchlist as watchlist_api
 from app.core.orm.repositories.watchlist import WatchlistRepository
 from app.core.security import CurrentUser, get_current_user
+from app.core.serialization import to_payload
 from app.core.watchlist.service import WatchlistService
 from app.schemas.watchlist import WatchlistItemCreate
 
@@ -38,8 +39,8 @@ def group_api(tmp_path):
 
 def test_group_lifecycle_and_membership_cascades(group_api):
     client, service, _ = group_api
-    apple = service.add_item(WatchlistItemCreate(category="US", symbol="AAPL"), "alice")
-    tencent = service.add_item(WatchlistItemCreate(category="H", symbol="700"), "alice")
+    apple = to_payload(service.add_item(WatchlistItemCreate(category="US", symbol="AAPL"), "alice"))
+    tencent = to_payload(service.add_item(WatchlistItemCreate(category="H", symbol="700"), "alice"))
     response = client.post("/api/v1/watchlist/groups", json={"name": "  核心关注  "})
     assert response.status_code == 200
     group = response.json()["groups"][0]
@@ -55,25 +56,25 @@ def test_group_lifecycle_and_membership_cascades(group_api):
     service.set_group_members(second["id"], [apple["id"]], "alice")
     # 重开数据库仍保留跨市场、多分组的成员关系。
     reopened = WatchlistRepository(service.db_path)
-    assert reopened.list_groups("alice")[0]["item_ids"] == [apple["id"], tencent["id"]]
+    assert to_payload(reopened.list_groups("alice"))[0]["item_ids"] == [apple["id"], tencent["id"]]
     reopened.engine.dispose()
     assert client.delete(path).status_code == 200
-    assert len(service.list_items(user_id="alice")) == 2
-    assert service.list_groups("alice")[0]["item_ids"] == [apple["id"]]
+    assert len(to_payload(service.list_items(user_id="alice"))) == 2
+    assert to_payload(service.list_groups("alice"))[0]["item_ids"] == [apple["id"]]
     assert client.delete(f"/api/v1/watchlist/{apple['id']}").status_code == 200
-    assert service.list_groups("alice")[0]["item_ids"] == []
+    assert to_payload(service.list_groups("alice"))[0]["item_ids"] == []
 
 
 def test_group_ownership_validation_and_atomic_failure(group_api):
     client, service, identity = group_api
-    owned = service.add_item(WatchlistItemCreate(category="US", symbol="AAPL"), "alice")
-    foreign = service.add_item(WatchlistItemCreate(category="US", symbol="MSFT"), "bob")
+    owned = to_payload(service.add_item(WatchlistItemCreate(category="US", symbol="AAPL"), "alice"))
+    foreign = to_payload(service.add_item(WatchlistItemCreate(category="US", symbol="MSFT"), "bob"))
     group = client.post("/api/v1/watchlist/groups", json={"name": "同名"}).json()["groups"][0]
     path = f"/api/v1/watchlist/groups/{group['id']}"
     assert client.put(path + "/members", json={"item_ids": [owned["id"]]}).status_code == 200
     for bad_id in [foreign["id"], 999999]:
         assert client.put(path + "/members", json={"item_ids": [bad_id]}).status_code == 400
-        assert service.list_groups("alice")[0]["item_ids"] == [owned["id"]]
+        assert to_payload(service.list_groups("alice"))[0]["item_ids"] == [owned["id"]]
     identity["id"] = "bob"
     assert client.get("/api/v1/watchlist/groups").json() == {"groups": []}
     assert client.patch(path, json={"name": "盗改"}).status_code == 404
@@ -119,12 +120,12 @@ def test_legacy_watchlist_upgrade_keeps_items_and_valid_group_foreign_keys(tmp_p
             VALUES ('US', 'AAPL.US', '2020-01-01', '2020-01-01');
         """)
     repository = WatchlistRepository(path)
-    assert repository.list_items()[0]["symbol"] == "AAPL.US"
+    assert to_payload(repository.list_items())[0]["symbol"] == "AAPL.US"
     group_id = repository.save_group("legacy", "")
     repository.set_group_members(group_id, [1], "")
-    assert repository.list_groups("")[0]["item_ids"] == [1]
+    assert to_payload(repository.list_groups(""))[0]["item_ids"] == [1]
     repository.delete_item(1)
-    assert repository.list_groups("")[0]["item_ids"] == []
+    assert to_payload(repository.list_groups(""))[0]["item_ids"] == []
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     repository.engine.dispose()

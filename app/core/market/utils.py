@@ -6,14 +6,9 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-SYMBOL_ALIASES = {
-    # Longbridge 对部分指数会返回带前导点的 symbol，配置和结果统一归一成无前导点格式。
-    ".HSI.HK": "HSI.HK",
-    ".HSCEI.HK": "HSCEI.HK",
-    ".HSTECH.HK": "HSTECH.HK",
-    ".HSCFI.HK": "HSCFI.HK",
-    ".HSHCI.HK": "HSHCI.HK",
-}
+from app.constants.market import (
+    SYMBOL_ALIASES as SYMBOL_ALIASES,
+)
 
 
 def canonical_symbol(symbol: Any) -> str:

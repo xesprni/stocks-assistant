@@ -16,6 +16,9 @@ from typing import Any
 from weakref import finalize
 
 from app.config import Settings, get_effective_settings, get_settings
+from app.constants.configuration import (
+    _LLM_PROVIDER_CACHE_TTL as _LLM_PROVIDER_CACHE_TTL,
+)
 from app.core.configuration.resources import ManagedResource
 
 
@@ -320,7 +323,6 @@ def create_llm_provider(settings: Settings):
 _llm_provider_cache: dict[str, tuple[float, Any]] = {}
 _llm_provider_cache_lock = Lock()
 _llm_provider_cache_generation = 0
-_LLM_PROVIDER_CACHE_TTL = 300.0  # 5 分钟
 
 
 def _llm_provider_signature(settings: Settings) -> str:

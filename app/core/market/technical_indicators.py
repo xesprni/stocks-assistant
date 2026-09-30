@@ -6,57 +6,16 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-SUPPORTED_INDICATORS = (
-    "VOL",
-    "MA",
-    "EMA",
-    "MACD",
-    "KDJ",
-    "RSI",
-    "CCI",
-    "WR",
-    "DMI",
-    "OSC",
-    "BOLL",
-    "BBIBOLL",
+from app.constants.market import (
+    _INDICATOR_ALIASES as _INDICATOR_ALIASES,
 )
-
-DEFAULT_PARAMS = {
-    "vol_periods": [5, 10, 20],
-    "ma_periods": [5, 10, 20, 30, 60],
-    "ema_periods": [5, 10, 20, 30, 60],
-    "macd_fast": 12,
-    "macd_slow": 26,
-    "macd_signal": 9,
-    "kdj_period": 9,
-    "rsi_periods": [6, 12, 24],
-    "cci_period": 14,
-    "wr_periods": [10, 14],
-    "dmi_period": 14,
-    "osc_period": 10,
-    "osc_signal_period": 6,
-    "boll_period": 20,
-    "boll_std": 2.0,
-    "bbiboll_ma_periods": [3, 6, 12, 24],
-    "bbiboll_std_period": 11,
-    "bbiboll_std": 6.0,
-}
-
-_INDICATOR_ALIASES = {
-    "VOLUME": "VOL",
-    "VOLMA": "VOL",
-    "MOVINGAVERAGE": "MA",
-    "SMA": "MA",
-    "EXPONENTIALMOVINGAVERAGE": "EMA",
-    "WILLIAMSR": "WR",
-    "WILLIAMS": "WR",
-    "W%R": "WR",
-    "DIRECTIONALMOVEMENTINDEX": "DMI",
-    "BOLLINGER": "BOLL",
-    "BOLLINGERBANDS": "BOLL",
-    "BBI_BOLL": "BBIBOLL",
-    "BBI-BOLL": "BBIBOLL",
-}
+from app.constants.market import (
+    DEFAULT_PARAMS as DEFAULT_PARAMS,
+)
+from app.constants.market import (
+    SUPPORTED_INDICATORS as SUPPORTED_INDICATORS,
+)
+from app.schemas.market_data import TechnicalCalculation
 
 
 def calculate_technical_indicators(
@@ -64,7 +23,7 @@ def calculate_technical_indicators(
     indicators: list[str] | None = None,
     params: dict[str, Any] | None = None,
     series_limit: int = 120,
-) -> dict:
+) -> TechnicalCalculation:
     """Calculate selected technical indicators from chronological OHLCV bars."""
     records = _normalize_bars(bars)
     requested = _normalize_indicators(indicators)
@@ -122,17 +81,17 @@ def calculate_technical_indicators(
             for name, values in full_series.items()
         }
 
-    return {
-        "requested_indicators": requested,
-        "available_indicators": list(SUPPORTED_INDICATORS),
-        "params": _params_for_indicators(requested, resolved_params),
-        "bars_count": len(records),
-        "latest_timestamp": timestamps[-1] if timestamps else None,
-        "series_limit": limit,
-        "series_timestamps": timestamps[-limit:],
-        "latest": latest,
-        "series": series,
-    }
+    return TechnicalCalculation(
+        requested_indicators=requested,
+        available_indicators=list(SUPPORTED_INDICATORS),
+        params=_params_for_indicators(requested, resolved_params),
+        bars_count=len(records),
+        latest_timestamp=timestamps[-1] if timestamps else None,
+        series_limit=limit,
+        series_timestamps=timestamps[-limit:],
+        latest=latest,
+        series=series,
+    )
 
 
 def _normalize_bars(bars: list[Any]) -> list[dict[str, Any]]:

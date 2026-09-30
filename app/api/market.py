@@ -1,8 +1,11 @@
 """Market dashboard API — index quotes, watchlist quotes, and config."""
 
+from http import HTTPStatus
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_effective_settings
+from app.constants.security import Permission
 from app.core.market.config_repository import MarketConfigError
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
@@ -24,51 +27,55 @@ router = APIRouter()
 
 
 @router.get("/config", response_model=MarketDashboardConfig)
-def get_market_config(current_user: CurrentUser = Depends(require_permissions("market:read"))):
+def get_market_config(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> MarketDashboardConfig:
     """获取行情监控仪表盘配置。"""
     service = get_market_service()
     try:
-        return MarketDashboardConfig(**service.get_config(user_id=current_user.id))
+        return MarketDashboardConfig.model_validate(service.get_config(user_id=current_user.id))
     except MarketConfigError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.put("/config", response_model=MarketDashboardConfig)
 def update_market_config(
     config: MarketDashboardConfig,
-    current_user: CurrentUser = Depends(require_permissions("market:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_WRITE)),
+) -> MarketDashboardConfig:
     """保存行情监控仪表盘配置。"""
     service = get_market_service()
     try:
-        return MarketDashboardConfig(
-            **service.save_config(config.model_dump(), user_id=current_user.id)
+        return MarketDashboardConfig.model_validate(
+            service.save_config(config.model_dump(), user_id=current_user.id)
         )
     except MarketConfigError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.get("/index-quotes", response_model=MarketQuotesResponse)
-def get_index_quotes(current_user: CurrentUser = Depends(require_permissions("market:read"))):
+def get_index_quotes(
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> MarketQuotesResponse:
     """拉取所有启用指数的实时报价。"""
     service = get_market_service()
     try:
         quotes = [
-            QuoteItem(**q)
+            QuoteItem.model_validate(q)
             for q in service.get_index_quotes(
                 user_id=current_user.id, settings=get_effective_settings(current_user.id)
             )
         ]
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return MarketQuotesResponse(quotes=quotes, total=len(quotes))
 
 
 @router.get("/stock-quotes", response_model=MarketQuotesResponse)
 def get_stock_quotes(
     category: str | None = None,
-    current_user: CurrentUser = Depends(require_permissions("market:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> MarketQuotesResponse:
     """拉取自选股列表的实时报价，可按市场分类过滤。"""
     market_svc = get_market_service()
     watchlist_svc = get_watchlist_service()
@@ -77,9 +84,9 @@ def get_stock_quotes(
         raw = market_svc.get_watchlist_quotes(
             items, settings=get_effective_settings(current_user.id)
         )
-        quotes = [QuoteItem(**q) for q in raw]
+        quotes = [QuoteItem.model_validate(q) for q in raw]
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return MarketQuotesResponse(quotes=quotes, total=len(quotes))
 
 
@@ -88,8 +95,8 @@ def get_candlesticks(
     symbol: str,
     period: str = "1D",
     count: int = 200,
-    current_user: CurrentUser = Depends(require_permissions("market:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> CandlesticksResponse:
     """拉取指定标的 K 线数据。period: 1D | 1W | 1M。"""
     service = get_market_service()
     try:
@@ -97,16 +104,16 @@ def get_candlesticks(
             symbol, period, count, settings=get_effective_settings(current_user.id)
         )
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return CandlesticksResponse(**data)
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return CandlesticksResponse.model_validate(data)
 
 
 @router.get("/intraday", response_model=IntradayResponse)
 def get_intraday(
     symbol: str,
     since: int | None = None,
-    current_user: CurrentUser = Depends(require_permissions("market:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> IntradayResponse:
     """拉取今日分时数据。since 可用于增量返回指定时间戳后的数据。"""
     service = get_market_service()
     try:
@@ -114,31 +121,31 @@ def get_intraday(
             symbol, since=since, settings=get_effective_settings(current_user.id)
         )
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return IntradayResponse(**data)
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return IntradayResponse.model_validate(data)
 
 
 @router.get("/capital-flow", response_model=CapitalFlowResponse)
 def get_capital_flow(
     symbol: str,
-    current_user: CurrentUser = Depends(require_permissions("market:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> CapitalFlowResponse:
     """拉取指定标的当日资金净流入时序。"""
     service = get_market_service()
     try:
         data = service.get_capital_flow(symbol, settings=get_effective_settings(current_user.id))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return CapitalFlowResponse(**data)
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return CapitalFlowResponse.model_validate(data)
 
 
 @router.get("/temperature", response_model=MarketTemperatureResponse)
 def get_market_temperature(
     market: str = "US",
-    current_user: CurrentUser = Depends(require_permissions("market:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.MARKET_READ)),
+) -> MarketTemperatureResponse:
     """获取市场温度数据。market: US / HK / CN"""
     service = get_market_service()
     try:
@@ -146,5 +153,5 @@ def get_market_temperature(
             market, settings=get_effective_settings(current_user.id)
         )
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return MarketTemperatureResponse(**data)
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return MarketTemperatureResponse.model_validate(data)

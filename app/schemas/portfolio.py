@@ -3,7 +3,9 @@
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
+
+from app.schemas.base import AppModel as BaseModel
 
 PortfolioMarket = Literal["US", "A", "H"]
 PortfolioTransactionSide = Literal["buy", "sell", "adjust"]
@@ -51,8 +53,8 @@ class PortfolioItemBase(BaseModel):
 
     @field_validator("shares", "cost_price")
     @classmethod
-    def valid_optional_amount(cls, value: str | None, info) -> str | None:
-        return _non_negative_decimal_text(value, info.field_name)
+    def valid_optional_amount(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _non_negative_decimal_text(value, info.field_name or "amount")
 
 
 class PortfolioItemCreate(PortfolioItemBase):
@@ -71,12 +73,12 @@ class PortfolioItemUpdate(BaseModel):
 
     @field_validator("shares", "cost_price")
     @classmethod
-    def valid_optional_amount(cls, value: str | None, info) -> str | None:
-        return _non_negative_decimal_text(value, info.field_name)
+    def valid_optional_amount(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _non_negative_decimal_text(value, info.field_name or "amount")
 
 
-class PortfolioItem(PortfolioItemBase):
-    """Portfolio item enriched with realtime market data."""
+class PortfolioPositionFields(PortfolioItemBase):
+    """公开持仓字段；工具输出只投影这些字段。"""
 
     id: int
     currency: str = ""
@@ -87,9 +89,14 @@ class PortfolioItem(PortfolioItemBase):
     stock_value: str | None = None
     position_ratio: str | None = None
     pnl_ratio: str | None = None
-    valuation_price_source: Literal["live", "cost", "unavailable"] = "unavailable"
     created_at: str
     updated_at: str
+
+
+class PortfolioItem(PortfolioPositionFields):
+    """Portfolio item enriched with realtime market data."""
+
+    valuation_price_source: Literal["live", "cost", "unavailable"] = "unavailable"
 
 
 class PortfolioListResponse(BaseModel):
@@ -115,8 +122,8 @@ class PortfolioSellRequest(BaseModel):
 
     @field_validator("shares", "price")
     @classmethod
-    def valid_positive_amount(cls, value: str, info) -> str:
-        normalized = _non_negative_decimal_text(value, info.field_name)
+    def valid_positive_amount(cls, value: str, info: ValidationInfo) -> str:
+        normalized = _non_negative_decimal_text(value, info.field_name or "amount")
         if normalized is None or Decimal(normalized) <= 0:
             raise ValueError(f"{info.field_name} must be greater than 0")
         return normalized
@@ -170,3 +177,15 @@ class PortfolioSearchResponse(BaseModel):
 
     results: list[PortfolioSearchResult]
     total: int
+
+
+class PortfolioLocalSnapshot(BaseModel):
+    """本地快照不包含实时估值，避免将未加载的资产错误表示为零。"""
+
+    market: PortfolioMarket
+    total_capital: str
+    total_assets: None = None
+    cash_ratio: None = None
+    items: list[PortfolioItem]
+    total: int
+    quote_error: None = None

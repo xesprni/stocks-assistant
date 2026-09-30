@@ -196,7 +196,7 @@ def test_agent_and_child_keep_explicit_user_identity(monkeypatch):
     result = subagent.SubAgentRunner(parent).run_batch(
         [{"role": "researcher", "task": "verify identity"}]
     )
-    assert result["status"] == "success"
+    assert result.status == "success"
     assert seen == ["user-1"]
 
 

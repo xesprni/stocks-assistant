@@ -9,16 +9,22 @@
   <body>
     <script>
       (() => {
-        const storedThemeValue = localStorage.getItem("stocks-assistant-theme");
+        const readPreference = (key) => {
+          try { return localStorage.getItem(key); } catch { return null; }
+        };
+        const storedThemeValue = readPreference("stocks-assistant-theme");
         const storedTheme = ["system", "dark", "light"].includes(storedThemeValue) ? storedThemeValue : "system";
         const resolvedTheme = storedTheme === "system"
           ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
           : storedTheme;
-        const storedMarketScheme = localStorage.getItem("stocks-assistant-color-scheme");
+        const storedMarketScheme = readPreference("stocks-assistant-color-scheme");
         const marketScheme = storedMarketScheme === "cn" ? "cn" : "intl";
+        const storedThemeColor = readPreference("stocks-assistant-theme-color");
+        const themeColor = ["blue", "violet", "teal", "green", "orange", "rose"].includes(storedThemeColor) ? storedThemeColor : "blue";
         document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
         document.documentElement.style.colorScheme = resolvedTheme;
         document.documentElement.dataset.colorScheme = marketScheme;
+        document.documentElement.dataset.themeColor = themeColor;
       })();
     </script>
     <div id="root"></div>

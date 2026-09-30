@@ -6,19 +6,39 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from app.constants.agent import (
+    _GROUPS as _GROUPS,
+)
+from app.constants.agent import (
+    _REFERENCE_KEYS as _REFERENCE_KEYS,
+)
+from app.constants.agent import (
+    _TRUNCATION_MARKER as _TRUNCATION_MARKER,
+)
+from app.constants.agent import (
+    MAX_BATCH_JSON_CHARS as MAX_BATCH_JSON_CHARS,
+)
+from app.constants.agent import (
+    MAX_ERROR_CHARS as MAX_ERROR_CHARS,
+)
+from app.constants.agent import (
+    MAX_ERROR_JSON_CHARS as MAX_ERROR_JSON_CHARS,
+)
+from app.constants.agent import (
+    MAX_METADATA_JSON_CHARS as MAX_METADATA_JSON_CHARS,
+)
+from app.constants.agent import (
+    MAX_REFERENCE_JSON_CHARS as MAX_REFERENCE_JSON_CHARS,
+)
+from app.constants.agent import (
+    MAX_RESPONSE_CHARS as MAX_RESPONSE_CHARS,
+)
+from app.constants.agent import (
+    MAX_TASK_RESPONSE_CHARS as MAX_TASK_RESPONSE_CHARS,
+)
 from app.core.tools.result_metadata import unique_metadata_items
 
-MAX_RESPONSE_CHARS = 18_000
-MAX_TASK_RESPONSE_CHARS = 6_000
-MAX_METADATA_JSON_CHARS = 16_000
 # 给工具结果外层协议和统计字段留余量，避免执行器从尾部截掉整条子任务。
-MAX_BATCH_JSON_CHARS = 46_000
-MAX_REFERENCE_JSON_CHARS = 6_000
-MAX_ERROR_JSON_CHARS = 4_000
-MAX_ERROR_CHARS = 500
-_GROUPS = ("evidence", "sources", "rendered_images")
-_REFERENCE_KEYS = ("evidence_ids", "source_ids", "rendered_image_ids")
-_TRUNCATION_MARKER = "\n[Response truncated]"
 
 
 def _json_size(value: Any) -> int:

@@ -18,6 +18,18 @@ import time
 import uuid
 from typing import Any
 
+from app.constants.agent import (
+    _CONTEXT_SUMMARY_SYSTEM_PROMPT as _CONTEXT_SUMMARY_SYSTEM_PROMPT,
+)
+from app.constants.agent import (
+    _CONTEXT_SUMMARY_USER_PROMPT as _CONTEXT_SUMMARY_USER_PROMPT,
+)
+from app.constants.agent import (
+    _REASONING_TRUNCATE_MARKER as _REASONING_TRUNCATE_MARKER,
+)
+from app.constants.agent import (
+    MAX_STORED_REASONING_CHARS as MAX_STORED_REASONING_CHARS,
+)
 from app.core.agent.context import (
     aggressive_trim_for_overflow,
     build_summary_messages,
@@ -44,20 +56,6 @@ from app.core.tools.result_metadata import ToolResultMetadata, normalize_tool_me
 logger = logging.getLogger("stocks-assistant.agent")
 
 # 存入对话历史的推理内容最大字符数（过长会截断为头+尾）
-MAX_STORED_REASONING_CHARS = 4 * 1024
-_REASONING_TRUNCATE_MARKER = "\n\n... [reasoning truncated, {omitted} chars omitted] ...\n\n"
-
-_CONTEXT_SUMMARY_SYSTEM_PROMPT = """你是一个对话压缩助手。请将对话历史压缩为简洁的要点摘要。
-
-要求：
-- 每条一行，用 "- " 开头
-- 只保留关键信息：用户需求、重要决策、已完成的操作、待办事项
-- 忽略闲聊和重复内容
-- 保持精炼，控制在 300 字以内"""
-
-_CONTEXT_SUMMARY_USER_PROMPT = """请压缩以下对话历史：
-
-{conversation}"""
 
 
 def _truncate_reasoning_for_storage(text: str) -> str:

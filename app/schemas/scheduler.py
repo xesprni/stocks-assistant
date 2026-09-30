@@ -1,9 +1,8 @@
 """调度系统 API Schema"""
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
-
+from app.schemas.base import AppModel as BaseModel
 from app.schemas.notifications import TelegramPhotos
 
 
@@ -73,3 +72,21 @@ class TaskRunListResponse(BaseModel):
 
     runs: list[TaskRunResponse]
     total: int
+
+
+class CronSchedule(BaseModel):
+    type: Literal["cron"] = "cron"
+    expression: str
+
+
+class IntervalSchedule(BaseModel):
+    type: Literal["interval"] = "interval"
+    seconds: int
+
+
+class OnceSchedule(BaseModel):
+    type: Literal["once"] = "once"
+    run_at: str
+
+
+type TaskSchedule = CronSchedule | IntervalSchedule | OnceSchedule

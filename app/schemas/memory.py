@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from pydantic import BaseModel
+from app.schemas.base import AppModel as BaseModel
+from app.schemas.common import StatusResponse
 
 
 class MemorySearchRequest(BaseModel):
@@ -49,3 +50,53 @@ class MemoryStatusResponse(BaseModel):
     embedding_provider: str  # 向量化服务商
     embedding_model: str  # 向量化模型
     search_mode: str  # 搜索模式
+
+
+class MemoryIndexDeleteResult(BaseModel):
+    deleted_chunks: int
+    deleted_index_files: int
+
+
+class MemoryDeleteResult(MemoryIndexDeleteResult):
+    deleted_file: bool
+
+
+class MemoryClearResult(MemoryIndexDeleteResult):
+    deleted_files: int
+
+
+class MemoryDeleteResponse(MemoryDeleteResult, StatusResponse):
+    pass
+
+
+class MemoryClearResponse(MemoryClearResult, StatusResponse):
+    pass
+
+
+class MemoryFileInfo(BaseModel):
+    path: str
+    size: int
+    modified: float
+    indexed_only: bool = False
+
+
+class MemoryFilesResponse(BaseModel):
+    files: list[MemoryFileInfo]
+
+
+class MemoryFileResponse(BaseModel):
+    path: str
+    content: str
+    size: int
+    indexed_only: bool = False
+
+
+class MemoryStorageStats(BaseModel):
+    chunks: int
+    files: int
+
+
+class MemorySummaryStatus(BaseModel):
+    last_flush_time: str | None
+    today_file: str
+    main_file: str

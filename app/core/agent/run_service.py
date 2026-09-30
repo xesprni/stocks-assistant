@@ -13,11 +13,22 @@ from array import array
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
+from app.constants.agent import (
+    _TERMINAL as _TERMINAL,
+)
+from app.constants.agent import (
+    CHAT_RUN_RETENTION_SECONDS,
+    CHAT_SHUTDOWN_TIMEOUT_SECONDS,
+    CHAT_STREAM_HEARTBEAT_SECONDS,
+    MAX_ACTIVE_CHAT_RUNS,
+    MAX_CACHED_CHAT_RUNS,
+)
+from app.schemas import ChatActiveRun
+
 if TYPE_CHECKING:
     from app.core.agent.input_service import ChatInputChannel
 
 logger = logging.getLogger("stocks-assistant.agent.runs")
-_TERMINAL = {"agent_end": "done", "agent_stopped": "cancelled", "error": "error"}
 
 
 class ChatRunConflict(ValueError):
@@ -50,15 +61,15 @@ class ChatRun:
         self.input_channel: ChatInputChannel | None = None
         self.result_data: dict[str, Any] = {}
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self) -> ChatActiveRun:
         with self._condition:
-            return {
-                "run_id": self.id,
-                "request_id": self.request_id,
-                "session_id": self.session_id,
-                "user_message": self.user_message,
-                "status": self.status,
-            }
+            return ChatActiveRun(
+                run_id=self.id,
+                request_id=self.request_id,
+                session_id=self.session_id,
+                user_message=self.user_message,
+                status=self.status,
+            )
 
     def publish(self, event: dict[str, Any]) -> None:
         with self._condition:
@@ -81,7 +92,7 @@ class ChatRun:
             self._condition.wait_for(lambda: self.completed_at is not None or self._closed)
             return self.result_data
 
-    def cancel(self) -> dict[str, Any]:
+    def cancel(self) -> ChatActiveRun:
         with self._condition:
             if self.completed_at is None:
                 self.status = "stopping"
@@ -99,7 +110,7 @@ class ChatRun:
                 lambda: (
                     len(self._offsets) - 1 > cursor or self.completed_at is not None or self._closed
                 ),
-                timeout=10,
+                timeout=CHAT_STREAM_HEARTBEAT_SECONDS,
             )
             if self._closed:
                 return [], True
@@ -143,7 +154,11 @@ class ChatRun:
 
 class ChatRunManager:
     def __init__(
-        self, *, retention_seconds: float = 3600, max_active: int = 16, max_runs: int = 256
+        self,
+        *,
+        retention_seconds: float = CHAT_RUN_RETENTION_SECONDS,
+        max_active: int = MAX_ACTIVE_CHAT_RUNS,
+        max_runs: int = MAX_CACHED_CHAT_RUNS,
     ):
         # 同一把锁保护幂等启动及会话清空/删除，避免后台任务向已清空历史回写。
         self.lock = threading.RLock()
@@ -234,7 +249,11 @@ class ChatRunManager:
                 if initialize:
                     initialize(run)
                 run.publish(
-                    {"type": "run_started", "timestamp": time.time(), "data": run.summary()}
+                    {
+                        "type": "run_started",
+                        "timestamp": time.time(),
+                        "data": run.summary().model_dump(),
+                    }
                 )
             except Exception:
                 run.close()
@@ -312,7 +331,7 @@ class ChatRunManager:
             self._reaper = None
             self._shutdown.clear()
 
-    def close(self, timeout: float = 5.0) -> None:
+    def close(self, timeout: float = CHAT_SHUTDOWN_TIMEOUT_SECONDS) -> None:
         with self.lock:
             self._shutdown.set()
             for run in self._runs.values():

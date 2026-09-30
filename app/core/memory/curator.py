@@ -9,45 +9,15 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.constants.memory import (
+    ALLOWED_CATEGORIES as ALLOWED_CATEGORIES,
+)
+from app.constants.memory import (
+    CURATOR_SYSTEM_PROMPT as CURATOR_SYSTEM_PROMPT,
+)
 from app.core.agent.models import LLMRequest
 
 logger = logging.getLogger("stocks-assistant.memory.curator")
-
-
-ALLOWED_CATEGORIES = {
-    "user_preference",
-    "watchlist_interest",
-    "analysis_style",
-    "risk_profile",
-    "portfolio_constraint",
-    "persistent_fact",
-}
-
-
-CURATOR_SYSTEM_PROMPT = """You are a memory curator for a stock, finance, and market-analysis assistant.
-
-Decide whether the latest exchange contains durable information worth saving for future conversations.
-Save only stable, reusable facts or preferences. Do not save ordinary answers, one-off analysis, current prices,
-short-term news, transient market opinions, or anything the assistant inferred without user confirmation.
-
-Allowed categories:
-- user_preference
-- watchlist_interest
-- analysis_style
-- risk_profile
-- portfolio_constraint
-- persistent_fact
-
-Return only one JSON object with these fields:
-{
-  "should_save": boolean,
-  "importance": number,
-  "confidence": number,
-  "category": string,
-  "memory": string,
-  "reason": string
-}
-"""
 
 
 @dataclass

@@ -16,6 +16,9 @@ import json
 import re
 from typing import Any
 
+from app.constants.skills import (
+    _KNOWN_NS as _KNOWN_NS,
+)
 from app.core.skills.types import SkillInstallSpec, SkillMetadata
 
 
@@ -103,9 +106,6 @@ def parse_metadata(frontmatter: dict[str, Any]) -> SkillMetadata | None:
         requires=requires,
         install=install_specs,
     )
-
-
-_KNOWN_NS = {"cowagent", "openclaw"}
 
 
 def _unwrap_namespace(metadata: dict) -> dict:

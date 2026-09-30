@@ -7,9 +7,11 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
-from app.schemas.evidence import Evidence, SourceReference
-
-LONGBRIDGE_DOCS_URL = "https://open.longbridge.com/docs"
+from app.constants.tools import (
+    LONGBRIDGE_DOCS_URL as LONGBRIDGE_DOCS_URL,
+)
+from app.core.serialization import to_payload
+from app.schemas.evidence import Evidence, EvidenceMetadata, SourceReference
 
 
 def utc_now_iso() -> str:
@@ -61,9 +63,9 @@ def evidence_for_source(
     return Evidence(id=evidence_id, source=source, excerpt=excerpt, data=data or {})
 
 
-def evidence_metadata(items: Iterable[Evidence]) -> dict[str, Any]:
-    values = [item.model_dump(mode="json") for item in items]
-    return {"evidence": values, "sources": [item["source"] for item in values]}
+def evidence_metadata(items: Iterable[Evidence]) -> EvidenceMetadata:
+    values = list(items)
+    return EvidenceMetadata(evidence=values, sources=[item.source for item in values])
 
 
 def infer_result_timestamp(data: Any) -> tuple[str | None, str | None, bool]:
@@ -82,7 +84,7 @@ def longbridge_evidence(
     data: Any,
     symbols: Iterable[str] = (),
     source_type: str = "market_data",
-) -> dict[str, Any]:
+) -> EvidenceMetadata:
     as_of, fetched_at, stale = infer_result_timestamp(data)
     normalized = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     symbol_text = ",".join(normalized) or None
@@ -99,12 +101,15 @@ def longbridge_evidence(
     return evidence_metadata([evidence_for_source(source)])
 
 
-def merge_evidence_metadata(*metadata_values: dict[str, Any] | None) -> dict[str, Any]:
+def merge_evidence_metadata(
+    *metadata_values: dict[str, Any] | EvidenceMetadata | None,
+) -> EvidenceMetadata:
     evidence: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     seen_evidence: set[str] = set()
     seen_sources: set[str] = set()
-    for metadata in metadata_values:
+    for value in metadata_values:
+        metadata = to_payload(value)
         if not metadata:
             continue
         for item in metadata.get("evidence", []):
@@ -117,7 +122,10 @@ def merge_evidence_metadata(*metadata_values: dict[str, Any] | None) -> dict[str
             if item_id and item_id not in seen_sources:
                 seen_sources.add(item_id)
                 sources.append(item)
-    return {"evidence": evidence, "sources": sources}
+    return EvidenceMetadata(
+        evidence=[Evidence.model_validate(item) for item in evidence],
+        sources=[SourceReference.model_validate(item) for item in sources],
+    )
 
 
 def _string_or_none(value: Any) -> str | None:

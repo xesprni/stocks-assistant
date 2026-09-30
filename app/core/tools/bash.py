@@ -11,13 +11,16 @@ import subprocess
 import time
 from typing import Any
 
+from app.constants.tools import (
+    MAX_BYTES as MAX_BYTES,
+)
+from app.constants.tools import (
+    MAX_LINES as MAX_LINES,
+)
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.call_context import AgentCancelledError, ToolCallContext
 
 logger = logging.getLogger("stocks-assistant.tools.bash")
-
-MAX_LINES = 500
-MAX_BYTES = 30 * 1024
 
 
 class BashTool(BaseTool):

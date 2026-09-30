@@ -9,6 +9,14 @@ from typing import Any
 from croniter import croniter
 
 from app.schemas.notifications import validate_telegram_photos
+from app.schemas.scheduler import (
+    CronSchedule,
+    IntervalSchedule,
+    OnceSchedule,
+    TaskResponse,
+    TaskRunResponse,
+    TaskSchedule,
+)
 
 
 def notification_metadata(
@@ -28,34 +36,36 @@ def notification_metadata(
     return result
 
 
-def task_to_response(task: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": task.get("id", ""),
-        "name": task.get("name", ""),
-        "prompt": task.get("prompt", ""),
-        "schedule": schedule_to_response_value(task.get("schedule", {})),
-        "enabled": task.get("enabled", True),
-        "last_run": task.get("last_run_at"),
-        "next_run": task.get("next_run_at"),
-        "run_count": task.get("run_count", 0),
-        "last_error": task.get("last_error"),
-        "metadata": task.get("metadata"),
-    }
+def task_to_response(task: dict[str, Any]) -> TaskResponse:
+    return TaskResponse(
+        id=task.get("id", ""),
+        name=task.get("name", ""),
+        prompt=task.get("prompt", ""),
+        schedule=schedule_to_response_value(task.get("schedule", {})),
+        enabled=task.get("enabled", True),
+        last_run=task.get("last_run_at"),
+        next_run=task.get("next_run_at"),
+        run_count=task.get("run_count", 0),
+        last_error=task.get("last_error"),
+        metadata=task.get("metadata"),
+    )
 
 
-def run_to_response(run: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": run.get("id", ""),
-        "task_id": run.get("task_id", ""),
-        "task_name": run.get("task_name", ""),
-        "trigger": run.get("trigger", "schedule"),
-        "status": run.get("status", ""),
-        "started_at": run.get("started_at", ""),
-        "ended_at": run.get("ended_at"),
-        "duration_ms": int(run.get("duration_ms", 0) or 0),
-        "output_preview": run.get("output_preview", ""),
-        "error": run.get("error"),
-    }
+def run_to_response(run: dict[str, Any] | TaskRunResponse) -> TaskRunResponse:
+    if isinstance(run, TaskRunResponse):
+        return run
+    return TaskRunResponse(
+        id=run.get("id", ""),
+        task_id=run.get("task_id", ""),
+        task_name=run.get("task_name", ""),
+        trigger=run.get("trigger", "schedule"),
+        status=run.get("status", ""),
+        started_at=run.get("started_at", ""),
+        ended_at=run.get("ended_at"),
+        duration_ms=int(run.get("duration_ms", 0) or 0),
+        output_preview=run.get("output_preview", ""),
+        error=run.get("error"),
+    )
 
 
 def schedule_to_response_value(schedule: dict[str, Any]) -> str:
@@ -64,8 +74,8 @@ def schedule_to_response_value(schedule: dict[str, Any]) -> str:
     return str(schedule)
 
 
-def parse_schedule_expression(schedule_str: str) -> dict[str, Any]:
-    """Parse API-style schedule text into an internal schedule dict.
+def parse_schedule_expression(schedule_str: str) -> TaskSchedule:
+    """Parse API-style schedule text into a named schedule model.
 
     Preserves the existing API behavior of falling back to an immediate one-shot
     schedule when the expression cannot be interpreted.
@@ -73,7 +83,7 @@ def parse_schedule_expression(schedule_str: str) -> dict[str, Any]:
 
     text = str(schedule_str or "").strip()
     if not text or text.lower() in {"once", "now"}:
-        return {"type": "once", "run_at": datetime.now().isoformat()}
+        return OnceSchedule(type="once", run_at=datetime.now().isoformat())
 
     relative = _parse_relative_once(text)
     if relative:
@@ -81,7 +91,7 @@ def parse_schedule_expression(schedule_str: str) -> dict[str, Any]:
 
     try:
         croniter(text)
-        return {"type": "cron", "expression": text}
+        return CronSchedule(type="cron", expression=text)
     except Exception:
         pass
 
@@ -91,14 +101,14 @@ def parse_schedule_expression(schedule_str: str) -> dict[str, Any]:
 
     try:
         datetime.fromisoformat(text)
-        return {"type": "once", "run_at": text}
+        return OnceSchedule(type="once", run_at=text)
     except Exception:
         pass
 
-    return {"type": "once", "run_at": datetime.now().isoformat()}
+    return OnceSchedule(type="once", run_at=datetime.now().isoformat())
 
 
-def parse_schedule_components(schedule_type: str, schedule_value: str) -> dict[str, Any] | None:
+def parse_schedule_components(schedule_type: str, schedule_value: str) -> TaskSchedule | None:
     """Parse the legacy tool schedule_type/schedule_value pair."""
 
     stype = str(schedule_type or "").strip().lower()
@@ -108,13 +118,13 @@ def parse_schedule_components(schedule_type: str, schedule_value: str) -> dict[s
             croniter(svalue)
         except Exception:
             return None
-        return {"type": "cron", "expression": svalue}
+        return CronSchedule(type="cron", expression=svalue)
     if stype == "interval":
         try:
             seconds = int(svalue)
         except ValueError:
             return None
-        return {"type": "interval", "seconds": seconds} if seconds > 0 else None
+        return IntervalSchedule(type="interval", seconds=seconds) if seconds > 0 else None
     if stype == "once":
         parsed = _parse_relative_once(svalue)
         if parsed:
@@ -123,11 +133,11 @@ def parse_schedule_components(schedule_type: str, schedule_value: str) -> dict[s
             datetime.fromisoformat(svalue)
         except Exception:
             return None
-        return {"type": "once", "run_at": svalue}
+        return OnceSchedule(type="once", run_at=svalue)
     return None
 
 
-def _parse_relative_once(text: str) -> dict[str, Any] | None:
+def _parse_relative_once(text: str) -> TaskSchedule | None:
     match = re.fullmatch(r"\+(\d+)([smhd])", text)
     if not match:
         return None
@@ -139,13 +149,13 @@ def _parse_relative_once(text: str) -> dict[str, Any] | None:
         "h": timedelta(hours=amount),
         "d": timedelta(days=amount),
     }[unit]
-    return {"type": "once", "run_at": (datetime.now() + delta).isoformat()}
+    return OnceSchedule(type="once", run_at=(datetime.now() + delta).isoformat())
 
 
-def _parse_interval(text: str) -> dict[str, Any] | None:
+def _parse_interval(text: str) -> TaskSchedule | None:
     if text.isdigit():
         seconds = int(text)
-        return {"type": "interval", "seconds": seconds} if seconds > 0 else None
+        return IntervalSchedule(type="interval", seconds=seconds) if seconds > 0 else None
 
     if not text.startswith("every "):
         return None
@@ -171,4 +181,4 @@ def _parse_interval(text: str) -> dict[str, Any] | None:
     }
     multiplier = multipliers.get(unit, 1)
     seconds = value * multiplier
-    return {"type": "interval", "seconds": seconds} if seconds > 0 else None
+    return IntervalSchedule(type="interval", seconds=seconds) if seconds > 0 else None

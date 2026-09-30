@@ -14,6 +14,7 @@ import pytest
 
 from app.core.rendering.document import MAX_LOGICAL_HEIGHT
 from app.core.rendering.service import RenderImageService
+from app.core.serialization import to_payload
 from app.schemas.rendering import RenderImageRequest, RenderSnapshot
 
 pytestmark = pytest.mark.skipif(
@@ -47,20 +48,22 @@ def test_long_chinese_svg_report_exports_native_png_and_exact_crops(
         "<p>第一季度 120 万元，第二季度 180 万元。</p></section>"
         for index, shade in enumerate(["eaf4ff", "f0f9ee", "fff4e5", "f5efff"], start=1)
     )
-    result = renderer.render(
-        RenderImageRequest(
-            html=(
-                '<h1>本地中文投研图表</h1><svg viewBox="0 0 700 240" '
-                'xmlns="http://www.w3.org/2000/svg" aria-label="季度营业收入，单位万元">'
-                '<rect x="30" y="100" width="200" height="100" fill="#1463bf"/>'
-                '<rect x="350" y="50" width="200" height="150" fill="#00865a"/>'
-                '<text x="60" y="85">120 万元</text>'
-                '<text x="380" y="35">180 万元</text>'
-                '<text x="40" y="232" font-size="24">第一季度</text>'
-                '<text x="360" y="232" font-size="24">第二季度</text></svg>'
-                f'{sections}<div style="height:12px;background:#e02852"></div>'
-            ),
-            snapshot=snapshot,
+    result = to_payload(
+        renderer.render(
+            RenderImageRequest(
+                html=(
+                    '<h1>本地中文投研图表</h1><svg viewBox="0 0 700 240" '
+                    'xmlns="http://www.w3.org/2000/svg" aria-label="季度营业收入，单位万元">'
+                    '<rect x="30" y="100" width="200" height="100" fill="#1463bf"/>'
+                    '<rect x="350" y="50" width="200" height="150" fill="#00865a"/>'
+                    '<text x="60" y="85">120 万元</text>'
+                    '<text x="380" y="35">180 万元</text>'
+                    '<text x="40" y="232" font-size="24">第一季度</text>'
+                    '<text x="360" y="232" font-size="24">第二季度</text></svg>'
+                    f'{sections}<div style="height:12px;background:#e02852"></div>'
+                ),
+                snapshot=snapshot,
+            )
         )
     )
 
@@ -112,17 +115,19 @@ def test_long_chinese_svg_report_exports_native_png_and_exact_crops(
 def test_layout_reports_small_text_overlap_hidden_content_and_top_clipping(
     renderer: RenderImageService,
 ) -> None:
-    result = renderer.render(
-        RenderImageRequest(
-            html=(
-                '<div style="position:absolute;top:-14px;left:40px">顶部裁切</div>'
-                '<h1>排版风险样例</h1><p style="font-size:18px">字号过小的来源信息</p>'
-                '<section style="position:relative;height:150px">'
-                '<span style="position:absolute;left:0;top:10px">重叠标题一</span>'
-                '<span style="position:absolute;left:20px;top:14px">重叠标题二</span>'
-                '</section><div style="height:70px;overflow:hidden">'
-                '<p style="height:200px">被裁切的内容<br>第二行<br>第三行</p></div>'
-                '<div style="height:100px"></div>'
+    result = to_payload(
+        renderer.render(
+            RenderImageRequest(
+                html=(
+                    '<div style="position:absolute;top:-14px;left:40px">顶部裁切</div>'
+                    '<h1>排版风险样例</h1><p style="font-size:18px">字号过小的来源信息</p>'
+                    '<section style="position:relative;height:150px">'
+                    '<span style="position:absolute;left:0;top:10px">重叠标题一</span>'
+                    '<span style="position:absolute;left:20px;top:14px">重叠标题二</span>'
+                    '</section><div style="height:70px;overflow:hidden">'
+                    '<p style="height:200px">被裁切的内容<br>第二行<br>第三行</p></div>'
+                    '<div style="height:100px"></div>'
+                )
             )
         )
     )
@@ -143,7 +148,7 @@ def test_horizontal_overflow_fails_without_publishing_artifacts(
     renderer: RenderImageService, tmp_path: Path, html: str
 ) -> None:
     with pytest.raises(RuntimeError, match="Horizontal overflow"):
-        renderer.render(RenderImageRequest(html=html))
+        to_payload(renderer.render(RenderImageRequest(html=html)))
     assert list((tmp_path / "artifacts/renderings").iterdir()) == []
 
 
@@ -163,7 +168,7 @@ def test_unavailable_assets_fail_without_publishing_artifacts(
     renderer: RenderImageService, tmp_path: Path, html: str, error: str
 ) -> None:
     with pytest.raises(RuntimeError, match=error):
-        renderer.render(RenderImageRequest(html=html))
+        to_payload(renderer.render(RenderImageRequest(html=html)))
     assert list((tmp_path / "artifacts/renderings").iterdir()) == []
 
 
@@ -186,8 +191,10 @@ def test_failed_embedded_font_identifies_only_the_failed_weight(
         # 三个字重都参与实际布局，确保 document.fonts.ready 触发各自字体加载。
         samples.append(f'<p style="font-family:RenderFontProbe;font-weight:{weight}">A</p>')
     with pytest.raises(RuntimeError, match="An embedded font failed to load") as error:
-        renderer.render(
-            RenderImageRequest(html=f"<style>{''.join(faces)}</style>{''.join(samples)}")
+        to_payload(
+            renderer.render(
+                RenderImageRequest(html=f"<style>{''.join(faces)}</style>{''.join(samples)}")
+            )
         )
 
     message = str(error.value)
@@ -215,8 +222,10 @@ def test_embedded_font_error_details_are_bounded_and_single_line(
         )
         samples.append(f"<p style='font-family:\"{family}\"'>A</p>")
     with pytest.raises(RuntimeError, match="An embedded font failed to load") as error:
-        renderer.render(
-            RenderImageRequest(html=f"<style>{''.join(faces)}</style>{''.join(samples)}")
+        to_payload(
+            renderer.render(
+                RenderImageRequest(html=f"<style>{''.join(faces)}</style>{''.join(samples)}")
+            )
         )
 
     message = str(error.value)
@@ -235,9 +244,11 @@ def test_excessive_height_is_rejected_before_export(
     renderer: RenderImageService, tmp_path: Path
 ) -> None:
     with pytest.raises(RuntimeError, match="12000 CSS px height limit"):
-        renderer.render(
-            RenderImageRequest(
-                html=f'<div style="height:{MAX_LOGICAL_HEIGHT + 1}px">过长报告</div>'
+        to_payload(
+            renderer.render(
+                RenderImageRequest(
+                    html=f'<div style="height:{MAX_LOGICAL_HEIGHT + 1}px">过长报告</div>'
+                )
             )
         )
     assert list((tmp_path / "artifacts/renderings").iterdir()) == []
@@ -245,8 +256,10 @@ def test_excessive_height_is_rejected_before_export(
 
 def test_large_document_reports_bounded_partial_inspection(renderer: RenderImageService) -> None:
     cells = "".join('<span style="font-size:24px">格</span>' for _ in range(3100))
-    result = renderer.render(
-        RenderImageRequest(html=f'<div style="line-height:1.2">{cells}</div>', scale=1)
+    result = to_payload(
+        renderer.render(
+            RenderImageRequest(html=f'<div style="line-height:1.2">{cells}</div>', scale=1)
+        )
     )
     stats = result["layout"]["stats"]
     assert stats["truncated"] is True
@@ -265,10 +278,12 @@ def test_short_report_uses_content_height_and_checks_raster_resolution(
     buffer = io.BytesIO()
     Image.new("RGB", (raster_width, raster_width // 2), "#1463bf").save(buffer, format="PNG")
     data = base64.b64encode(buffer.getvalue()).decode("ascii")
-    result = renderer.render(
-        RenderImageRequest(
-            html=f'<img style="display:block;width:100px;height:50px" '
-            f'src="data:image/png;base64,{data}" alt="像素质量样例">'
+    result = to_payload(
+        renderer.render(
+            RenderImageRequest(
+                html=f'<img style="display:block;width:100px;height:50px" '
+                f'src="data:image/png;base64,{data}" alt="像素质量样例">'
+            )
         )
     )
     assert result["logical_height"] == 114  # 50px 图片 + 上下各 32px 默认内边距。
@@ -281,13 +296,15 @@ def test_fractional_content_height_keeps_the_last_rendered_pixel(
 ) -> None:
     from PIL import Image
 
-    result = renderer.render(
-        RenderImageRequest(
-            html=(
-                "<style>body {padding:0}</style>"
-                '<svg viewBox="0 0 800 114.3" style="display:block;height:114.3px">'
-                '<rect width="800" height="114.3" fill="#1463bf"/>'
-                '<rect y="113.3" width="800" height="1" fill="#e02852"/></svg>'
+    result = to_payload(
+        renderer.render(
+            RenderImageRequest(
+                html=(
+                    "<style>body {padding:0}</style>"
+                    '<svg viewBox="0 0 800 114.3" style="display:block;height:114.3px">'
+                    '<rect width="800" height="114.3" fill="#1463bf"/>'
+                    '<rect y="113.3" width="800" height="1" fill="#e02852"/></svg>'
+                )
             )
         )
     )

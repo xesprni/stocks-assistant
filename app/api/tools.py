@@ -4,11 +4,13 @@
 """
 
 from contextlib import ExitStack
+from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from app.config import get_effective_settings
+from app.constants.security import Permission
 from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 from app.core.tools.call_context import ToolCallContext
 from app.core.tools.permissions import is_tool_allowed_for_agent, mcp_server_name_from_tool
@@ -25,14 +27,16 @@ router = APIRouter()
 def get_rendered_image(
     artifact_id: str,
     filename: str,
-    current_user: CurrentUser = Depends(require_permissions("chat:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_READ)),
+) -> FileResponse:
     settings = get_effective_settings(current_user.id)
     try:
         workspace = user_workspace_dir(settings.workspace_dir, current_user.id)
         path = rendered_image_path(workspace, artifact_id, filename)
     except (OSError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=404, detail="Rendered image not found") from exc
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Rendered image not found"
+        ) from exc
     return FileResponse(
         path,
         media_type="image/png",
@@ -54,7 +58,9 @@ def _tool_manager_for_user(current_user: CurrentUser, settings, memory_manager=N
 
 
 @router.get("", response_model=ToolListResponse)
-def list_tools(current_user: CurrentUser = Depends(require_permissions("tools:read"))):
+def list_tools(
+    current_user: CurrentUser = Depends(require_permissions(Permission.TOOLS_READ)),
+) -> ToolListResponse:
     settings = get_effective_settings(current_user.id)
     mgr = _tool_manager_for_user(current_user, settings)
     tools = mgr.get_all_tools()
@@ -80,8 +86,8 @@ def list_tools(current_user: CurrentUser = Depends(require_permissions("tools:re
 def execute_tool(
     name: str,
     request: ToolExecuteRequest,
-    current_user: CurrentUser = Depends(require_permissions("tools:execute")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.TOOLS_EXECUTE)),
+) -> ToolExecuteResponse:
     import time
 
     from app import deps
@@ -103,7 +109,7 @@ def execute_tool(
             )
             tool = next((item for item in manager.get_tools() if item.name == name), None)
         if not tool:
-            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=f"Tool '{name}' not found")
 
         context = ToolCallContext(
             tool_name=name,

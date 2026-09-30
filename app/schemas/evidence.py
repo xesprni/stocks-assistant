@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import AppModel as BaseModel
 
 
 class SourceReference(BaseModel):
@@ -37,3 +39,8 @@ class ClaimCitation(BaseModel):
     claim: str = ""
     evidence_ids: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
+
+
+class EvidenceMetadata(BaseModel):
+    evidence: list[Evidence] = Field(default_factory=list)
+    sources: list[SourceReference] = Field(default_factory=list)

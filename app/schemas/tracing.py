@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import AppModel as BaseModel
 
 
 class TraceEvent(BaseModel):
@@ -38,3 +40,8 @@ class TraceSessionResponse(BaseModel):
     session_id: str
     runs: list[TraceRun] = Field(default_factory=list)
     total: int = 0
+
+
+class TraceRunCreated(BaseModel):
+    run_id: str
+    root_event_id: str

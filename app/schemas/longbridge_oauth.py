@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from app.schemas.base import AppModel as BaseModel
 
 
 class LongbridgeOAuthStatus(BaseModel):

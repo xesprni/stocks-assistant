@@ -1,12 +1,14 @@
 """Dashboard aggregate API."""
 
 from functools import partial
+from http import HTTPStatus
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_effective_settings
+from app.constants.security import Permission
 from app.core.dashboard.service import DashboardService
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
@@ -39,8 +41,8 @@ def _service() -> DashboardService:
 @router.get("", response_model=DashboardResponse)
 async def get_dashboard(
     mode: DashboardMode = "full",
-    current_user: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> DashboardResponse:
     """Return Dashboard data while isolating failures by module."""
     payload = await run_in_threadpool(
         partial(
@@ -50,13 +52,13 @@ async def get_dashboard(
             mode=mode,
         )
     )
-    return DashboardResponse(**payload)
+    return DashboardResponse.model_validate(payload)
 
 
 @router.get("/market", response_model=DashboardMarketModule)
 async def get_dashboard_market(
-    current_user: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> DashboardMarketModule:
     """Return only the Dashboard market module."""
     payload = await run_in_threadpool(
         partial(
@@ -66,13 +68,13 @@ async def get_dashboard_market(
             mode="full",
         )
     )
-    return DashboardMarketModule(**payload)
+    return DashboardMarketModule.model_validate(payload)
 
 
 @router.get("/watchlist", response_model=DashboardWatchlistModule)
 async def get_dashboard_watchlist(
-    current_user: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> DashboardWatchlistModule:
     """Return only the Dashboard watchlist module."""
     payload = await run_in_threadpool(
         partial(
@@ -82,13 +84,13 @@ async def get_dashboard_watchlist(
             mode="full",
         )
     )
-    return DashboardWatchlistModule(**payload)
+    return DashboardWatchlistModule.model_validate(payload)
 
 
 @router.get("/portfolio", response_model=DashboardPortfolioModule)
 async def get_dashboard_portfolio(
-    current_user: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> DashboardPortfolioModule:
     """Return only the Dashboard portfolio module."""
     payload = await run_in_threadpool(
         partial(
@@ -98,14 +100,14 @@ async def get_dashboard_portfolio(
             mode="full",
         )
     )
-    return DashboardPortfolioModule(**payload)
+    return DashboardPortfolioModule.model_validate(payload)
 
 
 @router.get("/symbol-insights", response_model=DashboardSymbolInsightsResponse)
 async def get_dashboard_symbol_insights(
     symbol: str,
-    current_user: CurrentUser = Depends(require_permissions("fundamentals:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.FUNDAMENTALS_READ)),
+) -> DashboardSymbolInsightsResponse:
     """Return Longbridge disclosures, company, dividends, ratings and action data for one symbol."""
 
     service = get_fundamental_service()
@@ -118,7 +120,7 @@ async def get_dashboard_symbol_insights(
             )
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
     except LongbridgeUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return DashboardSymbolInsightsResponse(**payload)
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return DashboardSymbolInsightsResponse.model_validate(payload)

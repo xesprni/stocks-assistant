@@ -8,13 +8,26 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
+from app.constants.tracing import (
+    _SECRET_KEYS as _SECRET_KEYS,
+)
+from app.constants.tracing import (
+    _TOOL_CALL_NODE_TYPES as _TOOL_CALL_NODE_TYPES,
+)
+from app.constants.tracing import (
+    _TOOL_RESULT_NODE_TYPES as _TOOL_RESULT_NODE_TYPES,
+)
+from app.constants.tracing import (
+    _TRUNCATION_MARKER as _TRUNCATION_MARKER,
+)
+from app.constants.tracing import (
+    MAX_RESPONSE_PREVIEW_CHARS as MAX_RESPONSE_PREVIEW_CHARS,
+)
+from app.constants.tracing import (
+    MAX_TRACE_STRING_CHARS as MAX_TRACE_STRING_CHARS,
+)
+
 # 追踪会保存完整请求/响应片段，入库前统一截断大字段并脱敏常见凭据字段。
-MAX_TRACE_STRING_CHARS = 50_000
-MAX_RESPONSE_PREVIEW_CHARS = 1_000
-_TRUNCATION_MARKER = "\n\n[Trace payload truncated: {original} chars total]"
-_SECRET_KEYS = ("api_key", "authorization", "password", "secret", "token")
-_TOOL_CALL_NODE_TYPES = {"tool_call", "subagent_tool_call"}
-_TOOL_RESULT_NODE_TYPES = {"tool_result", "subagent_tool_result"}
 
 
 def _new_id() -> str:

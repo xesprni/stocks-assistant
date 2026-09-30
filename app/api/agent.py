@@ -11,10 +11,13 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from app.constants.common import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from app.constants.security import Permission
 from app.core.agent.executor import AgentCancelledError
 from app.core.agent.input_service import ChatInputService
 from app.core.agent.run_service import ChatRun, ChatRunCapacityError, ChatRunConflict, chat_runs
@@ -22,15 +25,21 @@ from app.core.security import CurrentUser, require_permissions
 from app.core.session import ChatSessionNotFound
 from app.deps import get_memory_manager_for_user, get_session_store
 from app.schemas import (
+    ChatActiveRun,
     ChatRequest,
     ChatResponse,
     ChatSessionCreateRequest,
     ChatSessionDetail,
     ChatSessionListResponse,
+    ChatSessionMessage,
     ChatSessionSummary,
     ChatSessionUpdateRequest,
+    DeleteSessionsResponse,
+    ResumeInputsResponse,
+    StoredChatSession,
 )
 from app.schemas.chat_inputs import ChatInput, ChatInputList, ChatInputRequest
+from app.schemas.common import DeleteResponse, MessageResponse, StatusResponse
 
 router = APIRouter()
 logger = logging.getLogger("stocks-assistant.agent.api")
@@ -119,13 +128,13 @@ def _agent_message(role: str, content: str) -> dict:
     return {"role": role, "content": [{"type": "text", "text": content}]}
 
 
-def _init_agent(request: ChatRequest, history_messages: list[dict]):
+def _init_agent(request: ChatRequest, history_messages: list[ChatSessionMessage]):
     agent = _build_agent(request.user_id)
     for msg in history_messages:
-        role = msg.get("role")
-        content = msg.get("content", "")
+        role = msg.role
+        content = msg.content
         if role in ("user", "assistant") and content:
-            rendered_images = (msg.get("metadata") or {}).get("rendered_images")
+            rendered_images = (msg.metadata or {}).get("rendered_images")
             if rendered_images:
                 # 历史仅注入产物引用；需要再次看图时由模型显式调用 view_image。
                 content += (
@@ -137,16 +146,18 @@ def _init_agent(request: ChatRequest, history_messages: list[dict]):
     return agent
 
 
-def _assert_session_owner(session: dict, user: CurrentUser) -> None:
-    owner = session.get("user_id")
+def _assert_session_owner(
+    session: StoredChatSession | ChatSessionDetail, user: CurrentUser
+) -> None:
+    owner = session.user_id
     if owner and owner != user.id and not user.is_admin:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found")
 
 
-def _assert_input_owner(session: dict, user: CurrentUser) -> None:
+def _assert_input_owner(session: StoredChatSession | ChatSessionDetail, user: CurrentUser) -> None:
     # 输入会在用户自己的凭据/工具环境执行，管理员也不能向其他用户会话注入指令。
-    if session.get("user_id") != user.id:
-        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user.id:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found")
 
 
 def _input_service() -> ChatInputService:
@@ -158,13 +169,16 @@ def _input_service() -> ChatInputService:
 def _assert_session_idle(session_id: str) -> None:
     if chat_runs.active_for_session(session_id):
         raise HTTPException(
-            status_code=409, detail="Stop the active run before changing this session"
+            status_code=HTTPStatus.CONFLICT,
+            detail="Stop the active run before changing this session",
         )
 
 
-def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list[dict]]:
+def _prepare_session(
+    request: ChatRequest, user: CurrentUser
+) -> tuple[str, list[ChatSessionMessage]]:
     store = get_session_store()
-    history_messages: list[dict] = []
+    history_messages: list[ChatSessionMessage] = []
 
     if request.session_id:
         try:
@@ -176,7 +190,9 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
             else:
                 history_messages = store.get_messages(request.session_id)
         except ChatSessionNotFound:
-            raise HTTPException(status_code=404, detail="Session not found") from None
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND, detail="Session not found"
+            ) from None
         return request.session_id, history_messages
 
     session = store.create_session(
@@ -189,9 +205,9 @@ def _prepare_session(request: ChatRequest, user: CurrentUser) -> tuple[str, list
             content = msg.get("content", "")
             if role in ("user", "assistant") and content:
                 history_messages.append(
-                    store.append_message(session["id"], role, content, {"source": "legacy_history"})
+                    store.append_message(session.id, role, content, {"source": "legacy_history"})
                 )
-    return session["id"], history_messages
+    return session.id, history_messages
 
 
 def _persist_exchange(
@@ -225,14 +241,14 @@ def _persist_exchange(
     )
     if was_empty:
         store.update_title(session_id, _title_from_text(user_message))
-    return user_msg["id"], assistant_msg["id"]
+    return user_msg.id, assistant_msg.id
 
 
-def _session_or_404(session_id: str) -> dict:
+def _session_or_404(session_id: str) -> ChatSessionDetail:
     try:
         return get_session_store().get_detail(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found") from None
 
 
 def _start_trace(session_id: str, user_message: str, user_id: str | None = None):
@@ -282,7 +298,7 @@ def _complete_exchange(
     session_id: str,
     response: str,
     sources: list[dict],
-    history_messages: list[dict],
+    history_messages: list[ChatSessionMessage],
     recorder,
     rendered_images: list[dict] | None = None,
     applied_inputs: list[dict] | None = None,
@@ -322,13 +338,17 @@ def _complete_exchange(
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(
-    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
-):
+    request: ChatRequest,
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ChatResponse:
     # 同步与 SSE 共用运行槽位；请求线程等待结果，其他请求仍可排队、补充或停止。
     run = _start_chat_run(request, current_user)
     result = run.wait_result()
     if run.status != "done":
-        raise HTTPException(status_code=500, detail=result.get("error", "Agent run cancelled"))
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail=result.get("error", "Agent run cancelled"),
+        )
     return ChatResponse(
         response=result.get("final_response", ""),
         session_id=run.session_id,
@@ -338,7 +358,9 @@ def chat(
     )
 
 
-def _run_stream_chat(request: ChatRequest, run: ChatRun, history_messages: list[dict]) -> None:
+def _run_stream_chat(
+    request: ChatRequest, run: ChatRun, history_messages: list[ChatSessionMessage]
+) -> None:
     recorder = None
     reasoning_notice_sent = False
     service = run.input_channel.service if run.input_channel else _input_service()
@@ -451,7 +473,7 @@ def _start_queued_input(item: dict, user_id: str, service: ChatInputService) -> 
     def prepare():
         # 队列直到轮到自己才读取历史，因此下一轮一定包含上一轮最终回复和补充输入。
         session = service.store.get_session(item["session_id"])
-        if session["user_id"] != user_id:
+        if session.user_id != user_id:
             raise ChatRunConflict("Session ownership changed")
         history = service.store.get_messages(item["session_id"])
         return item["session_id"], lambda run: _run_stream_chat(request, run, history)
@@ -471,7 +493,7 @@ def _stream_response(run: ChatRun, after_event_id: int) -> StreamingResponse:
     try:
         run.validate_cursor(after_event_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
     return StreamingResponse(
         run.events(after_event_id),
         media_type="text/event-stream",
@@ -491,7 +513,9 @@ def _start_chat_run(request: ChatRequest, current_user: CurrentUser) -> ChatRun:
         try:
             _assert_input_owner(get_session_store().get_session(request.session_id), current_user)
         except ChatSessionNotFound:
-            raise HTTPException(status_code=404, detail="Session not found") from None
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND, detail="Session not found"
+            ) from None
     # 首包丢失也按请求 ID 接回原任务，不能因重连再次运行有副作用的工具。
     fingerprint = request.model_dump_json(exclude={"request_id", "after_event_id", "user_id"})
 
@@ -511,20 +535,23 @@ def _start_chat_run(request: ChatRequest, current_user: CurrentUser) -> ChatRun:
             initialize=service.install,
         )
     except ChatRunConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.CONFLICT, detail=str(exc)) from exc
     except ChatRunCapacityError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.TOO_MANY_REQUESTS, detail=str(exc)) from exc
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Run no longer available") from exc
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Run no longer available"
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)) from exc
     return run
 
 
 @router.post("/stream")
 def stream_chat(
-    request: ChatRequest, current_user: CurrentUser = Depends(require_permissions("chat:write"))
-):
+    request: ChatRequest,
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> StreamingResponse:
     return _stream_response(_start_chat_run(request, current_user), request.after_event_id)
 
 
@@ -532,23 +559,23 @@ def _run_or_404(run_id: str, user: CurrentUser) -> ChatRun:
     try:
         return chat_runs.get(run_id, user.id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Run not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Run not found") from None
 
 
 @router.get("/runs/{run_id}/stream")
 def resume_stream(
     run_id: str,
     after_event_id: int = Query(default=0, ge=0),
-    current_user: CurrentUser = Depends(require_permissions("chat:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_READ)),
+) -> StreamingResponse:
     return _stream_response(_run_or_404(run_id, current_user), after_event_id)
 
 
 @router.post("/runs/{run_id}/cancel")
 def cancel_run(
     run_id: str,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ChatActiveRun:
     with chat_runs.lock:
         run = _run_or_404(run_id, current_user)
         if run.completed_at is None:
@@ -561,10 +588,10 @@ def cancel_run(
 @router.get("/sessions", response_model=ChatSessionListResponse)
 def list_sessions(
     user_id: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
-    current_user: CurrentUser = Depends(require_permissions("chat:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_READ)),
+) -> ChatSessionListResponse:
     store = get_session_store()
     effective_user_id = user_id if (user_id and current_user.is_admin) else current_user.id
     sessions = store.list_sessions(user_id=effective_user_id, limit=limit, offset=offset)
@@ -576,34 +603,38 @@ def list_sessions(
 @router.post("/sessions", response_model=ChatSessionDetail)
 def create_session(
     request: ChatSessionCreateRequest,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ChatSessionDetail:
     session = get_session_store().create_session(
         user_id=current_user.id,
         title=request.title or "新对话",
     )
-    return get_session_store().get_detail(session["id"])
+    return get_session_store().get_detail(session.id)
 
 
 @router.delete("/sessions")
-def delete_sessions(current_user: CurrentUser = Depends(require_permissions("chat:write"))):
+def delete_sessions(
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> DeleteSessionsResponse:
     with chat_runs.lock:
         if chat_runs.has_active(current_user.id):
-            raise HTTPException(status_code=409, detail="Stop active runs before deleting sessions")
+            raise HTTPException(
+                status_code=HTTPStatus.CONFLICT, detail="Stop active runs before deleting sessions"
+            )
         deleted = get_session_store().delete_sessions(user_id=current_user.id)
-    return {"status": "ok", "deleted": deleted, "tracing": "cleared_by_session_cascade"}
+    return DeleteSessionsResponse(deleted=deleted, tracing="cleared_by_session_cascade")
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSessionDetail)
 def get_session(
-    session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:read"))
-):
+    session_id: str, current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_READ))
+) -> ChatSessionDetail:
     with chat_runs.lock:
         _input_service()
         session = _session_or_404(session_id)
         _assert_session_owner(session, current_user)
         run = chat_runs.active_for_session(session_id)
-        session["active_run"] = run.summary() if run and run.user_id == current_user.id else None
+        session.active_run = run.summary() if run and run.user_id == current_user.id else None
         return session
 
 
@@ -612,7 +643,7 @@ def _owned_input_service(session_id: str, user: CurrentUser) -> ChatInputService
     try:
         _assert_input_owner(service.store.get_session(session_id), user)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found") from None
     return service
 
 
@@ -620,8 +651,8 @@ def _owned_input_service(session_id: str, user: CurrentUser) -> ChatInputService
 def submit_input(
     session_id: str,
     request: ChatInputRequest,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ChatInput:
     with chat_runs.lock:
         service = _owned_input_service(session_id, current_user)
         try:
@@ -631,45 +662,47 @@ def submit_input(
                 lambda item: _start_queued_input(item, current_user.id, service),
             )
         except ChatRunConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=HTTPStatus.CONFLICT, detail=str(exc)) from exc
         except ChatRunCapacityError as exc:
-            raise HTTPException(status_code=429, detail=str(exc)) from exc
+            raise HTTPException(status_code=HTTPStatus.TOO_MANY_REQUESTS, detail=str(exc)) from exc
 
 
 @router.get("/sessions/{session_id}/inputs", response_model=ChatInputList)
 def list_inputs(
     session_id: str,
-    current_user: CurrentUser = Depends(require_permissions("chat:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_READ)),
+) -> ChatInputList:
     with chat_runs.lock:
         service = _owned_input_service(session_id, current_user)
-        return {
-            "inputs": service.repository.list_inputs(session_id),
-            "input_queue_paused": service.store.get_session(session_id)["input_queue_paused"],
-        }
+        return ChatInputList(
+            inputs=service.repository.list_inputs(session_id),
+            input_queue_paused=service.store.get_session(session_id).input_queue_paused,
+        )
 
 
 @router.delete("/sessions/{session_id}/inputs/{input_id}", response_model=ChatInput)
 def cancel_input(
     session_id: str,
     input_id: str,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ChatInput:
     with chat_runs.lock:
         service = _owned_input_service(session_id, current_user)
         try:
             return service.cancel(session_id, input_id)
         except KeyError:
-            raise HTTPException(status_code=404, detail="Input not found") from None
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND, detail="Input not found"
+            ) from None
         except ChatRunConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=HTTPStatus.CONFLICT, detail=str(exc)) from exc
 
 
 @router.post("/sessions/{session_id}/inputs/resume")
 def resume_inputs(
     session_id: str,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ResumeInputsResponse:
     with chat_runs.lock:
         service = _owned_input_service(session_id, current_user)
         try:
@@ -679,66 +712,65 @@ def resume_inputs(
                 resume=True,
             )
         except ChatRunCapacityError as exc:
-            raise HTTPException(status_code=429, detail=str(exc)) from exc
-        return {"active_run": run.summary() if run else None}
+            raise HTTPException(status_code=HTTPStatus.TOO_MANY_REQUESTS, detail=str(exc)) from exc
+        return ResumeInputsResponse(active_run=run.summary() if run else None)
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionSummary)
 def update_session(
     session_id: str,
     request: ChatSessionUpdateRequest,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> ChatSessionSummary:
     try:
         _assert_session_owner(get_session_store().get_session(session_id), current_user)
         return get_session_store().update_title(session_id, request.title)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found") from None
 
 
 @router.delete("/sessions/{session_id}")
 def delete_session(
-    session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))
-):
+    session_id: str, current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE))
+) -> StatusResponse:
     try:
         with chat_runs.lock:
             _assert_session_owner(get_session_store().get_session(session_id), current_user)
             _assert_session_idle(session_id)
             get_session_store().delete_session(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found") from None
-    return {"status": "ok"}
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found") from None
+    return StatusResponse()
 
 
 @router.delete("/sessions/{session_id}/messages")
 def clear_session_messages(
-    session_id: str, current_user: CurrentUser = Depends(require_permissions("chat:write"))
-):
+    session_id: str, current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE))
+) -> DeleteResponse:
     try:
         with chat_runs.lock:
             _assert_session_owner(get_session_store().get_session(session_id), current_user)
             _assert_session_idle(session_id)
             deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found") from None
-    return {"status": "ok", "deleted": deleted}
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found") from None
+    return DeleteResponse(deleted=deleted)
 
 
 @router.delete("/history")
 def clear_history(
     session_id: str | None = None,
-    current_user: CurrentUser = Depends(require_permissions("chat:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.CHAT_WRITE)),
+) -> DeleteResponse | MessageResponse:
     if not session_id:
-        return {
-            "status": "ok",
-            "message": "No session_id supplied; stateless requests have no server history to clear",
-        }
+        return MessageResponse(
+            message="No session_id supplied; stateless requests have no server history to clear"
+        )
     try:
         with chat_runs.lock:
             _assert_session_owner(get_session_store().get_session(session_id), current_user)
             _assert_session_idle(session_id)
             deleted = get_session_store().clear_messages(session_id)
     except ChatSessionNotFound:
-        raise HTTPException(status_code=404, detail="Session not found") from None
-    return {"status": "ok", "deleted": deleted}
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Session not found") from None
+    return DeleteResponse(deleted=deleted)

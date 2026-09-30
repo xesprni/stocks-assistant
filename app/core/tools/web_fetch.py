@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.constants.tools import WEB_REQUEST_TIMEOUT_SECONDS
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import (
     evidence_for_source,
@@ -48,7 +49,7 @@ class WebFetchTool(BaseTool):
                 headers={
                     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
                 },
-                timeout=30,
+                timeout=WEB_REQUEST_TIMEOUT_SECONDS,
                 follow_redirects=True,
             )
             resp.raise_for_status()

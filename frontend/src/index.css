@@ -3,33 +3,71 @@
 @tailwind utilities;
 
 @layer base {
+  :root,
+  [data-theme-color="blue"] {
+    --theme-hue: 211;
+    --theme-primary-light: 211 100% 40%;
+    --theme-primary-dark: 211 100% 63%;
+  }
+
+  [data-theme-color="violet"] {
+    --theme-hue: 262;
+    --theme-primary-light: 262 73% 50%;
+    --theme-primary-dark: 263 90% 78%;
+  }
+
+  [data-theme-color="teal"] {
+    --theme-hue: 174;
+    --theme-primary-light: 174 85% 26%;
+    --theme-primary-dark: 172 66% 63%;
+  }
+
+  [data-theme-color="green"] {
+    --theme-hue: 145;
+    --theme-primary-light: 145 73% 30%;
+    --theme-primary-dark: 142 69% 67%;
+  }
+
+  [data-theme-color="orange"] {
+    --theme-hue: 25;
+    --theme-primary-light: 25 100% 38%;
+    --theme-primary-dark: 32 100% 65%;
+  }
+
+  [data-theme-color="rose"] {
+    --theme-hue: 340;
+    --theme-primary-light: 340 75% 43%;
+    --theme-primary-dark: 339 90% 73%;
+  }
+
   :root {
     --color-up: #007a63;
     --color-down: #d70015;
     --color-up-chart: #00a97f;
     --color-down-chart: #e83046;
+    --chart-blue: 211 100% 40%;
     --background: 240 5% 96%;
     --foreground: 240 6% 12%;
     --card: 0 0% 100%;
     --card-foreground: 240 6% 12%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 6% 12%;
-    --primary: 211 100% 40%;
+    --primary: var(--theme-primary-light);
     --primary-foreground: 0 0% 100%;
     --secondary: 35 100% 50%;
     --secondary-foreground: 30 38% 10%;
     --muted: 240 5% 92%;
     --muted-foreground: 240 3% 42%;
-    --accent: 211 100% 40%;
-    --accent-foreground: 0 0% 100%;
+    --accent: var(--primary);
+    --accent-foreground: var(--primary-foreground);
     --destructive: 354 100% 42%;
     --destructive-foreground: 0 0% 98%;
     --border: 240 6% 84%;
     --input: 240 5% 79%;
-    --ring: 211 100% 40%;
+    --ring: var(--primary);
     --grid-line: hsl(240 6% 12% / 0.045);
     --grid-line-soft: hsl(240 6% 12% / 0.025);
-    --shell-primary: hsl(211 100% 44% / 0.1);
+    --shell-primary: hsl(var(--primary) / 0.1);
     --shell-secondary: hsl(156 100% 32% / 0.07);
     --material-structural: hsl(240 10% 94% / 0.82);
     --material-bar: hsl(0 0% 100% / 0.72);
@@ -52,8 +90,8 @@
     --panel-shadow: 0 1px 2px hsl(240 6% 12% / 0.04), 0 10px 30px hsl(240 6% 12% / 0.055);
     --control-shadow: 0 1px 2px hsl(240 6% 12% / 0.08), inset 0 1px 0 hsl(0 0% 100% / 0.7);
     --control-shadow-hover: 0 3px 10px hsl(240 6% 12% / 0.11);
-    --list-hover-bg: hsl(211 100% 44% / 0.075);
-    --list-hover-border: hsl(211 100% 44% / 0.34);
+    --list-hover-bg: hsl(var(--primary) / 0.075);
+    --list-hover-border: hsl(var(--primary) / 0.34);
     --list-hover-shadow: inset 3px 0 0 hsl(var(--primary) / 0.6), 0 1px 0 hsl(var(--primary) / 0.05), 0 6px 16px hsl(var(--primary) / 0.08);
     --chat-assistant-bg: hsl(0 0% 100% / 0.96);
     --chat-assistant-border: hsl(220 9% 87% / 0.76);
@@ -76,28 +114,29 @@
     --color-down: #ff6961;
     --color-up-chart: #30d19a;
     --color-down-chart: #ff453a;
+    --chart-blue: 211 100% 63%;
     --background: 240 4% 6%;
     --foreground: 240 5% 94%;
     --card: 240 4% 11%;
     --card-foreground: 240 5% 94%;
     --popover: 240 4% 12%;
     --popover-foreground: 240 5% 94%;
-    --primary: 211 100% 63%;
-    --primary-foreground: 211 55% 12%;
+    --primary: var(--theme-primary-dark);
+    --primary-foreground: var(--theme-hue) 55% 12%;
     --secondary: 36 100% 52%;
     --secondary-foreground: 42 38% 12%;
     --muted: 240 4% 17%;
     --muted-foreground: 240 5% 64%;
-    --accent: 211 100% 63%;
-    --accent-foreground: 211 55% 12%;
+    --accent: var(--primary);
+    --accent-foreground: var(--primary-foreground);
     --destructive: 3 100% 64%;
     --destructive-foreground: 3 55% 12%;
     --border: 240 4% 22%;
     --input: 240 4% 27%;
-    --ring: 211 100% 63%;
+    --ring: var(--primary);
     --grid-line: rgba(232, 234, 237, 0.06);
     --grid-line-soft: rgba(232, 234, 237, 0.035);
-    --shell-primary: rgba(138, 180, 248, 0.12);
+    --shell-primary: hsl(var(--primary) / 0.12);
     --shell-secondary: rgba(129, 201, 149, 0.1);
     --material-structural: hsl(240 5% 9% / 0.88);
     --material-bar: hsl(240 5% 8% / 0.78);
@@ -117,8 +156,8 @@
     --panel-shadow: none;
     --control-shadow: none;
     --control-shadow-hover: none;
-    --list-hover-bg: hsl(211 100% 63% / 0.14);
-    --list-hover-border: hsl(211 100% 63% / 0.48);
+    --list-hover-bg: hsl(var(--primary) / 0.14);
+    --list-hover-border: hsl(var(--primary) / 0.48);
     --list-hover-shadow: inset 3px 0 0 hsl(var(--primary) / 0.7), 0 0 0 1px hsl(var(--primary) / 0.12), 0 8px 20px hsl(0 0% 0% / 0.4);
     --chat-assistant-bg: hsl(0 0% 8% / 0.96);
     --chat-assistant-border: hsl(0 0% 18% / 0.78);
@@ -131,6 +170,16 @@
     --glass-bg: var(--material-popover);
     --glass-border: hsl(240 4% 27% / 0.62);
     --glass-highlight: hsl(0 0% 100% / 0.06);
+  }
+
+  .theme-color-swatch {
+    background-color: hsl(var(--theme-primary-light));
+    color: hsl(0 0% 100%);
+  }
+
+  .dark .theme-color-swatch {
+    background-color: hsl(var(--theme-primary-dark));
+    color: hsl(var(--theme-hue) 55% 12%);
   }
 
   [data-color-scheme="cn"] {
@@ -1761,6 +1810,32 @@
   }
 }
 
+.technical-chip-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
+  border-top: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--card) / 0.5);
+}
+
+.chip-profile-chart {
+  flex: 1 0 220px;
+  min-height: 220px;
+}
+
+@media (min-width: 1024px) {
+  .technical-chip-panel {
+    width: 250px;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    border-left: 1px solid hsl(var(--border) / 0.7);
+    border-top: 0;
+  }
+}
+
 @media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 560px) {
   .console-shell-watchlist .app-top-edge-trigger {
     display: none;
@@ -1815,6 +1890,7 @@
   .watchlist-analysis-shell .technical-analysis-body,
   .watchlist-analysis-shell .technical-main-content,
   .watchlist-analysis-shell .technical-kline-layout,
+  .watchlist-analysis-shell .technical-kline-content,
   .watchlist-analysis-shell .technical-chart-column,
   .watchlist-analysis-shell .technical-chart-panel {
     height: 100%;
@@ -1841,8 +1917,28 @@
     display: none;
   }
 
+  .watchlist-analysis-shell .technical-kline-content {
+    flex-direction: row;
+  }
+
   .watchlist-analysis-shell .technical-chip-panel {
-    display: none !important;
+    width: 210px;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    border-left: 1px solid hsl(var(--border) / 0.7);
+    border-top: 0;
+  }
+
+  .watchlist-analysis-shell .chip-profile-chart {
+    flex: 0 0 120px;
+    min-height: 120px;
+  }
+
+  .watchlist-analysis-shell .chip-profile-header {
+    padding-top: 4px;
+    padding-bottom: 4px;
   }
 
   .watchlist-analysis-shell .technical-native-chart {

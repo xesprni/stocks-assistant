@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.core.llm.codex_auth import CodexAuthError, inspect_codex_oauth, resolve_codex_oauth
+from app.core.serialization import to_payload
 
 
 def write_auth(root: Path, payload: dict) -> Path:
@@ -55,7 +56,7 @@ class CodexAuthTest(unittest.TestCase):
                 {"tokens": {"access_token": "secret-token", "account_id": "workspace-123"}},
             )
 
-            status = inspect_codex_oauth(str(path))
+            status = to_payload(inspect_codex_oauth(str(path)))
 
         self.assertTrue(status["available"])
         self.assertEqual(status["account_id"], "workspace-123")

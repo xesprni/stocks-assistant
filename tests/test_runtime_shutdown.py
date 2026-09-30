@@ -68,7 +68,7 @@ def test_scheduler_shutdown_signals_thread_and_records_completion():
         assert await asyncio.to_thread(started.wait, 2)
         await service.stop()
         result = await pending
-        assert result["output_preview"] == "stopped cooperatively"
+        assert result.output_preview == "stopped cooperatively"
         assert not service._executions
 
     asyncio.run(run())
@@ -99,7 +99,7 @@ def test_scheduler_shutdown_waits_for_execution_owned_by_another_loop():
     with ThreadPoolExecutor(max_workers=1) as executor:
         pending = executor.submit(lambda: asyncio.run(run_in_worker(), debug=True))
         asyncio.run(stop_from_main_loop(), debug=True)
-        assert pending.result(timeout=2)["output_preview"] == "foreign loop stopped"
+        assert pending.result(timeout=2).output_preview == "foreign loop stopped"
     assert not service._executions
     store.update_task.assert_called_once()
 

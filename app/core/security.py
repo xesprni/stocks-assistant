@@ -15,7 +15,23 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from app.constants.security import (
+    ACCESS_TOKEN_MINUTES as ACCESS_TOKEN_MINUTES,
+)
+from app.constants.security import (
+    DEVICE_ID_HEADER as DEVICE_ID_HEADER,
+)
+from app.constants.security import (
+    JWT_ALGORITHM as JWT_ALGORITHM,
+)
+from app.constants.security import (
+    LOGIN_SESSION_DAYS as LOGIN_SESSION_DAYS,
+)
+from app.constants.security import (
+    REFRESH_TOKEN_DAYS as REFRESH_TOKEN_DAYS,
+)
 from app.core.app_store import JWT_SECRET_KEY, get_app_store, utc_now
+from app.schemas.auth import UserPublic
 
 try:  # pragma: no cover - exercised when dependency is installed.
     import jwt as pyjwt
@@ -28,13 +44,6 @@ try:  # pragma: no cover - exercised when dependency is installed.
     _password_hash = PasswordHash.recommended()
 except Exception:  # pragma: no cover - stdlib fallback keeps local tests runnable.
     _password_hash = None
-
-
-ACCESS_TOKEN_MINUTES = 15
-REFRESH_TOKEN_DAYS = 7
-LOGIN_SESSION_DAYS = 30
-JWT_ALGORITHM = "HS256"
-DEVICE_ID_HEADER = "x-device-id"
 
 
 class AuthError(RuntimeError):
@@ -216,21 +225,21 @@ def create_refresh_token(
     return token, token_id
 
 
-def public_user(user: dict[str, Any]) -> dict[str, Any]:
+def public_user(user: dict[str, Any]) -> UserPublic:
     store = get_app_store()
-    return {
-        "id": user["id"],
-        "username": user["username"],
-        "display_name": user.get("display_name") or "",
-        "avatar_base64": user.get("avatar_base64") or "",
-        "roles": user.get("roles", []),
-        "permissions": user.get("permissions", []),
-        "page_permissions": store.list_page_permissions(),
-        "is_active": bool(user.get("is_active")),
-        "created_at": user.get("created_at"),
-        "updated_at": user.get("updated_at"),
-        "last_login_at": user.get("last_login_at"),
-    }
+    return UserPublic(
+        id=user["id"],
+        username=user["username"],
+        display_name=user.get("display_name") or "",
+        avatar_base64=user.get("avatar_base64") or "",
+        roles=user.get("roles", []),
+        permissions=user.get("permissions", []),
+        page_permissions=store.list_page_permissions(),
+        is_active=bool(user.get("is_active")),
+        created_at=user.get("created_at"),
+        updated_at=user.get("updated_at"),
+        last_login_at=user.get("last_login_at"),
+    )
 
 
 def to_current_user(user: dict[str, Any], *, session_id: str | None = None) -> CurrentUser:

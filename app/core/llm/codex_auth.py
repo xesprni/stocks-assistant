@@ -15,8 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CODEX_HOME = "~/.codex"
-DEFAULT_CODEX_AUTH_PATH = "auth.json"
+from app.constants.llm import (
+    DEFAULT_CODEX_AUTH_PATH as DEFAULT_CODEX_AUTH_PATH,
+)
+from app.constants.llm import (
+    DEFAULT_CODEX_HOME as DEFAULT_CODEX_HOME,
+)
+from app.schemas.config import CodexOAuthStatus
 
 
 class CodexAuthError(RuntimeError):
@@ -64,25 +69,23 @@ def resolve_codex_oauth(auth_file: str | None = None) -> CodexOAuthCredentials:
     return CodexOAuthCredentials(access_token=access_token, account_id=account_id, auth_path=path)
 
 
-def inspect_codex_oauth(auth_file: str | None = None) -> dict[str, str | bool]:
+def inspect_codex_oauth(auth_file: str | None = None) -> CodexOAuthStatus:
     """Return non-secret Codex OAuth status for configuration UI."""
     try:
         credentials = resolve_codex_oauth(auth_file)
     except CodexAuthError as exc:
-        return {
-            "available": False,
-            "account_id": "",
-            "auth_path": str(
-                Path(auth_file).expanduser() if auth_file else default_codex_auth_path()
-            ),
-            "error": str(exc),
-        }
-    return {
-        "available": True,
-        "account_id": credentials.account_id,
-        "auth_path": str(credentials.auth_path),
-        "error": "",
-    }
+        return CodexOAuthStatus(
+            available=False,
+            account_id="",
+            auth_path=str(Path(auth_file).expanduser() if auth_file else default_codex_auth_path()),
+            error=str(exc),
+        )
+    return CodexOAuthStatus(
+        available=True,
+        account_id=credentials.account_id,
+        auth_path=str(credentials.auth_path),
+        error="",
+    )
 
 
 def _first_str(*values: Any) -> str:

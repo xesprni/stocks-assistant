@@ -6,59 +6,23 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import clear_effective_settings_cache
+from app.constants.configuration import (
+    LLM_KEYS as LLM_KEYS,
+)
+from app.constants.configuration import (
+    LONGBRIDGE_KEYS as LONGBRIDGE_KEYS,
+)
+from app.constants.configuration import (
+    MCP_KEYS as MCP_KEYS,
+)
+from app.constants.configuration import (
+    MEMORY_KEYS as MEMORY_KEYS,
+)
+from app.constants.configuration import (
+    WORKSPACE_DEPENDENCIES as WORKSPACE_DEPENDENCIES,
+)
 
 logger = logging.getLogger("stocks-assistant.configuration")
-
-LLM_KEYS = frozenset(
-    {
-        "llm_provider",
-        "llm_auth_mode",
-        "llm_api_key",
-        "llm_api_base",
-        "llm_model",
-        "llm_codex_auth_file",
-        "llm_codex_api_base",
-        "llm_codex_model",
-        "llm_temperature",
-        "llm_max_output_tokens",
-        "llm_reasoning_effort",
-        "llm_tool_choice",
-    }
-)
-MEMORY_KEYS = LLM_KEYS | {
-    "embedding_auth_mode",
-    "embedding_api_key",
-    "embedding_api_base",
-    "embedding_model",
-    "embedding_provider",
-    "embedding_codex_auth_file",
-    "embedding_codex_api_base",
-    "embedding_codex_model",
-    "memory_enabled",
-    "workspace_dir",
-}
-LONGBRIDGE_KEYS = frozenset(
-    {
-        "longbridge_auth_mode",
-        "longbridge_oauth_client_id",
-        "longbridge_app_key",
-        "longbridge_app_secret",
-        "longbridge_access_token",
-        "longbridge_http_url",
-        "longbridge_quote_ws_url",
-    }
-)
-MCP_KEYS = frozenset({"mcp_servers", "mcp_tool_timeout_seconds", "workspace_dir"})
-WORKSPACE_DEPENDENCIES = (
-    "get_tool_manager",
-    "get_skill_manager",
-    "get_knowledge_service",
-    "get_watchlist_service",
-    "get_market_service",
-    "get_portfolio_service",
-    "get_session_store",
-    "get_trace_store",
-)
 
 
 @dataclass(frozen=True)

@@ -2,12 +2,13 @@
 
 import pytest
 
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 from app.core.tracing import TraceRecorder, TraceStore
 
 
 def trace_for(tmp_path):
-    session = ChatSessionStore(str(tmp_path)).create_session(title="queued agents")
+    session = to_payload(ChatSessionStore(str(tmp_path)).create_session(title="queued agents"))
     store = TraceStore(str(tmp_path))
     recorder = TraceRecorder.start(store, session["id"], "research")
     return recorder, store, session["id"]
@@ -19,7 +20,7 @@ def emit(recorder, event_type, timestamp, **data):
 
 def events_for(recorder, store, session_id):
     recorder._executor.submit(lambda: None).result()
-    return store.get_session_traces(session_id)["runs"][0]["events"]
+    return to_payload(store.get_session_traces(session_id))["runs"][0]["events"]
 
 
 def test_queued_task_becomes_running_and_reuses_the_same_trace_node(tmp_path):
@@ -60,7 +61,7 @@ def test_queued_task_becomes_running_and_reuses_the_same_trace_node(tmp_path):
         final_response="Evidence found",
     )
     recorder.finish("done")
-    nodes = store.get_session_traces(session_id)["runs"][0]["events"]
+    nodes = to_payload(store.get_session_traces(session_id))["runs"][0]["events"]
     agents = [node for node in nodes if node["node_type"] == "subagent"]
     assert len(agents) == 1
     assert agents[0]["id"] == queued["id"]
@@ -98,7 +99,7 @@ def test_unstarted_tasks_still_have_terminal_nodes_after_batch_end(tmp_path, sta
     )
     recorder.finish("done")
 
-    nodes = store.get_session_traces(session_id)["runs"][0]["events"]
+    nodes = to_payload(store.get_session_traces(session_id))["runs"][0]["events"]
     batch = next(node for node in nodes if node["node_type"] == "subagent_batch")
     agents = [node for node in nodes if node["node_type"] == "subagent"]
     assert len(agents) == 1
@@ -121,7 +122,7 @@ def test_late_success_start_or_queue_cannot_resurrect_cancelled_task(tmp_path):
     emit(recorder, "subagent_queued", 1006, **data)
     recorder.finish("done")
 
-    nodes = store.get_session_traces(session_id)["runs"][0]["events"]
+    nodes = to_payload(store.get_session_traces(session_id))["runs"][0]["events"]
     agents = [node for node in nodes if node["node_type"] == "subagent"]
     assert len(agents) == 1
     assert agents[0]["status"] == "cancelled"

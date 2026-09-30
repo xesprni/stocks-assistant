@@ -2,7 +2,10 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import AppModel as BaseModel
+from app.schemas.common import StatusResponse
 
 
 class SkillInfo(BaseModel):
@@ -67,3 +70,13 @@ class ClawHubInstallResponse(BaseModel):
     message: str
     installed_path: str
     skill: SkillInfo
+
+
+class SkillToggleResponse(StatusResponse):
+    name: str
+    enabled: bool
+
+
+class SkillDeleteResponse(StatusResponse):
+    name: str
+    deleted_path: str

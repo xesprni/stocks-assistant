@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.constants.tracing import DEFAULT_TRACE_LIMIT
 from app.core.orm.repositories.tracing import TraceRepository
 from app.core.tracing.payloads import (
     _SECRET_KEYS as _SECRET_KEYS,
@@ -59,6 +60,7 @@ from app.core.tracing.payloads import (
     _sanitize_payload as _sanitize_payload,
 )
 from app.core.tracing.recorder import TraceRecorder as TraceRecorder
+from app.schemas.tracing import TraceEvent, TraceRun, TraceRunCreated, TraceSessionResponse
 
 
 class TraceStore:
@@ -70,7 +72,7 @@ class TraceStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.repository = repository or TraceRepository(self.db_path)
 
-    def create_run(self, session_id: str, user_message: str) -> dict[str, str]:
+    def create_run(self, session_id: str, user_message: str) -> TraceRunCreated:
         run_id = _new_id()
         root_event_id = _new_id()
         now = _now()
@@ -94,7 +96,7 @@ class TraceStore:
                 ),
             },
         )
-        return {"run_id": run_id, "root_event_id": root_event_id}
+        return TraceRunCreated(run_id=run_id, root_event_id=root_event_id)
 
     def add_event(
         self,
@@ -207,11 +209,13 @@ class TraceStore:
             },
         )
 
-    def get_session_traces(self, session_id: str, limit: int = 20) -> dict[str, Any]:
+    def get_session_traces(
+        self, session_id: str, limit: int = DEFAULT_TRACE_LIMIT
+    ) -> TraceSessionResponse:
         traces = self.repository.get_session_traces(session_id=session_id, limit=limit)
         for run in traces["runs"]:
             run["events"] = [self._event_row_to_dict(event_row) for event_row in run["events"]]
-        return traces
+        return TraceSessionResponse.model_validate(traces)
 
     @staticmethod
     def _coerce_time(value: float | str) -> str:
@@ -220,35 +224,35 @@ class TraceStore:
         return value
 
     @staticmethod
-    def _run_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": row["id"],
-            "session_id": row["session_id"],
-            "user_message_id": row["user_message_id"],
-            "assistant_message_id": row["assistant_message_id"],
-            "status": row["status"],
-            "started_at": row["started_at"],
-            "ended_at": row["ended_at"],
-            "duration_ms": row["duration_ms"],
-            "error": row["error"],
-            "final_response_preview": row["final_response_preview"],
-        }
+    def _run_row_to_dict(row: dict[str, Any]) -> TraceRun:
+        return TraceRun(
+            id=row["id"],
+            session_id=row["session_id"],
+            user_message_id=row["user_message_id"],
+            assistant_message_id=row["assistant_message_id"],
+            status=row["status"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+            duration_ms=row["duration_ms"],
+            error=row["error"],
+            final_response_preview=row["final_response_preview"],
+        )
 
     @staticmethod
-    def _event_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
+    def _event_row_to_dict(row: dict[str, Any]) -> TraceEvent:
         node_type = row["node_type"]
         payload = _decode_json(row["payload_json"], {})
-        return {
-            "id": row["id"],
-            "run_id": row["run_id"],
-            "seq": row["seq"],
-            "parent_id": row["parent_id"],
-            "node_type": node_type,
-            "title": row["title"],
-            "status": row["status"],
-            "started_at": row["started_at"],
-            "ended_at": row["ended_at"],
-            "duration_ms": row["duration_ms"],
-            "summary": row["summary"],
-            "payload": _normalize_payload_for_response(node_type, payload),
-        }
+        return TraceEvent(
+            id=row["id"],
+            run_id=row["run_id"],
+            seq=row["seq"],
+            parent_id=row["parent_id"],
+            node_type=node_type,
+            title=row["title"],
+            status=row["status"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+            duration_ms=row["duration_ms"],
+            summary=row["summary"],
+            payload=_normalize_payload_for_response(node_type, payload),
+        )

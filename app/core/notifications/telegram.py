@@ -15,14 +15,27 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.constants.common import OperationStatus
+from app.constants.notifications import (
+    TELEGRAM_CAPTION_LIMIT as TELEGRAM_CAPTION_LIMIT,
+)
+from app.constants.notifications import (
+    TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT as TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT,
+)
+from app.constants.notifications import (
+    TELEGRAM_FORMATTED_SOURCE_LIMIT as TELEGRAM_FORMATTED_SOURCE_LIMIT,
+)
+from app.constants.notifications import (
+    TELEGRAM_MESSAGE_LIMIT as TELEGRAM_MESSAGE_LIMIT,
+)
+from app.constants.notifications import (
+    TELEGRAM_PHOTO_LIMIT as TELEGRAM_PHOTO_LIMIT,
+)
+from app.constants.notifications import (
+    TELEGRAM_PHOTO_MAX_BYTES as TELEGRAM_PHOTO_MAX_BYTES,
+)
 from app.core.tools.paths import resolve_workspace_path
-
-TELEGRAM_MESSAGE_LIMIT = 4096
-TELEGRAM_FORMATTED_SOURCE_LIMIT = 3000
-TELEGRAM_FORMATTED_RETRY_SOURCE_LIMIT = 1800
-TELEGRAM_CAPTION_LIMIT = 1024
-TELEGRAM_PHOTO_LIMIT = 10
-TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+from app.schemas.notifications import TelegramDelivery
 
 
 class TelegramConfigError(RuntimeError):
@@ -63,12 +76,12 @@ class TelegramSender:
     def configured(self) -> bool:
         return self.enabled and bool(self.bot_token and self.chat_id)
 
-    def send_photo(self, photo: str, caption: str = "") -> dict[str, Any]:
+    def send_photo(self, photo: str, caption: str = "") -> TelegramDelivery:
         return self.send_message(caption, photos=[photo])
 
-    def send_message(self, text: str, *, photos: list[str] | None = None) -> dict[str, Any]:
+    def send_message(self, text: str, *, photos: list[str] | None = None) -> TelegramDelivery:
         if not self.enabled:
-            return {"ok": False, "skipped": True, "reason": "telegram disabled"}
+            return TelegramDelivery(ok=False, skipped=True, reason="telegram disabled")
         if not self.bot_token or not self.chat_id:
             raise TelegramConfigError("Telegram bot token or chat id is missing")
 
@@ -90,12 +103,9 @@ class TelegramSender:
                     fallback_caption=fallback_caption if index == 0 else None,
                 )
             )
-        return {
-            "ok": True,
-            "chunks": len(responses),
-            "photos": len(prepared),
-            "responses": responses,
-        }
+        return TelegramDelivery(
+            ok=True, chunks=len(responses), photos=len(prepared), responses=responses
+        )
 
     def _prepare_photos(self, photos: list[str] | None) -> list[_PreparedPhoto]:
         if photos is None:
@@ -267,7 +277,7 @@ class TelegramSender:
             raise RuntimeError("Telegram send failed: invalid API response") from None
         if not isinstance(data, dict):
             raise RuntimeError("Telegram send failed: invalid API response")
-        if not data.get("ok", False):
+        if not data.get(OperationStatus.OK, False):
             detail = self._redact_error(str(data.get("description") or "unknown error"))
             raise RuntimeError(f"Telegram send failed: {detail}")
         return data

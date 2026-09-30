@@ -5,9 +5,12 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.constants.agent import MAX_CHAT_TITLE_LENGTH, MAX_REQUEST_ID_LENGTH
+from app.schemas.base import AppModel as BaseModel
 from app.schemas.chat_inputs import ChatInput
+from app.schemas.common import DeleteResponse
 from app.schemas.evidence import SourceReference
 
 
@@ -15,7 +18,7 @@ class ChatRequest(BaseModel):
     """聊天请求"""
 
     message: str  # 用户消息
-    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=1, max_length=MAX_REQUEST_ID_LENGTH)
     after_event_id: int = Field(default=0, ge=0)
     session_id: str | None = None  # 会话 ID；为空时创建新会话
     user_id: str | None = None  # 用户 ID
@@ -49,7 +52,7 @@ class ChatSessionCreateRequest(BaseModel):
 class ChatSessionUpdateRequest(BaseModel):
     """更新聊天会话请求"""
 
-    title: str = Field(..., min_length=1, max_length=120)
+    title: str = Field(..., min_length=1, max_length=MAX_CHAT_TITLE_LENGTH)
 
 
 class ChatSessionMessage(BaseModel):
@@ -84,6 +87,10 @@ class ChatActiveRun(BaseModel):
     status: str
 
 
+class StoredChatSession(ChatSessionSummary):
+    input_queue_paused: bool = False
+
+
 class ChatSessionDetail(ChatSessionSummary):
     """聊天会话详情"""
 
@@ -108,3 +115,11 @@ class StreamEvent(BaseModel):
     run_id: str | None = None
     event_id: int | None = None
     data: dict[str, Any] | None = None  # 事件数据
+
+
+class DeleteSessionsResponse(DeleteResponse):
+    tracing: str = "cleared_by_session_cascade"
+
+
+class ResumeInputsResponse(BaseModel):
+    active_run: ChatActiveRun | None = None

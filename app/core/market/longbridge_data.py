@@ -6,6 +6,22 @@ import contextlib
 from datetime import date, datetime
 from typing import Any
 
+from app.constants.market import (
+    DEFAULT_CANDLESTICK_COUNT,
+    DEFAULT_TECHNICAL_BAR_COUNT,
+    DEFAULT_TECHNICAL_SERIES_LIMIT,
+    DEFAULT_TRADE_COUNT,
+    FALLBACK_MARKET_INDICES,
+    MAX_CANDLESTICK_COUNT,
+    MAX_TRADE_COUNT,
+    TEMPERATURE_CHANGE_MULTIPLIER,
+    TEMPERATURE_COOL,
+    TEMPERATURE_HOT,
+    TEMPERATURE_MAX,
+    TEMPERATURE_NEUTRAL,
+    TEMPERATURE_STABLE,
+    TEMPERATURE_WARM,
+)
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.technical_indicators import calculate_technical_indicators
 from app.core.market.utils import (
@@ -17,6 +33,30 @@ from app.core.market.utils import (
     normalize_symbols,
     stringify,
     timestamp,
+)
+from app.schemas.market import (
+    CapitalFlowItem,
+    CapitalFlowResponse,
+    IntradayItem,
+    MarketTemperatureResponse,
+)
+from app.schemas.market_data import (
+    Candle,
+    Candlesticks,
+    Depth,
+    DepthLevel,
+    HistoryCandlesticks,
+    Intraday,
+    MarketStatus,
+    MarketTime,
+    QuoteIndicators,
+    RealtimeQuote,
+    RealtimeQuotes,
+    SessionQuote,
+    TechnicalIndicators,
+    Trade,
+    Trades,
+    TradingDays,
 )
 
 
@@ -33,11 +73,11 @@ class LongbridgeMarketDataMixin:
 
         return get_cached_context("MarketContext", settings=settings)
 
-    def get_realtime_quotes(self, symbols: list[str], settings: Any = None) -> dict:
+    def get_realtime_quotes(self, symbols: list[str], settings: Any = None) -> RealtimeQuotes:
         """拉取证券实时报价。"""
         normalized_symbols = normalize_symbols(symbols)
         if not normalized_symbols:
-            return {"source": "Longbridge QuoteContext.quote", "quotes": [], "total": 0}
+            return RealtimeQuotes(source="Longbridge QuoteContext.quote", quotes=[], total=0)
 
         ctx = self._quote_context(settings=settings)
         try:
@@ -45,22 +85,22 @@ class LongbridgeMarketDataMixin:
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
         quotes = [self._serialize_quote(item) for item in raw_quotes]
-        return {
-            "source": "Longbridge QuoteContext.quote",
-            "symbols": normalized_symbols,
-            "quotes": quotes,
-            "total": len(quotes),
-        }
+        return RealtimeQuotes(
+            source="Longbridge QuoteContext.quote",
+            symbols=normalized_symbols,
+            quotes=quotes,
+            total=len(quotes),
+        )
 
     def get_candlesticks(
         self,
         symbol: str,
         period: str,
-        count: int = 200,
+        count: int = DEFAULT_CANDLESTICK_COUNT,
         adjust_type: str = "forward",
         trade_sessions: str | None = None,
         settings: Any = None,
-    ) -> dict:
+    ) -> Candlesticks:
         """拉取近期 K 线数据。period 支持日/周/月及 Longbridge 分钟周期。"""
         lb_period, period_name = self._longbridge_period(period)
         lb_adjust_type, adjust_name = self._longbridge_adjust_type(adjust_type)
@@ -70,13 +110,16 @@ class LongbridgeMarketDataMixin:
         try:
             if lb_trade_sessions is None:
                 raw = ctx.candlesticks(
-                    symbol, lb_period, min(max(int(count), 1), 1000), lb_adjust_type
+                    symbol,
+                    lb_period,
+                    min(max(int(count), 1), MAX_CANDLESTICK_COUNT),
+                    lb_adjust_type,
                 )
             else:
                 raw = ctx.candlesticks(
                     symbol,
                     lb_period,
-                    min(max(int(count), 1), 1000),
+                    min(max(int(count), 1), MAX_CANDLESTICK_COUNT),
                     lb_adjust_type,
                     lb_trade_sessions,
                 )
@@ -84,14 +127,14 @@ class LongbridgeMarketDataMixin:
             raise LongbridgeUnavailableError(str(exc)) from exc
 
         bars = [self._serialize_candlestick(item) for item in raw]
-        return {
-            "source": "Longbridge QuoteContext.candlesticks",
-            "symbol": symbol,
-            "period": period_name,
-            "adjust_type": adjust_name,
-            "trade_sessions": trade_sessions_name,
-            "bars": bars,
-        }
+        return Candlesticks(
+            source="Longbridge QuoteContext.candlesticks",
+            symbol=symbol,
+            period=period_name,
+            adjust_type=adjust_name,
+            trade_sessions=trade_sessions_name,
+            bars=bars,
+        )
 
     def get_history_candlesticks(
         self,
@@ -102,7 +145,7 @@ class LongbridgeMarketDataMixin:
         adjust_type: str = "forward",
         trade_sessions: str | None = None,
         settings: Any = None,
-    ) -> dict:
+    ) -> HistoryCandlesticks:
         """按日期区间拉取历史 K 线。start/end 使用 YYYY-MM-DD。"""
         lb_period, period_name = self._longbridge_period(period)
         lb_adjust_type, adjust_name = self._longbridge_adjust_type(adjust_type)
@@ -129,16 +172,16 @@ class LongbridgeMarketDataMixin:
             raise LongbridgeUnavailableError(str(exc)) from exc
 
         bars = [self._serialize_candlestick(item) for item in raw]
-        return {
-            "source": "Longbridge QuoteContext.history_candlesticks_by_date",
-            "symbol": symbol,
-            "period": period_name,
-            "start": start_date.isoformat() if start_date else None,
-            "end": end_date.isoformat() if end_date else None,
-            "adjust_type": adjust_name,
-            "trade_sessions": trade_sessions_name,
-            "bars": bars,
-        }
+        return HistoryCandlesticks(
+            source="Longbridge QuoteContext.history_candlesticks_by_date",
+            symbol=symbol,
+            period=period_name,
+            start=start_date.isoformat() if start_date else None,
+            end=end_date.isoformat() if end_date else None,
+            adjust_type=adjust_name,
+            trade_sessions=trade_sessions_name,
+            bars=bars,
+        )
 
     def get_intraday(
         self,
@@ -146,7 +189,7 @@ class LongbridgeMarketDataMixin:
         since: int | None = None,
         trade_sessions: str | None = None,
         settings: Any = None,
-    ) -> dict:
+    ) -> Intraday:
         """拉取今日分时数据。"""
         symbol = canonical_symbol(symbol)
         lb_trade_sessions, trade_sessions_name = self._longbridge_trade_sessions(trade_sessions)
@@ -164,16 +207,16 @@ class LongbridgeMarketDataMixin:
         # 获取昨收价用于前端计算正确的涨跌幅，失败时静默忽略（不阻塞分时数据返回）
         prev_close = self._fetch_prev_close(ctx, symbol)
         if since is not None:
-            bars = [bar for bar in bars if int(bar["timestamp"]) >= since]
-        return {
-            "source": "Longbridge QuoteContext.intraday",
-            "symbol": symbol,
-            "trade_sessions": trade_sessions_name,
-            "prev_close": prev_close,
-            "bars": bars,
-        }
+            bars = [bar for bar in bars if int(bar.timestamp) >= since]
+        return Intraday(
+            source="Longbridge QuoteContext.intraday",
+            symbol=symbol,
+            trade_sessions=trade_sessions_name,
+            prev_close=prev_close,
+            bars=bars,
+        )
 
-    def get_capital_flow(self, symbol: str, settings: Any = None) -> dict:
+    def get_capital_flow(self, symbol: str, settings: Any = None) -> CapitalFlowResponse:
         """拉取标的当日资金净流入时序。"""
         symbol = canonical_symbol(symbol)
         if not symbol:
@@ -188,32 +231,31 @@ class LongbridgeMarketDataMixin:
         # Longbridge 返回的是盘中资金净流入曲线；按时间排序后前端和工具都能稳定消费。
         lines = sorted(
             (self._serialize_capital_flow_line(item) for item in raw),
-            key=lambda item: item["timestamp"],
+            key=lambda item: item.timestamp,
         )
-        return {
-            "source": "Longbridge QuoteContext.capital_flow",
-            "symbol": symbol,
-            "lines": lines,
-            "total": len(lines),
-        }
+        return CapitalFlowResponse(
+            source="Longbridge QuoteContext.capital_flow",
+            symbol=symbol,
+            lines=lines,
+            total=len(lines),
+        )
 
-    def get_trades(self, symbol: str, count: int = 50, settings: Any = None) -> dict:
+    def get_trades(
+        self, symbol: str, count: int = DEFAULT_TRADE_COUNT, settings: Any = None
+    ) -> Trades:
         """拉取逐笔成交。"""
         symbol = canonical_symbol(symbol)
         ctx = self._quote_context(settings=settings)
         try:
-            raw = ctx.trades(symbol, min(max(int(count), 1), 500))
+            raw = ctx.trades(symbol, min(max(int(count), 1), MAX_TRADE_COUNT))
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
         trades = [self._serialize_trade(item) for item in raw]
-        return {
-            "source": "Longbridge QuoteContext.trades",
-            "symbol": symbol,
-            "trades": trades,
-            "total": len(trades),
-        }
+        return Trades(
+            source="Longbridge QuoteContext.trades", symbol=symbol, trades=trades, total=len(trades)
+        )
 
-    def get_depth(self, symbol: str, settings: Any = None) -> dict:
+    def get_depth(self, symbol: str, settings: Any = None) -> Depth:
         """拉取买卖盘口深度。"""
         symbol = canonical_symbol(symbol)
         ctx = self._quote_context(settings=settings)
@@ -221,14 +263,14 @@ class LongbridgeMarketDataMixin:
             raw = ctx.depth(symbol)
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
-        return {
-            "source": "Longbridge QuoteContext.depth",
-            "symbol": symbol,
-            "bids": [self._serialize_depth_level(item) for item in getattr(raw, "bids", [])],
-            "asks": [self._serialize_depth_level(item) for item in getattr(raw, "asks", [])],
-        }
+        return Depth(
+            source="Longbridge QuoteContext.depth",
+            symbol=symbol,
+            bids=[self._serialize_depth_level(item) for item in getattr(raw, "bids", [])],
+            asks=[self._serialize_depth_level(item) for item in getattr(raw, "asks", [])],
+        )
 
-    def get_market_status(self, settings: Any = None) -> dict:
+    def get_market_status(self, settings: Any = None) -> MarketStatus:
         """拉取所有市场当前交易状态。"""
         ctx = self._market_context(settings=settings)
         try:
@@ -236,13 +278,13 @@ class LongbridgeMarketDataMixin:
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
         items = [self._serialize_market_time_item(item) for item in getattr(raw, "market_time", [])]
-        return {
-            "source": "Longbridge MarketContext.market_status",
-            "market_time": items,
-            "total": len(items),
-        }
+        return MarketStatus(
+            source="Longbridge MarketContext.market_status", market_time=items, total=len(items)
+        )
 
-    def get_trading_days(self, market: str, begin: str, end: str, settings: Any = None) -> dict:
+    def get_trading_days(
+        self, market: str, begin: str, end: str, settings: Any = None
+    ) -> TradingDays:
         """拉取指定市场交易日历。begin/end 使用 YYYY-MM-DD。"""
         lb_market, market_name = self._longbridge_market(market)
         begin_date = self._parse_date(begin)
@@ -254,22 +296,24 @@ class LongbridgeMarketDataMixin:
             raw = ctx.trading_days(lb_market, begin_date, end_date)
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
-        return {
-            "source": "Longbridge QuoteContext.trading_days",
-            "market": market_name,
-            "begin": begin_date.isoformat(),
-            "end": end_date.isoformat(),
-            "trading_days": [date_iso(item) for item in getattr(raw, "trading_days", [])],
-            "half_trading_days": [date_iso(item) for item in getattr(raw, "half_trading_days", [])],
-        }
+        return TradingDays(
+            source="Longbridge QuoteContext.trading_days",
+            market=market_name,
+            begin=begin_date.isoformat(),
+            end=end_date.isoformat(),
+            trading_days=[date_iso(item) for item in getattr(raw, "trading_days", [])],
+            half_trading_days=[date_iso(item) for item in getattr(raw, "half_trading_days", [])],
+        )
 
     def get_quote_indicators(
         self, symbols: list[str], indexes: list[str], settings: Any = None
-    ) -> dict:
+    ) -> QuoteIndicators:
         """拉取 Longbridge 支持的证券计算指标。"""
         normalized_symbols = normalize_symbols(symbols)
         if not normalized_symbols:
-            return {"source": "Longbridge QuoteContext.calc_indexes", "indicators": [], "total": 0}
+            return QuoteIndicators(
+                source="Longbridge QuoteContext.calc_indexes", indicators=[], total=0
+            )
         lb_indexes, index_names = self._longbridge_calc_indexes(indexes)
         ctx = self._quote_context(settings=settings)
         try:
@@ -277,29 +321,29 @@ class LongbridgeMarketDataMixin:
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
         indicators = [self._serialize_calc_index(item) for item in raw]
-        return {
-            "source": "Longbridge QuoteContext.calc_indexes",
-            "symbols": normalized_symbols,
-            "requested_indexes": index_names,
-            "indicators": indicators,
-            "total": len(indicators),
-        }
+        return QuoteIndicators(
+            source="Longbridge QuoteContext.calc_indexes",
+            symbols=normalized_symbols,
+            requested_indexes=index_names,
+            indicators=indicators,
+            total=len(indicators),
+        )
 
     def get_technical_indicators(
         self,
         symbol: str,
         period: str = "1D",
-        count: int = 300,
+        count: int = DEFAULT_TECHNICAL_BAR_COUNT,
         indicators: list[str] | None = None,
         adjust_type: str = "forward",
         trade_sessions: str | None = None,
         params: dict[str, Any] | None = None,
-        series_limit: int = 120,
+        series_limit: int = DEFAULT_TECHNICAL_SERIES_LIMIT,
         settings: Any = None,
-    ) -> dict:
+    ) -> TechnicalIndicators:
         """基于 Longbridge K 线本地计算经典技术指标。"""
         try:
-            bounded_count = min(max(int(count), 1), 1000)
+            bounded_count = min(max(int(count), 1), MAX_CANDLESTICK_COUNT)
         except (TypeError, ValueError) as exc:
             raise ValueError("count must be an integer") from exc
 
@@ -313,48 +357,33 @@ class LongbridgeMarketDataMixin:
             settings=settings,
         )
         calculation = calculate_technical_indicators(
-            kline_payload["bars"],
+            kline_payload.bars,
             indicators=indicators,
             params=params,
             series_limit=series_limit,
         )
-        return {
-            "source": "Longbridge QuoteContext.candlesticks + local technical indicator calculation",
-            "symbol": kline_payload["symbol"],
-            "period": kline_payload["period"],
-            "adjust_type": kline_payload["adjust_type"],
-            "trade_sessions": kline_payload["trade_sessions"],
-            "bars_count": calculation["bars_count"],
-            "latest_timestamp": calculation["latest_timestamp"],
-            "requested_indicators": calculation["requested_indicators"],
-            "available_indicators": calculation["available_indicators"],
-            "params": calculation["params"],
-            "series_limit": calculation["series_limit"],
-            "series_timestamps": calculation["series_timestamps"],
-            "latest": calculation["latest"],
-            "series": calculation["series"],
-        }
+        return TechnicalIndicators(
+            source="Longbridge QuoteContext.candlesticks + local technical indicator calculation",
+            symbol=kline_payload.symbol,
+            period=kline_payload.period,
+            adjust_type=kline_payload.adjust_type,
+            trade_sessions=kline_payload.trade_sessions,
+            bars_count=calculation.bars_count,
+            latest_timestamp=calculation.latest_timestamp,
+            requested_indicators=calculation.requested_indicators,
+            available_indicators=calculation.available_indicators,
+            params=calculation.params,
+            series_limit=calculation.series_limit,
+            series_timestamps=calculation.series_timestamps,
+            latest=calculation.latest,
+            series=calculation.series,
+        )
 
     # 各市场主要指数，用于 market_temperature API 无数据时回退估算
-    _FALLBACK_INDICES: dict[str, list[str]] = {
-        "CN": [
-            "000001.SH",  # 上证综指
-            "000300.SH",  # 沪深300
-            "399001.SZ",  # 深证成指
-            "399006.SZ",  # 创业板指
-        ],
-        "HK": [
-            "HSI.HK",  # 恒生指数
-            "HSCEI.HK",  # 国企指数
-        ],
-        "US": [
-            ".SPX.US",  # S&P 500
-            ".NDX.US",  # 纳斯达克100
-            ".DJI.US",  # 道琼斯
-        ],
-    }
 
-    def get_market_temperature(self, market: str = "US", settings: Any = None) -> dict:
+    def get_market_temperature(
+        self, market: str = "US", settings: Any = None
+    ) -> MarketTemperatureResponse:
         """获取市场温度。market: US / HK / CN
 
         优先使用 Longbridge market_temperature API；若该接口对某些市场（如 CN）无数据，
@@ -370,26 +399,26 @@ class LongbridgeMarketDataMixin:
         ctx = self._quote_context(settings=settings)
 
         # 先尝试 Longbridge 官方市场温度接口
-        api_data: dict | None = None
+        api_data: MarketTemperatureResponse | None = None
         try:
             resp = ctx.market_temperature(lb_market)
-            api_data = {
-                "market": market,
-                "temperature": getattr(resp, "temperature", None),
-                "description": getattr(resp, "description", ""),
-                "sentiment": getattr(resp, "sentiment", None),
-                "updated_at": getattr(resp, "updated_at", None),
-            }
+            api_data = MarketTemperatureResponse(
+                market=market,
+                temperature=getattr(resp, "temperature", None),
+                description=getattr(resp, "description", ""),
+                sentiment=getattr(resp, "sentiment", None),
+                updated_at=getattr(resp, "updated_at", None),
+            )
         except Exception:
             api_data = None
 
         # API 返回了有效温度 → 直接使用
-        if api_data and api_data.get("temperature") is not None:
+        if api_data and api_data.temperature is not None:
             return api_data
 
         # API 无数据 → 基于主要指数涨跌幅回退估算
         fallback = self._compute_fallback_temperature(market, settings=settings)
-        if fallback.get("temperature") is not None:
+        if fallback.temperature is not None:
             return fallback
 
         # 回退也失败时返回原始 API 数据（可能含 null 字段），保证响应结构一致
@@ -397,74 +426,74 @@ class LongbridgeMarketDataMixin:
             return api_data
         raise LongbridgeUnavailableError(f"Market temperature data is not available for {market}")
 
-    def _compute_fallback_temperature(self, market: str, settings: Any = None) -> dict:
+    def _compute_fallback_temperature(
+        self, market: str, settings: Any = None
+    ) -> MarketTemperatureResponse:
         """基于主要指数涨跌幅估算市场温度（回退方案）。
 
         当 Longbridge market_temperature API 对某市场（典型为 CN）无数据时调用。
         拉取该市场核心指数实时报价，取加权平均涨跌幅映射到 0-100 温度区间。
         """
-        indices = self._FALLBACK_INDICES.get(market)
+        indices = FALLBACK_MARKET_INDICES.get(market)
         if not indices:
-            return {
-                "market": market,
-                "temperature": None,
-                "description": "",
-                "sentiment": None,
-                "updated_at": None,
-            }
+            return MarketTemperatureResponse(
+                market=market, temperature=None, description="", sentiment=None, updated_at=None
+            )
 
         try:
             quotes_data = self.get_realtime_quotes(indices, settings=settings)
         except Exception:
-            return {
-                "market": market,
-                "temperature": None,
-                "description": "",
-                "sentiment": None,
-                "updated_at": None,
-            }
+            return MarketTemperatureResponse(
+                market=market, temperature=None, description="", sentiment=None, updated_at=None
+            )
 
         # 收集各指数涨跌幅（change_rate 格式如 "1.23%"）
         change_rates: list[float] = []
-        for q in quotes_data.get("quotes", []):
-            cr_str = q.get("change_rate")
+        for q in quotes_data.quotes:
+            cr_str = q.change_rate
             if cr_str:
                 with contextlib.suppress(TypeError, ValueError):
                     change_rates.append(float(str(cr_str).rstrip("%")))
 
         if not change_rates:
-            return {
-                "market": market,
-                "temperature": None,
-                "description": "",
-                "sentiment": None,
-                "updated_at": None,
-            }
+            return MarketTemperatureResponse(
+                market=market, temperature=None, description="", sentiment=None, updated_at=None
+            )
 
         avg_cr = sum(change_rates) / len(change_rates)
 
         # 涨跌幅映射到温度：0% → 50（中性），+3% → ~100（过热），-3% → ~0（冰点）
-        temperature = max(0, min(100, round(50 + avg_cr * 16.5)))
-        sentiment = max(0, min(100, round(50 + avg_cr * 16.5)))
+        temperature = max(
+            0,
+            min(
+                TEMPERATURE_MAX, round(TEMPERATURE_NEUTRAL + avg_cr * TEMPERATURE_CHANGE_MULTIPLIER)
+            ),
+        )
+        sentiment = max(
+            0,
+            min(
+                TEMPERATURE_MAX, round(TEMPERATURE_NEUTRAL + avg_cr * TEMPERATURE_CHANGE_MULTIPLIER)
+            ),
+        )
 
-        if temperature >= 80:
+        if temperature >= TEMPERATURE_HOT:
             desc = "市场情绪高涨"
-        elif temperature >= 60:
+        elif temperature >= TEMPERATURE_WARM:
             desc = "市场偏暖"
-        elif temperature >= 40:
+        elif temperature >= TEMPERATURE_STABLE:
             desc = "市场情绪平稳"
-        elif temperature >= 20:
+        elif temperature >= TEMPERATURE_COOL:
             desc = "市场偏冷"
         else:
             desc = "市场情绪低迷"
 
-        return {
-            "market": market,
-            "temperature": temperature,
-            "description": f"{desc}（基于指数涨跌幅估算）",
-            "sentiment": sentiment,
-            "updated_at": int(datetime.now().timestamp()),
-        }
+        return MarketTemperatureResponse(
+            market=market,
+            temperature=temperature,
+            description=f"{desc}（基于指数涨跌幅估算）",
+            sentiment=sentiment,
+            updated_at=int(datetime.now().timestamp()),
+        )
 
     def _longbridge_period(self, period: str):
         try:
@@ -656,61 +685,57 @@ class LongbridgeMarketDataMixin:
         except ValueError as exc:
             raise ValueError("date must use YYYY-MM-DD") from exc
 
-    def _serialize_quote(self, item: Any) -> dict:
+    def _serialize_quote(self, item: Any) -> RealtimeQuote:
         last_done = getattr(item, "last_done", None)
         prev_close = getattr(item, "prev_close", None)
-        return {
-            "symbol": canonical_symbol(getattr(item, "symbol", "")),
-            "timestamp": timestamp(getattr(item, "timestamp", None)),
-            "last_done": stringify(last_done),
-            "prev_close": stringify(prev_close),
-            "open": stringify(getattr(item, "open", None)),
-            "high": stringify(getattr(item, "high", None)),
-            "low": stringify(getattr(item, "low", None)),
-            "volume": stringify(getattr(item, "volume", None)),
-            "turnover": stringify(getattr(item, "turnover", None)),
-            "trade_status": enum_name(getattr(item, "trade_status", None)),
-            "change_value": change_value(last_done, prev_close),
-            "change_rate": change_rate(last_done, prev_close),
-            "pre_market_quote": self._serialize_prepost_quote(
-                getattr(item, "pre_market_quote", None)
-            ),
-            "post_market_quote": self._serialize_prepost_quote(
+        return RealtimeQuote(
+            symbol=canonical_symbol(getattr(item, "symbol", "")),
+            timestamp=timestamp(getattr(item, "timestamp", None)),
+            last_done=stringify(last_done),
+            prev_close=stringify(prev_close),
+            open=stringify(getattr(item, "open", None)),
+            high=stringify(getattr(item, "high", None)),
+            low=stringify(getattr(item, "low", None)),
+            volume=stringify(getattr(item, "volume", None)),
+            turnover=stringify(getattr(item, "turnover", None)),
+            trade_status=enum_name(getattr(item, "trade_status", None)),
+            change_value=change_value(last_done, prev_close),
+            change_rate=change_rate(last_done, prev_close),
+            pre_market_quote=self._serialize_prepost_quote(getattr(item, "pre_market_quote", None)),
+            post_market_quote=self._serialize_prepost_quote(
                 getattr(item, "post_market_quote", None)
             ),
-            "overnight_quote": self._serialize_prepost_quote(
-                getattr(item, "overnight_quote", None)
-            ),
-        }
+            overnight_quote=self._serialize_prepost_quote(getattr(item, "overnight_quote", None)),
+        )
 
-    def _serialize_prepost_quote(self, item: Any) -> dict | None:
+    def _serialize_prepost_quote(self, item: Any) -> SessionQuote | None:
         if item is None:
             return None
         last_done = getattr(item, "last_done", None)
         prev_close = getattr(item, "prev_close", None)
-        return {
-            "timestamp": timestamp(getattr(item, "timestamp", None)),
-            "last_done": stringify(last_done),
-            "prev_close": stringify(prev_close),
-            "high": stringify(getattr(item, "high", None)),
-            "low": stringify(getattr(item, "low", None)),
-            "volume": stringify(getattr(item, "volume", None)),
-            "turnover": stringify(getattr(item, "turnover", None)),
-            "change_value": change_value(last_done, prev_close),
-            "change_rate": change_rate(last_done, prev_close),
-        }
+        return SessionQuote(
+            timestamp=timestamp(getattr(item, "timestamp", None)),
+            last_done=stringify(last_done),
+            prev_close=stringify(prev_close),
+            high=stringify(getattr(item, "high", None)),
+            low=stringify(getattr(item, "low", None)),
+            volume=stringify(getattr(item, "volume", None)),
+            turnover=stringify(getattr(item, "turnover", None)),
+            change_value=change_value(last_done, prev_close),
+            change_rate=change_rate(last_done, prev_close),
+        )
 
-    def _serialize_candlestick(self, item: Any) -> dict:
-        return {
-            "timestamp": timestamp(getattr(item, "timestamp", None)) or 0,
-            "open": stringify(getattr(item, "open", None)) or "0",
-            "high": stringify(getattr(item, "high", None)) or "0",
-            "low": stringify(getattr(item, "low", None)) or "0",
-            "close": stringify(getattr(item, "close", None)) or "0",
-            "volume": stringify(getattr(item, "volume", None)) or "0",
-            "turnover": stringify(getattr(item, "turnover", None)) or "0",
-            "trade_session": enum_name(getattr(item, "trade_session", None)),
-        }
+    def _serialize_candlestick(self, item: Any) -> Candle:
+        return Candle(
+            timestamp=timestamp(getattr(item, "timestamp", None)) or 0,
+            open=stringify(getattr(item, "open", None)) or "0",
+            high=stringify(getattr(item, "high", None)) or "0",
+            low=stringify(getattr(item, "low", None)) or "0",
+            close=stringify(getattr(item, "close", None)) or "0",
+            volume=stringify(getattr(item, "volume", None)) or "0",
+            turnover=stringify(getattr(item, "turnover", None)) or "0",
+            trade_session=enum_name(getattr(item, "trade_session", None)),
+        )
 
     def _fetch_prev_close(self, ctx: Any, symbol: str) -> str | None:
         """获取单个标的的昨收价，用于分时涨跌幅计算。失败时返回 None。"""
@@ -722,49 +747,49 @@ class LongbridgeMarketDataMixin:
             pass
         return None
 
-    def _serialize_intraday_line(self, item: Any) -> dict:
-        return {
-            "timestamp": timestamp(getattr(item, "timestamp", None)) or 0,
-            "price": stringify(getattr(item, "price", None)) or "0",
-            "volume": stringify(getattr(item, "volume", None)) or "0",
-            "turnover": stringify(getattr(item, "turnover", None)) or "0",
-            "avg_price": stringify(getattr(item, "avg_price", None)) or "0",
-        }
+    def _serialize_intraday_line(self, item: Any) -> IntradayItem:
+        return IntradayItem(
+            timestamp=timestamp(getattr(item, "timestamp", None)) or 0,
+            price=stringify(getattr(item, "price", None)) or "0",
+            volume=stringify(getattr(item, "volume", None)) or "0",
+            turnover=stringify(getattr(item, "turnover", None)) or "0",
+            avg_price=stringify(getattr(item, "avg_price", None)) or "0",
+        )
 
-    def _serialize_capital_flow_line(self, item: Any) -> dict:
-        return {
-            "timestamp": timestamp(getattr(item, "timestamp", None)) or 0,
-            "inflow": stringify(getattr(item, "inflow", None)) or "0",
-        }
+    def _serialize_capital_flow_line(self, item: Any) -> CapitalFlowItem:
+        return CapitalFlowItem(
+            timestamp=timestamp(getattr(item, "timestamp", None)) or 0,
+            inflow=stringify(getattr(item, "inflow", None)) or "0",
+        )
 
-    def _serialize_trade(self, item: Any) -> dict:
-        return {
-            "timestamp": timestamp(getattr(item, "timestamp", None)),
-            "price": stringify(getattr(item, "price", None)),
-            "volume": stringify(getattr(item, "volume", None)),
-            "direction": enum_name(getattr(item, "direction", None)),
-            "trade_type": stringify(getattr(item, "trade_type", None)),
-            "trade_session": enum_name(getattr(item, "trade_session", None)),
-        }
+    def _serialize_trade(self, item: Any) -> Trade:
+        return Trade(
+            timestamp=timestamp(getattr(item, "timestamp", None)),
+            price=stringify(getattr(item, "price", None)),
+            volume=stringify(getattr(item, "volume", None)),
+            direction=enum_name(getattr(item, "direction", None)),
+            trade_type=stringify(getattr(item, "trade_type", None)),
+            trade_session=enum_name(getattr(item, "trade_session", None)),
+        )
 
-    def _serialize_depth_level(self, item: Any) -> dict:
-        return {
-            "position": stringify(getattr(item, "position", None)),
-            "price": stringify(getattr(item, "price", None)),
-            "volume": stringify(getattr(item, "volume", None)),
-            "order_num": stringify(getattr(item, "order_num", None)),
-        }
+    def _serialize_depth_level(self, item: Any) -> DepthLevel:
+        return DepthLevel(
+            position=stringify(getattr(item, "position", None)),
+            price=stringify(getattr(item, "price", None)),
+            volume=stringify(getattr(item, "volume", None)),
+            order_num=stringify(getattr(item, "order_num", None)),
+        )
 
-    def _serialize_market_time_item(self, item: Any) -> dict:
-        return {
-            "market": enum_name(getattr(item, "market", None)),
-            "trade_status": enum_name(getattr(item, "trade_status", None)),
-            "timestamp": timestamp(getattr(item, "timestamp", None)),
-            "delay_trade_status": enum_name(getattr(item, "delay_trade_status", None)),
-            "delay_timestamp": timestamp(getattr(item, "delay_timestamp", None)),
-            "sub_status": stringify(getattr(item, "sub_status", None)),
-            "delay_sub_status": stringify(getattr(item, "delay_sub_status", None)),
-        }
+    def _serialize_market_time_item(self, item: Any) -> MarketTime:
+        return MarketTime(
+            market=enum_name(getattr(item, "market", None)),
+            trade_status=enum_name(getattr(item, "trade_status", None)),
+            timestamp=timestamp(getattr(item, "timestamp", None)),
+            delay_trade_status=enum_name(getattr(item, "delay_trade_status", None)),
+            delay_timestamp=timestamp(getattr(item, "delay_timestamp", None)),
+            sub_status=stringify(getattr(item, "sub_status", None)),
+            delay_sub_status=stringify(getattr(item, "delay_sub_status", None)),
+        )
 
     def _serialize_calc_index(self, item: Any) -> dict:
         data = {"symbol": canonical_symbol(getattr(item, "symbol", ""))}

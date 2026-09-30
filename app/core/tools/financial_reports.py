@@ -4,6 +4,7 @@ from typing import Any
 
 from app.core.fundamentals.service import FundamentalService
 from app.core.market.errors import LongbridgeUnavailableError
+from app.core.serialization import to_payload
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.evidence import longbridge_evidence
 
@@ -59,11 +60,13 @@ class GetFinancialReportsTool(BaseTool):
         period_value = args.get("period")
         period = str(period_value).strip() if period_value else None
         try:
-            data = FundamentalService().get_financial_reports(
-                symbol=symbol,
-                kind=kind,
-                period=period,
-                settings=self.settings,
+            data = to_payload(
+                FundamentalService().get_financial_reports(
+                    symbol=symbol,
+                    kind=kind,
+                    period=period,
+                    settings=self.settings,
+                )
             )
         except (ValueError, LongbridgeUnavailableError) as exc:
             return ToolResult.fail(str(exc))

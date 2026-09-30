@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from zipfile import ZipFile
 
+from app.core.serialization import to_payload
 from app.core.skills.clawhub import (
     ClawHubArchiveError,
     ClawHubConflictError,
@@ -83,7 +84,7 @@ class ClawHubServiceTest(unittest.TestCase):
                 },
             )
 
-            response = service.search("market", limit=99)
+            response = to_payload(service.search("market", limit=99))
 
         self.assertEqual(service.json_requests[0][0], "/api/v1/search")
         self.assertEqual(service.json_requests[0][1]["nonSuspiciousOnly"], "true")
@@ -112,7 +113,7 @@ class ClawHubServiceTest(unittest.TestCase):
                 text_payloads={"/api/v1/skills/research/file": "---\nname: research\n---\n"},
             )
 
-            detail = service.get_detail("research")
+            detail = to_payload(service.get_detail("research"))
 
         self.assertEqual(detail["slug"], "research")
         self.assertEqual(detail["scan_status"], "passed")
@@ -142,7 +143,7 @@ class ClawHubServiceTest(unittest.TestCase):
                 text_payloads={"/api/v1/skills/browser/file": "---\nname: browser\n---\n"},
             )
 
-            detail = service.get_detail("browser")
+            detail = to_payload(service.get_detail("browser"))
 
         self.assertEqual(detail["scan_status"], "suspicious")
         self.assertEqual(detail["moderation_status"], "clear")
@@ -154,7 +155,7 @@ class ClawHubServiceTest(unittest.TestCase):
             service = FakeClawHubService(root / "skills", manager)
 
             with self.assertRaises(ClawHubValidationError):
-                service.install("../bad")
+                to_payload(service.install("../bad"))
 
     def test_install_rejects_existing_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,7 +165,7 @@ class ClawHubServiceTest(unittest.TestCase):
             service = FakeClawHubService(root / "skills", manager)
 
             with self.assertRaises(ClawHubConflictError):
-                service.install("research")
+                to_payload(service.install("research"))
 
     def test_install_rejects_path_traversal_zip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -179,7 +180,7 @@ class ClawHubServiceTest(unittest.TestCase):
             )
 
             with self.assertRaises(ClawHubArchiveError):
-                service.install("research")
+                to_payload(service.install("research"))
 
         self.assertFalse((root / "skills" / "research").exists())
 
@@ -194,7 +195,7 @@ class ClawHubServiceTest(unittest.TestCase):
             )
 
             with self.assertRaises(ClawHubArchiveError):
-                service.install("research")
+                to_payload(service.install("research"))
 
     def test_install_success_refreshes_skill_and_keeps_it_disabled(self):
         skill_md = """---
@@ -223,7 +224,7 @@ description: Research skill from ClawHub
                 archive_bytes=make_zip({"research-1.2.3/SKILL.md": skill_md}),
             )
 
-            result = service.install("research", version="1.2.3")
+            result = to_payload(service.install("research", version="1.2.3"))
             config = manager.get_skills_config()["research-skill"]
 
             self.assertTrue((root / "skills" / "research" / "SKILL.md").is_file())

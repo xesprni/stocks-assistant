@@ -1,6 +1,24 @@
 """Authentication, user, and role schemas."""
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.constants.common import OperationStatus
+from app.constants.security import (
+    DEFAULT_EXPIRES_IN,
+    MAX_AVATAR_BASE64_LENGTH,
+    MAX_DESCRIPTION_LENGTH,
+    MAX_DEVICE_ID_LENGTH,
+    MAX_DISPLAY_NAME_LENGTH,
+    MAX_NAME_LENGTH,
+    MAX_PASSWORD_LENGTH,
+    MAX_PERMISSION_LENGTH,
+    MAX_USERNAME_LENGTH,
+    MIN_NAME_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    MIN_USERNAME_LENGTH,
+)
+from app.schemas.base import AppModel as BaseModel
+from app.schemas.common import StatusResponse
 
 
 class SetupStatusResponse(BaseModel):
@@ -8,21 +26,21 @@ class SetupStatusResponse(BaseModel):
 
 
 class SetupRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=64)
-    password: str = Field(..., min_length=8, max_length=256)
-    display_name: str = Field(default="", max_length=120)
-    device_id: str | None = Field(default=None, max_length=128)
+    username: str = Field(..., min_length=MIN_USERNAME_LENGTH, max_length=MAX_USERNAME_LENGTH)
+    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    display_name: str = Field(default="", max_length=MAX_DISPLAY_NAME_LENGTH)
+    device_id: str | None = Field(default=None, max_length=MAX_DEVICE_ID_LENGTH)
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
-    device_id: str | None = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=MAX_DEVICE_ID_LENGTH)
 
 
 class RefreshRequest(BaseModel):
     refresh_token: str
-    device_id: str | None = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=MAX_DEVICE_ID_LENGTH)
 
 
 class LogoutRequest(BaseModel):
@@ -30,24 +48,24 @@ class LogoutRequest(BaseModel):
 
 
 class DeviceHeartbeatRequest(BaseModel):
-    device_id: str | None = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=MAX_DEVICE_ID_LENGTH)
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str = Field(..., min_length=1, max_length=256)
-    new_password: str = Field(..., min_length=8, max_length=256)
+    current_password: str = Field(..., min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    new_password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UserProfileUpdateRequest(BaseModel):
-    display_name: str | None = Field(default=None, max_length=120)
-    avatar_base64: str | None = Field(default=None, max_length=800_000)
+    display_name: str | None = Field(default=None, max_length=MAX_DISPLAY_NAME_LENGTH)
+    avatar_base64: str | None = Field(default=None, max_length=MAX_AVATAR_BASE64_LENGTH)
 
 
 class UserPublic(BaseModel):
     id: str
     username: str
     display_name: str = ""
-    avatar_base64: str = Field(default="", max_length=800_000)
+    avatar_base64: str = Field(default="", max_length=MAX_AVATAR_BASE64_LENGTH)
     roles: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
     page_permissions: dict[str, str] = Field(default_factory=dict)
@@ -61,7 +79,7 @@ class AuthTokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int = 900
+    expires_in: int = DEFAULT_EXPIRES_IN
     user: UserPublic
 
 
@@ -90,7 +108,7 @@ class LoginSessionResponse(LoginRecordResponse):
 
 
 class DeviceHeartbeatResponse(BaseModel):
-    status: str = "ok"
+    status: str = OperationStatus.OK
     device_id: str
     last_seen_at: str
     is_online: bool = True
@@ -104,22 +122,24 @@ class LoginSessionListResponse(BaseModel):
 
 
 class RevokeOtherSessionsResponse(BaseModel):
-    status: str = "ok"
+    status: str = OperationStatus.OK
     revoked_devices: int = Field(ge=0)
     revoked_sessions: int = Field(ge=0)
 
 
 class UserCreateRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=64)
-    password: str = Field(..., min_length=8, max_length=256)
-    display_name: str = Field(default="", max_length=120)
+    username: str = Field(..., min_length=MIN_USERNAME_LENGTH, max_length=MAX_USERNAME_LENGTH)
+    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    display_name: str = Field(default="", max_length=MAX_DISPLAY_NAME_LENGTH)
     roles: list[str] = Field(default_factory=lambda: ["user"])
     is_active: bool = True
 
 
 class UserUpdateRequest(BaseModel):
-    display_name: str | None = Field(default=None, max_length=120)
-    password: str | None = Field(default=None, min_length=8, max_length=256)
+    display_name: str | None = Field(default=None, max_length=MAX_DISPLAY_NAME_LENGTH)
+    password: str | None = Field(
+        default=None, min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH
+    )
     roles: list[str] | None = None
     is_active: bool | None = None
 
@@ -140,8 +160,8 @@ class RoleResponse(BaseModel):
 
 
 class RoleUpdateRequest(BaseModel):
-    name: str = Field(..., min_length=2, max_length=64)
-    description: str = Field(default="", max_length=240)
+    name: str = Field(..., min_length=MIN_NAME_LENGTH, max_length=MAX_NAME_LENGTH)
+    description: str = Field(default="", max_length=MAX_DESCRIPTION_LENGTH)
     permissions: list[str] = Field(default_factory=list)
 
 
@@ -152,4 +172,17 @@ class RoleListResponse(BaseModel):
 
 
 class PagePermissionUpdateRequest(BaseModel):
-    permission: str = Field(..., min_length=1, max_length=120)
+    permission: str = Field(..., min_length=1, max_length=MAX_PERMISSION_LENGTH)
+
+
+class RevokeSessionResponse(StatusResponse):
+    revoked_current: bool
+
+
+class DeleteDeviceResponse(StatusResponse):
+    deleted: int
+    deleted_current: bool
+
+
+class DeleteLoginRecordResponse(StatusResponse):
+    deleted_current: bool

@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import AppModel as BaseModel
 
 
 class MCPToolInfo(BaseModel):

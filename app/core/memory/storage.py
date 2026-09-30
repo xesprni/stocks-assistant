@@ -20,11 +20,15 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 
+from app.constants.common import OperationStatus
+from app.constants.memory import (
+    VECTOR_SEARCH_MAX_CANDIDATES as VECTOR_SEARCH_MAX_CANDIDATES,
+)
+
 # 向量搜索候选集上限。超过此数量的 embedding 不会被加载到内存参与相似度计算，
 # 防止大规模记忆库导致 O(n) 扫描和内存压力。实际结果仍按 limit 截断。
 from app.core.memory.search_filters import scope_filter
-
-VECTOR_SEARCH_MAX_CANDIDATES = 5000
+from app.schemas.memory import MemoryIndexDeleteResult, MemoryStorageStats
 
 
 def _locked(method):
@@ -102,7 +106,7 @@ class MemoryStorage:
             self.fts5_available = self._check_fts5()
             try:
                 result = self.conn.execute("PRAGMA integrity_check").fetchone()
-                if result[0] != "ok":
+                if result[0] != OperationStatus.OK:
                     self.conn.close()
                     self.db_path.unlink(missing_ok=True)
                     self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -238,15 +242,14 @@ class MemoryStorage:
         return cursor.rowcount
 
     @_locked
-    def delete_indexed_file(self, path: str) -> dict[str, int]:
+    def delete_indexed_file(self, path: str) -> MemoryIndexDeleteResult:
         """Delete both chunks and file metadata for a path."""
         chunk_cursor = self.conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
         file_cursor = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
         self.conn.commit()
-        return {
-            "deleted_chunks": chunk_cursor.rowcount,
-            "deleted_index_files": file_cursor.rowcount,
-        }
+        return MemoryIndexDeleteResult(
+            deleted_chunks=chunk_cursor.rowcount, deleted_index_files=file_cursor.rowcount
+        )
 
     @_locked
     def list_indexed_files(self, source: str | None = None) -> list[dict]:
@@ -368,12 +371,12 @@ class MemoryStorage:
         )
 
     @_locked
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self) -> MemoryStorageStats:
         """获取存储统计信息"""
-        return {
-            "chunks": self.conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"],
-            "files": self.conn.execute("SELECT COUNT(*) as c FROM files").fetchone()["c"],
-        }
+        return MemoryStorageStats(
+            chunks=self.conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"],
+            files=self.conn.execute("SELECT COUNT(*) as c FROM files").fetchone()["c"],
+        )
 
     @_locked
     def close(self):

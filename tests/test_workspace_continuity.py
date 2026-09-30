@@ -16,6 +16,7 @@ from app.core.agent.agent import Agent
 from app.core.agent.models import LLMRequest
 from app.core.agent.run_service import ChatRunManager
 from app.core.security import CurrentUser, get_current_user
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 from app.core.tools import tool_manager
 from app.core.tools.base_tool import BaseTool, ToolStage
@@ -182,8 +183,8 @@ def test_api_resume_recreates_agent_and_reads_persisted_user_file(
     tool_results = models[1].requests[1].messages[-1]["content"]
     assert tool_results[0]["type"] == "tool_result"
     assert file_content in tool_results[0]["content"]
-    assert store.get_session(session_id)["user_id"] == "alice"
-    assert len(store.get_messages(session_id)) == 4
+    assert to_payload(store.get_session(session_id))["user_id"] == "alice"
+    assert len(to_payload(store.get_messages(session_id))) == 4
     assert not (tmp_path / "research workspace/users/bob" / relative_file).exists()
 
 

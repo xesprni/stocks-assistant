@@ -11,6 +11,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from app.constants.skills import (
+    SKILLS_CONFIG_FILE as SKILLS_CONFIG_FILE,
+)
 from app.core.skills.config import get_missing_requirements, should_include_skill
 from app.core.skills.formatter import (
     format_skill_entries_for_prompt,
@@ -20,8 +23,6 @@ from app.core.skills.loader import SkillLoader
 from app.core.skills.types import SkillEntry, SkillSnapshot
 
 logger = logging.getLogger("stocks-assistant.skills")
-
-SKILLS_CONFIG_FILE = "skills_config.json"
 
 
 class SkillManager:

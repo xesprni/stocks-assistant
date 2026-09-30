@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from app.api import agent as agent_api
 from app.core.agent.executor import AgentCancelledError
 from app.core.agent.run_service import ChatRunManager
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 from app.core.tracing import TraceRecorder, TraceStore
 from app.schemas import ChatRequest
@@ -17,7 +18,7 @@ from app.schemas.chat_inputs import ChatInputRequest
 @pytest.mark.parametrize("outcome", ["success", "cancel", "error"])
 def test_input_terminal_state_is_traced_before_run_closes(tmp_path, monkeypatch, outcome):
     sessions = ChatSessionStore(str(tmp_path))
-    session_id = sessions.create_session(user_id="alice")["id"]
+    session_id = to_payload(sessions.create_session(user_id="alice"))["id"]
     traces = TraceStore(str(tmp_path))
     manager = ChatRunManager()
 
@@ -64,7 +65,7 @@ def test_input_terminal_state_is_traced_before_run_closes(tmp_path, monkeypatch,
         else:
             with pytest.raises(HTTPException):
                 agent_api.chat(request, SimpleNamespace(id="alice"))
-        trace = traces.get_session_traces(session_id)["runs"][0]
+        trace = to_payload(traces.get_session_traces(session_id))["runs"][0]
         nodes = [event for event in trace["events"] if event["node_type"] == "input"]
         expected_final = "completed" if outcome == "success" else "failed"
         assert [node["payload"]["input"]["status"] for node in nodes] == [

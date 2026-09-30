@@ -1,0 +1,4 @@
+"""watchlist 输入校验与协议常量。"""
+
+MAX_ITEM_IDS_LENGTH = 2000
+MAX_WATCHLIST_GROUP_NAME_LENGTH = 40

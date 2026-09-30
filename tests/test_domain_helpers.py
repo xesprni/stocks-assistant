@@ -13,7 +13,10 @@ from app.core.market.utils import change_rate, change_value
 from app.core.memory.storage import MemoryChunk, MemoryStorage
 from app.core.portfolio.service import PortfolioService
 from app.core.portfolio.valuation import money, pnl_ratio, position_ratio, ratio
+from app.core.serialization import to_payload
 from app.core.watchlist.service import LongbridgeUnavailableError as LegacyLongbridgeError
+from app.schemas.dashboard import DashboardPortfolioSnapshot
+from app.schemas.portfolio import PortfolioItem
 
 
 def test_html_extraction_preserves_domain_title_and_paragraph_policies() -> None:
@@ -104,6 +107,10 @@ def test_quote_helpers_keep_decimal_precision_and_error_identity() -> None:
 
 def test_portfolio_and_dashboard_keep_distinct_missing_quote_fallbacks(tmp_path: Path) -> None:
     row = {
+        "id": 1,
+        "market": "US",
+        "created_at": "2026-01-01",
+        "updated_at": "2026-01-01",
         "symbol": "AAPL.US",
         "shares": "2",
         "cost_price": "10",
@@ -113,13 +120,20 @@ def test_portfolio_and_dashboard_keep_distinct_missing_quote_fallbacks(tmp_path:
     }
     portfolio = PortfolioService(str(tmp_path))
     items, assets, _ = portfolio._build_enriched_items([row], "0", {}, {})
-    assert items[0]["stock_value"] == "20.00"
-    assert items[0]["valuation_price_source"] == "cost"
-    assert items[0]["pnl_ratio"] is None
+    assert items[0].stock_value == "20.00"
+    assert items[0].valuation_price_source == "cost"
+    assert items[0].pnl_ratio is None
     assert assets == "20.00"
 
     dashboard = object.__new__(DashboardService)
-    payload = dashboard._enrich_portfolio_payload({"items": [row], "total_capital": "0"}, {})
+    payload = to_payload(
+        dashboard._enrich_portfolio_payload(
+            DashboardPortfolioSnapshot(
+                items=[PortfolioItem.model_validate(row)], total_capital="0", market="US", total=1
+            ),
+            {},
+        )
+    )
     assert payload["items"][0]["stock_value"] == "30.00"
     assert payload["items"][0]["pnl_ratio"] == "50.00%"
     assert payload["total_assets"] == "30.00"

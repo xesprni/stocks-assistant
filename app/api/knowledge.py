@@ -3,17 +3,22 @@
 提供知识库目录树浏览、文件内容读取、文件导入、URL 导入和知识图谱接口。
 """
 
+from http import HTTPStatus
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_effective_settings
+from app.constants.security import Permission
 from app.core.knowledge.service import KnowledgeService
 from app.core.security import CurrentUser, require_permissions, user_workspace_dir
 from app.schemas.knowledge import (
+    KnowledgeContent,
     KnowledgeFileSaveRequest,
+    KnowledgeGraph,
     KnowledgeSaveResponse,
+    KnowledgeTreeEnvelope,
     KnowledgeUrlSaveRequest,
 )
 
@@ -26,7 +31,7 @@ def _knowledge_service(user: CurrentUser) -> KnowledgeService:
     return KnowledgeService(workspace_root=root)
 
 
-async def _index_saved_knowledge(user: CurrentUser, result: dict) -> None:
+async def _index_saved_knowledge(user: CurrentUser, result: KnowledgeSaveResponse) -> None:
     """知识写入成功后立即进入当前用户索引，避免首次检索读不到新内容。"""
     from app.deps import get_memory_manager_for_user
 
@@ -34,53 +39,55 @@ async def _index_saved_knowledge(user: CurrentUser, result: dict) -> None:
     if not settings.memory_enabled:
         return
     root = Path(user_workspace_dir(settings.workspace_dir, user.id))
-    file_path = root / "knowledge" / str(result["path"])
+    file_path = root / "knowledge" / str(result.path)
     manager = get_memory_manager_for_user(user.id)
     await manager.index_file(
         file_path,
         source="knowledge",
         scope="user",
         user_id=user.id,
-        metadata={"source_url": result.get("source")},
+        metadata={"source_url": result.source},
     )
 
 
-@router.get("/tree")
-def knowledge_tree(current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+@router.get("/tree", response_model=KnowledgeTreeEnvelope, response_model_exclude_unset=True)
+def knowledge_tree(
+    current_user: CurrentUser = Depends(require_permissions(Permission.KNOWLEDGE_READ)),
+) -> KnowledgeTreeEnvelope:
     service = _knowledge_service(current_user)
     try:
         tree = service.list_tree()
-        return {"tree": tree}
+        return KnowledgeTreeEnvelope(tree=tree)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
-@router.get("/read")
+@router.get("/read", response_model=KnowledgeContent)
 def read_knowledge_file(
     path: str = Query(..., description="File path relative to knowledge dir"),
-    current_user: CurrentUser = Depends(require_permissions("knowledge:read")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.KNOWLEDGE_READ)),
+) -> KnowledgeContent:
     service = _knowledge_service(current_user)
     try:
         content = service.read_file(path)
         if content is None:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="File not found")
         return content
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="File not found") from None
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="File not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
 @router.post("/files", response_model=KnowledgeSaveResponse)
 async def save_knowledge_file(
     payload: KnowledgeFileSaveRequest,
-    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.KNOWLEDGE_WRITE)),
+) -> KnowledgeSaveResponse:
     service = _knowledge_service(current_user)
     try:
         result = await run_in_threadpool(
@@ -92,16 +99,16 @@ async def save_knowledge_file(
         await _index_saved_knowledge(current_user, result)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
 @router.post("/url", response_model=KnowledgeSaveResponse)
 async def save_knowledge_url(
     payload: KnowledgeUrlSaveRequest,
-    current_user: CurrentUser = Depends(require_permissions("knowledge:write")),
-):
+    current_user: CurrentUser = Depends(require_permissions(Permission.KNOWLEDGE_WRITE)),
+) -> KnowledgeSaveResponse:
     service = _knowledge_service(current_user)
     try:
         result = await run_in_threadpool(
@@ -113,16 +120,18 @@ async def save_knowledge_url(
         await _index_saved_knowledge(current_user, result)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
 
 
-@router.get("/graph")
-def knowledge_graph(current_user: CurrentUser = Depends(require_permissions("knowledge:read"))):
+@router.get("/graph", response_model=KnowledgeGraph)
+def knowledge_graph(
+    current_user: CurrentUser = Depends(require_permissions(Permission.KNOWLEDGE_READ)),
+) -> KnowledgeGraph:
     service = _knowledge_service(current_user)
     try:
         graph = service.build_graph()
         return graph
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e

@@ -93,7 +93,7 @@ class ChatInputService:
         session_id: str,
         request: ChatInputRequest,
         start: Callable[[dict[str, Any]], ChatRun],
-    ) -> dict[str, Any]:
+    ) -> ChatInput:
         with self.manager.lock:
             self.recover()
             fingerprint = request.model_dump_json(exclude={"request_id"})
@@ -101,7 +101,7 @@ class ChatInputService:
             if existing:
                 if existing["fingerprint"] != fingerprint:
                     raise ChatRunConflict("request_id already used with different parameters")
-                return existing
+                return ChatInput.model_validate(existing)
             run = self.manager.active_for_session(session_id)
             if request.mode == "steer" and (
                 not run
@@ -143,7 +143,7 @@ class ChatInputService:
                     self.repository.pause_inputs(session_id, True)
             result = self.repository.find_input(session_id, input_id=item["id"])
             assert result is not None
-            return result
+            return ChatInput.model_validate(result)
 
     def start_next(
         self,
@@ -173,14 +173,14 @@ class ChatInputService:
                 self.repository.pause_inputs(session_id, True)
                 raise
 
-    def cancel(self, session_id: str, input_id: str) -> dict[str, Any]:
+    def cancel(self, session_id: str, input_id: str) -> ChatInput:
         with self.manager.lock:
             self.recover()
             item = self.repository.find_input(session_id, input_id=input_id)
             if item is None:
                 raise KeyError(input_id)
             if item["status"] == "cancelled":
-                return item
+                return ChatInput.model_validate(item)
             if item["status"] not in {"pending", "failed"}:
                 raise ChatRunConflict(
                     "Input is already executing or applied and cannot be cancelled"
@@ -189,7 +189,7 @@ class ChatInputService:
             run = self.manager.active_for_session(session_id)
             if run and run.input_channel:
                 run.input_channel.emit(result)
-            return result
+            return ChatInput.model_validate(result)
 
     def finish_run(self, run: ChatRun, *, success: bool, error: str | None = None) -> None:
         with self.manager.lock:

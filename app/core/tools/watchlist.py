@@ -7,43 +7,30 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.constants.common import OperationStatus
+from app.constants.market import DEFAULT_SYMBOL_SEARCH_LIMIT, MAX_SYMBOL_SEARCH_LIMIT
+from app.constants.tools import (
+    ITEM_PAYLOAD_FIELDS as ITEM_PAYLOAD_FIELDS,
+)
+from app.constants.tools import (
+    WATCHLIST_ACTION_ALIASES,
+    WATCHLIST_CATEGORY_ALIASES,
+)
+from app.constants.tools import (
+    WATCHLIST_FIELDS as WATCHLIST_FIELDS,
+)
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.parameters import bounded_positive_int, optional_positive_int
-from app.schemas.watchlist import WatchlistItemCreate
-
-WATCHLIST_FIELDS = (
-    "id",
-    "category",
-    "symbol",
-    "name",
-    "name_cn",
-    "name_en",
-    "name_hk",
-    "exchange",
-    "currency",
-    "last_done",
-    "change_value",
-    "change_rate",
-    "note",
-    "created_at",
-    "updated_at",
+from app.schemas.common import RefreshResponse
+from app.schemas.tool_outputs import (
+    ItemDeletionResult,
+    ItemMutationResult,
+    ToolItemResult,
+    WatchlistToolList,
+    WatchlistToolSearch,
 )
-
-ITEM_PAYLOAD_FIELDS = (
-    "category",
-    "symbol",
-    "name",
-    "name_cn",
-    "name_en",
-    "name_hk",
-    "exchange",
-    "currency",
-    "last_done",
-    "change_value",
-    "change_rate",
-    "note",
-)
+from app.schemas.watchlist import WatchlistItem, WatchlistItemCreate, WatchlistSearchResult
 
 
 class WatchlistTool(BaseTool):
@@ -95,7 +82,12 @@ class WatchlistTool(BaseTool):
                 "description": "Search query for Longbridge symbol lookup.",
             },
             "q": {"type": "string", "description": "Alias for query."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_SYMBOL_SEARCH_LIMIT,
+                "default": DEFAULT_SYMBOL_SEARCH_LIMIT,
+            },
         },
         "required": ["action"],
     }
@@ -148,31 +140,35 @@ class WatchlistTool(BaseTool):
         except Exception:
             return None
 
-    def _list(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _list(self, service: Any, params: dict[str, Any]) -> WatchlistToolList:
         category = self._category(params.get("category"))
         items = [
             self._sanitize_item(item) for item in service.list_items(category, user_id=self.user_id)
         ]
-        return {
-            "source": "watchlist",
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "category": category or "ALL",
-            "items": items,
-            "total": len(items),
-        }
+        return WatchlistToolList(
+            source="watchlist",
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+            category=category or "ALL",
+            items=items,
+            total=len(items),
+        )
 
-    def _get(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _get(self, service: Any, params: dict[str, Any]) -> ToolItemResult[WatchlistItem]:
         item = self._find_item(service, params)
-        return {"source": "watchlist", "item": self._sanitize_item(item)}
+        return ToolItemResult[WatchlistItem](source="watchlist", item=self._sanitize_item(item))
 
-    def _add(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _add(self, service: Any, params: dict[str, Any]) -> ItemMutationResult[WatchlistItem]:
         payload = self._create_payload(params)
-        item = service.add_item(WatchlistItemCreate(**payload), user_id=self.user_id)
-        return {"status": "ok", "item": self._sanitize_item(item)}
+        item = WatchlistItem.model_validate(
+            service.add_item(WatchlistItemCreate.model_validate(payload), user_id=self.user_id)
+        )
+        return ItemMutationResult[WatchlistItem](
+            status=OperationStatus.OK, item=self._sanitize_item(item)
+        )
 
-    def _update(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _update(self, service: Any, params: dict[str, Any]) -> ItemMutationResult[WatchlistItem]:
         current = self._find_item(service, params, use_category_filter=False)
-        payload = {field: current.get(field) for field in ITEM_PAYLOAD_FIELDS}
+        payload = {field: getattr(current, field) for field in ITEM_PAYLOAD_FIELDS}
         has_updates = False
 
         # symbol 在 update 中用于定位现有条目；如需改代码本身，先 add 新 symbol 再 delete 旧条目更清晰。
@@ -189,29 +185,41 @@ class WatchlistTool(BaseTool):
             has_updates = True
 
         if not has_updates:
-            return {"status": "ok", "item": self._sanitize_item(current)}
+            return ItemMutationResult[WatchlistItem](
+                status=OperationStatus.OK, item=self._sanitize_item(current)
+            )
 
-        item = service.add_item(WatchlistItemCreate(**payload), user_id=self.user_id)
-        return {"status": "ok", "item": self._sanitize_item(item)}
+        item = WatchlistItem.model_validate(
+            service.add_item(WatchlistItemCreate.model_validate(payload), user_id=self.user_id)
+        )
+        return ItemMutationResult[WatchlistItem](
+            status=OperationStatus.OK, item=self._sanitize_item(item)
+        )
 
-    def _delete(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _delete(self, service: Any, params: dict[str, Any]) -> ItemDeletionResult[WatchlistItem]:
         item = self._find_item(service, params)
-        service.delete_item(int(item["id"]), user_id=self.user_id)
-        return {"status": "ok", "deleted_item": self._sanitize_item(item)}
+        service.delete_item(item.id, user_id=self.user_id)
+        return ItemDeletionResult[WatchlistItem](
+            status=OperationStatus.OK, deleted_item=self._sanitize_item(item)
+        )
 
-    def _reorder(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _reorder(self, service: Any, params: dict[str, Any]) -> RefreshResponse:
         ids = self._id_list(params.get("ids") or params.get("ordered_ids"))
         if not ids:
             raise ValueError("ids is required for reorder")
         service.reorder_items(ids, user_id=self.user_id)
-        return {"status": "ok", "total": len(ids)}
+        return RefreshResponse(status=OperationStatus.OK, total=len(ids))
 
-    def _search(self, service: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _search(self, service: Any, params: dict[str, Any]) -> WatchlistToolSearch:
         query = str(params.get("query") or params.get("q") or params.get("symbol") or "").strip()
         if not query:
             raise ValueError("query is required for search")
         limit = self._bounded_int(
-            params.get("limit"), default=10, minimum=1, maximum=20, name="limit"
+            params.get("limit"),
+            default=DEFAULT_SYMBOL_SEARCH_LIMIT,
+            minimum=1,
+            maximum=MAX_SYMBOL_SEARCH_LIMIT,
+            name="limit",
         )
         category = self._category(params.get("category"))
         results = [
@@ -220,18 +228,18 @@ class WatchlistTool(BaseTool):
                 query=query, category=category, limit=limit, settings=self.settings
             )
         ]
-        return {
-            "source": "longbridge",
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "query": query,
-            "category": category or "ALL",
-            "results": results,
-            "total": len(results),
-        }
+        return WatchlistToolSearch(
+            source="longbridge",
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+            query=query,
+            category=category or "ALL",
+            results=results,
+            total=len(results),
+        )
 
     def _find_item(
         self, service: Any, params: dict[str, Any], use_category_filter: bool = True
-    ) -> dict[str, Any]:
+    ) -> WatchlistItem:
         raw_item_id = (
             params.get("item_id") if params.get("item_id") is not None else params.get("id")
         )
@@ -241,37 +249,40 @@ class WatchlistTool(BaseTool):
             raise ValueError("item_id or symbol is required")
 
         category = self._category(params.get("category")) if use_category_filter else None
-        items = service.list_items(category, user_id=self.user_id)
+        items = [
+            WatchlistItem.model_validate(item)
+            for item in service.list_items(category, user_id=self.user_id)
+        ]
         for item in items:
-            if item_id is not None and int(item.get("id")) == item_id:
+            if item_id is not None and item.id == item_id:
                 return item
-            if symbol and str(item.get("symbol") or "").upper() == symbol:
+            if symbol and item.symbol.upper() == symbol:
                 return item
         raise LookupError("Watchlist item not found")
 
-    def _create_payload(self, params: dict[str, Any]) -> dict[str, Any]:
+    def _create_payload(self, params: dict[str, Any]) -> WatchlistItemCreate:
         symbol = str(params.get("symbol") or "").strip().upper()
         if not symbol:
             raise ValueError("symbol is required")
-        return {
-            "category": self._category(params.get("category"), required=True),
-            "symbol": symbol,
-            "name": str(params.get("name") or ""),
-            "name_cn": str(params.get("name_cn") or ""),
-            "name_en": str(params.get("name_en") or ""),
-            "name_hk": str(params.get("name_hk") or ""),
-            "exchange": str(params.get("exchange") or ""),
-            "currency": str(params.get("currency") or ""),
-            "last_done": params.get("last_done"),
-            "change_value": params.get("change_value"),
-            "change_rate": params.get("change_rate"),
-            "note": str(params.get("note") or ""),
-        }
+        return WatchlistItemCreate(
+            category=self._category(params.get("category"), required=True),
+            symbol=symbol,
+            name=str(params.get("name") or ""),
+            name_cn=str(params.get("name_cn") or ""),
+            name_en=str(params.get("name_en") or ""),
+            name_hk=str(params.get("name_hk") or ""),
+            exchange=str(params.get("exchange") or ""),
+            currency=str(params.get("currency") or ""),
+            last_done=params.get("last_done"),
+            change_value=params.get("change_value"),
+            change_rate=params.get("change_rate"),
+            note=str(params.get("note") or ""),
+        )
 
     @staticmethod
     def _normalize_action(value: Any) -> str:
         action = str(value or "").strip().lower()
-        aliases = {"create": "add", "read": "list", "remove": "delete"}
+        aliases = WATCHLIST_ACTION_ALIASES
         return aliases.get(action, action)
 
     @staticmethod
@@ -281,7 +292,7 @@ class WatchlistTool(BaseTool):
                 raise ValueError("category is required")
             return None
         normalized = str(value).strip().upper().replace("-", "").replace("_", "")
-        aliases = {"HK": "H", "HKG": "H", "CN": "A", "ASHARE": "A", "ALL": None}
+        aliases = WATCHLIST_CATEGORY_ALIASES
         category = aliases.get(normalized, normalized)
         if category is None and not required:
             return None
@@ -311,15 +322,12 @@ class WatchlistTool(BaseTool):
         return ids
 
     @staticmethod
-    def _sanitize_item(item: dict[str, Any]) -> dict[str, Any]:
-        # 工具结果只暴露业务字段，避免把内部用户标识混进 LLM 上下文。
-        return {field: item.get(field) for field in WATCHLIST_FIELDS if field in item}
+    def _sanitize_item(item: WatchlistItem | dict[str, Any]) -> WatchlistItem:
+        # 模型只声明公开业务字段，忽略数据库行中的内部用户标识。
+        return WatchlistItem.model_validate(item)
 
     @staticmethod
-    def _sanitize_search_result(item: dict[str, Any]) -> dict[str, Any]:
-        fields = tuple(
-            field
-            for field in WATCHLIST_FIELDS
-            if field not in {"id", "note", "created_at", "updated_at"}
-        )
-        return {field: item.get(field) for field in fields if field in item}
+    def _sanitize_search_result(
+        item: WatchlistSearchResult | dict[str, Any],
+    ) -> WatchlistSearchResult:
+        return WatchlistSearchResult.model_validate(item)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import re
 import shutil
 import stat
 import tempfile
@@ -14,11 +13,29 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 
 import httpx
 
+from app.constants.common import OperationStatus
+from app.constants.skills import (
+    CLAW_HUB_MAX_SEARCH_LIMIT,
+    CLAW_HUB_SEARCH_LIMIT,
+    CLAW_HUB_TIMEOUT_SECONDS,
+)
+from app.constants.skills import (
+    CLAW_HUB_SLUG_RE as CLAW_HUB_SLUG_RE,
+)
+from app.constants.skills import (
+    MAX_ARCHIVE_BYTES as MAX_ARCHIVE_BYTES,
+)
+from app.constants.skills import (
+    MAX_UNCOMPRESSED_BYTES as MAX_UNCOMPRESSED_BYTES,
+)
 from app.core.skills.manager import SkillManager
-
-CLAW_HUB_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
-MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+from app.schemas.skills import (
+    ClawHubInstallResponse,
+    ClawHubSearchResponse,
+    ClawHubSearchResult,
+    ClawHubSkillDetail,
+    SkillInfo,
+)
 
 
 class ClawHubError(Exception):
@@ -120,19 +137,19 @@ class ClawHubService:
         registry_url: str,
         skills_dir: Path,
         skill_manager: SkillManager,
-        timeout: float = 20.0,
+        timeout: float = CLAW_HUB_TIMEOUT_SECONDS,
     ):
         self.registry_url = registry_url.rstrip("/") or "https://clawhub.ai"
         self.skills_dir = skills_dir.expanduser()
         self.skill_manager = skill_manager
         self.timeout = timeout
 
-    def search(self, query: str, limit: int = 20) -> dict[str, Any]:
+    def search(self, query: str, limit: int = CLAW_HUB_SEARCH_LIMIT) -> ClawHubSearchResponse:
         query = query.strip()
         if not query:
-            return {"results": [], "total": 0}
+            return ClawHubSearchResponse(results=[], total=0)
 
-        safe_limit = max(1, min(limit, 50))
+        safe_limit = max(1, min(limit, CLAW_HUB_MAX_SEARCH_LIMIT))
         payload = self._get_json(
             "/api/v1/search",
             params={
@@ -142,15 +159,15 @@ class ClawHubService:
             },
         )
         results = [self._normalize_skill_item(item) for item in _collection_from_response(payload)]
-        results = [item for item in results if item.get("slug")]
-        return {"results": results, "total": len(results)}
+        results = [item for item in results if item.slug]
+        return ClawHubSearchResponse(results=results, total=len(results))
 
-    def get_detail(self, slug: str) -> dict[str, Any]:
+    def get_detail(self, slug: str) -> ClawHubSkillDetail:
         self._validate_slug(slug)
         raw_payload = self._get_json(f"/api/v1/skills/{slug}")
         raw_detail = _object_from_response(raw_payload)
-        detail = self._normalize_skill_item(raw_detail)
-        detail["slug"] = detail.get("slug") or slug
+        detail = ClawHubSkillDetail(**self._normalize_skill_item(raw_detail).model_dump())
+        detail.slug = detail.slug or slug
 
         scan: dict[str, Any] = {}
         scan_error: str | None = None
@@ -168,21 +185,17 @@ class ClawHubService:
         except ClawHubError as exc:
             preview_error = str(exc)
 
-        detail.update(
-            {
-                "scan": scan,
-                "scan_status": self._scan_status(scan),
-                "moderation_status": self._moderation_status(raw_detail, scan),
-                "skill_md": skill_md,
-                "preview_error": preview_error,
-                "scan_error": scan_error,
-            }
-        )
+        detail.scan = scan
+        detail.scan_status = self._scan_status(scan)
+        detail.moderation_status = self._moderation_status(raw_detail, scan)
+        detail.skill_md = skill_md
+        detail.preview_error = preview_error
+        detail.scan_error = scan_error
         return detail
 
     def install(
         self, slug: str, version: str | None = None, tag: str | None = None
-    ) -> dict[str, Any]:
+    ) -> ClawHubInstallResponse:
         self._validate_slug(slug)
         target = self.skills_dir / slug
         if target.exists():
@@ -216,24 +229,24 @@ class ClawHubService:
         )
         config_entry = self.skill_manager.get_skills_config().get(entry.skill.name, {})
 
-        return {
-            "status": "ok",
-            "message": "Installed. The skill is disabled until you enable it manually.",
-            "installed_path": str(target),
-            "skill": {
-                "name": entry.skill.name,
-                "description": entry.skill.description,
-                "enabled": False,
-                "file_path": entry.skill.file_path,
-                "source": config_entry.get("source"),
-                "clawhub_slug": config_entry.get("clawhub_slug"),
-                "clawhub_version": config_entry.get("clawhub_version"),
-                "clawhub_owner": config_entry.get("clawhub_owner"),
-                "clawhub_url": config_entry.get("clawhub_url"),
-            },
-        }
+        return ClawHubInstallResponse(
+            status=OperationStatus.OK,
+            message="Installed. The skill is disabled until you enable it manually.",
+            installed_path=str(target),
+            skill=SkillInfo(
+                name=entry.skill.name,
+                description=entry.skill.description,
+                enabled=False,
+                file_path=entry.skill.file_path,
+                source=config_entry.get("source"),
+                clawhub_slug=config_entry.get("clawhub_slug"),
+                clawhub_version=config_entry.get("clawhub_version"),
+                clawhub_owner=config_entry.get("clawhub_owner"),
+                clawhub_url=config_entry.get("clawhub_url"),
+            ),
+        )
 
-    def _normalize_skill_item(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_skill_item(self, raw: dict[str, Any]) -> ClawHubSearchResult:
         slug = _first_string(raw, ("slug", "skillSlug", "packageSlug", "id", "name"))
         owner = _normalize_owner(raw.get("owner") or raw.get("author") or raw.get("publisher"))
         version = _nested_version(raw.get("version")) or _first_string(
@@ -243,19 +256,17 @@ class ClawHubService:
         if not canonical_url and slug:
             canonical_url = f"{self.registry_url}/skills/{slug}"
 
-        return {
-            "slug": slug,
-            "name": _first_string(raw, ("displayName", "display_name", "title", "name"))
-            or slug
-            or "",
-            "summary": _first_string(
+        return ClawHubSearchResult(
+            slug=slug or "",
+            name=_first_string(raw, ("displayName", "display_name", "title", "name")) or slug or "",
+            summary=_first_string(
                 raw, ("summary", "description", "shortDescription", "short_description")
             )
             or "",
-            "description": _first_string(raw, ("description", "summary", "readme")) or "",
-            "owner": owner,
-            "version": version,
-            "updated_at": _first_string(
+            description=_first_string(raw, ("description", "summary", "readme")) or "",
+            owner=owner,
+            version=version,
+            updated_at=_first_string(
                 raw,
                 (
                     "updatedAt",
@@ -266,16 +277,16 @@ class ClawHubService:
                     "created_at",
                 ),
             ),
-            "canonical_url": canonical_url,
-            "scan_status": self._scan_status(raw),
-            "moderation_status": self._moderation_status(raw),
-        }
+            canonical_url=canonical_url,
+            scan_status=self._scan_status(raw),
+            moderation_status=self._moderation_status(raw),
+        )
 
     def _fetch_install_metadata(self, slug: str) -> dict[str, Any]:
         try:
             raw_detail = self._get_json(f"/api/v1/skills/{slug}")
             if isinstance(raw_detail, dict):
-                return self._normalize_skill_item(_object_from_response(raw_detail))
+                return self._normalize_skill_item(_object_from_response(raw_detail)).model_dump()
         except ClawHubError:
             return {}
         return {}

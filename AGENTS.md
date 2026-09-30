@@ -224,3 +224,13 @@ Longbridge OpenAPI 提供程序化行情和交易接口，用于构建投研、�
 - 对外部实时数据、行情、新闻、政策、交易日历和 SDK 行为不要凭记忆断言；优先查本地 service、文档或工具结果。
 - 保持 API 响应结构向后兼容，前端依赖字段变动时同步更新 `frontend/src/lib/api.ts` 类型和页面处理。
 - 修改 README、AGENTS、CLAUDE 等协作文档时，优先纠正会误导开发/运行的旧信息。
+
+## 返回模型与常量约束（必须遵守）
+
+- 固定业务返回结构必须使用 `app/schemas/` 中具名的 Pydantic 模型，内部纯计算结果也可使用具名 dataclass。API handler 必须声明返回类型；Service 的固定结构结果不得声明为 `dict`、`dict[str, Any]` 或 `list[dict]`。
+- 构造业务结果使用 `Response(field=value)`，调用方使用 `result.field`。禁止添加 `__getitem__` / `get` 等字典兼容接口，也不要通过 `Any`、`TypedDict` 或 `RootModel[dict]` 规避固定结构建模。
+- ORM 行、外部 SDK/HTTP 原始响应在适配入口解析；HTTP、LLM 工具、SSE、数据库/文件写入等序列化边界才转 JSON。工具通过 `ToolResult` 和 `core.serialization.to_payload` 递归序列化，不能依赖 `str(model)`。模型字段需覆盖原有协议，金额仍保留字符串精度。
+- 动态字典仅用于真正按 symbol/ID/指标名索引的映射、配置补丁、第三方扩展数据、明确的持久化/外部消息协议；不得用它们承载普通固定业务记录。新例外须说明边界和原因，并补契约测试。
+- 共享及领域常量定义在 `app/constants/`，按领域拆分；常量模块只依赖标准库，不能反向导入 Schema、Service 或配置运行时。权限使用 `Permission`，HTTP 状态使用 `HTTPStatus` 或框架的具名状态常量。
+- 有业务意义的默认值、数量/大小上限、超时、缓存 TTL、阈值、地址及别名映射必须提取并复用。不要把模型字段名、JSON 协议键、普通文案、`None`、布尔值和无额外业务含义的 `0/1` 机械提取成常量。
+- 修改模型或常量后运行 `bash scripts/check_backend.sh`。`tests/test_model_contracts.py` 检查 API 返回类型、Service 返回契约、固定字典返回、请求参数上限、常量存放位置、权限/状态常量和常量模块依赖方向；`app/schemas/`、`app/constants/` 全量纳入严格 mypy。

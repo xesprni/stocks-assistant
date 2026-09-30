@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, Bot, BrainCircuit, Check, ChevronDown, CircleCheck, Cpu, Database, Globe2, KeyRound, Loader2, LayoutDashboard, LockKeyhole, MessageCircle, Plug, RefreshCw, Save, Send, ShieldCheck, SlidersHorizontal, TerminalSquare, TrendingUp, WandSparkles, Wrench } from "lucide-react";
 
 import { ConfigChoiceCard, ConfigField as Field, ConfigSegmentedControl } from "@/components/config/ConfigForm";
+import { ThemeColorPicker } from "@/components/config/ThemeColorPicker";
 import { ToggleRow } from "@/components/common/ToggleRow";
 import { TelegramPhotoField } from "@/components/common/TelegramPhotoField";
 import { LongbridgeAuthPanel } from "@/components/LongbridgeAuthPanel";
@@ -1074,6 +1075,9 @@ export function ConfigPage({
                   </Field>
                   <ColorSchemeRow language={language} />
                 </div>
+                <div className="mt-5 border-t border-border/50 pt-5">
+                  <ThemeColorPicker language={language} />
+                </div>
               </ConfigSection>
               <ConfigSection
                 description={copy.featureSectionHint}
@@ -1362,7 +1366,7 @@ function ColorSchemeRow({ language }: { language: AppLanguage }) {
   const { scheme, setScheme } = useColorScheme();
   const copy = i18n[language].config;
   return (
-    <div className="flex items-center justify-between rounded-md border border-border/80 bg-background/50 px-3 py-3">
+    <div className="flex flex-col gap-3 rounded-md border border-border/80 bg-background/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3">
         <div className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
           <TrendingUp className="size-4 text-secondary" />
@@ -1374,9 +1378,10 @@ function ColorSchemeRow({ language }: { language: AppLanguage }) {
           </p>
         </div>
       </div>
-      <div className="flex rounded-md border border-border/80 bg-muted/40 p-0.5">
+      <div role="group" aria-label={copy.colorScheme} className="grid shrink-0 grid-cols-2 rounded-md border border-border/80 bg-muted/40 p-0.5">
         <button
-          className={`rounded-sm px-2.5 py-1 text-[11px] font-medium transition-all ${
+          aria-pressed={scheme === "intl"}
+          className={`min-h-9 rounded-sm px-2.5 py-1 text-[11px] font-medium transition-colors ${
             scheme === "intl"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -1387,7 +1392,8 @@ function ColorSchemeRow({ language }: { language: AppLanguage }) {
           {copy.colorSchemeIntl}
         </button>
         <button
-          className={`rounded-sm px-2.5 py-1 text-[11px] font-medium transition-all ${
+          aria-pressed={scheme === "cn"}
+          className={`min-h-9 rounded-sm px-2.5 py-1 text-[11px] font-medium transition-colors ${
             scheme === "cn"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"

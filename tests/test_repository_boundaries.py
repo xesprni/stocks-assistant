@@ -8,6 +8,7 @@ from sqlalchemy import event
 
 from app.core.app_store import AppStore
 from app.core.orm.models.app import AuditEvent
+from app.core.serialization import to_payload
 
 
 def test_config_and_role_changes_roll_back_together(tmp_path):
@@ -17,7 +18,7 @@ def test_config_and_role_changes_roll_back_together(tmp_path):
     with pytest.raises(ValueError, match="must be an object"):
         store.set_config_values({"app_language": "en", "multi_agent_roles": {"invalid": "role"}})
 
-    assert store.get_config()["app_language"] == "zh"
+    assert to_payload(store.get_config())["app_language"] == "zh"
     assert store.get_subagent_roles() == {"analyst": {"tools": []}}
 
 
@@ -51,7 +52,7 @@ def test_legacy_config_migrates_once_and_stays_encrypted(tmp_path):
     assert store.migrate_config_json_once(legacy)["app_language"] == "en"
     legacy.write_text(json.dumps({"app_language": "zh"}))
     assert store.migrate_config_json_once(legacy) == {}
-    assert store.get_config()["app_language"] == "en"
+    assert to_payload(store.get_config())["app_language"] == "en"
     with store.connect() as connection:
         value = connection.execute(
             "SELECT value_json FROM app_config WHERE key='llm_api_key'"

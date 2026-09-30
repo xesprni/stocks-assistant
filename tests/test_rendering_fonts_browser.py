@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.core.rendering.service import RenderImageService
+from app.core.serialization import to_payload
 from app.schemas.rendering import RenderImageRequest
 
 pytestmark = pytest.mark.skipif(
@@ -42,14 +43,16 @@ def test_three_embedded_weights_render_actual_glyphs(
         for weight in (400, 500, 700)
     )
     lines = "".join(f'<div style="font-weight:{weight}">A</div>' for weight in (400, 500, 700))
-    result = RenderImageService(str(tmp_path)).render(
-        RenderImageRequest(
-            html=(
-                f"<style>{faces}body{{padding:0;color:#000;background:#fff;"
-                "font-family:EmbeddedProbe;font-size:100px;line-height:100px;"
-                f"font-synthesis:none}}</style>{lines}"
-            ),
-            scale=1,
+    result = to_payload(
+        RenderImageService(str(tmp_path)).render(
+            RenderImageRequest(
+                html=(
+                    f"<style>{faces}body{{padding:0;color:#000;background:#fff;"
+                    "font-family:EmbeddedProbe;font-size:100px;line-height:100px;"
+                    f"font-synthesis:none}}</style>{lines}"
+                ),
+                scale=1,
+            )
         )
     )
     assert result["render_checks"]["fonts_ready"] is True
@@ -63,15 +66,17 @@ def test_three_embedded_weights_render_actual_glyphs(
 
 def test_valid_css_fallback_source_does_not_fail_render(tmp_path: Path) -> None:
     url = _font_url("ttf", "font/ttf")
-    result = RenderImageService(str(tmp_path)).render(
-        RenderImageRequest(
-            html=(
-                "<style>@font-face{font-family:EmbeddedFallback;"
-                'src:url("data:font/ttf;base64,YnJva2Vu") format("truetype"),'
-                f'url("{url}") format("truetype")}}'
-                "@font-face{font-family:UnusedBroken;"
-                'src:url("data:font/ttf;base64,YnJva2Vu") format("truetype")}'
-                '</style><p style="font-family:EmbeddedFallback">A</p>'
+    result = to_payload(
+        RenderImageService(str(tmp_path)).render(
+            RenderImageRequest(
+                html=(
+                    "<style>@font-face{font-family:EmbeddedFallback;"
+                    'src:url("data:font/ttf;base64,YnJva2Vu") format("truetype"),'
+                    f'url("{url}") format("truetype")}}'
+                    "@font-face{font-family:UnusedBroken;"
+                    'src:url("data:font/ttf;base64,YnJva2Vu") format("truetype")}'
+                    '</style><p style="font-family:EmbeddedFallback">A</p>'
+                )
             )
         )
     )

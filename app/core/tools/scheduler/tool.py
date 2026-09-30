@@ -9,6 +9,7 @@ from typing import Any
 
 from croniter import croniter
 
+from app.constants.common import OperationStatus
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.scheduler.helpers import (
     notification_metadata,
@@ -17,6 +18,8 @@ from app.core.tools.scheduler.helpers import (
     run_to_response,
     task_to_response,
 )
+from app.schemas.common import StatusResponse, ToggleResponse
+from app.schemas.scheduler import TaskListResponse, TaskRunListResponse, TaskSchedule
 
 logger = logging.getLogger("stocks-assistant.scheduler")
 
@@ -152,7 +155,7 @@ class SchedulerTool(BaseTool):
             "enabled": bool(p.get("enabled", True)),
             "created_at": now,
             "updated_at": now,
-            "schedule": schedule,
+            "schedule": schedule.model_dump(),
             "run_count": 0,
             "metadata": metadata,
         }
@@ -167,9 +170,9 @@ class SchedulerTool(BaseTool):
         self.task_store.add_task(task_data)
         return task_to_response(task_data)
 
-    def _list(self, p: dict) -> dict:
+    def _list(self, p: dict) -> TaskListResponse:
         tasks = self.task_store.list_tasks(enabled_only=bool(p.get("enabled_only", False)))
-        return {"tasks": [task_to_response(task) for task in tasks], "total": len(tasks)}
+        return TaskListResponse(tasks=[task_to_response(task) for task in tasks], total=len(tasks))
 
     def _get(self, p: dict) -> dict:
         task = self.task_store.get_task(self._task_id(p))
@@ -200,7 +203,7 @@ class SchedulerTool(BaseTool):
 
         schedule = self._schedule_from_params(p, required=False)
         if schedule:
-            updates["schedule"] = schedule
+            updates["schedule"] = schedule.model_dump()
 
         if "metadata" in p or "notify_telegram" in p or "telegram_photos" in p:
             metadata = dict(task.get("metadata") or {})
@@ -221,22 +224,22 @@ class SchedulerTool(BaseTool):
             raise ValueError("Task not found")
         return task_to_response(updated)
 
-    def _delete(self, p: dict) -> dict:
+    def _delete(self, p: dict) -> StatusResponse:
         task_id = self._task_id(p)
         task = self.task_store.get_task(task_id)
         if not task:
             raise ValueError("Task not found")
         self.task_store.delete_task(task_id)
-        return {"status": "ok"}
+        return StatusResponse(status=OperationStatus.OK)
 
-    def _toggle(self, p: dict) -> dict:
+    def _toggle(self, p: dict) -> ToggleResponse:
         task_id = self._task_id(p)
         task = self.task_store.get_task(task_id)
         if not task:
             raise ValueError("Task not found")
         enabled = not task.get("enabled", True)
         self.task_store.update_task(task_id, {"enabled": enabled})
-        return {"status": "ok", "enabled": enabled}
+        return ToggleResponse(status=OperationStatus.OK, enabled=enabled)
 
     def _run(self, p: dict) -> dict:
         if not self.scheduler_service:
@@ -259,34 +262,34 @@ class SchedulerTool(BaseTool):
             run = self._run_coro_sync(self.scheduler_service.execute_task_now(task_id))
         return run_to_response(run)
 
-    def _list_runs(self, p: dict) -> dict:
+    def _list_runs(self, p: dict) -> TaskRunListResponse:
         if not self.run_store:
-            return {"runs": [], "total": 0}
+            return TaskRunListResponse(runs=[], total=0)
 
         task_id = self._optional_str(p.get("task_id"))
         if task_id and not self.task_store.get_task(task_id):
             raise ValueError("Task not found")
         limit = max(1, min(int(p.get("limit") or 50), 200))
         runs = self.run_store.list_runs(task_id=task_id, limit=limit)
-        return {"runs": [run_to_response(run) for run in runs], "total": len(runs)}
+        return TaskRunListResponse(runs=[run_to_response(run) for run in runs], total=len(runs))
 
     def _list_task_runs(self, p: dict) -> dict:
         self._task_id(p)
         return self._list_runs(p)
 
-    def _enable(self, p: dict) -> dict:
+    def _enable(self, p: dict) -> ToggleResponse:
         task_id = self._task_id(p)
         if not self.task_store.get_task(task_id):
             raise ValueError("Task not found")
         self.task_store.enable_task(task_id, True)
-        return {"status": "ok", "enabled": True}
+        return ToggleResponse(status=OperationStatus.OK, enabled=True)
 
-    def _disable(self, p: dict) -> dict:
+    def _disable(self, p: dict) -> ToggleResponse:
         task_id = self._task_id(p)
         if not self.task_store.get_task(task_id):
             raise ValueError("Task not found")
         self.task_store.enable_task(task_id, False)
-        return {"status": "ok", "enabled": False}
+        return ToggleResponse(status=OperationStatus.OK, enabled=False)
 
     def _calculate_next(self, task: dict, from_time: datetime) -> datetime | None:
         if self.scheduler_service and hasattr(self.scheduler_service, "_calculate_next"):
@@ -310,7 +313,7 @@ class SchedulerTool(BaseTool):
                 return None
         return None
 
-    def _schedule_from_params(self, p: dict, required: bool) -> dict[str, Any] | None:
+    def _schedule_from_params(self, p: dict, required: bool) -> TaskSchedule | None:
         has_schedule = "schedule" in p and p.get("schedule") is not None
         has_legacy_schedule = (
             p.get("schedule_type") is not None or p.get("schedule_value") is not None

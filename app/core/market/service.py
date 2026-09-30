@@ -5,6 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.constants.market import (
+    DEFAULT_CONFIG as DEFAULT_CONFIG,
+)
+from app.constants.market import (
+    DEFAULT_INDICES as DEFAULT_INDICES,
+)
 from app.core.market.config_repository import MarketConfigRepository
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.longbridge_data import LongbridgeMarketDataMixin
@@ -17,49 +23,37 @@ from app.core.market.utils import (
     normalize_symbols,
     stringify,
 )
+from app.schemas.market import IndexConfig, MarketDashboardConfig, QuoteItem
+from app.schemas.market_data import SecurityStaticInfo
 
 # 默认监控指数列表
-DEFAULT_INDICES = [
-    {"symbol": "HSI.HK", "name": "恒生指数", "enabled": True},
-    {"symbol": "HSCEI.HK", "name": "国企指数", "enabled": True},
-    {"symbol": ".SPX.US", "name": "S&P 500", "enabled": True},
-    {"symbol": ".NDX.US", "name": "纳斯达克100", "enabled": True},
-    {"symbol": ".DJI.US", "name": "道琼斯", "enabled": True},
-    {"symbol": "000001.SH", "name": "上证综指", "enabled": True},
-    {"symbol": "000300.SH", "name": "沪深300", "enabled": True},
-]
-
-DEFAULT_CONFIG = {
-    "indices": DEFAULT_INDICES,
-    "refresh_interval": 60,
-}
 
 
-def _default_config() -> dict:
-    return {
-        "indices": [dict(index) for index in DEFAULT_INDICES],
-        "refresh_interval": DEFAULT_CONFIG["refresh_interval"],
-    }
+def _default_config() -> MarketDashboardConfig:
+    return MarketDashboardConfig(
+        indices=[dict(index) for index in DEFAULT_INDICES],
+        refresh_interval=DEFAULT_CONFIG["refresh_interval"],
+    )
 
 
-def _normalize_index_config(index: Any) -> dict:
+def _normalize_index_config(index: Any) -> IndexConfig:
     if not isinstance(index, dict):
         symbol = canonical_symbol(index)
-        return {"symbol": symbol, "name": symbol, "enabled": True}
+        return IndexConfig(symbol=symbol, name=symbol, enabled=True)
 
     symbol = canonical_symbol(index.get("symbol"))
     normalized = dict(index)
     normalized["symbol"] = symbol
     normalized["name"] = str(index.get("name") or symbol)
     normalized["enabled"] = bool(index.get("enabled", True))
-    return normalized
+    return IndexConfig.model_validate(normalized)
 
 
-def _normalize_config(config: Any) -> dict:
+def _normalize_config(config: Any) -> MarketDashboardConfig:
     if not isinstance(config, dict):
         return _default_config()
 
-    normalized = _default_config()
+    normalized = _default_config().model_dump()
     normalized.update(config)
 
     indices = normalized.get("indices") or DEFAULT_INDICES
@@ -67,7 +61,7 @@ def _normalize_config(config: Any) -> dict:
     normalized_indices = []
     for index in indices:
         item = _normalize_index_config(index)
-        symbol = item.get("symbol", "")
+        symbol = item.symbol
         # 配置文件可能来自旧版本或手工编辑，保存/读取时顺手去掉空 symbol 和重复项。
         if not symbol or symbol in seen:
             continue
@@ -75,7 +69,7 @@ def _normalize_config(config: Any) -> dict:
         normalized_indices.append(item)
 
     normalized["indices"] = normalized_indices
-    return normalized
+    return MarketDashboardConfig.model_validate(normalized)
 
 
 class MarketService(LongbridgeMarketDataMixin):
@@ -91,42 +85,44 @@ class MarketService(LongbridgeMarketDataMixin):
 
     # ------------------------------------------------------------------ config
 
-    def get_config(self, user_id: str | None = None) -> dict:
+    def get_config(self, user_id: str | None = None) -> MarketDashboardConfig:
         stored = self.config_repository.load(user_id)
         return _normalize_config(stored) if stored else _default_config()
 
-    def save_config(self, config: dict, user_id: str | None = None) -> dict:
-        return self.config_repository.save(_normalize_config(config), user_id)
+    def save_config(self, config: dict, user_id: str | None = None) -> MarketDashboardConfig:
+        return MarketDashboardConfig.model_validate(
+            self.config_repository.save(_normalize_config(config).model_dump(), user_id)
+        )
 
     # ------------------------------------------------------------------ quotes
 
-    def get_index_quotes(self, user_id: str | None = None, settings: Any = None) -> list[dict]:
+    def get_index_quotes(self, user_id: str | None = None, settings: Any = None) -> list[QuoteItem]:
         cfg = self.get_config(user_id=user_id)
-        indices = cfg.get("indices", DEFAULT_INDICES)
-        name_map = {idx["symbol"]: idx["name"] for idx in indices}
-        symbols = [idx["symbol"] for idx in indices if idx.get("enabled", True)]
+        indices = cfg.indices
+        name_map = {idx.symbol: idx.name for idx in indices}
+        symbols = [idx.symbol for idx in indices if idx.enabled]
         if not symbols:
             return []
         return self._fetch_quotes(symbols, name_map=name_map, settings=settings)
 
-    def get_watchlist_quotes(self, watchlist_items: list[dict], settings: Any = None) -> list[dict]:
+    def get_watchlist_quotes(
+        self, watchlist_items: list[dict], settings: Any = None
+    ) -> list[QuoteItem]:
         if not watchlist_items:
             return []
-        symbols = [canonical_symbol(item["symbol"]) for item in watchlist_items]
+        watchlist_items = [QuoteItem.model_validate(item) for item in watchlist_items]
+        symbols = [canonical_symbol(item.symbol) for item in watchlist_items]
         name_map = {
-            canonical_symbol(item["symbol"]): (
-                item.get("name") or item.get("name_cn") or item.get("symbol", "")
-            )
-            for item in watchlist_items
+            canonical_symbol(item.symbol): (item.name or item.symbol) for item in watchlist_items
         }
-        category_map = {
-            canonical_symbol(item["symbol"]): item.get("category", "") for item in watchlist_items
-        }
+        category_map = {canonical_symbol(item.symbol): item.category for item in watchlist_items}
         return self._fetch_quotes(
             symbols, name_map=name_map, category_map=category_map, settings=settings
         )
 
-    def get_security_static_info(self, symbols: list[str], settings: Any = None) -> list[dict]:
+    def get_security_static_info(
+        self, symbols: list[str], settings: Any = None
+    ) -> list[SecurityStaticInfo]:
         """拉取 Longbridge 标的基础资料，用于 Dashboard 公司资料补全。"""
         normalized_symbols = normalize_symbols(symbols)
         if not normalized_symbols:
@@ -146,7 +142,7 @@ class MarketService(LongbridgeMarketDataMixin):
         name_map: dict | None = None,
         category_map: dict | None = None,
         settings: Any = None,
-    ) -> list[dict]:
+    ) -> list[QuoteItem]:
         # 批量报价前先做归一和去重，减少 Longbridge 请求量并稳定结果 key。
         normalized_symbols = normalize_symbols(symbols)
         if not normalized_symbols:
@@ -161,7 +157,7 @@ class MarketService(LongbridgeMarketDataMixin):
         except Exception as exc:
             raise LongbridgeUnavailableError(str(exc)) from exc
 
-        results: list[dict] = []
+        results: list[QuoteItem] = []
         for q in raw_quotes:
             symbol = canonical_symbol(getattr(q, "symbol", ""))
             if not symbol:
@@ -169,24 +165,24 @@ class MarketService(LongbridgeMarketDataMixin):
             last_done = getattr(q, "last_done", None)
             prev_close = getattr(q, "prev_close", None)
             results.append(
-                {
-                    "symbol": symbol,
-                    "name": normalized_name_map.get(symbol, ""),
-                    "category": normalized_category_map.get(symbol, ""),
-                    "last_done": stringify(last_done),
-                    "prev_close": stringify(prev_close),
-                    "open": stringify(getattr(q, "open", None)),
-                    "high": stringify(getattr(q, "high", None)),
-                    "low": stringify(getattr(q, "low", None)),
-                    "volume": stringify(getattr(q, "volume", None)),
-                    "turnover": stringify(getattr(q, "turnover", None)),
-                    "change_value": change_value(last_done, prev_close),
-                    "change_rate": change_rate(last_done, prev_close),
-                }
+                QuoteItem(
+                    symbol=symbol,
+                    name=normalized_name_map.get(symbol, ""),
+                    category=normalized_category_map.get(symbol, ""),
+                    last_done=stringify(last_done),
+                    prev_close=stringify(prev_close),
+                    open=stringify(getattr(q, "open", None)),
+                    high=stringify(getattr(q, "high", None)),
+                    low=stringify(getattr(q, "low", None)),
+                    volume=stringify(getattr(q, "volume", None)),
+                    turnover=stringify(getattr(q, "turnover", None)),
+                    change_value=change_value(last_done, prev_close),
+                    change_rate=change_rate(last_done, prev_close),
+                )
             )
         return results
 
-    def _serialize_static_info(self, item: Any) -> dict:
+    def _serialize_static_info(self, item: Any) -> SecurityStaticInfo:
         def value(attr: str) -> str:
             raw = getattr(item, attr, None)
             if raw in (None, ""):
@@ -197,15 +193,15 @@ class MarketService(LongbridgeMarketDataMixin):
         name_cn = value("name_cn")
         name_hk = value("name_hk")
         name_en = value("name_en")
-        return {
-            "symbol": symbol,
-            "name": name_cn or name_hk or name_en or symbol,
-            "name_cn": name_cn,
-            "name_en": name_en,
-            "name_hk": name_hk,
-            "exchange": value("exchange"),
-            "currency": value("currency"),
-            "lot_size": value("lot_size"),
-            "board": value("board"),
-            "security_type": value("security_type"),
-        }
+        return SecurityStaticInfo(
+            symbol=symbol,
+            name=name_cn or name_hk or name_en or symbol,
+            name_cn=name_cn,
+            name_en=name_en,
+            name_hk=name_hk,
+            exchange=value("exchange"),
+            currency=value("currency"),
+            lot_size=value("lot_size"),
+            board=value("board"),
+            security_type=value("security_type"),
+        )

@@ -14,6 +14,8 @@ import threading
 import uuid
 from datetime import datetime
 
+from app.constants.common import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+
 logger = logging.getLogger("stocks-assistant.scheduler")
 
 
@@ -130,8 +132,8 @@ class RunStore:
         self.save_runs(runs)
         return record
 
-    def list_runs(self, task_id: str | None = None, limit: int = 50) -> list[dict]:
-        limit = max(1, min(int(limit or 50), 200))
+    def list_runs(self, task_id: str | None = None, limit: int = DEFAULT_PAGE_LIMIT) -> list[dict]:
+        limit = max(1, min(int(limit or DEFAULT_PAGE_LIMIT), MAX_PAGE_LIMIT))
         runs = self.load_runs()
         if task_id:
             runs = [run for run in runs if run.get("task_id") == task_id]
@@ -238,7 +240,7 @@ class SQLiteRunStore:
             raise ValueError("Scheduler run requires user_id")
         return get_app_store().add_scheduler_run(run, max_records=self.max_records)
 
-    def list_runs(self, task_id: str | None = None, limit: int = 50) -> list[dict]:
+    def list_runs(self, task_id: str | None = None, limit: int = DEFAULT_PAGE_LIMIT) -> list[dict]:
         from app.core.app_store import get_app_store
 
         return get_app_store().list_scheduler_runs(

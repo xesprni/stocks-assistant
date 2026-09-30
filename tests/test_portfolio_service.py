@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 
 from app.core.portfolio.service import PortfolioService
+from app.core.serialization import to_payload
 from app.schemas.portfolio import PortfolioItemCreate, PortfolioItemUpdate, PortfolioSellRequest
 
 
@@ -39,19 +40,21 @@ class PortfolioServiceTest(unittest.TestCase):
             ctx = FakeQuoteContext()
             service = PortfolioService(tmp)
             service.longbridge = FakeLongbridge(ctx)
-            service.save_settings("US", "10000")
-            service.add_item(
-                PortfolioItemCreate(
-                    market="US",
-                    symbol="msft.us",
-                    name="Microsoft",
-                    shares="10",
-                    cost_price="80",
-                    note="core",
+            to_payload(service.save_settings("US", "10000"))
+            to_payload(
+                service.add_item(
+                    PortfolioItemCreate(
+                        market="US",
+                        symbol="msft.us",
+                        name="Microsoft",
+                        shares="10",
+                        cost_price="80",
+                        note="core",
+                    )
                 )
             )
 
-            result = service.list_items("US")
+            result = to_payload(service.list_items("US"))
 
         self.assertEqual(ctx.symbols, ["MSFT.US"])
         item = result["items"][0]
@@ -68,15 +71,19 @@ class PortfolioServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             service = PortfolioService(tmp)
             service.longbridge = FakeLongbridge(FakeQuoteContext())
-            service.save_settings("US", "100")
-            service.add_item(
-                PortfolioItemCreate(market="US", symbol="MSFT.US", shares="10", cost_price="80")
+            to_payload(service.save_settings("US", "100"))
+            to_payload(
+                service.add_item(
+                    PortfolioItemCreate(market="US", symbol="MSFT.US", shares="10", cost_price="80")
+                )
             )
-            service.add_item(
-                PortfolioItemCreate(market="US", symbol="AAPL.US", shares="5", cost_price="80")
+            to_payload(
+                service.add_item(
+                    PortfolioItemCreate(market="US", symbol="AAPL.US", shares="5", cost_price="80")
+                )
             )
 
-            result = service.list_items("US")
+            result = to_payload(service.list_items("US"))
 
         items = {item["symbol"]: item for item in result["items"]}
         self.assertEqual("1700.00", result["total_assets"])
@@ -91,39 +98,49 @@ class PortfolioServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             service = PortfolioService(tmp)
             with self.assertRaisesRegex(ValueError, "total_capital"):
-                service.save_settings("US", "typo")
+                to_payload(service.save_settings("US", "typo"))
             with self.assertRaises(ValidationError):
                 PortfolioItemCreate(market="US", symbol="AAPL.US", shares="oops", cost_price="100")
             with self.assertRaisesRegex(ValueError, "does not match market"):
-                service.add_item(
-                    PortfolioItemCreate(market="H", symbol="AAPL.US", shares="1", cost_price="1")
+                to_payload(
+                    service.add_item(
+                        PortfolioItemCreate(
+                            market="H", symbol="AAPL.US", shares="1", cost_price="1"
+                        )
+                    )
                 )
 
-            item = service.add_item(
-                PortfolioItemCreate(market="US", symbol="AAPL.US", shares="1", cost_price="100")
+            item = to_payload(
+                service.add_item(
+                    PortfolioItemCreate(market="US", symbol="AAPL.US", shares="1", cost_price="100")
+                )
             )
             with self.assertRaisesRegex(ValueError, "explicit matching symbol"):
-                service.update_item(item["id"], PortfolioItemUpdate(market="H"))
+                to_payload(service.update_item(item["id"], PortfolioItemUpdate(market="H")))
 
     def test_sell_item_reduces_shares_increases_cash_and_records_transaction(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = PortfolioService(tmp)
-            service.save_settings("US", "100")
-            item = service.add_item(
-                PortfolioItemCreate(
-                    market="US",
-                    symbol="msft.us",
-                    name="Microsoft",
-                    shares="10",
-                    cost_price="80",
-                    note="core",
+            to_payload(service.save_settings("US", "100"))
+            item = to_payload(
+                service.add_item(
+                    PortfolioItemCreate(
+                        market="US",
+                        symbol="msft.us",
+                        name="Microsoft",
+                        shares="10",
+                        cost_price="80",
+                        note="core",
+                    )
                 )
             )
 
-            result = service.sell_item(
-                item["id"], PortfolioSellRequest(shares="4", price="120", note=" trim ")
+            result = to_payload(
+                service.sell_item(
+                    item["id"], PortfolioSellRequest(shares="4", price="120", note=" trim ")
+                )
             )
-            transactions = service.list_transactions("US")["transactions"]
+            transactions = to_payload(service.list_transactions("US"))["transactions"]
 
         self.assertEqual(result["item"]["shares"], "6")
         self.assertEqual(result["total_capital"], "580")

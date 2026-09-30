@@ -1,6 +1,6 @@
 """Longbridge security news schemas."""
 
-from pydantic import BaseModel
+from app.schemas.base import AppModel as BaseModel
 
 
 class SecurityNewsItem(BaseModel):

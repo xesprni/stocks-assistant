@@ -18,19 +18,29 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.constants.rendering import (
+    INSTALL_HELP as INSTALL_HELP,
+)
+from app.constants.rendering import (
+    MAX_CONCURRENT_RENDERS,
+    RENDER_PROCESS_REAP_SECONDS,
+    RENDER_STOP_GRACE_SECONDS,
+    RENDER_TIMEOUT_SECONDS,
+)
 from app.core.rendering.document import MAX_SOURCE_BYTES, canonical_json, prepare_document
 from app.core.rendering.layout import CROWDING_FIX_ORDER, VISUAL_CHECKLIST
 from app.core.tools.paths import resolve_workspace_path
-from app.schemas.rendering import RenderImageRequest
+from app.schemas.rendering import (
+    RenderImageRequest,
+    RenderImageResult,
+    RenderWorkerResult,
+    VisualReview,
+)
 
 logger = logging.getLogger("stocks-assistant.rendering")
-_RENDER_SLOTS = threading.BoundedSemaphore(2)
-INSTALL_HELP = (
-    "Local rendering requires Playwright, Pillow and Chromium. "
-    "Run: uv sync --extra rendering; uv run playwright install chromium. "
-    "On Linux install Chromium system dependencies and fonts-noto-cjk "
-    "(uv run playwright install --with-deps chromium)."
-)
+
+
+_RENDER_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_RENDERS)
 
 
 def _stop_worker(process: subprocess.Popen[bytes], process_module: Any) -> None:
@@ -55,7 +65,7 @@ def _stop_worker(process: subprocess.Popen[bytes], process_module: Any) -> None:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGTERM)
     try:
-        process.communicate(timeout=3)
+        process.communicate(timeout=RENDER_STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         pass
     finally:
@@ -71,9 +81,9 @@ def _stop_worker(process: subprocess.Popen[bytes], process_module: Any) -> None:
             with contextlib.suppress(OSError):
                 process.kill()
         with contextlib.suppress(process_module.Error):
-            process_module.wait_procs(list(tracked.values()), timeout=1)
+            process_module.wait_procs(list(tracked.values()), timeout=RENDER_PROCESS_REAP_SECONDS)
         try:
-            process.communicate(timeout=3)
+            process.communicate(timeout=RENDER_STOP_GRACE_SECONDS)
         except subprocess.TimeoutExpired:
             # 管道或失控后代不能把 60 秒制图期限变成无期限等待。
             if process.stdout is not None:
@@ -96,7 +106,7 @@ def _run_worker(request_path: Path) -> dict[str, Any]:
         start_new_session=os.name != "nt",
     )
     try:
-        stdout, _stderr = process.communicate(timeout=60)
+        stdout, _stderr = process.communicate(timeout=RENDER_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         _stop_worker(process, psutil)
         raise RuntimeError("Rendering exceeded 60 seconds; simplify or split the report") from None
@@ -116,7 +126,7 @@ class RenderImageService:
     def __init__(self, workspace_dir: str):
         self.workspace = Path(workspace_dir).expanduser().resolve()
 
-    def render(self, request: RenderImageRequest) -> dict[str, Any]:
+    def render(self, request: RenderImageRequest) -> RenderImageResult:
         fragment = request.html
         if fragment is None:
             path = resolve_workspace_path(self.workspace, request.html_path or "")
@@ -140,7 +150,7 @@ class RenderImageService:
 
     def _render(
         self, request: RenderImageRequest, document: str, snapshot_hash: str | None
-    ) -> dict[str, Any]:
+    ) -> RenderImageResult:
         artifact_id = uuid.uuid4().hex
         # 与图片下载接口共用无符号链接的产物约定，避免成功生成却无法预览。
         for directory in (self.workspace / "artifacts", self.workspace / "artifacts/renderings"):
@@ -164,45 +174,39 @@ class RenderImageService:
                 canonical_json({"logical_width": request.logical_width, "scale": request.scale}),
                 encoding="utf-8",
             )
-            rendered = _run_worker(job_path)
+            rendered = RenderWorkerResult.model_validate(_run_worker(job_path))
             relative_dir = final_dir.relative_to(self.workspace).as_posix()
-            result = {
-                "artifact_id": artifact_id,
-                "image_path": f"{relative_dir}/image.png",
-                "files": {
+            result = RenderImageResult(
+                artifact_id=artifact_id,
+                image_path=f"{relative_dir}/image.png",
+                files={
                     key: f"{relative_dir}/{key}.png"
                     for key in ("image", "top", "middle", "bottom", "mobile")
                 },
-                "source_path": f"{relative_dir}/source.html",
-                "manifest_path": f"{relative_dir}/manifest.json",
-                "snapshot_path": f"{relative_dir}/snapshot.json" if snapshot_hash else None,
-                "snapshot_sha256": snapshot_hash,
-                "document_sha256": hashlib.sha256(document.encode("utf-8")).hexdigest(),
-                "created_at": datetime.now(UTC).isoformat(),
-                "format": "png",
-                "logical_width": request.logical_width,
-                "scale": request.scale,
-                **rendered,
-                "visual_review": {
-                    "status": "required",
-                    "checklist": VISUAL_CHECKLIST,
-                    "fix_order": CROWDING_FIX_ORDER,
-                    "instruction": (
-                        "Call view_image on files.image, files.top, files.middle, files.bottom and "
-                        "files.mobile. Crops are cut from the final PNG without rescaling. "
-                        "mobile is a 390px viewing simulation of the same PNG, not a new layout. "
-                        "Review the complete image as well as the crops; split very long reports. "
-                        "Do not claim checks passed until the images have actually been inspected."
-                    ),
-                },
-                "snapshot_consistency": "requires_review" if snapshot_hash else "not_provided",
-            }
-            (work / "manifest.json").write_text(
-                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+                source_path=f"{relative_dir}/source.html",
+                manifest_path=f"{relative_dir}/manifest.json",
+                snapshot_path=f"{relative_dir}/snapshot.json" if snapshot_hash else None,
+                snapshot_sha256=snapshot_hash,
+                document_sha256=hashlib.sha256(document.encode("utf-8")).hexdigest(),
+                created_at=datetime.now(UTC).isoformat(),
+                format="png",
+                logical_width=request.logical_width,
+                scale=request.scale,
+                width=rendered.width,
+                height=rendered.height,
+                logical_height=rendered.logical_height,
+                layout=rendered.layout,
+                render_checks=rendered.render_checks,
+                visual_review=VisualReview(
+                    status="required",
+                    checklist=VISUAL_CHECKLIST,
+                    fix_order=CROWDING_FIX_ORDER,
+                    instruction="Call view_image on files.image, files.top, files.middle, files.bottom and files.mobile. Crops are cut from the final PNG without rescaling. mobile is a 390px viewing simulation of the same PNG, not a new layout. Review the complete image as well as the crops; split very long reports. Do not claim checks passed until the images have actually been inspected.",
+                ),
+                snapshot_consistency="requires_review" if snapshot_hash else "not_provided",
             )
+            (work / "manifest.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")
             job_path.unlink()
             work.rename(final_dir)
-        logger.info(
-            "Rendered artifact %s (%s x %s)", artifact_id, result["width"], result["height"]
-        )
+        logger.info("Rendered artifact %s (%s x %s)", artifact_id, result.width, result.height)
         return result

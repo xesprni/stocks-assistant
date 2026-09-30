@@ -11,63 +11,39 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.constants.fundamentals import (
+    INSIGHTS_CACHE_MAX_ENTRIES as INSIGHTS_CACHE_MAX_ENTRIES,
+)
+from app.constants.fundamentals import (
+    INSIGHTS_CACHE_TTL_SECONDS as INSIGHTS_CACHE_TTL_SECONDS,
+)
+from app.constants.fundamentals import (
+    INSIGHTS_SECTION_WORKERS as INSIGHTS_SECTION_WORKERS,
+)
+from app.constants.fundamentals import (
+    KIND_ALIASES as KIND_ALIASES,
+)
+from app.constants.fundamentals import (
+    PERIOD_ALIASES as PERIOD_ALIASES,
+)
+from app.constants.fundamentals import (
+    STATEMENT_NAMES as STATEMENT_NAMES,
+)
+from app.constants.fundamentals import (
+    STATEMENT_TITLES as STATEMENT_TITLES,
+)
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.market.utils import canonical_symbol
+from app.schemas.dashboard import DashboardSymbolInsightSection, DashboardSymbolInsightsResponse
+from app.schemas.fundamentals import (
+    FinancialReportCell,
+    FinancialReportColumn,
+    FinancialReportRow,
+    FinancialReportsResponse,
+    FinancialStatementTable,
+)
 
-INSIGHTS_CACHE_TTL_SECONDS = 180
-INSIGHTS_CACHE_MAX_ENTRIES = 128
 # Longbridge Quote API account-level concurrent request limit is five.
-INSIGHTS_SECTION_WORKERS = 5
-
-STATEMENT_NAMES = {
-    "IS": "利润表",
-    "BS": "资产负债表",
-    "CF": "现金流量表",
-}
-
-STATEMENT_TITLES = {
-    "IS": "Income Statement",
-    "BS": "Balance Sheet",
-    "CF": "Cash Flow Statement",
-}
-
-KIND_ALIASES = {
-    "ALL": "All",
-    "IS": "IncomeStatement",
-    "INCOME": "IncomeStatement",
-    "INCOME_STATEMENT": "IncomeStatement",
-    "INCOMESTATEMENT": "IncomeStatement",
-    "BS": "BalanceSheet",
-    "BALANCE": "BalanceSheet",
-    "BALANCE_SHEET": "BalanceSheet",
-    "BALANCESHEET": "BalanceSheet",
-    "CF": "CashFlow",
-    "CASH": "CashFlow",
-    "CASH_FLOW": "CashFlow",
-    "CASHFLOW": "CashFlow",
-}
-
-PERIOD_ALIASES = {
-    "AF": "Annual",
-    "ANNUAL": "Annual",
-    "YEAR": "Annual",
-    "FY": "Annual",
-    "SAF": "SemiAnnual",
-    "SEMI": "SemiAnnual",
-    "SEMI_ANNUAL": "SemiAnnual",
-    "SEMIANNUAL": "SemiAnnual",
-    "Q1": "Q1",
-    "Q2": "Q2",
-    "Q3": "Q3",
-    "3Q": "ThreeQ",
-    "THREE_Q": "ThreeQ",
-    "THREEQ": "ThreeQ",
-    "QF": "QuarterlyFull",
-    "QUARTER": "QuarterlyFull",
-    "QUARTERLY": "QuarterlyFull",
-    "QUARTERLY_FULL": "QuarterlyFull",
-    "QUARTERLYFULL": "QuarterlyFull",
-}
 
 
 def _plain(value: Any) -> Any:
@@ -158,10 +134,14 @@ class FundamentalService:
     """Fetch and normalize Longbridge fundamental data."""
 
     def __init__(self) -> None:
-        self._insights_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._insights_cache: dict[
+            tuple[str, str], tuple[float, DashboardSymbolInsightsResponse]
+        ] = {}
         self._insights_cache_lock = threading.RLock()
 
-    def get_security_insights(self, symbol: str, settings: Any = None) -> dict[str, Any]:
+    def get_security_insights(
+        self, symbol: str, settings: Any = None
+    ) -> DashboardSymbolInsightsResponse:
         """Fetch Dashboard-ready Longbridge content and fundamental sections."""
 
         normalized_symbol = canonical_symbol(symbol)
@@ -208,7 +188,7 @@ class FundamentalService:
 
         def section(
             fetcher, *, collection_keys: tuple[str, ...] = ("list", "items")
-        ) -> dict[str, Any]:
+        ) -> DashboardSymbolInsightSection:
             try:
                 return self._section_from_raw(fetcher(), collection_keys=collection_keys)
             except LongbridgeUnavailableError as exc:
@@ -259,13 +239,17 @@ class FundamentalService:
 
         # 每个板块单独捕获错误，避免某个 Longbridge 子接口失败导致 Dashboard 整列空白。
         # 财报明细由独立 Fundamentals API 提供，这里只保留公司资料和轻量研究信息。
-        payload = {
-            "symbol": normalized_symbol,
-            "source": "Longbridge FundamentalContext + QuoteContext",
-            "fetched_at": _iso_now(),
-            **sections,
-        }
-        if any(payload[name]["available"] for name in section_specs):
+        payload = DashboardSymbolInsightsResponse(
+            symbol=normalized_symbol,
+            source="Longbridge FundamentalContext + QuoteContext",
+            fetched_at=_iso_now(),
+            filings=sections["filings"],
+            company=sections["company"],
+            dividends=sections["dividends"],
+            institution_rating=sections["institution_rating"],
+            corporate_actions=sections["corporate_actions"],
+        )
+        if any(section.available for section in sections.values()):
             self._set_cached_insights(cache_key, payload)
         return payload
 
@@ -275,7 +259,9 @@ class FundamentalService:
         with self._insights_cache_lock:
             self._insights_cache.clear()
 
-    def _get_cached_insights(self, cache_key: tuple[str, str]) -> dict[str, Any] | None:
+    def _get_cached_insights(
+        self, cache_key: tuple[str, str]
+    ) -> DashboardSymbolInsightsResponse | None:
         now = time.monotonic()
         with self._insights_cache_lock:
             cached = self._insights_cache.get(cache_key)
@@ -287,7 +273,9 @@ class FundamentalService:
                 return None
             return deepcopy(payload)
 
-    def _set_cached_insights(self, cache_key: tuple[str, str], payload: dict[str, Any]) -> None:
+    def _set_cached_insights(
+        self, cache_key: tuple[str, str], payload: DashboardSymbolInsightsResponse
+    ) -> None:
         expires_at = time.monotonic() + INSIGHTS_CACHE_TTL_SECONDS
         with self._insights_cache_lock:
             self._insights_cache[cache_key] = (expires_at, deepcopy(payload))
@@ -311,7 +299,7 @@ class FundamentalService:
         kind: str = "All",
         period: str | None = None,
         settings: Any = None,
-    ) -> dict[str, Any]:
+    ) -> FinancialReportsResponse:
         normalized_symbol = canonical_symbol(symbol)
         if not normalized_symbol:
             raise ValueError("symbol is required")
@@ -332,12 +320,12 @@ class FundamentalService:
             raise LongbridgeUnavailableError(str(exc)) from exc
 
         raw = _as_dict(getattr(raw_response, "list", raw_response))
-        return {
-            "symbol": normalized_symbol,
-            "kind": lb_kind_name,
-            "period": lb_period_name,
-            "statements": self._map_statements(raw),
-        }
+        return FinancialReportsResponse(
+            symbol=normalized_symbol,
+            kind=lb_kind_name,
+            period=lb_period_name,
+            statements=self._map_statements(raw),
+        )
 
     def _fundamental_context(self, settings: Any = None):
         from app.core.market.longbridge_context import get_cached_context
@@ -357,19 +345,15 @@ class FundamentalService:
         return get_cached_context("QuoteContext", settings=settings)
 
     @staticmethod
-    def _error_section(message: str) -> dict[str, Any]:
-        return {
-            "available": False,
-            "error": message,
-            "data": {},
-            "items": [],
-            "total": 0,
-        }
+    def _error_section(message: str) -> DashboardSymbolInsightSection:
+        return DashboardSymbolInsightSection(
+            available=False, error=message, data={}, items=[], total=0
+        )
 
     @staticmethod
     def _section_from_raw(
         raw: Any, *, collection_keys: tuple[str, ...] = ("list", "items")
-    ) -> dict[str, Any]:
+    ) -> DashboardSymbolInsightSection:
         plain = _plain(raw)
         data: dict[str, Any] = {}
         items: list[Any] = []
@@ -386,13 +370,9 @@ class FundamentalService:
                         data.pop(key, None)
                     break
 
-        return {
-            "available": True,
-            "error": None,
-            "data": data,
-            "items": items,
-            "total": len(items),
-        }
+        return DashboardSymbolInsightSection(
+            available=True, error=None, data=data, items=items, total=len(items)
+        )
 
     @staticmethod
     def _sdk_enum(enum_name: str, member_name: str | None) -> Any:
@@ -432,7 +412,7 @@ class FundamentalService:
             )
         return normalized
 
-    def _map_statements(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+    def _map_statements(self, raw: dict[str, Any]) -> list[FinancialStatementTable]:
         statements = []
         for code in ("IS", "BS", "CF"):
             section = _as_dict(raw.get(code))
@@ -441,11 +421,11 @@ class FundamentalService:
             table = self._map_section(
                 code, [_as_dict(item) for item in _as_list(section.get("indicators"))]
             )
-            if table["rows"]:
+            if table.rows:
                 statements.append(table)
         return statements
 
-    def _map_section(self, code: str, indicators: list[dict[str, Any]]) -> dict[str, Any]:
+    def _map_section(self, code: str, indicators: list[dict[str, Any]]) -> FinancialStatementTable:
         accounts: list[dict[str, Any]] = []
         currency = ""
         has_yoy = False
@@ -485,26 +465,26 @@ class FundamentalService:
                     column_meta.setdefault(key, {"period": key})
 
         rows = [self._map_account(account, column_order) for account in accounts]
-        return {
-            "code": code,
-            "name": STATEMENT_NAMES.get(code, code),
-            "title": STATEMENT_TITLES.get(code, code),
-            "short_title": code,
-            "currency": currency,
-            "has_yoy": has_yoy,
-            "columns": [
-                {
-                    "key": key,
-                    "label": key,
-                    "year": column_meta.get(key, {}).get("year"),
-                    "fp_end": _optional_string(column_meta.get(key, {}).get("fp_end")),
-                }
+        return FinancialStatementTable(
+            code=code,
+            name=STATEMENT_NAMES.get(code, code),
+            title=STATEMENT_TITLES.get(code, code),
+            short_title=code,
+            currency=currency,
+            has_yoy=has_yoy,
+            columns=[
+                FinancialReportColumn(
+                    key=key,
+                    label=key,
+                    year=column_meta.get(key, {}).get("year"),
+                    fp_end=_optional_string(column_meta.get(key, {}).get("fp_end")),
+                )
                 for key in column_order
             ],
-            "rows": rows,
-        }
+            rows=rows,
+        )
 
-    def _map_account(self, account: dict[str, Any], column_order: list[str]) -> dict[str, Any]:
+    def _map_account(self, account: dict[str, Any], column_order: list[str]) -> FinancialReportRow:
         values_by_period: dict[str, dict[str, Any]] = {}
         for index, value in enumerate(_as_list(account.get("values"))):
             item = _as_dict(value)
@@ -512,20 +492,20 @@ class FundamentalService:
             if key:
                 values_by_period[key] = item
 
-        return {
-            "field": _string(account.get("field")),
-            "name": _string(account.get("name")),
-            "percent": bool(account.get("percent", False)),
-            "tip": _string(account.get("tip")),
-            "cells": [
-                {
-                    "period": key,
-                    "value": _optional_string(values_by_period.get(key, {}).get("value")),
-                    "ratio": _optional_string(values_by_period.get(key, {}).get("ratio")),
-                    "yoy": _optional_string(values_by_period.get(key, {}).get("yoy")),
-                    "year": values_by_period.get(key, {}).get("year"),
-                    "fp_end": _optional_string(values_by_period.get(key, {}).get("fp_end")),
-                }
+        return FinancialReportRow(
+            field=_string(account.get("field")),
+            name=_string(account.get("name")),
+            percent=bool(account.get("percent", False)),
+            tip=_string(account.get("tip")),
+            cells=[
+                FinancialReportCell(
+                    period=key,
+                    value=_optional_string(values_by_period.get(key, {}).get("value")),
+                    ratio=_optional_string(values_by_period.get(key, {}).get("ratio")),
+                    yoy=_optional_string(values_by_period.get(key, {}).get("yoy")),
+                    year=values_by_period.get(key, {}).get("year"),
+                    fp_end=_optional_string(values_by_period.get(key, {}).get("fp_end")),
+                )
                 for key in column_order
             ],
-        }
+        )

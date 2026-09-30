@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends
 
 from app.config import get_effective_settings
+from app.constants.security import Permission
 from app.core.app_store import get_app_store
 from app.core.security import CurrentUser, require_permissions
 from app.schemas.telemetry import ProductEventRequest, ProductEventResponse
@@ -13,8 +14,8 @@ router = APIRouter()
 @router.post("/events", response_model=ProductEventResponse)
 def record_product_event(
     payload: ProductEventRequest,
-    current: CurrentUser = Depends(require_permissions("config:read")),
-):
+    current: CurrentUser = Depends(require_permissions(Permission.CONFIG_READ)),
+) -> ProductEventResponse:
     settings = get_effective_settings(current.id)
     if not settings.product_analytics_enabled:
         return ProductEventResponse(accepted=False)

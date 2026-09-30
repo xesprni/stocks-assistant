@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from app.core.agent.agent import Agent
 from app.core.agent.subagent import SubAgentRunner
+from app.core.serialization import to_payload
 from app.core.session import ChatSessionStore
 from app.core.tools.base_tool import BaseTool, ToolResult
 from app.core.tools.delegate_agent import DelegateAgentTool
@@ -301,7 +302,7 @@ class DelegateAgentToolTest(unittest.TestCase):
 class SubAgentTraceTest(unittest.TestCase):
     def test_trace_records_subagent_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
-            session = ChatSessionStore(tmp).create_session(title="trace")
+            session = to_payload(ChatSessionStore(tmp).create_session(title="trace"))
             store = TraceStore(tmp)
             recorder = TraceRecorder.start(store, session_id=session["id"], user_message="analyze")
 
@@ -403,7 +404,7 @@ class SubAgentTraceTest(unittest.TestCase):
             )
             recorder.finish(status="done", final_response="final")
 
-            run = store.get_session_traces(session_id=session["id"], limit=1)["runs"][0]
+            run = to_payload(store.get_session_traces(session_id=session["id"], limit=1))["runs"][0]
             events = run["events"]
             by_type = {event["node_type"]: event for event in events}
             self.assertIn("subagent_batch", by_type)

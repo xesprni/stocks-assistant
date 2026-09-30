@@ -146,7 +146,7 @@ def test_parent_cancellation_carries_snapshot_without_waiting_for_blocked_child(
             cancel.set()
             with pytest.raises(SubAgentCancelledError) as caught:
                 future.result(timeout=1)
-            assert caught.value.batch_result["results"][0]["status"] == "cancelled"
+            assert caught.value.batch_result.results[0].status == "cancelled"
             assert caught.value.metadata["sources"] == [{"id": "source"}]
             assert caught.value.metadata["rendered_images"] == [image]
             assert not exited.is_set()

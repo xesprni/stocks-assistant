@@ -2,8 +2,13 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import Field, StringConstraints
 
+from app.constants.watchlist import (
+    MAX_ITEM_IDS_LENGTH,
+    MAX_WATCHLIST_GROUP_NAME_LENGTH,
+)
+from app.schemas.base import AppModel as BaseModel
 from app.schemas.market import QuoteItem
 
 WatchlistCategory = Literal["US", "A", "H"]
@@ -12,11 +17,16 @@ WatchlistQuoteView = Literal["movers", "gainers", "losers", "active"]
 
 
 class WatchlistGroupWrite(BaseModel):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    name: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True, min_length=1, max_length=MAX_WATCHLIST_GROUP_NAME_LENGTH
+        ),
+    ]
 
 
 class WatchlistGroupMembersWrite(BaseModel):
-    item_ids: list[Annotated[int, Field(gt=0)]] = Field(max_length=2000)
+    item_ids: list[Annotated[int, Field(gt=0)]] = Field(max_length=MAX_ITEM_IDS_LENGTH)
 
 
 class WatchlistGroup(BaseModel):

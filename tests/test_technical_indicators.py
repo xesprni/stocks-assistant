@@ -1,6 +1,7 @@
 import unittest
 
 from app.core.market.technical_indicators import calculate_technical_indicators
+from app.core.serialization import to_payload
 
 
 def _bars(count: int) -> list[dict]:
@@ -24,24 +25,31 @@ class TechnicalIndicatorsTest(unittest.TestCase):
     def test_calculates_common_indicators_and_limits_series(self):
         bars = _bars(80)
 
-        result = calculate_technical_indicators(
-            bars,
-            indicators=[
-                "vol",
-                "ma",
-                "ema",
-                "macd",
-                "kdj",
-                "rsi",
-                "cci",
-                "wr",
-                "dmi",
-                "osc",
-                "boll",
-                "bbiboll",
-            ],
-            params={"vol_periods": [5], "ma_periods": [5], "ema_periods": [5], "wr_periods": [10]},
-            series_limit=5,
+        result = to_payload(
+            calculate_technical_indicators(
+                bars,
+                indicators=[
+                    "vol",
+                    "ma",
+                    "ema",
+                    "macd",
+                    "kdj",
+                    "rsi",
+                    "cci",
+                    "wr",
+                    "dmi",
+                    "osc",
+                    "boll",
+                    "bbiboll",
+                ],
+                params={
+                    "vol_periods": [5],
+                    "ma_periods": [5],
+                    "ema_periods": [5],
+                    "wr_periods": [10],
+                },
+                series_limit=5,
+            )
         )
 
         self.assertEqual(result["bars_count"], 80)
@@ -62,19 +70,23 @@ class TechnicalIndicatorsTest(unittest.TestCase):
         self.assertEqual(len(result["series"]["MA"]["ma5"]), 5)
 
     def test_supports_aliases_and_validates_parameters(self):
-        result = calculate_technical_indicators(
-            _bars(30),
-            indicators=["volume", "bollinger_bands"],
-            params={"boll_period": 10, "boll_std": 2.5},
+        result = to_payload(
+            calculate_technical_indicators(
+                _bars(30),
+                indicators=["volume", "bollinger_bands"],
+                params={"boll_period": 10, "boll_std": 2.5},
+            )
         )
 
         self.assertEqual(result["requested_indicators"], ["VOL", "BOLL"])
         self.assertEqual(result["params"]["boll_period"], 10)
         self.assertEqual(result["params"]["boll_std"], 2.5)
         with self.assertRaisesRegex(ValueError, "unsupported technical indicator"):
-            calculate_technical_indicators(_bars(10), indicators=["DMA"])
+            to_payload(calculate_technical_indicators(_bars(10), indicators=["DMA"]))
         with self.assertRaisesRegex(ValueError, "macd_fast"):
-            calculate_technical_indicators(_bars(30), params={"macd_fast": 30, "macd_slow": 20})
+            to_payload(
+                calculate_technical_indicators(_bars(30), params={"macd_fast": 30, "macd_slow": 20})
+            )
 
 
 if __name__ == "__main__":

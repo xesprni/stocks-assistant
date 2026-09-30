@@ -40,10 +40,8 @@ def test_more_tasks_than_workers_queue_and_preserve_request_order():
     result = SubAgentRunner(
         parent(multi_agent_max_parallel_agents=1), lambda event, data: events.append((event, data))
     ).run_batch([task(f"task-{index}") for index in range(7)])
-    assert result["counts"]["success"] == 7
-    assert [item["task_id"] for item in result["results"]] == [
-        f"task-{index}" for index in range(7)
-    ]
+    assert result.counts["success"] == 7
+    assert [item.task_id for item in result.results] == [f"task-{index}" for index in range(7)]
     assert len([event for event, _ in events if event == "subagent_queued"]) == 7
 
 
@@ -77,7 +75,7 @@ def test_two_batches_share_one_actual_concurrency_limit(monkeypatch):
             pool.submit(runner.run_batch, [task(f"task-{i}") for i in range(4)])
             for runner in runners
         ]
-        assert all(future.result(timeout=3)["status"] == "success" for future in futures)
+        assert all(future.result(timeout=3).status == "success" for future in futures)
     assert peak == 2
 
 
@@ -128,7 +126,7 @@ def test_dependencies_receive_shared_snapshot_and_bounded_source_artifact_contex
         [task("review", dependencies=["facts"]), task("facts")],
         'Snapshot: {"as_of":"2026-09-09", "revenue":128}',
     )
-    assert result["status"] == "success"
+    assert result.status == "success"
     assert "revenue" in messages["facts"]
     assert "Findings for facts" in messages["review"]
     assert "source-1" in messages["review"]
@@ -136,7 +134,7 @@ def test_dependencies_receive_shared_snapshot_and_bounded_source_artifact_contex
     assert '"metadata_truncated": true' in messages["review"]
     assert len(messages["review"]) < 48000
     assert list(messages) == ["facts", "review"]
-    assert [item["task_id"] for item in result["results"]] == ["review", "facts"]
+    assert [item.task_id for item in result.results] == ["review", "facts"]
 
 
 def test_failed_prerequisite_skips_only_its_dependents(monkeypatch):
@@ -159,8 +157,8 @@ def test_failed_prerequisite_skips_only_its_dependents(monkeypatch):
             task("independent"),
         ]
     )
-    assert result["status"] == "partial_error"
-    assert [item["status"] for item in result["results"]] == [
+    assert result.status == "partial_error"
+    assert [item.status for item in result.results] == [
         "error",
         "skipped",
         "skipped",
@@ -192,7 +190,7 @@ def test_child_skill_scope_never_expands(parent_scope, requested, expected, monk
     arguments = task("facts")
     if requested is not None:
         arguments["skill_filter"] = requested
-    assert SubAgentRunner(outer).run_batch([arguments])["status"] == "success"
+    assert SubAgentRunner(outer).run_batch([arguments]).status == "success"
     assert scopes == [expected]
 
 
@@ -231,7 +229,7 @@ def test_parent_cancel_stops_running_and_never_starts_queued_children(monkeypatc
             cancel.set()
             with pytest.raises(SubAgentCancelledError) as exc:
                 future.result(timeout=1)
-            assert exc.value.batch_result["counts"]["cancelled"] == 3
+            assert exc.value.batch_result.counts["cancelled"] == 3
             assert stopped.wait(1)
             assert calls == ["first"]
         finally:
@@ -262,7 +260,7 @@ def test_timeout_returns_without_waiting_for_blocked_thread_and_suppresses_late_
             [task("blocked"), task("independent"), task("review", dependencies=["blocked"])]
         )
         assert time.monotonic() - started < 0.5
-        assert [item["status"] for item in result["results"]] == ["timeout", "success", "skipped"]
+        assert [item.status for item in result.results] == ["timeout", "success", "skipped"]
         assert runner.runtime.slots.acquire(blocking=False)
         assert not runner.runtime.slots.acquire(blocking=False)
         runner.runtime.slots.release()
@@ -289,7 +287,7 @@ def test_queue_wait_does_not_shorten_running_tasks_own_deadline(monkeypatch):
     timer.start()
     try:
         result = SubAgentRunner(outer).run_batch([task("facts")])
-        assert result["status"] == "success"
+        assert result.status == "success"
     finally:
         timer.join()
 
@@ -313,11 +311,11 @@ def test_completed_results_are_not_overwritten_when_cancellation_arrives(monkeyp
     monkeypatch.setattr(subagent, "ThreadPoolExecutor", InlinePool)
     with pytest.raises(SubAgentCancelledError) as exc:
         SubAgentRunner(parent(), cancel_event=cancel).run_batch([task("done"), task("queued")])
-    assert [item["status"] for item in exc.value.batch_result["results"]] == [
+    assert [item.status for item in exc.value.batch_result.results] == [
         "success",
         "cancelled",
     ]
-    assert exc.value.batch_result["results"][0]["final_response"] == "done:done"
+    assert exc.value.batch_result.results[0].final_response == "done:done"
 
 
 def test_tool_reports_all_failed_batch_as_error_and_preserves_source_metadata(monkeypatch):

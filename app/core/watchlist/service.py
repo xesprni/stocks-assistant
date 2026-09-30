@@ -13,7 +13,14 @@ from app.core.market.utils import change_value as _change_value
 from app.core.market.utils import stringify as _decimal_to_str
 from app.core.orm.repositories.watchlist import WatchlistRepository
 from app.core.portfolio.symbols import canonical_portfolio_symbol
-from app.schemas.watchlist import WatchlistCategory, WatchlistGroupWrite, WatchlistItemCreate
+from app.schemas.watchlist import (
+    WatchlistCategory,
+    WatchlistGroup,
+    WatchlistGroupWrite,
+    WatchlistItem,
+    WatchlistItemCreate,
+    WatchlistSearchResult,
+)
 
 
 def _now() -> str:
@@ -42,7 +49,7 @@ class LongbridgeSearchClient:
 
     def search(
         self, query: str, category: WatchlistCategory | None, limit: int, settings: Any = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[WatchlistSearchResult]:
         symbols = self._candidate_symbols(query, category)
         if not symbols:
             return []
@@ -63,7 +70,7 @@ class LongbridgeSearchClient:
         except Exception:
             quote_by_symbol = {}
 
-        results: list[dict[str, Any]] = []
+        results: list[WatchlistSearchResult] = []
         for info in static_infos:
             symbol = str(getattr(info, "symbol", "")).upper()
             if not symbol:
@@ -74,19 +81,19 @@ class LongbridgeSearchClient:
             change_value = _change_value(last_done, prev_close)
 
             results.append(
-                {
-                    "category": _category_from_symbol(symbol),
-                    "symbol": symbol,
-                    "name": _name_from_static(info),
-                    "name_cn": str(getattr(info, "name_cn", "") or ""),
-                    "name_en": str(getattr(info, "name_en", "") or ""),
-                    "name_hk": str(getattr(info, "name_hk", "") or ""),
-                    "exchange": str(getattr(info, "exchange", "") or ""),
-                    "currency": str(getattr(info, "currency", "") or ""),
-                    "last_done": _decimal_to_str(last_done),
-                    "change_value": change_value,
-                    "change_rate": _change_rate(last_done, prev_close),
-                }
+                WatchlistSearchResult(
+                    category=_category_from_symbol(symbol),
+                    symbol=symbol,
+                    name=_name_from_static(info),
+                    name_cn=str(getattr(info, "name_cn", "") or ""),
+                    name_en=str(getattr(info, "name_en", "") or ""),
+                    name_hk=str(getattr(info, "name_hk", "") or ""),
+                    exchange=str(getattr(info, "exchange", "") or ""),
+                    currency=str(getattr(info, "currency", "") or ""),
+                    last_done=_decimal_to_str(last_done),
+                    change_value=change_value,
+                    change_rate=_change_rate(last_done, prev_close),
+                )
             )
 
         return results[:limit]
@@ -136,11 +143,14 @@ class WatchlistService:
 
     def list_items(
         self, category: WatchlistCategory | None = None, user_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        return self.repository.list_items(category=category, user_id=user_id)
+    ) -> list[WatchlistItem]:
+        return [
+            WatchlistItem.model_validate(row)
+            for row in self.repository.list_items(category=category, user_id=user_id)
+        ]
 
-    def list_groups(self, user_id: str) -> list[dict[str, Any]]:
-        return self.repository.list_groups(user_id)
+    def list_groups(self, user_id: str) -> list[WatchlistGroup]:
+        return [WatchlistGroup.model_validate(row) for row in self.repository.list_groups(user_id)]
 
     def save_group(self, name: str, user_id: str, group_id: int | None = None) -> None:
         # Service 入口也验证名称，保证 API 外的调用遵守同样约束。
@@ -157,16 +167,16 @@ class WatchlistService:
         """Update sort_order for each item according to the provided ID sequence."""
         self.repository.reorder_items(ordered_ids, user_id=user_id)
 
-    def add_item(self, item: WatchlistItemCreate, user_id: str | None = None) -> dict[str, Any]:
+    def add_item(self, item: WatchlistItemCreate, user_id: str | None = None) -> WatchlistItem:
         now = _now()
         payload = item.model_dump()
         payload["user_id"] = user_id or ""
         payload["symbol"] = canonical_portfolio_symbol(item.symbol, item.category)
         payload["updated_at"] = now
         payload["created_at"] = now
-        return self.repository.add_item(payload)
+        return WatchlistItem.model_validate(self.repository.add_item(payload))
 
-    def seed_sample_items(self, user_id: str) -> list[dict[str, Any]]:
+    def seed_sample_items(self, user_id: str) -> list[WatchlistItem]:
         """仅为空自选创建可删除的示例，避免污染用户已有研究列表。"""
         if self.list_items(user_id=user_id):
             return []
@@ -194,7 +204,7 @@ class WatchlistService:
 
     def search(
         self, query: str, category: WatchlistCategory | None, limit: int, settings: Any = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[WatchlistSearchResult]:
         return self.longbridge.search(
             query=query, category=category, limit=limit, settings=settings
         )

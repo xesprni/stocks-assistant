@@ -10,6 +10,7 @@ import logging
 from enum import Enum
 from typing import Any
 
+from app.core.serialization import to_payload
 from app.core.tools.call_context import AgentCancelledError, ToolCallContext, bind_legacy_tool
 
 logger = logging.getLogger("stocks-assistant.tools")
@@ -28,11 +29,13 @@ class ToolResult:
 
     @staticmethod
     def success(result, ext_data: Any = None):
-        return ToolResult(status="success", result=result, ext_data=ext_data)
+        return ToolResult(
+            status="success", result=to_payload(result), ext_data=to_payload(ext_data)
+        )
 
     @staticmethod
     def fail(result, ext_data: Any = None):
-        return ToolResult(status="error", result=result, ext_data=ext_data)
+        return ToolResult(status="error", result=to_payload(result), ext_data=to_payload(ext_data))
 
 
 class BaseTool:

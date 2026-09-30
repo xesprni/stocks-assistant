@@ -12,6 +12,7 @@ from app.config import (
     get_settings,
     reset_settings_cache,
 )
+from app.constants.security import Permission
 from app.core.app_store import get_app_store
 from app.core.configuration.runtime import MCP_KEYS, invalidate_runtime
 from app.core.security import CurrentUser
@@ -31,7 +32,7 @@ async def persist_config_update(update: ConfigUpdate, current: CurrentUser) -> S
         for key, value in update.model_dump(exclude_unset=True).items()
         if value is not None
     }
-    personal_only = not current.can("config:write")
+    personal_only = not current.can(Permission.CONFIG_WRITE)
     if personal_only and (disallowed := sorted(patch.keys() - USER_CONFIG_KEYS)):
         raise ConfigPermissionError(
             f"Only personal config keys can be updated: {', '.join(disallowed)}"

@@ -6,37 +6,38 @@
 from __future__ import annotations
 
 import base64
-import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
+from app.constants.mcp import (
+    _SERVER_NAME_RE as _SERVER_NAME_RE,
+)
+from app.constants.mcp import (
+    LEGACY_SSE_TRANSPORT as LEGACY_SSE_TRANSPORT,
+)
+from app.constants.mcp import (
+    STANDARD_HTTP_TRANSPORT as STANDARD_HTTP_TRANSPORT,
+)
+from app.constants.mcp import (
+    STDIO_TRANSPORT as STDIO_TRANSPORT,
+)
+from app.constants.mcp import (
+    SUPPORTED_TRANSPORTS as SUPPORTED_TRANSPORTS,
+)
+from app.constants.mcp import (
+    TRANSPORT_ALIASES as TRANSPORT_ALIASES,
+)
+
 # 标准可流式 HTTP 传输（MCP 推荐方式）
-STANDARD_HTTP_TRANSPORT = "streamable_http"
 # 旧式 SSE（Server-Sent Events）传输
-LEGACY_SSE_TRANSPORT = "sse"
 # 本地进程标准输入输出传输
-STDIO_TRANSPORT = "stdio"
 
 # 传输类型别名映射，将各种写法统一归一化
-TRANSPORT_ALIASES = {
-    "http": STANDARD_HTTP_TRANSPORT,
-    "streamable-http": STANDARD_HTTP_TRANSPORT,
-    "streamable_http": STANDARD_HTTP_TRANSPORT,
-    "streamableHttp": STANDARD_HTTP_TRANSPORT,
-    "sse": LEGACY_SSE_TRANSPORT,
-    "stdio": STDIO_TRANSPORT,
-}
 
 # 受支持的传输类型集合
-SUPPORTED_TRANSPORTS = {
-    STANDARD_HTTP_TRANSPORT,
-    LEGACY_SSE_TRANSPORT,
-    STDIO_TRANSPORT,
-}
 
 # 服务器名称合法字符正则：仅允许字母、数字、下划线和连字符
-_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def normalize_transport(value: Any, config: Mapping[str, Any] | None = None) -> str:

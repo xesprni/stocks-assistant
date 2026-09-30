@@ -1,4 +1,4 @@
-// Smoke-test the built workspace after removing the investment research features.
+// Smoke-test the built workspace, theme preferences and removed-feature boundaries.
 // Every request uses fixtures. No real account, backend or external service is contacted.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -82,6 +82,90 @@ async function absentRemovedUI() {
   assert.equal(await page.getByRole("button", { name: /^(AI 研究|Thesis|估值|Guardian|实验室|保存为证据|保存证据)$/i }).count(), 0);
   assert.equal(await page.locator('a[href="/labs"],a[href$="/thesis"],a[href$="/ai-research"]').count(), 0);
 }
+async function readTheme() {
+  // Reduced motion still uses a short color transition; inspect its final colors.
+  await page.locator(".app-mark").evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => {})));
+  });
+  return page.evaluate(() => {
+    const styles = getComputedStyle(document.documentElement);
+    const mark = getComputedStyle(document.querySelector(".app-mark"));
+    return {
+      color: document.documentElement.dataset.themeColor,
+      dark: document.documentElement.classList.contains("dark"),
+      primary: styles.getPropertyValue("--primary").trim(),
+      accent: styles.getPropertyValue("--accent").trim(),
+      ring: styles.getPropertyValue("--ring").trim(),
+      background: mark.backgroundColor, foreground: mark.color,
+      market: ["--color-up", "--color-down", "--color-up-chart", "--color-down-chart", "--chart-blue"].map((key) => styles.getPropertyValue(key).trim()),
+    };
+  });
+}
+function contrast(a, b) {
+  const luminance = (rgb) => rgb.match(/[\d.]+/g).slice(0, 3).map((channel) => {
+    const value = Number(channel) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const values = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+async function checkThemePreferences() {
+  await page.getByRole("tab", { name: "偏好与能力", exact: true }).click();
+  const colors = { blue: "蓝色", violet: "紫色", teal: "青色", green: "绿色", orange: "橙色", rose: "玫红" };
+  assert.equal(await page.getByRole("group", { name: "主题色", exact: true }).getByRole("radio").count(), 6);
+  for (const mode of ["亮色", "黑暗"]) {
+    await page.locator(".theme-toggle").getByRole("button", { name: `切换到 ${mode}`, exact: true }).click();
+    await page.waitForFunction((dark) => document.documentElement.classList.contains("dark") === dark, mode === "黑暗");
+    const baseline = await readTheme();
+    const backgrounds = new Set();
+    for (const [color, label] of Object.entries(colors)) {
+      const radio = page.getByRole("radio", { name: label, exact: true });
+      await radio.locator("..").click();
+      await page.waitForFunction((value) => document.documentElement.dataset.themeColor === value, color);
+      assert.ok(await radio.isChecked());
+      const current = await readTheme();
+      assert.equal(current.primary, current.accent);
+      assert.equal(current.primary, current.ring);
+      assert.deepEqual(current.market, baseline.market, "Theme accents must not recolor market directions or indicators");
+      assert.ok(contrast(current.background, current.foreground) >= 4.5, `${color} ${mode} must keep primary text readable`);
+      backgrounds.add(current.background);
+    }
+    assert.equal(backgrounds.size, 6, "Every swatch must apply a distinct accent");
+  }
+  const violet = page.getByRole("radio", { name: "紫色", exact: true });
+  await violet.locator("..").click();
+  await violet.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => document.documentElement.dataset.themeColor === "teal");
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForFunction(() => document.documentElement.dataset.themeColor === "violet");
+  const selected = await readTheme();
+  await page.screenshot({ path: "/tmp/stocks-theme-dark.png" });
+  await page.reload();
+  await page.getByRole("tab", { name: "偏好与能力", exact: true }).click();
+  assert.ok(await violet.isChecked(), "Selected accent must survive reload");
+  assert.deepEqual(await readTheme(), selected, "Accent and dark mode must both survive reload");
+  await page.locator(".theme-toggle").getByRole("button", { name: "切换到 亮色", exact: true }).click();
+  await page.waitForFunction(() => !document.documentElement.classList.contains("dark"));
+  assert.equal((await readTheme()).color, "violet");
+  await page.screenshot({ path: "/tmp/stocks-theme-light.png" });
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole("radio", { name: "橙色", exact: true }).locator("..").click();
+    for (const label of Object.values(colors)) {
+      const box = await page.getByRole("radio", { name: label, exact: true }).locator("..").boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= width && box.width >= 44 && box.height >= 44, `Swatch ${label} must fit and remain touchable at ${width}px`);
+    }
+  }
+  await readTheme();
+  await page.screenshot({ path: "/tmp/stocks-theme-mobile.png" });
+  await page.evaluate(() => localStorage.setItem("stocks-assistant-theme-color", "unknown-old-value"));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.reload();
+  await page.getByRole("tab", { name: "偏好与能力", exact: true }).click();
+  assert.ok(await page.getByRole("radio", { name: "蓝色", exact: true }).isChecked());
+  assert.equal((await readTheme()).color, "blue", "Invalid saved colors must recover to the default");
+}
 try {
   await page.goto(`${origin}/security/${symbol}`);
   await page.getByRole("button", { name: "MA250", exact: true }).waitFor();
@@ -110,6 +194,7 @@ try {
   await page.getByPlaceholder("Longbridge app key", { exact: true }).waitFor();
   await absentRemovedUI();
   assert.doesNotMatch(await page.locator("body").innerText(), /Guardian|快速问答/);
+  await checkThemePreferences();
   await page.goto(`${origin}/dashboard`);
   await page.locator("textarea").first().fill("Hello fixture");
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -119,7 +204,7 @@ try {
   assert.equal(calls.filter((path) => /^\/api\/v1\/(research|labs|alerts)(\/|$)|\/guardian\//.test(path)).length, 0);
   assert.deepEqual(failures, []);
   assert.deepEqual(errors, []);
-  console.log("PASS: company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; no retired feature requests or page errors.");
+  console.log("PASS: company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; theme colors, contrast, keyboard selection, persistence, mobile layout and fallback; no retired feature requests or page errors.");
 } catch (error) {
   await page.screenshot({ path: "/tmp/stocks-workspace-removal-failure.png", fullPage: true });
   console.error({ failures, errors });

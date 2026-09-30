@@ -1,6 +1,12 @@
 """Market dashboard API schemas."""
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.constants.market import (
+    DEFAULT_REFRESH_INTERVAL,
+    MAX_REFRESH_INTERVAL,
+)
+from app.schemas.base import AppModel as BaseModel
 
 
 class IndexConfig(BaseModel):
@@ -15,7 +21,7 @@ class MarketDashboardConfig(BaseModel):
     """行情监控仪表盘配置。"""
 
     indices: list[IndexConfig] = Field(default_factory=list)
-    refresh_interval: int = Field(default=60, ge=1, le=3600)
+    refresh_interval: int = Field(default=DEFAULT_REFRESH_INTERVAL, ge=1, le=MAX_REFRESH_INTERVAL)
 
 
 class QuoteItem(BaseModel):

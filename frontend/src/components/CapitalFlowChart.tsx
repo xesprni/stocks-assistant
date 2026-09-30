@@ -78,7 +78,7 @@ function useCapitalFlowChartTheme(): NativeChartTheme {
       axisBackground: cssHsl(styles, "--background", isDark ? 0.94 : 0.9),
       up: upColor,
       down: downColor,
-      blue: cssHsl(styles, "--primary"),
+      blue: cssHsl(styles, "--chart-blue"),
       orange: cssHsl(styles, "--secondary"),
       purple: isDark ? "#c58af9" : "#7e57c2",
       yellow: isDark ? "#fdd663" : "#b7791f",
