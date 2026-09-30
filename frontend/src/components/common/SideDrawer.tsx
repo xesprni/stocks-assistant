@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n/react";
 import { useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -39,10 +40,11 @@ export function SideDrawer({
   subtitle?: string;
   title: string;
 }) {
+  const { messages } = useI18n();
   const titleId = useId();
   const subtitleId = useId();
   const resolvedCloseLabel = closeLabel
-    ?? (typeof document !== "undefined" && document.documentElement.lang.startsWith("zh") ? "关闭抽屉" : "Close drawer");
+    ?? messages.shell.closeDrawer;
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const { dragHandleProps, layerRef, panelRef, present, requestClose: requestSheetClose } = useFluidSheet<HTMLElement>({
     axis: "responsive",

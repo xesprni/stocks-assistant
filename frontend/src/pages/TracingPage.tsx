@@ -1,9 +1,9 @@
+import { Check, ChevronDown, ChevronRight, CircleDot, Loader2, MessageSquareText, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleDot, Cpu, Loader2, MessageSquareText, RefreshCw, Search, Settings2, X } from "lucide-react";
 
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { getSessionTraces, listChatSessionPage } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -347,32 +347,32 @@ export function TracingPage({
             ) : null}
             <div className="space-y-1.5">
               {traceData?.runs.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                onClick={() => {
-                  setSelectedRunId(run.id);
-                  setExpandedEventId(null);
-                }}
-                className={cn(
-                  "block w-full rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
-                  selectedRun?.id === run.id
-                    ? "border-primary/60 bg-primary/10 text-foreground"
-                    : "border-border/80 bg-muted/20 text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                )}
-              >
-                <div className="mb-0.5 flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">{formatDateTime(run.started_at)}</span>
-                  <Badge variant={statusTone(run.status)} className="h-5 px-1.5 text-[10px]">{run.status}</Badge>
-                </div>
-                <div className="flex items-center justify-between gap-2 text-[10px]">
-                  <span>{run.events.length} nodes</span>
-                  <span>{formatDurationMs(run.duration_ms)}</span>
-                </div>
-                {run.final_response_preview ? (
-                  <p className="mt-1 line-clamp-1 text-[11px] leading-4">{run.final_response_preview}</p>
-                ) : null}
-              </button>
+                <button
+                  key={run.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedRunId(run.id);
+                    setExpandedEventId(null);
+                  }}
+                  className={cn(
+                    "block w-full rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
+                    selectedRun?.id === run.id
+                      ? "border-primary/60 bg-primary/10 text-foreground"
+                      : "border-border/80 bg-muted/20 text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                  )}
+                >
+                  <div className="mb-0.5 flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{formatDateTime(run.started_at)}</span>
+                    <Badge variant={statusTone(run.status)} className="h-5 px-1.5 text-[10px]">{run.status}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-[10px]">
+                    <span>{run.events.length} nodes</span>
+                    <span>{formatDurationMs(run.duration_ms)}</span>
+                  </div>
+                  {run.final_response_preview ? (
+                    <p className="mt-1 line-clamp-1 text-[11px] leading-4">{run.final_response_preview}</p>
+                  ) : null}
+                </button>
               ))}
             </div>
           </div>

@@ -1,0 +1,85 @@
+@keyframes theme-icon-in {
+  from {
+    opacity: 0;
+    transform: rotate(-35deg) scale(0.76);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes mobile-popover-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0.5rem, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes dashboard-chat-drawer-in {
+  from {
+    opacity: 0.92;
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes chart-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes shell-pan {
+  from {
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0;
+  }
+  to {
+    background-position:
+      44px 0,
+      0 44px,
+      0 0,
+      0 0,
+      0 0;
+  }
+}
+
+@keyframes reduced-status-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes reduced-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes reduced-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

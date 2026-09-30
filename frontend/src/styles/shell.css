@@ -1,0 +1,273 @@
+@layer components {
+  .console-shell {
+    background: var(--app-stage-bg);
+  }
+
+  .auth-fluid-shell {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    background: hsl(var(--background));
+  }
+
+  .dark .auth-fluid-shell {
+    background: hsl(0 0% 4%);
+  }
+
+  .auth-fluid-shell::before,
+  .auth-fluid-shell::after {
+    content: "";
+    position: absolute;
+    inset: -28%;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  .auth-fluid-shell::before {
+    background:
+      radial-gradient(circle at 30% 18%, hsl(var(--primary) / 0.1), transparent 30%),
+      radial-gradient(circle at 72% 72%, hsl(142 45% 48% / 0.08), transparent 32%);
+    filter: blur(18px);
+    opacity: 0.9;
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1.04);
+    animation: auth-fluid-flow 18s ease-in-out infinite alternate;
+  }
+
+  .dark .auth-fluid-shell::before {
+    opacity: 0.3;
+    filter: blur(42px) saturate(1.05);
+  }
+
+  .auth-fluid-shell::after {
+    inset: 0;
+    background: linear-gradient(180deg, hsl(0 0% 100% / 0.82), hsl(var(--background) / 0.72));
+    background-size: auto;
+    mix-blend-mode: normal;
+    opacity: 0.86;
+    animation: auth-fluid-sheen 14s ease-in-out infinite alternate;
+  }
+
+  .dark .auth-fluid-shell::after {
+    opacity: 0.18;
+  }
+
+  .auth-panel {
+    border-color: hsl(var(--border) / 0.6);
+    background: linear-gradient(180deg, hsl(var(--card) / 0.96), hsl(var(--card) / 0.86));
+    box-shadow: var(--shadow-card-hover);
+  }
+
+  .dark .auth-panel {
+    background: hsl(0 0% 7% / 0.88);
+    box-shadow:
+      0 32px 80px hsl(0 0% 0% / 0.46),
+      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  }
+
+  .app-frame {
+    background: var(--app-stage-bg);
+  }
+
+  .app-header {
+    background: var(--app-header-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .app-main-grid {
+    background: var(--app-stage-bg);
+  }
+
+  .app-mobile-nav {
+    background: var(--app-mobile-nav-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .app-main-stage {
+    background-color: var(--app-stage-bg);
+    background-image:
+      radial-gradient(ellipse 70% 55% at 12% -12%, hsl(var(--primary) / 0.06), transparent 60%),
+      radial-gradient(ellipse 58% 50% at 100% -8%, hsl(var(--secondary) / 0.05), transparent 55%);
+    background-repeat: no-repeat;
+    background-size: auto;
+  }
+
+  .dark .app-main-stage {
+    background-image:
+      radial-gradient(ellipse 70% 55% at 12% -12%, hsl(var(--primary) / 0.1), transparent 60%),
+      radial-gradient(ellipse 58% 50% at 100% -8%, hsl(var(--secondary) / 0.07), transparent 55%);
+  }
+
+  .app-main-stage > .page-enter {
+    gap: 0.75rem;
+  }
+
+  .app-main-stage > .panel,
+  .app-main-stage > .page-enter > .panel {
+    box-shadow: none;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .panel {
+    @apply rounded-xl border;
+    border-color: hsl(var(--border) / 0.5);
+    background: var(--panel-bg);
+    box-shadow: var(--shadow-card);
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 220ms ease,
+      transform 220ms ease;
+  }
+
+  .panel-hover:hover {
+    border-color: hsl(var(--primary) / 0.35);
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .panel.app-header {
+    border-color: hsl(var(--border));
+    background: var(--app-header-bg);
+    box-shadow: none;
+    overflow: visible;
+    position: relative;
+    z-index: 90;
+  }
+
+  .panel.app-mobile-nav {
+    border-color: hsl(var(--border));
+    background: var(--app-mobile-nav-bg);
+    box-shadow: 0 -1px 0 hsl(var(--foreground) / 0.04);
+  }
+
+  .panel-header {
+    @apply border-b border-border/45 px-4 py-3;
+    background: transparent;
+  }
+
+  .page-toolbar {
+    background: transparent;
+    min-height: 2.25rem;
+    padding: 0.25rem 0.75rem;
+  }
+
+  .panel-body {
+    @apply p-4;
+  }
+
+  .metric-tile {
+    @apply rounded-lg border border-border/45 px-3 py-2;
+    background: linear-gradient(180deg, hsl(var(--card) / 0.66), hsl(var(--muted) / 0.34));
+    box-shadow: var(--shadow-card);
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 200ms ease,
+      transform 200ms ease;
+  }
+
+  .metric-tile:hover {
+    border-color: hsl(var(--primary) / 0.32);
+    box-shadow: var(--shadow-card-hover), 0 8px 22px hsl(var(--primary) / 0.1);
+    transform: translateY(-2px);
+  }
+
+  .finance-top-nav {
+    border-bottom: 1px solid hsl(var(--border));
+    background: var(--app-header-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    position: relative;
+    z-index: 30;
+  }
+
+  .account-menu-popover {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(20px) saturate(1.5);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    box-shadow: var(--shadow-card-hover);
+    isolation: isolate;
+    opacity: 1;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .dark .account-menu-popover {
+    background: var(--glass-bg) !important;
+  }
+
+  .finance-top-nav-item {
+    align-items: center;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.85rem;
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
+  }
+
+  .finance-top-nav-item:hover {
+    background: hsl(var(--muted) / 0.82);
+    color: hsl(var(--foreground));
+  }
+
+  .finance-top-nav-item-active {
+    background: hsl(var(--primary) / 0.09);
+    color: hsl(var(--primary));
+  }
+
+  .dark .finance-top-nav {
+    border-bottom-color: hsl(var(--border) / 0.86);
+    background: hsl(0 0% 6% / 0.96);
+  }
+
+  .dark .finance-top-nav-item:hover {
+    background: hsl(var(--muted) / 0.82);
+  }
+
+  .dark .finance-top-nav-item-active {
+    background: hsl(var(--primary) / 0.14);
+    color: hsl(var(--primary));
+  }
+
+  .mobile-nav-fab {
+    touch-action: none;
+    user-select: none;
+  }
+
+  .dashboard-chat-searchbar {
+    touch-action: manipulation;
+  }
+
+  .mobile-nav-popover {
+    animation: mobile-popover-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    backdrop-filter: blur(16px);
+    overscroll-behavior: contain;
+    transform-origin: right bottom;
+  }
+
+  .dashboard-chat-searchbar {
+    background: linear-gradient(
+      180deg,
+      hsl(var(--background) / 0),
+      hsl(var(--background) / 0.92) 26%,
+      hsl(var(--background)) 100%
+    );
+  }
+
+  .dashboard-chat-drawer {
+    animation: dashboard-chat-drawer-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    overscroll-behavior: contain;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n/react";
 import { useState, type FormEvent } from "react";
 import { KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-react";
 
@@ -6,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth";
 
 export function ReauthDialog() {
+  const { messages } = useI18n();
+  const copy = messages.shell.reauth;
   const auth = useAuth();
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -22,7 +25,7 @@ export function ReauthDialog() {
       await auth.reauthenticate(password);
       setPassword("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Authentication failed");
+      setError(caught instanceof Error ? caught.message : copy.failed);
     } finally {
       setSubmitting(false);
     }
@@ -36,9 +39,9 @@ export function ReauthDialog() {
             <ShieldCheck className="size-5" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-base font-semibold">需要重新登录</h2>
+            <h2 className="text-base font-semibold">{copy.title}</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              为了安全，登录设备会定期要求重新验证。当前页面和已填写内容会保留。
+              {copy.hint}
             </p>
           </div>
         </div>
@@ -51,11 +54,11 @@ export function ReauthDialog() {
 
         <div className="space-y-3">
           <label className="block space-y-1.5 text-sm font-medium">
-            <span>账号</span>
+            <span>{copy.username}</span>
             <Input value={auth.user.username} disabled autoComplete="username" />
           </label>
           <label className="block space-y-1.5 text-sm font-medium">
-            <span>密码</span>
+            <span>{copy.password}</span>
             <Input
               autoFocus
               autoComplete="current-password"
@@ -71,11 +74,11 @@ export function ReauthDialog() {
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={auth.logout} disabled={submitting}>
             <LogOut />
-            退出
+            {copy.logout}
           </Button>
           <Button type="submit" disabled={submitting || !password}>
             {submitting ? <Loader2 className="animate-spin" /> : <KeyRound />}
-            继续
+            {copy.continue}
           </Button>
         </div>
       </form>

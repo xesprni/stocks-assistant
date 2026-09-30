@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { formatTemplate } from "@/i18n";
+import { catalogsFor, type AppLanguage } from "@/i18n";
 import {
   ArrowLeft,
   Check,
@@ -10,81 +11,18 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { getMarketConfig, saveMarketConfig } from "@/lib/api";
+import { MARKET_REFRESH_MAX, MARKET_REFRESH_MIN, type MarketConfigEditor } from "@/lib/market-config-controller";
 import { cn } from "@/lib/utils";
 import type { IndexConfig, MarketDashboardConfig } from "@/types/app";
 
-type AppLanguage = "zh" | "en";
-
-const marketConfigCopy = {
-  zh: {
-    back: "返回",
-    title: "行情配置",
-    subtitle: "指数监控列表与自动刷新间隔",
-    resetDefault: "重置默认",
-    save: "保存",
-    saving: "保存中",
-    saved: "已保存",
-    loadFailed: "配置加载失败",
-    saveFailed: "保存失败",
-    readOnly: "只读",
-    readOnlyHint: "当前账号无权限修改行情配置",
-    refreshInterval: "自动刷新间隔（秒）",
-    intervalRange: "范围：1-3600 秒",
-    indexList: "指数监控列表",
-    enabledCount: "{enabled} / {total} 启用",
-    searchIndex: "搜索指数名称或代码...",
-    enabledLabel: "{name} 启用",
-    delete: "删除",
-    addIndex: "添加指数",
-    addSearch: "输入名称、代码或关键词搜索指数，如 恒生、SPX、上证...",
-    noMatchedIndex: "未找到匹配的指数",
-    allKnownAdded: "所有已知指数已添加",
-    manualSymbol: "或手动输入代码，如 HSI.HK",
-    displayName: "显示名称（可选）",
-    add: "添加",
-    loading: "加载配置中...",
-  },
-  en: {
-    back: "Back",
-    title: "Market Config",
-    subtitle: "Index monitor list and auto-refresh interval",
-    resetDefault: "Reset default",
-    save: "Save",
-    saving: "Saving",
-    saved: "Saved",
-    loadFailed: "Failed to load config",
-    saveFailed: "Save failed",
-    readOnly: "Read only",
-    readOnlyHint: "This account cannot edit market config",
-    refreshInterval: "Auto-refresh interval (seconds)",
-    intervalRange: "Range: 1-3600 seconds",
-    indexList: "Index monitor list",
-    enabledCount: "{enabled} / {total} enabled",
-    searchIndex: "Search index name or symbol...",
-    enabledLabel: "{name} enabled",
-    delete: "Delete",
-    addIndex: "Add index",
-    addSearch: "Search by name, symbol, or keyword, e.g. HSI, SPX, Shanghai...",
-    noMatchedIndex: "No matching indices",
-    allKnownAdded: "All known indices have been added",
-    manualSymbol: "Or enter a symbol manually, e.g. HSI.HK",
-    displayName: "Display name (optional)",
-    add: "Add",
-    loading: "Loading config...",
-  },
-} as const;
-
-function formatTemplate(text: string, values: Record<string, string | number>) {
-  return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
-}
+const marketConfigCopy = catalogsFor("marketConfig");
 
 const DEFAULT_INDICES: IndexConfig[] = [
   { symbol: "HSI.HK", name: "恒生指数", enabled: true },
@@ -131,26 +69,21 @@ const INDEX_CATALOG: IndexCatalogEntry[] = [
   { symbol: "399303.SZ", name: "国证2000", aliases: ["国证2000"], market: "CN" },
 ];
 
-interface Props {
+interface Props extends MarketConfigEditor {
   embedded?: boolean;
   language: AppLanguage;
   onBack?: () => void;
-  onSaved: (config: MarketDashboardConfig) => void;
   readOnly?: boolean;
 }
 
-export function MarketConfigPage({ embedded = false, language, onBack, onSaved, readOnly = false }: Props) {
+export function MarketConfigPage({ embedded = false, language, onBack, config, saveState, onPatch, onSave, readOnly = false }: Props) {
   const copy = marketConfigCopy[language];
-  const [config, setConfig] = useState<MarketDashboardConfig | null>(null);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [error, setError] = useState("");
   const [newSymbol, setNewSymbol] = useState("");
   const [newName, setNewName] = useState("");
   const [addSearch, setAddSearch] = useState("");
   const [showAddDropdown, setShowAddDropdown] = useState(false);
   const addDropdownRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  useErrorToast(error, copy.title);
 
   const filteredIndices = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -189,43 +122,18 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
-    getMarketConfig()
-      .then((cfg) => {
-        if (mounted) setConfig(cfg);
-      })
-      .catch((e) => {
-        if (mounted) setError(e instanceof Error ? e.message : copy.loadFailed);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
   function patchConfig(patch: Partial<MarketDashboardConfig>) {
-    setConfig((c) => (c ? { ...c, ...patch } : c));
+    if (!readOnly) onPatch(patch);
   }
 
   function toggleIndex(symbol: string, enabled: boolean) {
-    if (readOnly) return;
-    setConfig((c) =>
-      c
-        ? {
-            ...c,
-            indices: c.indices.map((idx) =>
-              idx.symbol === symbol ? { ...idx, enabled } : idx,
-            ),
-          }
-        : c,
-    );
+    if (!config) return;
+    patchConfig({ indices: config.indices.map((idx) => idx.symbol === symbol ? { ...idx, enabled } : idx) });
   }
 
   function removeIndex(symbol: string) {
-    if (readOnly) return;
-    setConfig((c) =>
-      c ? { ...c, indices: c.indices.filter((idx) => idx.symbol !== symbol) } : c,
-    );
+    if (!config) return;
+    patchConfig({ indices: config.indices.filter((idx) => idx.symbol !== symbol) });
   }
 
   function addIndex(sym?: string, nm?: string) {
@@ -233,11 +141,8 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
     const symbol = (sym ?? newSymbol).trim().toUpperCase();
     const name = (nm ?? newName).trim();
     if (!symbol) return;
-    setConfig((c) => {
-      if (!c) return c;
-      if (c.indices.some((idx) => idx.symbol === symbol)) return c;
-      return { ...c, indices: [...c.indices, { symbol, name: name || symbol, enabled: true }] };
-    });
+    if (!config || config.indices.some((idx) => idx.symbol.toUpperCase() === symbol)) return;
+    patchConfig({ indices: [...config.indices, { symbol, name: name || symbol, enabled: true }] });
     setNewSymbol("");
     setNewName("");
     setAddSearch("");
@@ -245,24 +150,12 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
   }
 
   function resetToDefault() {
-    if (readOnly) return;
-    setConfig((c) => (c ? { ...c, indices: DEFAULT_INDICES } : c));
+    patchConfig({ indices: DEFAULT_INDICES.map((index) => ({ ...index })) });
   }
 
-  async function handleSave() {
+  function handleSave() {
     if (!config || readOnly) return;
-    setSaveState("saving");
-    setError("");
-    try {
-      const saved = await saveMarketConfig(config);
-      setConfig(saved);
-      onSaved(saved);
-      setSaveState("saved");
-      window.setTimeout(() => setSaveState("idle"), 1400);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : copy.saveFailed);
-      setSaveState("error");
-    }
+    onSave();
   }
 
   return (
@@ -320,8 +213,10 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
             <div className="flex items-center gap-3">
               <Input
                 className="w-32"
-                min={1}
-                max={3600}
+                min={MARKET_REFRESH_MIN}
+                max={MARKET_REFRESH_MAX}
+                required
+                aria-label={copy.refreshInterval}
                 type="number"
                 disabled={readOnly}
                 value={config.refresh_interval}
@@ -430,7 +325,7 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
                     value={newSymbol}
                     onChange={(e) => setNewSymbol(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") addIndex();
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) addIndex();
                     }}
                   />
                   <Input
@@ -438,7 +333,7 @@ export function MarketConfigPage({ embedded = false, language, onBack, onSaved, 
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") addIndex();
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) addIndex();
                     }}
                   />
                   <Button

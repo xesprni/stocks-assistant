@@ -9,6 +9,7 @@ type Options = {
   onSaved: (config: AppConfig) => void;
   onState: (state: ConfigSaveState) => void;
   onError: (error: unknown) => void;
+  onPersisted?: () => void;
   canSave?: () => boolean;
 };
 
@@ -93,6 +94,7 @@ export function createConfigAutosave(options: Options) {
         options.onDraft(draft);
       }
       options.onState(hasPending() ? "pending" : "saved");
+      if (result) options.onPersisted?.();
     } catch (error) {
       if (disposed) return;
       pending = { ...submitted, ...pending };

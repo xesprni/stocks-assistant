@@ -1,4 +1,5 @@
-import type { AppLanguage } from "@/lib/i18n";
+import type { AppLanguage } from "@/i18n";
+import { localeFor } from "@/i18n";
 import type { LoginRecord, LoginSession } from "@/types/app";
 
 export function deviceInfo(userAgent: string, unknown: string) {
@@ -39,7 +40,7 @@ export function hasValidLogin(record: LoginRecord | LoginSession, now = Date.now
 
 export function formatSessionDate(value: string, language: AppLanguage) {
   if (!dateValue(value)) return "—";
-  return new Date(value).toLocaleString(language === "en" ? "en-US" : "zh-CN", {
+  return new Date(value).toLocaleString(localeFor(language), {
     year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
 }
@@ -47,7 +48,7 @@ export function formatSessionDate(value: string, language: AppLanguage) {
 export function relativeSessionDate(value: string, language: AppLanguage, now: number) {
   if (!dateValue(value)) return "—";
   const seconds = Math.min(0, Math.round((dateValue(value) - now) / 1000));
-  const formatter = new Intl.RelativeTimeFormat(language === "en" ? "en" : "zh-CN", { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat(localeFor(language), { numeric: "auto" });
   if (seconds > -60) return formatter.format(0, "second");
   if (seconds > -3600) return formatter.format(Math.round(seconds / 60), "minute");
   if (seconds > -86400) return formatter.format(Math.round(seconds / 3600), "hour");

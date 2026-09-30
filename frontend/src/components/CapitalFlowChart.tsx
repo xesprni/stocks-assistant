@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getMessages } from "@/i18n";
 import { Activity, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   NativeStockChart,
@@ -8,9 +9,9 @@ import {
 } from "@/components/charts/NativeStockChart";
 import { useErrorToast } from "@/components/common/Toast";
 import { Button } from "@/components/ui/button";
+import { localeFor, type AppLanguage } from "@/i18n";
 import { getCapitalFlow } from "@/lib/api";
 import { useChartColors } from "@/lib/color-scheme";
-import { localeFor, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { CapitalFlowItem } from "@/types/app";
 
@@ -175,33 +176,7 @@ export function CapitalFlowChart({
   language: AppLanguage;
   symbol: string;
 }) {
-  const labels = language === "en"
-    ? {
-      title: "Capital flow",
-      subtitle: "Longbridge intraday net inflow",
-      latest: "Latest",
-      high: "High",
-      low: "Low",
-      empty: "No capital flow data",
-      loading: "Loading capital flow",
-      refresh: "Refresh capital flow",
-      updated: "Updated",
-      netInflow: "Net inflow",
-      zero: "Zero",
-    }
-    : {
-      title: "资金流向",
-      subtitle: "长桥当日资金净流入时序",
-      latest: "最新净流入",
-      high: "盘中高点",
-      low: "盘中低点",
-      empty: "暂无资金流向数据",
-      loading: "加载资金流向中",
-      refresh: "刷新资金流向",
-      updated: "更新",
-      netInflow: "净流入",
-      zero: "零轴",
-    };
+  const labels = getMessages(language).capitalFlow.labels;
   const theme = useCapitalFlowChartTheme();
   const requestSeqRef = useRef(0);
   const [points, setPoints] = useState<ParsedCapitalFlowPoint[]>([]);

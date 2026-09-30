@@ -1,0 +1,164 @@
+@media (hover: none) {
+  .panel-hover:hover,
+  .finance-row-card:hover,
+  .finance-data-card:hover,
+  .nav-item:hover,
+  .theme-toggle:hover {
+    transform: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .apple-button,
+  .apple-control,
+  .apple-segment,
+  .app-navigation-item {
+    min-height: 2.75rem;
+  }
+
+  .apple-button {
+    min-width: 2.75rem;
+  }
+
+  .apple-control {
+    font-size: 1rem;
+  }
+
+  .apple-switch::before {
+    content: "";
+    inset: -0.625rem -0.15rem;
+    position: absolute;
+  }
+
+  .sheet-drag-handle {
+    min-height: 2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 120ms !important;
+  }
+
+  .auth-fluid-shell::before,
+  .auth-fluid-shell::after,
+  .ticker-line::after,
+  .pulse-path,
+  .watchlist-sortable-row-over {
+    animation: none !important;
+  }
+
+  .motion-panel,
+  .page-enter,
+  .motion-panel.page-enter,
+  .message-bubble,
+  .apple-popover,
+  .app-navigation-popover,
+  .account-menu-popover {
+    animation: reduced-fade-in 140ms ease both !important;
+    filter: none !important;
+    transform: none !important;
+  }
+
+  .apple-select-popover[data-state="closed"],
+  .app-toast[data-state="closing"],
+  .config-toast[data-state="closing"] {
+    animation: reduced-fade-out 120ms ease both !important;
+    filter: none !important;
+    transform: none !important;
+  }
+
+  .app-toast[data-state="open"],
+  .config-toast[data-state="open"] {
+    animation: reduced-fade-in 140ms ease both !important;
+    filter: none !important;
+    transform: none !important;
+  }
+
+  .fluid-sheet-layer[data-reduced-motion="true"] .fluid-sheet-panel {
+    transform: none !important;
+    transition: opacity 140ms ease !important;
+  }
+
+  .panel.app-header,
+  .app-mobile-nav {
+    transform: none !important;
+    transition-property: opacity !important;
+  }
+
+  .theme-toggle svg {
+    animation: none !important;
+  }
+
+  .apple-dialog-surface {
+    filter: none !important;
+    transform: none !important;
+  }
+
+  .animate-spin {
+    animation: reduced-status-pulse 1.2s ease-in-out infinite !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-structural: hsl(240 5% 94%);
+    --material-bar: hsl(0 0% 100%);
+    --material-popover: hsl(0 0% 100%);
+    --material-sheet: hsl(0 0% 100%);
+    --control-bg: hsl(0 0% 100%);
+    --panel-bg: hsl(0 0% 100%);
+    --tile-bg: hsl(0 0% 100%);
+  }
+
+  .dark {
+    --material-structural: hsl(240 4% 10%);
+    --material-bar: hsl(240 4% 10%);
+    --material-popover: hsl(240 4% 13%);
+    --material-sheet: hsl(240 4% 12%);
+    --control-bg: hsl(240 4% 18%);
+    --panel-bg: hsl(240 4% 11%);
+    --tile-bg: hsl(240 4% 15%);
+  }
+
+  .app-header,
+  .app-mobile-nav,
+  .account-menu-popover,
+  .apple-material-popover,
+  .apple-material-thick,
+  .chat-bubble-assistant,
+  .finance-top-nav {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border: 240 8% 56%;
+    --input: 240 8% 48%;
+    --muted-foreground: 240 5% 28%;
+  }
+
+  .dark {
+    --border: 240 5% 58%;
+    --input: 240 5% 64%;
+    --muted-foreground: 240 5% 78%;
+  }
+
+  :focus-visible {
+    outline: 3px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
+
+  .app-header,
+  .panel,
+  .apple-material-popover,
+  .apple-material-thick {
+    border-color: hsl(var(--border)) !important;
+  }
+}

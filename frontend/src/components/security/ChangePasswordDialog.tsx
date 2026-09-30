@@ -1,13 +1,13 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Check, Circle, Eye, EyeOff, Info, KeyRound, Loader2 } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { useToast } from "@/components/common/Toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { passwordCopy, type AppLanguage } from "@/i18n";
 import { changeOwnPassword } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { passwordCopy, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type PasswordField = "current" | "next" | "confirm";

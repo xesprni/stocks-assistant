@@ -72,6 +72,33 @@ test("save delays distinguish text, long text, booleans and discrete options", (
   assert.equal(configAutosaveDelay({ agent_tool_allowlist: ["read_file"] }), 0);
 });
 
+test("success feedback fires after auto and manual saves, never hydration, no-op or failure", async (t) => {
+  let notifications = 0;
+  const h = setup(t, {}, { onPersisted: () => { notifications += 1; } });
+  assert.equal(notifications, 0);
+  h.controller.patch({ llm_model: "autosaved" });
+  await h.tick(800);
+  assert.equal(notifications, 0);
+  await h.succeed(0);
+  assert.equal(notifications, 1);
+  h.controller.patch({ llm_model: "manual" });
+  const done = h.controller.flush();
+  await settle();
+  await h.succeed(1);
+  await done;
+  assert.equal(notifications, 2);
+  h.controller.patch({ llm_api_key: " " });
+  await h.tick(800);
+  h.calls[2].resolve(null);
+  await settle();
+  assert.equal(notifications, 2);
+  h.controller.patch({ llm_model: "failed" });
+  await h.tick(800);
+  h.calls[3].reject(new Error("unavailable"));
+  await settle();
+  assert.equal(notifications, 2);
+});
+
 test("typing resets the 800 ms debounce and submits only the latest values", async (t) => {
   const h = setup(t);
   h.controller.patch({ llm_model: "partial" });

@@ -7,7 +7,7 @@ npm test
 npm run build
 ```
 
-The test loader uses esbuild with `node:test` so both `.mjs` and `.ts` tests, including extensionless TypeScript imports, run through one entry point.
+The test loader uses esbuild with `node:test` so both `.mjs` and `.ts` tests, including extensionless TypeScript and directory index imports, run through one entry point. `i18n.test.ts` checks catalog keys and interpolation parity, partial translations, locale aliases, formatting and a third-language registration.
 
 The optional browser check mounts the real watchlist view and chat hooks, in React development StrictMode. It checks one drag produces one reorder, one chat submission produces one persisted assistant reply. A temporary server supplies every API response from memory, and external browser requests are blocked. It never uses a real account or backend.
 
@@ -27,7 +27,7 @@ npm run test:browser:watchlist
 
 The same Playwright environment variables apply. Screenshots are saved as `/tmp/stocks-watchlist-desktop.png`, `/tmp/stocks-chips-dark.png`, `/tmp/stocks-chips-landscape.png`, `/tmp/stocks-chips-portrait.png`, `/tmp/stocks-capital-landscape.png`, `/tmp/stocks-watchlist-portrait.png`, or `/tmp/stocks-watchlist-failure.png` on failure. Mobile portrait screenshots use the viewport to avoid changing orientation media queries during a full-page capture.
 
-The built-workspace smoke test checks the company chart, holdings, news and financials, plus navigation, knowledge, scheduler, settings and general chat. It verifies all six theme colors in light/dark modes, primary text contrast, keyboard selection, reload persistence, mobile swatch layout and invalid-preference recovery. Market and indicator colors must remain independent of the theme accent. It also asserts that no removed research, labs, alerts or Guardian endpoints are requested, including with old browser preferences. API responses are entirely fixtures.
+The built-workspace smoke test checks the company chart, holdings, news and financials, plus navigation, knowledge, scheduler, settings and general chat. It verifies all six theme colors in light/dark modes, primary text contrast, keyboard selection, reload persistence, mobile swatch layout and invalid-preference recovery. Market and indicator colors must remain independent of the theme accent. It also asserts that no removed research, labs, alerts or Guardian endpoints are requested, including with old browser preferences. It also checks language selection, account autosave, HTML `lang`/`dir` and reload persistence. API responses are entirely fixtures.
 
 ```sh
 npm run build
@@ -35,3 +35,5 @@ npm run test:browser:workspace
 ```
 
 The same Playwright environment variables apply. Screenshots are saved as `/tmp/stocks-company-after-removal.png`, `/tmp/stocks-theme-light.png`, `/tmp/stocks-theme-dark.png`, `/tmp/stocks-theme-mobile.png`, or `/tmp/stocks-workspace-removal-failure.png`.
+
+The workspace check also verifies market configuration autosave, switching settings tabs and pages while a save is pending, persistence after reload, rendering more than eight dashboard indices, and success toasts for both automatic and explicit saves of market and general settings.

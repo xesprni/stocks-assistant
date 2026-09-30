@@ -1,393 +1,85 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import {
-  BookOpen,
-  Bot,
-  BrainCircuit,
-  BriefcaseBusiness,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
-  CircleAlert,
-  Clock,
-  Cpu,
-  Home,
-  Loader2,
-  LogOut,
-  MessageSquareText,
-  Monitor,
-  Moon,
-  Plug,
-  Search,
-  Settings2,
-  ShieldCheck,
-  Sparkles,
-  Star,
-  Sun,
-  Upload,
-  UserCog,
-  X,
-  Zap,
-} from "lucide-react";
-
 import { ReauthDialog } from "@/components/ReauthDialog";
 import { useConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useToast } from "@/components/common/Toast";
-import {
-  AppNavigationPopover,
-  type AppNavGroup,
-  type AppNavItem,
-} from "@/components/shell/AppNavigation";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { useFluidSheet } from "@/hooks/useFluidSheet";
-import {
-  trackProductEvent,
-  getMarketConfig,
-  loadConfig,
-  saveConfig,
-} from "@/lib/api";
-import { useAuth } from "@/lib/auth";
-import { cn } from "@/lib/utils";
-import { toDraft } from "@/lib/config";
-import { createConfigAutosave, type ConfigSaveState } from "@/lib/config-autosave";
-import { parseJsonObject } from "@/lib/json";
-import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
-import { formatTemplate, i18n, localeFor, normalizeLanguage } from "@/lib/i18n";
+import { DashboardMobileChatDock } from "@/components/shell/DashboardMobileChatDock";
+import { Header } from "@/components/shell/Header";
+import { PageFallback } from "@/components/shell/PageFallback";
+import { getNavigationGroups } from "@/components/shell/navigation";
 import { useChatRunController } from "@/hooks/useChatRunController";
 import { CHAT_AUTO_SCROLL_THRESHOLD, useConversations } from "@/hooks/useConversations";
-import type { AppLanguage } from "@/lib/i18n";
-import type { ConfigTab } from "@/pages/ConfigPage";
+import { useMarketConfig } from "@/hooks/useMarketConfig";
+import { formatTemplate, getMessages, i18n, normalizeLanguage } from "@/i18n";
+import { I18nProvider } from "@/i18n/react";
+import {
+  loadConfig,
+  saveConfig,
+  trackProductEvent,
+} from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { toDraft } from "@/lib/config";
+import { createConfigAutosave, type ConfigSaveState } from "@/lib/config-autosave";
+import { CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY, PERSONAL_CONFIG_PAYLOAD_KEYS } from "@/lib/config-fields";
+import { parseJsonObject } from "@/lib/json";
+import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
+import { companyRouteFromPath, configTabFromPath, DEFAULT_PAGE_PERMISSION, normalizeRoutePath, pageFromPath, pathForCompany, pathForPage } from "@/lib/routes";
+import { effectiveTheme, isMobileShellViewport, isTheme, systemTheme } from "@/lib/shell-layout";
+import { cn } from "@/lib/utils";
 import type { CompanyTab } from "@/pages/CompanyWorkspacePage";
-import type { EffectiveTheme, Page, Theme } from "@/types/ui";
+import type { ConfigTab } from "@/pages/ConfigPage";
 import type {
   AppConfig,
-  LongbridgeOAuthStatus,
-  AuthUser,
   ConfigDraft,
-  MarketDashboardConfig,
+  LongbridgeOAuthStatus
 } from "@/types/app";
+import type { EffectiveTheme, Page, Theme } from "@/types/ui";
+import {
+  Loader2,
+  ShieldCheck
+} from "lucide-react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 const ChatPage = lazy(() => import("@/pages/ChatPage").then((module) => ({ default: module.ChatPage })));
+
 const AuthPage = lazy(() => import("@/pages/AuthPage").then((module) => ({ default: module.AuthPage })));
+
 const ConfigPage = lazy(() => import("@/pages/ConfigPage").then((module) => ({ default: module.ConfigPage })));
+
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+
 const CompanyWorkspacePage = lazy(() => import("@/pages/CompanyWorkspacePage").then((module) => ({ default: module.CompanyWorkspacePage })));
+
 const SchedulerPage = lazy(() => import("@/pages/SchedulerPage").then((module) => ({ default: module.SchedulerPage })));
+
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
+
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
+
 const MCPPage = lazy(() => import("@/pages/MCPPage").then((module) => ({ default: module.MCPPage })));
+
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((module) => ({ default: module.MemoryPage })));
+
 const NewsPage = lazy(() => import("@/pages/NewsPage").then((module) => ({ default: module.NewsPage })));
+
 const PortfolioPage = lazy(() => import("@/components/PortfolioPage").then((module) => ({ default: module.PortfolioPage })));
+
 const SecurityPage = lazy(() => import("@/pages/SecurityPage").then((module) => ({ default: module.SecurityPage })));
+
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })));
+
 const SubAgentsPage = lazy(() => import("@/pages/SubAgentsPage").then((module) => ({ default: module.SubAgentsPage })));
+
 const TracingPage = lazy(() => import("@/pages/TracingPage").then((module) => ({ default: module.TracingPage })));
+
 const UsersPage = lazy(() => import("@/pages/UsersPage").then((module) => ({ default: module.UsersPage })));
+
 const WatchlistPage = lazy(() => import("@/pages/WatchlistPage").then((module) => ({ default: module.WatchlistPage })));
 
-type ConfigToast = { id: number; kind: "success" | "error"; message: string; state: "open" | "closing" };
-
 const MOBILE_HEADER_VISIBLE_KEY = "stocks-assistant-mobile-header-visible";
+
 const LEGACY_MOBILE_CHROME_HIDDEN_KEY = "stocks-assistant-mobile-chrome-hidden";
-
-const DEFAULT_PAGE_PERMISSION: Partial<Record<Page, string>> = {
-  overview: "config:read",
-  company: "knowledge:read",
-  tracing: "tracing:read",
-  security: "config:read",
-  watchlist: "watchlist:read",
-  portfolio: "portfolio:read",
-  news: "market:read",
-  config: "config:read",
-  fundamentals: "fundamentals:read",
-  skills: "skills:read",
-  subagents: "config:write",
-  mcp: "mcp:read",
-  memory: "memory:read",
-  knowledge: "knowledge:read",
-  scheduler: "scheduler:read",
-  users: "users:manage",
-};
-
-const PAGE_PATH: Record<Page, string> = {
-  overview: "/dashboard",
-  company: "/security",
-  tracing: "/tracing",
-  security: "/admin/security",
-  watchlist: "/watchlist",
-  portfolio: "/portfolio",
-  news: "/news",
-  config: "/settings",
-  fundamentals: "/fundamentals",
-  skills: "/skills",
-  subagents: "/subagents",
-  mcp: "/mcp",
-  memory: "/memory",
-  knowledge: "/knowledge",
-  scheduler: "/alerts",
-  users: "/users",
-};
-
-const PATH_PAGE = new Map<string, Page>([
-  ...Object.entries(PAGE_PATH).map(([page, path]) => [path, page as Page] as const),
-  ["/", "overview"],
-  ["/config", "config"],
-  ["/chat", "overview"],
-  ["/chart", "watchlist"],
-  ["/market", "overview"],
-  ["/market/config", "config"],
-  ["/overview", "overview"],
-  ["/scheduler", "scheduler"],
-]);
-
-const CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY: Partial<Record<keyof ConfigDraft, string[]>> = {
-  llm_provider: ["llm_provider", "llm_auth_mode"],
-  llm_auth_mode: ["llm_provider", "llm_auth_mode"],
-  llm_api_base: ["llm_api_base"],
-  llm_model: ["llm_model"],
-  llm_api_key: ["llm_api_key"],
-  llm_codex_auth_file: ["llm_codex_auth_file"],
-  llm_codex_api_base: ["llm_codex_api_base"],
-  llm_codex_model: ["llm_codex_model"],
-  llm_temperature: ["llm_temperature"],
-  llm_max_output_tokens: ["llm_max_output_tokens"],
-  llm_reasoning_effort: ["llm_reasoning_effort"],
-  llm_tool_choice: ["llm_tool_choice"],
-  embedding_auth_mode: ["embedding_auth_mode"],
-  embedding_api_base: ["embedding_api_base"],
-  embedding_model: ["embedding_model"],
-  embedding_provider: ["embedding_provider"],
-  embedding_api_key: ["embedding_api_key"],
-  embedding_codex_auth_file: ["embedding_codex_auth_file"],
-  embedding_codex_api_base: ["embedding_codex_api_base"],
-  embedding_codex_model: ["embedding_codex_model"],
-  workspace_dir: ["workspace_dir"],
-  app_language: ["app_language"],
-  auth_max_devices_per_user: ["auth_max_devices_per_user"],
-  agent_max_steps: ["agent_max_steps"],
-  agent_max_context_tokens: ["agent_max_context_tokens"],
-  agent_max_context_turns: ["agent_max_context_turns"],
-  agent_tool_allowlist: ["agent_tool_allowlist"],
-  agent_allow_all_mcp_tools: ["agent_allow_all_mcp_tools"],
-  multi_agent_enabled: ["multi_agent_enabled"],
-  multi_agent_max_parallel_agents: ["multi_agent_max_parallel_agents"],
-  multi_agent_max_tasks_per_batch: ["multi_agent_max_tasks_per_batch"],
-  multi_agent_task_timeout_seconds: ["multi_agent_task_timeout_seconds"],
-  multi_agent_default_max_steps: ["multi_agent_default_max_steps"],
-  multi_agent_max_depth: ["multi_agent_max_depth"],
-  multi_agent_dangerous_tools: ["multi_agent_dangerous_tools"],
-  multi_agent_roles: ["multi_agent_roles"],
-  knowledge_enabled: ["knowledge_enabled"],
-  memory_enabled: ["memory_enabled"],
-  memory_auto_curate_enabled: ["memory_auto_curate_enabled"],
-  memory_curator_min_importance: ["memory_curator_min_importance"],
-  memory_curator_min_confidence: ["memory_curator_min_confidence"],
-  scheduler_enabled: ["scheduler_enabled"],
-  tracing_enabled: ["tracing_enabled"],
-  product_analytics_enabled: ["product_analytics_enabled"],
-  telegram_enabled: ["telegram_enabled"],
-  telegram_bot_token: ["telegram_bot_token"],
-  telegram_chat_id: ["telegram_chat_id"],
-  telegram_api_base: ["telegram_api_base"],
-  telegram_parse_mode: ["telegram_parse_mode"],
-  system_prompt: ["system_prompt"],
-  mcp_servers_text: ["mcp_servers"],
-  mcp_tool_timeout_seconds: ["mcp_tool_timeout_seconds"],
-  longbridge_app_key: ["longbridge_app_key"],
-  longbridge_auth_mode: ["longbridge_auth_mode"],
-  longbridge_app_secret: ["longbridge_app_secret"],
-  longbridge_access_token: ["longbridge_access_token"],
-  longbridge_http_url: ["longbridge_http_url"],
-  longbridge_quote_ws_url: ["longbridge_quote_ws_url"],
-  search_api_url: ["search_api_url"],
-  search_api_key: ["search_api_key"],
-  debug: ["debug"],
-};
-
-const PERSONAL_CONFIG_PAYLOAD_KEYS = new Set([
-  "llm_provider",
-  "llm_auth_mode",
-  "llm_api_key",
-  "llm_api_base",
-  "llm_model",
-  "llm_codex_auth_file",
-  "llm_codex_api_base",
-  "llm_codex_model",
-  "llm_temperature",
-  "llm_max_output_tokens",
-  "llm_reasoning_effort",
-  "llm_tool_choice",
-  "embedding_auth_mode",
-  "embedding_api_key",
-  "embedding_api_base",
-  "embedding_model",
-  "embedding_provider",
-  "embedding_codex_auth_file",
-  "embedding_codex_api_base",
-  "embedding_codex_model",
-  "telegram_enabled",
-  "telegram_bot_token",
-  "telegram_chat_id",
-  "telegram_api_base",
-  "telegram_parse_mode",
-  "mcp_servers",
-  "mcp_tool_timeout_seconds",
-  "longbridge_app_key",
-  "longbridge_auth_mode",
-  "longbridge_app_secret",
-  "longbridge_access_token",
-  "longbridge_http_url",
-  "longbridge_quote_ws_url",
-  "search_api_url",
-  "search_api_key",
-  "app_language",
-  "agent_max_steps",
-  "agent_max_context_tokens",
-  "agent_max_context_turns",
-  "multi_agent_enabled",
-  "multi_agent_max_parallel_agents",
-  "multi_agent_max_tasks_per_batch",
-  "multi_agent_task_timeout_seconds",
-  "multi_agent_default_max_steps",
-  "multi_agent_max_depth",
-  "knowledge_enabled",
-  "memory_enabled",
-  "memory_auto_curate_enabled",
-  "memory_curator_min_importance",
-  "memory_curator_min_confidence",
-  "scheduler_enabled",
-  "tracing_enabled",
-  "product_analytics_enabled",
-  "debug",
-]);
-
-function navItem(language: AppLanguage, id: Page, icon: ReactNode, labelOverride?: string, hintOverride?: string): AppNavItem {
-  const [label, hint] = i18n[language].nav[id as keyof typeof i18n.zh.nav];
-  return { id, label: labelOverride ?? label, icon, hint: hintOverride ?? hint, href: PAGE_PATH[id] };
-}
-
-function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
-  const primary = language === "en"
-    ? { group: "Workspace", today: "Today", companies: "Companies", portfolio: "Portfolio", knowledge: "Knowledge", alerts: "Tasks" }
-    : { group: "工作台", today: "今日", companies: "公司", portfolio: "组合", knowledge: "知识库", alerts: "定时任务" };
-  return [
-    {
-      id: "primary",
-      label: primary.group,
-      items: [
-        navItem(language, "overview", <Home />, primary.today),
-        navItem(language, "watchlist", <Star />, primary.companies),
-        navItem(language, "portfolio", <BriefcaseBusiness />, primary.portfolio),
-        navItem(language, "knowledge", <BookOpen />, primary.knowledge),
-        navItem(language, "scheduler", <Clock />, primary.alerts),
-      ],
-    },
-    {
-      id: "developer",
-      label: language === "en" ? "Developer Center" : "开发者中心",
-      items: [
-        navItem(language, "tracing", <Cpu />),
-        navItem(language, "skills", <Zap />),
-        navItem(language, "subagents", <Bot />),
-        navItem(language, "mcp", <Plug />),
-        navItem(language, "memory", <BrainCircuit />),
-      ],
-    },
-    {
-      id: "admin",
-      label: language === "en" ? "Administration" : "系统管理",
-      items: [
-        navItem(language, "security", <ShieldCheck />),
-        navItem(language, "users", <UserCog />),
-        navItem(language, "config", <Settings2 />),
-      ],
-    },
-  ];
-}
-
-function normalizeRoutePath(pathname: string) {
-  const clean = pathname.replace(/\/+$/, "");
-  return clean || "/";
-}
-
-function pageFromPath(pathname: string): Page {
-  if (companyRouteFromPath(pathname)) return "company";
-  return PATH_PAGE.get(normalizeRoutePath(pathname)) ?? "overview";
-}
-
-function pathForPage(page: Page) {
-  return PAGE_PATH[page] ?? PAGE_PATH.overview;
-}
-
-const COMPANY_TABS = new Set<CompanyTab>(["chart", "financials", "news", "position"]);
-
-function companyRouteFromPath(pathname: string): { symbol: string; tab: CompanyTab } | null {
-  const match = normalizeRoutePath(pathname).match(/^\/security\/([^/]+)(?:\/([^/]+))?$/);
-  if (!match) return null;
-  const symbol = decodeURIComponent(match[1]).trim().toUpperCase();
-  const tabValue = decodeURIComponent(match[2] || "chart") as CompanyTab;
-  if (!symbol || !COMPANY_TABS.has(tabValue)) return null;
-  return { symbol, tab: tabValue };
-}
-
-function pathForCompany(route: { symbol: string; tab: CompanyTab }) {
-  return `/security/${encodeURIComponent(route.symbol)}/${route.tab}`;
-}
-
-function configTabFromPath(pathname: string): ConfigTab | undefined {
-  return normalizeRoutePath(pathname) === "/market/config" ? "market" : undefined;
-}
-
-function ConfigSaveToast({ onClose, toast }: { onClose: () => void; toast: ConfigToast | null }) {
-  if (!toast) return null;
-  const Icon = toast.kind === "success" ? CheckCircle2 : CircleAlert;
-  return (
-    <div
-      className={cn(
-        "config-toast",
-        "fixed right-4 top-4 z-[1200] flex w-[min(360px,calc(100vw-2rem))] items-start gap-3 rounded-md border px-3 py-3 text-sm shadow-lg",
-        "bg-popover text-popover-foreground",
-        toast.kind === "success" ? "border-primary/35" : "border-destructive/45",
-      )}
-      data-state={toast.state}
-      role="status"
-    >
-      <Icon className={cn("mt-0.5 size-4 shrink-0", toast.kind === "success" ? "text-primary" : "text-destructive")} />
-      <span className="min-w-0 flex-1 leading-5">{toast.message}</span>
-      <button
-        aria-label="Close"
-        className="rounded-sm p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-        type="button"
-        onClick={onClose}
-      >
-        <X className="size-3.5" />
-      </button>
-    </div>
-  );
-}
 
 function isChatScrolledToBottom(element: HTMLDivElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_AUTO_SCROLL_THRESHOLD;
-}
-
-function isTheme(value: string | null): value is Theme {
-  return value === "system" || value === "dark" || value === "light";
-}
-
-function isMobileShellViewport(): boolean {
-  return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
-}
-
-function systemTheme(): EffectiveTheme {
-  if (typeof window === "undefined") return "dark";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function effectiveTheme(theme: Theme, systemPreference: EffectiveTheme): EffectiveTheme {
-  return theme === "system" ? systemPreference : theme;
 }
 
 // ── Chat History ───────────────────────────────────────────────────────────
@@ -428,8 +120,6 @@ function ConsoleApp() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
   const [configState, setConfigState] = useState<ConfigSaveState>("idle");
-  const [configToast, setConfigToast] = useState<ConfigToast | null>(null);
-  const [marketConfig, setMarketConfig] = useState<MarketDashboardConfig>({ indices: [], refresh_interval: 60 });
   const [isMobileHeaderVisible, setIsMobileHeaderVisible] = useState(() => {
     const stored = readStoredText(MOBILE_HEADER_VISIBLE_KEY, "");
     if (stored === "true" || stored === "false") return stored === "true";
@@ -448,13 +138,14 @@ function ConsoleApp() {
   const configAutosaveRef = useRef<ReturnType<typeof createConfigAutosave> | null>(null);
   const persistConfigRef = useRef(persistConfigChanges);
   persistConfigRef.current = persistConfigChanges;
-  const configToastTimerRef = useRef<number | null>(null);
-  const configToastExitTimerRef = useRef<number | null>(null);
   const routeReadyRef = useRef(false);
   const chatHistory = useConversations();
   const confirmDialog = useConfirmDialog();
   const language = normalizeLanguage(draft?.app_language ?? config?.app_language);
   const ui = i18n[language];
+  const marketSettings = useMarketConfig(language, auth.can("market:read"), auth.can("market:write"));
+  const configSuccessRef = useRef(() => showConfigToast("success", ui.config.saved));
+  configSuccessRef.current = () => showConfigToast("success", ui.config.saved);
   const configErrorRef = useRef((caught: unknown) => {
     showConfigToast("error", caught instanceof Error ? caught.message : ui.config.saveFailed);
   });
@@ -574,16 +265,6 @@ function ConsoleApp() {
     return () => media.removeEventListener("change", handleChange);
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (configToastTimerRef.current) {
-        window.clearTimeout(configToastTimerRef.current);
-      }
-      if (configToastExitTimerRef.current) {
-        window.clearTimeout(configToastExitTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
@@ -592,7 +273,6 @@ function ConsoleApp() {
   }, [resolvedTheme, theme]);
 
   useEffect(() => {
-    document.documentElement.lang = language === "en" ? "en" : "zh-CN";
     document.title = `${activeNavItem?.label ?? ui.shell.noPageAccessTitle} — Stocks Assistant`;
   }, [activeNavItem?.label, language, ui.shell.noPageAccessTitle]);
 
@@ -623,6 +303,7 @@ function ConsoleApp() {
       onSaved: setConfig,
       onState: setConfigState,
       onError: (caught) => configErrorRef.current(caught),
+      onPersisted: () => configSuccessRef.current(),
       canSave: () => !document.getElementById("config-form")?.querySelector("input:invalid, textarea:invalid, select:invalid"),
     });
     configAutosaveRef.current = autosave;
@@ -643,20 +324,14 @@ function ConsoleApp() {
     let mounted = true;
 
     async function bootstrap() {
-      const [configResult, marketConfigResult] = await Promise.allSettled([
-        loadConfig(),
-        getMarketConfig(),
-      ]);
+      const [configResult] = await Promise.allSettled([loadConfig()]);
       if (!mounted) return;
 
       if (configResult.status === "fulfilled") {
         configAutosaveRef.current?.acceptSaved(configResult.value);
       } else {
-        const message = configResult.reason instanceof Error ? configResult.reason.message : (language === "en" ? "Failed to load configuration" : "配置加载失败");
-        showToast({ kind: "error", message, title: language === "en" ? "Configuration" : "配置" });
-      }
-      if (marketConfigResult.status === "fulfilled") {
-        setMarketConfig(marketConfigResult.value);
+        const message = configResult.reason instanceof Error ? configResult.reason.message : (getMessages(language).shell.loadConfigFailed);
+        showToast({ kind: "error", message, title: getMessages(language).shell.configuration });
       }
     }
 
@@ -779,33 +454,8 @@ function ConsoleApp() {
     );
   }
 
-  function showConfigToast(kind: ConfigToast["kind"], message: string) {
-    if (configToastTimerRef.current) {
-      window.clearTimeout(configToastTimerRef.current);
-    }
-    if (configToastExitTimerRef.current) {
-      window.clearTimeout(configToastExitTimerRef.current);
-      configToastExitTimerRef.current = null;
-    }
-    setConfigToast({ id: Date.now(), kind, message, state: "open" });
-    configToastTimerRef.current = window.setTimeout(() => {
-      dismissConfigToast();
-    }, kind === "success" ? 2200 : 4600);
-  }
-
-  function dismissConfigToast() {
-    if (configToastTimerRef.current) {
-      window.clearTimeout(configToastTimerRef.current);
-      configToastTimerRef.current = null;
-    }
-    setConfigToast((current) => current ? { ...current, state: "closing" } : current);
-    if (configToastExitTimerRef.current) {
-      window.clearTimeout(configToastExitTimerRef.current);
-    }
-    configToastExitTimerRef.current = window.setTimeout(() => {
-      setConfigToast(null);
-      configToastExitTimerRef.current = null;
-    }, 180);
+  function showConfigToast(kind: "success" | "error", message: string) {
+    showToast({ kind, message, title: ui.config.title });
   }
 
   async function persistConfigChanges(source: ConfigDraft, patch: Partial<ConfigDraft>) {
@@ -819,6 +469,7 @@ function ConsoleApp() {
     const invalid = document.getElementById("config-form")?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input:invalid, textarea:invalid, select:invalid");
     if (invalid) { invalid.reportValidity(); return; }
     void configAutosaveRef.current?.flush();
+    marketSettings.editor.onSave();
   }
 
   function patchDraft(patch: Partial<ConfigDraft>) {
@@ -909,675 +560,191 @@ function ConsoleApp() {
   );
 
   return (
-    <div className={cn("console-shell h-[100dvh] overflow-hidden", activePage === "watchlist" && "console-shell-watchlist")}>
-      <a className="skip-link" href="#main-content">{language === "en" ? "Skip to content" : "跳到主要内容"}</a>
-      {confirmDialog.dialog}
-      <ReauthDialog />
-      <ConfigSaveToast key={configToast?.id ?? "empty"} toast={configToast} onClose={dismissConfigToast} />
-      <div className="app-frame flex h-full min-h-0 w-full flex-col gap-0 p-0">
-        <button
-          aria-hidden={isMobileHeaderVisible}
-          aria-label={language === "en" ? "Show top bar" : "显示顶部栏"}
-          className={cn("app-top-edge-trigger lg:hidden", isMobileHeaderVisible && "app-edge-trigger-hidden")}
-          disabled={isMobileHeaderVisible}
-          onClick={() => setIsMobileHeaderVisible(true)}
-          tabIndex={isMobileHeaderVisible ? -1 : 0}
-          type="button"
-        >
-          <span className="app-edge-grabber" />
-        </button>
-        <Header
-          isMobileVisible={isMobileHeaderVisible}
-          language={language}
-          onHideMobileChrome={() => {
-            setIsMobileHeaderVisible(false);
-          }}
-          onHome={firstAllowedPage ? () => handleNavigate(canPage("overview") ? "overview" : firstAllowedPage) : undefined}
-          onLogout={auth.logout}
-          onUpdateProfile={auth.updateProfile}
-          navigationGroups={navigationGroups}
-          page={activePage}
-          setPage={handleNavigate}
-          onThemeChange={setTheme}
-          resolvedTheme={resolvedTheme}
-          theme={theme}
-          user={auth.user}
-        />
-
-        <div
-          className="app-main-grid flex min-h-0 flex-1"
-        >
-          <main
-            aria-label={activeNavItem?.label ?? ui.shell.noPageAccessTitle}
-            className={cn(
-              "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-3 focus-visible:outline-none sm:p-4 lg:overflow-y-auto lg:p-5",
-              isMobileHeaderVisible && "mobile-header-spacer",
-              activePage === "overview" && isMobileViewport && auth.can("chat:read") && "mobile-chat-dock-space",
-            )}
-            id="main-content"
-            ref={mainContentRef}
-            tabIndex={-1}
-          >
-            <Suspense fallback={<PageFallback />}>
-              {!activePage ? (
-                <section className="grid min-h-[min(32rem,70dvh)] place-items-center" role="status">
-                  <div className="apple-material-thick max-w-md rounded-[1.75rem] border border-border/60 px-7 py-8 text-center shadow-xl">
-                    <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-muted text-muted-foreground">
-                      <ShieldCheck className="size-5" />
-                    </span>
-                    <h1 className="mt-4 text-xl font-semibold tracking-[-0.02em] text-foreground">{ui.shell.noPageAccessTitle}</h1>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{ui.shell.noPageAccessBody}</p>
-                  </div>
-                </section>
-              ) : null}
-              {activePage === "overview" ? (
-                <DashboardPage
-                  canPermission={auth.can}
-                  chatExpanded={dashboardChatExpanded}
-                  chatPanel={dashboardChatPanel}
-                  isMobileViewport={isMobileViewport}
-                  language={language}
-                  onOpenChart={(symbol) => {
-                    openCompany(symbol, "chart");
-                  }}
-                  onOpenMarketConfig={() => openConfig("market")}
-                  onOpenPortfolio={() => handleNavigate("portfolio")}
-                  onOpenWatchlist={() => handleNavigate("watchlist")}
-                  refreshInterval={marketConfig.refresh_interval}
-                />
-              ) : null}
-
-            {activePage === "tracing" ? (
-              <TracingPage
-                activeSessionId={activeConvId}
-                onOpenConfig={() => openConfig()}
-                tracingEnabled={Boolean(config?.tracing_enabled)}
-              />
-            ) : null}
-
-            {activePage === "company" ? (
-              <CompanyWorkspacePage
-                language={language}
-                onSymbolChange={(symbol) => openCompany(symbol, "chart")}
-                onNavigateTab={(tab) => setCompanyRoute((current) => ({ ...current, tab }))}
-                onOpenPortfolio={() => handleNavigate("portfolio")}
-                symbol={companyRoute.symbol}
-                tab={companyRoute.tab}
-              />
-            ) : null}
-
-            {activePage === "watchlist" ? (
-              <WatchlistPage
-                language={language}
-                selectedSymbol={selectedSymbol}
-                onSelectedSymbolChange={setSelectedSymbol}
-                onOpenFinancials={(symbol) => {
-                  openCompany(symbol, "financials");
-                }}
-              />
-            ) : null}
-
-            {activePage === "news" ? <NewsPage initialSymbol={selectedSymbol || undefined} language={language} /> : null}
-
-            {activePage === "portfolio" ? (
-              <PortfolioPage
-                confirmAction={confirmDialog.confirm}
-                language={language}
-                refreshInterval={marketConfig.refresh_interval}
-                onOpenFinancials={(symbol) => {
-                  openCompany(symbol, "financials");
-                }}
-              />
-            ) : null}
-
-            {activePage === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
-
-            {activePage === "skills" ? <SkillsPage confirmAction={confirmDialog.confirm} language={language} /> : null}
-
-            {activePage === "subagents" ? (
-              <SubAgentsPage
-                config={config}
-                confirmAction={confirmDialog.confirm}
-                language={language}
-                onSaved={applySavedConfig}
-                onOpenConfig={() => openConfig()}
-              />
-            ) : null}
-
-            {activePage === "memory" ? <MemoryPage confirmAction={confirmDialog.confirm} language={language} /> : null}
-
-            {activePage === "knowledge" ? <KnowledgePage language={language} /> : null}
-
-            {activePage === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
-
-            {activePage === "mcp" ? <MCPPage language={language} /> : null}
-
-            {activePage === "security" ? <SecurityPage confirmAction={confirmDialog.confirm} language={language} /> : null}
-
-            {activePage === "users" ? <UsersPage language={language} /> : null}
-
-              {activePage === "config" ? (
-                <ConfigPage
-                  canManageSystem={auth.can("config:write")}
-                  canReadMarket={auth.can("market:read")}
-                  canWriteMarket={auth.can("market:write")}
-                  config={config}
-                  configState={configState}
-                  draft={draft}
-                  enabledCount={enabledCount}
-                  handleSaveConfig={handleSaveConfig}
-                  onConfigBlur={() => { void configAutosaveRef.current?.flush(); }}
-                  onConfigCompositionStart={() => configAutosaveRef.current?.compositionStart()}
-                  onConfigCompositionEnd={() => configAutosaveRef.current?.compositionEnd()}
-                  onLongbridgeAuthChanged={applyLongbridgeOAuthStatus}
-                  initialTab={configInitialTab}
-                  language={language}
-                  onMarketConfigSaved={setMarketConfig}
-                  patchDraft={patchDraft}
-                  setDraft={() => configAutosaveRef.current?.reset()}
-                />
-              ) : null}
-            </Suspense>
-          </main>
-        </div>
-        {activePage === "overview" && isMobileViewport && auth.can("chat:read") ? (
-          <DashboardMobileChatDock
-            chatPanel={dashboardChatPanel}
-            fullscreen={dashboardChatFullscreen}
-            isOpen={dashboardChatDrawerOpen}
-            language={language}
-            onOpenChange={setDashboardChatDrawerOpen}
-            onFullscreenChange={setDashboardChatFullscreen}
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function DashboardMobileChatDock({
-  chatPanel,
-  fullscreen,
-  isOpen,
-  language,
-  onOpenChange,
-  onFullscreenChange,
-}: {
-  chatPanel: ReactNode;
-  fullscreen: boolean;
-  isOpen: boolean;
-  language: AppLanguage;
-  onOpenChange: (open: boolean) => void;
-  onFullscreenChange: (fullscreen: boolean) => void;
-}) {
-  const mobileChatLabel = language === "en" ? "Search or ask" : "搜索或提问";
-  const closeMobileChatLabel = language === "en" ? "Close AI drawer" : "关闭 AI 抽屉";
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  function finishClose() {
-    onFullscreenChange(false);
-    onOpenChange(false);
-  }
-  const { dragHandleProps, layerRef, panelRef, present: drawerPresent, requestClose } = useFluidSheet<HTMLElement>({
-    axis: "y",
-    onDismiss: finishClose,
-    open: isOpen,
-  });
-  useDialogFocus(isOpen, panelRef, requestClose, closeButtonRef);
-
-  return (
-    <>
-      {!drawerPresent ? (
-        <div className="dashboard-chat-searchbar fixed inset-x-0 bottom-0 z-[920] px-3 pb-[calc(0.85rem+env(safe-area-inset-bottom))] pt-3 lg:hidden">
+    <I18nProvider language={language}>
+      <div className={cn("console-shell h-[100dvh] overflow-hidden", activePage === "watchlist" && "console-shell-watchlist")}>
+        <a className="skip-link" href="#main-content">{getMessages(language).shell.skipToContent}</a>
+        {confirmDialog.dialog}
+        <ReauthDialog />
+        <div className="app-frame flex h-full min-h-0 w-full flex-col gap-0 p-0">
           <button
-            aria-label={mobileChatLabel}
-            className="flex h-14 w-full items-center gap-3 rounded-[2rem] border border-border/75 bg-card px-4 text-left text-base font-semibold text-muted-foreground shadow-[0_-10px_30px_hsl(var(--background)_/_0.75),0_14px_34px_hsl(var(--foreground)_/_0.13)] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            onClick={() => onOpenChange(true)}
-            title={mobileChatLabel}
+            aria-hidden={isMobileHeaderVisible}
+            aria-label={getMessages(language).shell.showHeader}
+            className={cn("app-top-edge-trigger lg:hidden", isMobileHeaderVisible && "app-edge-trigger-hidden")}
+            disabled={isMobileHeaderVisible}
+            onClick={() => setIsMobileHeaderVisible(true)}
+            tabIndex={isMobileHeaderVisible ? -1 : 0}
             type="button"
           >
-            <span className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground">
-              <Search className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 truncate">{mobileChatLabel}</span>
-            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/55 text-muted-foreground">
-              <MessageSquareText className="size-4" />
-            </span>
+            <span className="app-edge-grabber" />
           </button>
-        </div>
-      ) : null}
-      {drawerPresent ? (
-        <div
-          className={cn("dashboard-chat-drawer-layer fluid-sheet-layer fixed inset-0 lg:hidden", fullscreen ? "z-[980]" : "z-[950]")}
-          ref={layerRef}
-        >
-          <div
-            aria-hidden="true"
-            className="fluid-sheet-backdrop absolute inset-0"
-            onClick={requestClose}
+          <Header
+            isMobileVisible={isMobileHeaderVisible}
+            language={language}
+            onHideMobileChrome={() => {
+              setIsMobileHeaderVisible(false);
+            }}
+            onHome={firstAllowedPage ? () => handleNavigate(canPage("overview") ? "overview" : firstAllowedPage) : undefined}
+            onLogout={auth.logout}
+            onUpdateProfile={auth.updateProfile}
+            navigationGroups={navigationGroups}
+            page={activePage}
+            setPage={handleNavigate}
+            onThemeChange={setTheme}
+            resolvedTheme={resolvedTheme}
+            theme={theme}
+            user={auth.user}
           />
-          <aside
-            aria-label={mobileChatLabel}
-            aria-modal="true"
-            className={cn(
-              "dashboard-chat-drawer fluid-sheet-panel apple-material-thick absolute inset-x-0 bottom-0 flex flex-col overflow-hidden border border-border/60 shadow-2xl",
-              fullscreen
-                ? "h-[100dvh] rounded-none border-x-0 border-b-0 pt-[calc(env(safe-area-inset-top))]"
-                : "h-[min(86dvh,46rem)] rounded-t-[1.5rem]",
-            )}
-            ref={panelRef}
-            role="dialog"
-            tabIndex={-1}
+
+          <div
+            className="app-main-grid flex min-h-0 flex-1"
           >
-            <div className="sheet-header flex shrink-0 items-center justify-between px-3 py-2">
-              <div
-                aria-hidden="true"
-                className="sheet-drag-handle flex h-8 flex-1 touch-none items-center justify-center"
-                {...dragHandleProps}
-              >
-                <span className="h-1 w-10 rounded-full bg-muted-foreground/35" />
-              </div>
-              <Button
-                aria-label={closeMobileChatLabel}
-                className="ml-2 rounded-full"
-                onClick={requestClose}
-                ref={closeButtonRef}
-                size="icon"
-                title={closeMobileChatLabel}
-                type="button"
-                variant="ghost"
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <Suspense fallback={<PageFallback />}>{chatPanel}</Suspense>
-            </div>
-          </aside>
-        </div>
-      ) : null}
-    </>
-  );
-}
+            <main
+              aria-label={activeNavItem?.label ?? ui.shell.noPageAccessTitle}
+              className={cn(
+                "app-main-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-3 focus-visible:outline-none sm:p-4 lg:overflow-y-auto lg:p-5",
+                isMobileHeaderVisible && "mobile-header-spacer",
+                activePage === "overview" && isMobileViewport && auth.can("chat:read") && "mobile-chat-dock-space",
+              )}
+              id="main-content"
+              ref={mainContentRef}
+              tabIndex={-1}
+            >
+              <Suspense fallback={<PageFallback />}>
+                {!activePage ? (
+                  <section className="grid min-h-[min(32rem,70dvh)] place-items-center" role="status">
+                    <div className="apple-material-thick max-w-md rounded-[1.75rem] border border-border/60 px-7 py-8 text-center shadow-xl">
+                      <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                        <ShieldCheck className="size-5" />
+                      </span>
+                      <h1 className="mt-4 text-xl font-semibold tracking-[-0.02em] text-foreground">{ui.shell.noPageAccessTitle}</h1>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{ui.shell.noPageAccessBody}</p>
+                    </div>
+                  </section>
+                ) : null}
+                {activePage === "overview" ? (
+                  <DashboardPage
+                    canPermission={auth.can}
+                    chatExpanded={dashboardChatExpanded}
+                    chatPanel={dashboardChatPanel}
+                    isMobileViewport={isMobileViewport}
+                    language={language}
+                    onOpenChart={(symbol) => {
+                      openCompany(symbol, "chart");
+                    }}
+                    marketConfig={marketSettings.savedConfig}
+                    onOpenMarketConfig={() => openConfig("market")}
+                    onOpenPortfolio={() => handleNavigate("portfolio")}
+                    onOpenWatchlist={() => handleNavigate("watchlist")}
+                    refreshInterval={marketSettings.savedConfig?.refresh_interval ?? 60}
+                  />
+                ) : null}
 
-function Header({
-  isMobileVisible,
-  language,
-  navigationGroups,
-  onHideMobileChrome,
-  onHome,
-  onLogout,
-  onUpdateProfile,
-  page,
-  setPage,
-  onThemeChange,
-  resolvedTheme,
-  theme,
-  user,
-}: {
-  isMobileVisible: boolean;
-  language: AppLanguage;
-  navigationGroups: AppNavGroup[];
-  onHideMobileChrome: () => void;
-  onHome?: () => void;
-  onLogout: () => void;
-  onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
-  page: Page | null;
-  setPage: (page: Page) => void;
-  onThemeChange: (theme: Theme) => void;
-  resolvedTheme: EffectiveTheme;
-  theme: Theme;
-  user: AuthUser | null;
-}) {
-  const themeLabels = language === "en"
-    ? { system: "System", dark: "Dark", light: "Light", current: "Theme", switchTo: "Switch to", darkNow: "dark", lightNow: "light" }
-    : { system: "系统", dark: "黑暗", light: "亮色", current: "主题切换，当前", switchTo: "切换到", darkNow: "黑暗", lightNow: "亮色" };
-  const themeOptions: Array<{ value: Theme; label: string; icon: ReactNode }> = [
-    { value: "system", label: themeLabels.system, icon: <Monitor /> },
-    { value: "dark", label: themeLabels.dark, icon: <Moon /> },
-    { value: "light", label: themeLabels.light, icon: <Sun /> },
-  ];
-  const hideMobileChromeLabel = language === "en" ? "Hide header" : "隐藏顶部栏";
-  const navigationLabel = language === "en" ? "Open navigation" : "打开导航";
-  const closeNavigationLabel = language === "en" ? "Close navigation" : "关闭导航";
-  const currentItem = navigationGroups.flatMap((group) => group.items).find((item) => item.id === page);
-  const nextTheme: Theme = theme === "system" ? "dark" : theme === "dark" ? "light" : "system";
-  const activeThemeIcon = theme === "system" ? <Monitor /> : theme === "dark" ? <Moon /> : <Sun />;
-  const nextThemeLabel = themeOptions.find((option) => option.value === nextTheme)?.label ?? nextTheme;
+                {activePage === "tracing" ? (
+                  <TracingPage
+                    activeSessionId={activeConvId}
+                    onOpenConfig={() => openConfig()}
+                    tracingEnabled={Boolean(config?.tracing_enabled)}
+                  />
+                ) : null}
 
-  return (
-    <header
-      className={cn(
-        "panel app-header flex min-h-14 shrink-0 items-center justify-between gap-3 rounded-none border-x-0 border-t-0 px-2.5 py-2 shadow-none sm:px-4 lg:px-5",
-        !isMobileVisible && "mobile-header-hidden",
-      )}
-    >
-      <div className="flex min-w-0 items-center gap-2.5">
-        <AppNavigationPopover
-          closeLabel={closeNavigationLabel}
-          currentPage={page}
-          groups={navigationGroups}
-          label={navigationLabel}
-          onNavigate={setPage}
-        />
-        <button
-          aria-label={i18n[language].shell.goToStartPage}
-          className="apple-pressable flex shrink-0 items-center gap-2 rounded-xl text-left"
-          disabled={!onHome}
-          onClick={onHome}
-          type="button"
-        >
-          <span className="app-mark grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
-            <Sparkles className="size-4" />
-          </span>
-          <span className="hidden min-w-0 sm:block">
-            <span className="block truncate text-sm font-semibold tracking-[-0.012em] text-foreground">Stocks Assistant</span>
-          </span>
-        </button>
-        <span aria-hidden="true" className="hidden h-6 w-px bg-border/70 sm:block" />
-        <div className="min-w-0" aria-live="polite">
-          <p className="truncate text-sm font-semibold tracking-[-0.012em] text-foreground">{currentItem?.label}</p>
-          <p className="hidden truncate text-[0.6875rem] leading-4 text-muted-foreground md:block">{currentItem?.hint}</p>
+                {activePage === "company" ? (
+                  <CompanyWorkspacePage
+                    language={language}
+                    onSymbolChange={(symbol) => openCompany(symbol, "chart")}
+                    onNavigateTab={(tab) => setCompanyRoute((current) => ({ ...current, tab }))}
+                    onOpenPortfolio={() => handleNavigate("portfolio")}
+                    symbol={companyRoute.symbol}
+                    tab={companyRoute.tab}
+                  />
+                ) : null}
+
+                {activePage === "watchlist" ? (
+                  <WatchlistPage
+                    language={language}
+                    selectedSymbol={selectedSymbol}
+                    onSelectedSymbolChange={setSelectedSymbol}
+                    onOpenFinancials={(symbol) => {
+                      openCompany(symbol, "financials");
+                    }}
+                  />
+                ) : null}
+
+                {activePage === "news" ? <NewsPage initialSymbol={selectedSymbol || undefined} language={language} /> : null}
+
+                {activePage === "portfolio" ? (
+                  <PortfolioPage
+                    confirmAction={confirmDialog.confirm}
+                    language={language}
+                    refreshInterval={marketSettings.savedConfig?.refresh_interval ?? 60}
+                    onOpenFinancials={(symbol) => {
+                      openCompany(symbol, "financials");
+                    }}
+                  />
+                ) : null}
+
+                {activePage === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
+
+                {activePage === "skills" ? <SkillsPage confirmAction={confirmDialog.confirm} language={language} /> : null}
+
+                {activePage === "subagents" ? (
+                  <SubAgentsPage
+                    config={config}
+                    confirmAction={confirmDialog.confirm}
+                    language={language}
+                    onSaved={applySavedConfig}
+                    onOpenConfig={() => openConfig()}
+                  />
+                ) : null}
+
+                {activePage === "memory" ? <MemoryPage confirmAction={confirmDialog.confirm} language={language} /> : null}
+
+                {activePage === "knowledge" ? <KnowledgePage language={language} /> : null}
+
+                {activePage === "scheduler" ? <SchedulerPage confirmAction={confirmDialog.confirm} language={language} telegramEnabled={Boolean(config?.telegram_enabled)} /> : null}
+
+                {activePage === "mcp" ? <MCPPage language={language} /> : null}
+
+                {activePage === "security" ? <SecurityPage confirmAction={confirmDialog.confirm} language={language} /> : null}
+
+                {activePage === "users" ? <UsersPage language={language} /> : null}
+
+                {activePage === "config" ? (
+                  <ConfigPage
+                    canManageSystem={auth.can("config:write")}
+                    canReadMarket={auth.can("market:read")}
+                    canWriteMarket={auth.can("market:write")}
+                    config={config}
+                    configState={configState}
+                    draft={draft}
+                    enabledCount={enabledCount}
+                    handleSaveConfig={handleSaveConfig}
+                    onConfigBlur={handleSaveConfig}
+                    onConfigCompositionStart={() => configAutosaveRef.current?.compositionStart()}
+                    onConfigCompositionEnd={() => configAutosaveRef.current?.compositionEnd()}
+                    onLongbridgeAuthChanged={applyLongbridgeOAuthStatus}
+                    initialTab={configInitialTab}
+                    language={language}
+                    marketSettings={marketSettings.editor}
+                    patchDraft={patchDraft}
+                    setDraft={() => { configAutosaveRef.current?.reset(); marketSettings.reset(); }}
+                  />
+                ) : null}
+              </Suspense>
+            </main>
+          </div>
+          {activePage === "overview" && isMobileViewport && auth.can("chat:read") ? (
+            <DashboardMobileChatDock
+              chatPanel={dashboardChatPanel}
+              fullscreen={dashboardChatFullscreen}
+              isOpen={dashboardChatDrawerOpen}
+              language={language}
+              onOpenChange={setDashboardChatDrawerOpen}
+              onFullscreenChange={setDashboardChatFullscreen}
+            />
+          ) : null}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Button
-          aria-label={hideMobileChromeLabel}
-          className="rounded-full lg:hidden"
-          onClick={onHideMobileChrome}
-          size="icon"
-          title={hideMobileChromeLabel}
-          type="button"
-          variant="outline"
-        >
-          <ChevronUp className="size-4" />
-        </Button>
-        <Button
-          aria-label={`${themeLabels.switchTo} ${nextThemeLabel}`}
-          className="rounded-full sm:hidden"
-          onClick={() => onThemeChange(nextTheme)}
-          size="icon"
-          title={`${themeLabels.switchTo} ${nextThemeLabel}`}
-          type="button"
-          variant="outline"
-        >
-          {activeThemeIcon}
-        </Button>
-        <div
-          aria-label={`${themeLabels.current}${theme === "system" ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})` : theme === "dark" ? themeLabels.dark : themeLabels.light}`}
-          className="theme-toggle hidden h-9 shrink-0 items-center rounded-full border border-input bg-[var(--control-bg)] p-0.5 sm:inline-flex"
-          role="group"
-        >
-          {themeOptions.map((option) => {
-            const active = theme === option.value;
-            const title =
-              option.value === "system"
-                ? `${themeLabels.system} (${resolvedTheme === "dark" ? themeLabels.darkNow : themeLabels.lightNow})`
-                : option.label;
-            return (
-              <button
-                aria-label={`${themeLabels.switchTo} ${title}`}
-                aria-pressed={active}
-                className={cn(
-                  "apple-pressable grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5",
-                  active && "bg-[var(--control-selected-bg)] text-foreground shadow-sm",
-                )}
-                key={option.value}
-                onClick={() => onThemeChange(option.value)}
-                title={title}
-                type="button"
-              >
-                {option.icon}
-              </button>
-            );
-          })}
-        </div>
-        <UserAvatarMenu
-          language={language}
-          onLogout={onLogout}
-          onUpdateProfile={onUpdateProfile}
-          user={user}
-        />
-      </div>
-    </header>
-  );
-}
-
-function userInitials(user: AuthUser | null) {
-  const source = (user?.display_name || user?.username || "?").trim();
-  if (!source) return "?";
-  const parts = source.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-  return source.slice(0, 2).toUpperCase();
-}
-
-function formatProfileTime(value: string | null | undefined, language: AppLanguage) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString(localeFor(language), { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function readAvatarDataUrl(file: File, language: AppLanguage): Promise<string> {
-  const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-  if (!allowed.has(file.type)) {
-    return Promise.reject(new Error(language === "en" ? "Use PNG, JPEG, WebP or GIF" : "请使用 PNG、JPEG、WebP 或 GIF 图片"));
-  }
-  if (file.size > 512 * 1024) {
-    return Promise.reject(new Error(language === "en" ? "Avatar must be 512KB or smaller" : "头像需小于 512KB"));
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error(language === "en" ? "Failed to read image" : "图片读取失败"));
-    };
-    reader.onerror = () => reject(new Error(language === "en" ? "Failed to read image" : "图片读取失败"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function AvatarVisual({ user, size = "md" }: { user: AuthUser | null; size?: "md" | "lg" }) {
-  const className = size === "lg" ? "size-11 text-sm" : "size-8 text-xs";
-  if (user?.avatar_base64) {
-    return (
-      <img
-        alt={user.display_name || user.username}
-        className={cn(className, "rounded-full border border-border/70 object-cover")}
-        src={user.avatar_base64}
-      />
-    );
-  }
-  return (
-    <span className={cn(className, "grid shrink-0 place-items-center rounded-full border border-primary/35 bg-primary/10 font-semibold text-primary")}>
-      {userInitials(user)}
-    </span>
-  );
-}
-
-function UserAvatarMenu({
-  language,
-  onLogout,
-  onUpdateProfile,
-  user,
-}: {
-  language: AppLanguage;
-  onLogout: () => void;
-  onUpdateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
-  user: AuthUser | null;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [avatarError, setAvatarError] = useState("");
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const copy = language === "en"
-    ? {
-      account: "Account",
-      upload: "Upload avatar",
-      remove: "Remove avatar",
-      uploading: "Uploading...",
-      roles: "Roles",
-      lastLogin: "Last login",
-      created: "Created",
-      logout: "Log out",
-      permissions: "permissions",
-      noRoles: "No roles",
-    }
-    : {
-      account: "账号",
-      upload: "上传头像",
-      remove: "移除头像",
-      uploading: "上传中...",
-      roles: "角色",
-      lastLogin: "最近登录",
-      created: "创建时间",
-      logout: "退出登录",
-      permissions: "项权限",
-      noRoles: "暂无角色",
-    };
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    function handlePointerDown(event: PointerEvent) {
-      const path = event.composedPath();
-      if (!menuRef.current || !path.includes(menuRef.current)) setIsOpen(false);
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      setIsOpen(false);
-      triggerRef.current?.focus({ preventScroll: true });
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen]);
-
-  async function handleAvatarFile(file: File | undefined) {
-    if (!file) return;
-    setAvatarError("");
-    setIsUploading(true);
-    try {
-      const avatar_base64 = await readAvatarDataUrl(file, language);
-      await onUpdateProfile({ avatar_base64 });
-    } catch (caught) {
-      setAvatarError(caught instanceof Error ? caught.message : (language === "en" ? "Upload failed" : "上传失败"));
-    } finally {
-      setIsUploading(false);
-      if (inputRef.current) inputRef.current.value = "";
-    }
-  }
-
-  async function handleRemoveAvatar() {
-    setAvatarError("");
-    setIsUploading(true);
-    try {
-      await onUpdateProfile({ avatar_base64: "" });
-    } catch (caught) {
-      setAvatarError(caught instanceof Error ? caught.message : (language === "en" ? "Failed to remove avatar" : "移除头像失败"));
-    } finally {
-      setIsUploading(false);
-    }
-  }
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <button
-        aria-expanded={isOpen}
-        aria-haspopup="dialog"
-        aria-label={language === "en" ? "Open account menu" : "打开账号菜单"}
-        className="apple-pressable flex h-10 items-center gap-1 rounded-full border border-input bg-[var(--control-bg)] p-0.5 pr-2 shadow-[var(--control-shadow)] transition-[background-color,border-color,transform] hover:bg-[var(--control-hover-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => setIsOpen((current) => !current)}
-        ref={triggerRef}
-        type="button"
-      >
-        <AvatarVisual user={user} />
-        <ChevronDown className="size-3.5 text-muted-foreground" />
-      </button>
-
-      {isOpen ? (
-        <div
-          className="account-menu-popover absolute right-0 top-[calc(100%+0.45rem)] z-[1000] max-h-[min(680px,calc(100dvh-4rem))] w-[320px] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg border border-border/90 p-2 text-popover-foreground shadow-2xl ring-1 ring-border/40"
-          aria-label={copy.account}
-          onPointerDown={(event) => event.stopPropagation()}
-          onTouchStart={(event) => event.stopPropagation()}
-          role="dialog"
-        >
-          <div className="flex min-w-0 items-center gap-2 border-b border-border/65 pb-2">
-            <AvatarVisual size="lg" user={user} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">{user?.display_name || user?.username || copy.account}</p>
-              <p className="truncate text-xs text-muted-foreground">@{user?.username || "-"}</p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {(user?.permissions?.length ?? 0).toLocaleString(localeFor(language))} {copy.permissions}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-2 py-2">
-            <div className="grid grid-cols-2 gap-1.5 text-xs">
-              <div className="rounded-md bg-muted/25 px-2 py-1.5">
-                <p className="text-muted-foreground">{copy.lastLogin}</p>
-                <p className="truncate font-semibold">{formatProfileTime(user?.last_login_at, language)}</p>
-              </div>
-              <div className="rounded-md bg-muted/25 px-2 py-1.5">
-                <p className="text-muted-foreground">{copy.created}</p>
-                <p className="truncate font-semibold">{formatProfileTime(user?.created_at, language)}</p>
-              </div>
-            </div>
-            <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{copy.roles}</p>
-              <div className="flex flex-wrap gap-1">
-                {user?.roles?.length ? user.roles.map((role) => (
-                  <Badge className="border-transparent bg-muted/45 shadow-none" key={role} variant="outline">{role}</Badge>
-                )) : <span className="text-xs text-muted-foreground">{copy.noRoles}</span>}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <input
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                className="hidden"
-                onChange={(event) => void handleAvatarFile(event.target.files?.[0])}
-                ref={inputRef}
-                type="file"
-              />
-              <Button className="h-7 px-2 text-xs" disabled={isUploading} onClick={() => inputRef.current?.click()} size="sm" type="button" variant="outline">
-                {isUploading ? <Loader2 className="animate-spin" /> : <Upload />}
-                {isUploading ? copy.uploading : copy.upload}
-              </Button>
-              {user?.avatar_base64 ? (
-                <Button className="h-7 px-2 text-xs" disabled={isUploading} onClick={() => void handleRemoveAvatar()} size="sm" type="button" variant="ghost">
-                  <X className="size-4" />
-                  {copy.remove}
-                </Button>
-              ) : null}
-            </div>
-            {avatarError ? <p className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">{avatarError}</p> : null}
-          </div>
-
-          <div className="border-t border-border/65 pt-2">
-            <Button className="h-8 w-full justify-start text-destructive hover:text-destructive" onClick={onLogout} size="sm" type="button" variant="ghost">
-              <LogOut />
-              {copy.logout}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function PageFallback() {
-  return (
-    <div className="grid h-full min-h-0 flex-1 place-items-center">
-      <div className="flex items-center gap-2 rounded-md border border-border/80 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin text-primary" />
-        Loading...
-      </div>
-    </div>
+    </I18nProvider>
   );
 }
 

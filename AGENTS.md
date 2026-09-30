@@ -172,10 +172,11 @@ app/
 
 ## 前端开发约定
 
-- 前端入口在 `frontend/src/`，API 封装集中在 `frontend/src/lib/api.ts`，国际化文案在 `frontend/src/lib/i18n.ts`。
+- 前端入口在 `frontend/src/`；`lib/api.ts` 是领域 API 的公开门面，`lib/api/transport.ts` 统一管理认证和请求状态。国际化框架位于 `frontend/src/i18n/`，文案按语言、领域放入 `i18n/locales/`；新增语言只在注册表集中声明，业务代码不要写中英文条件分支。扩展流程见 [前端模块与多语言扩展](docs/frontend-architecture.md)。
 - UI 使用 React 19、Radix UI、Tailwind CSS、lucide-react 和项目内 `components/ui/` 组件风格。
 - 业务页面应复用现有 API client、认证状态和错误处理模式，不要在组件里散落裸 `fetch`。
-- 涉及行情、持仓、K 线和分时图时优先沿用现有数据结构和 `lightweight-charts` 集成。
+- 大页面按区块、表单和状态逻辑拆到对应领域目录，保留单一状态来源；API、类型和样式通过原入口保持兼容。
+- 涉及行情、持仓、K 线和分时图时优先沿用现有数据结构及 `components/charts/NativeStockChart` 绘制层。
 - 修改前端后运行 `npm test` 和 `npm run build`；联调时确认 Vite proxy 与后端端口一致。领域加载和写命令使用控制器，React 状态 updater 中不发网络请求。
 
 ## Longbridge SDK / OpenAPI

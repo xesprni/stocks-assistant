@@ -1,0 +1,352 @@
+@media (max-width: 767px) {
+  .app-main-stage {
+    background-size: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .panel-header {
+    padding: 0.75rem;
+  }
+
+  .panel-body {
+    padding: 0.75rem;
+  }
+
+  .metric-tile {
+    padding: 0.625rem 0.75rem;
+  }
+
+  .metric-tile p:last-child {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  .metric-tile p {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 1023px) {
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+  }
+
+  .console-shell {
+    min-height: 0;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .app-main-grid {
+    display: block;
+    min-height: 0;
+    overscroll-behavior: none;
+    overflow: hidden;
+  }
+
+  .app-main-stage {
+    min-height: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-left-width: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-main-stage.mobile-header-spacer {
+    padding-top: calc(4.25rem + env(safe-area-inset-top));
+  }
+
+  @media (min-width: 640px) {
+    .app-main-stage.mobile-header-spacer {
+      padding-top: calc(4.5rem + env(safe-area-inset-top));
+    }
+  }
+
+  .app-main-stage.mobile-chat-dock-space {
+    padding-bottom: calc(5.75rem + env(safe-area-inset-bottom));
+  }
+
+  .panel.app-header {
+    position: fixed;
+    inset-inline: 0;
+    top: 0;
+    z-index: 60;
+    overflow: visible;
+    touch-action: pan-y;
+    transform: translate3d(0, 0, 0);
+    transition:
+      opacity 160ms ease,
+      transform 180ms ease;
+    will-change: transform, opacity;
+  }
+
+  .app-header.mobile-header-hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translate3d(0, calc(-100% - env(safe-area-inset-top) - 0.5rem), 0);
+  }
+
+  .app-mobile-nav {
+    touch-action: pan-y;
+    transform: translate3d(0, 0, 0);
+    transition:
+      opacity 160ms ease,
+      transform 180ms ease;
+    will-change: transform, opacity;
+  }
+
+  .app-mobile-nav.mobile-nav-hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translate3d(0, calc(100% + env(safe-area-inset-bottom) + 0.5rem), 0);
+  }
+
+  .app-top-edge-trigger,
+  .app-bottom-edge-trigger {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    display: flex;
+    inset-inline: 0;
+    justify-content: center;
+    opacity: 1;
+    position: fixed;
+    touch-action: none;
+    transition: opacity 140ms ease;
+  }
+
+  .app-top-edge-trigger.app-edge-trigger-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .app-top-edge-trigger {
+    height: calc(1.75rem + env(safe-area-inset-top));
+    padding-top: calc(0.3rem + env(safe-area-inset-top));
+    top: 0;
+    z-index: 61;
+  }
+
+  .app-bottom-edge-trigger {
+    bottom: 0;
+    height: calc(2rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(0.45rem + env(safe-area-inset-bottom));
+    z-index: 51;
+  }
+
+  .app-bottom-edge-trigger.mobile-nav-restore-trigger {
+    z-index: 941;
+  }
+
+  .app-edge-grabber {
+    background: hsl(var(--muted-foreground) / 0.36);
+    border-radius: 999px;
+    box-shadow: 0 1px 4px hsl(var(--background) / 0.72);
+    display: block;
+    height: 0.25rem;
+    width: 2.25rem;
+  }
+
+  .app-main-stage.app-main-stage-chat {
+    overflow: hidden;
+  }
+
+  .app-main-stage > .page-enter,
+  .app-main-stage > .panel,
+  .app-main-stage > .page-enter > .panel {
+    min-height: auto;
+  }
+
+  .panel {
+    border-radius: 0.75rem;
+  }
+
+  .panel-header {
+    padding: 0.75rem;
+  }
+
+  .page-toolbar {
+    padding: 0.25rem 0.75rem;
+  }
+
+  .panel-body {
+    padding: 0.75rem;
+  }
+}
+
+.technical-chip-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
+  border-top: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--card) / 0.5);
+}
+
+.chip-profile-chart {
+  flex: 1 0 220px;
+  min-height: 220px;
+}
+
+@media (min-width: 1024px) {
+  .technical-chip-panel {
+    width: 250px;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    border-left: 1px solid hsl(var(--border) / 0.7);
+    border-top: 0;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 560px) {
+  .console-shell-watchlist .app-top-edge-trigger {
+    display: none;
+    pointer-events: none;
+  }
+
+  .console-shell-watchlist .panel.app-header {
+    pointer-events: none;
+    z-index: 40;
+  }
+
+  .watchlist-page-shell {
+    background: hsl(var(--background)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    height: 100dvh !important;
+    inset: 0;
+    min-height: 100dvh !important;
+    padding: 0 !important;
+    position: fixed;
+    width: 100vw;
+    z-index: 70;
+  }
+
+  .watchlist-page-shell > .panel-header,
+  .watchlist-page-shell > .page-toolbar,
+  .watchlist-list-shell {
+    display: none !important;
+  }
+
+  .watchlist-page-grid {
+    display: flex !important;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 0 !important;
+    height: 100%;
+    min-height: 0;
+    padding: 0 !important;
+  }
+
+  .watchlist-analysis-shell {
+    background: hsl(var(--background)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    height: 100%;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .watchlist-analysis-shell .technical-analysis-root,
+  .watchlist-analysis-shell .technical-analysis-body,
+  .watchlist-analysis-shell .technical-main-content,
+  .watchlist-analysis-shell .technical-kline-layout,
+  .watchlist-analysis-shell .technical-kline-content,
+  .watchlist-analysis-shell .technical-chart-column,
+  .watchlist-analysis-shell .technical-chart-panel {
+    height: 100%;
+    min-height: 0 !important;
+    overflow: hidden;
+  }
+
+  .watchlist-analysis-shell .technical-tab-bar {
+    padding-left: calc(0.75rem + env(safe-area-inset-left));
+    padding-right: calc(0.75rem + env(safe-area-inset-right));
+  }
+
+  .watchlist-analysis-shell .technical-indicator-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    padding-left: calc(0.75rem + env(safe-area-inset-left));
+    padding-right: calc(0.75rem + env(safe-area-inset-right));
+    padding-top: 0.35rem;
+    scrollbar-width: none;
+  }
+
+  .watchlist-analysis-shell .technical-indicator-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .watchlist-analysis-shell .technical-kline-content {
+    flex-direction: row;
+  }
+
+  .watchlist-analysis-shell .technical-chip-panel {
+    width: 210px;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    border-left: 1px solid hsl(var(--border) / 0.7);
+    border-top: 0;
+  }
+
+  .watchlist-analysis-shell .chip-profile-chart {
+    flex: 0 0 120px;
+    min-height: 120px;
+  }
+
+  .watchlist-analysis-shell .chip-profile-header {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .watchlist-analysis-shell .technical-native-chart {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0 !important;
+  }
+
+  /* 横屏高度由外层分配，资金图不能继续保留竖屏的最小高度。 */
+  .watchlist-analysis-shell .technical-capital-flow-panel {
+    flex: 1 1 0%;
+    height: auto;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .watchlist-analysis-shell .capital-flow-canvas,
+  .watchlist-analysis-shell .capital-flow-state {
+    min-height: 0 !important;
+  }
+
+  .watchlist-analysis-shell .capital-flow-canvas {
+    flex: 1 1 0%;
+    overflow: hidden;
+  }
+
+  .watchlist-analysis-shell .capital-flow-header {
+    flex-wrap: nowrap;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .watchlist-analysis-shell .capital-flow-metrics {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
+}

@@ -1,6 +1,6 @@
-import { formatTemplate, i18n, type AppLanguage } from "@/lib/i18n";
-import { subagentCountDetails, subagentTraceStatus, upsertSubagentTrace } from "@/lib/subagent-trace";
+import { formatTemplate, getMessages, i18n, type AppLanguage } from "@/i18n";
 import { parseRenderedImage, parseRenderedImages } from "@/lib/rendered-images";
+import { subagentCountDetails, subagentTraceStatus, upsertSubagentTrace } from "@/lib/subagent-trace";
 import type { ChatMessage, ChatStreamEvent, ChatTraceEvent } from "@/types/app";
 
 function getStreamText(data: Record<string, unknown> | undefined, key: string) {
@@ -58,8 +58,10 @@ export interface ChatRunState {
 }
 
 export function initialChatRunState(message: ChatMessage): ChatRunState {
-  return { message, streamedContent: "", currentStatus: message.status ?? "", trace: message.trace ?? [],
-    renderedImages: message.renderedImages ?? [], sawAgentEnd: false, terminalEventReceived: false, sequence: 0 };
+  return {
+    message, streamedContent: "", currentStatus: message.status ?? "", trace: message.trace ?? [],
+    renderedImages: message.renderedImages ?? [], sawAgentEnd: false, terminalEventReceived: false, sequence: 0
+  };
 }
 
 /** Pure protocol projection. IDs and timestamps are derived from the supplied event/context. */
@@ -161,7 +163,7 @@ export function chatRunReducer(previous: ChatRunState, action: {
 
     if (streamEvent.type === "error") {
       terminalEventReceived = true;
-      error = getStreamText(data, "error") || (language === "en" ? "Chat request failed" : "对话请求失败");
+      error = getStreamText(data, "error") || (getMessages(language).chatRun.requestFailed);
       trace = trace.map((item) => item.status === "running" ? { ...item, status: "error" } : item);
       currentStatus = formatTemplate(ui.chat.requestFailed, { message: error });
       commitStreamState({ pending: false });
@@ -327,6 +329,8 @@ export function chatRunReducer(previous: ChatRunState, action: {
     }
   };
   project();
-  return { message, streamedContent, currentStatus, trace, renderedImages, sawAgentEnd, terminalEventReceived,
-    error, sequence: previous.sequence + 1 };
+  return {
+    message, streamedContent, currentStatus, trace, renderedImages, sawAgentEnd, terminalEventReceived,
+    error, sequence: previous.sequence + 1
+  };
 }

@@ -33,6 +33,8 @@
 
 ## 前端状态和副作用
 
+页面、图表、API 和多语言资源的目录职责及扩展步骤见 [前端模块与多语言扩展](frontend-architecture.md)。
+
 - `api.ts` 继续作为调用门面，`AuthSessionManager` 独占凭据与身份代次。正常续期保留身份代次；账户切换使旧请求失效。JSON、blob 和聊天流式请求共享认证边界。
 - `chatRunReducer` 负责将服务端事件投影为可展示状态；`useChatRunController` 负责订阅、恢复、取消和队列接续。应用入口保留页面导航与布局。
 - 自选股、分组和公司持仓查询使用领域控制器，资源键与请求代次决定回包是否仍然有效，AbortController 用于取消过时读请求。

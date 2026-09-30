@@ -1,25 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { FileText, Folder, GripVertical, Loader2, Plus, Search, Star, Trash2, X } from "lucide-react";
-import { DndContext, DragOverlay, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
+import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { FileText, Folder, GripVertical, Loader2, Plus, Search, Star, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { SideDrawer } from "@/components/common/SideDrawer";
-import { WatchlistGroupsDrawer } from "@/components/WatchlistGroupsDrawer";
-import { Select } from "@/components/ui/select";
-import { useWatchlistGroups } from "@/hooks/useWatchlistGroups";
-import { filterWatchlist, quoteNumber, reorderVisibleItems, type WatchlistGroupFilter, type WatchlistSort } from "@/lib/watchlist-view";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/common/Toast";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { searchWatchlist } from "@/lib/api";
+import { Select } from "@/components/ui/select";
+import { WatchlistGroupsDrawer } from "@/components/WatchlistGroupsDrawer";
 import { useWatchlistController } from "@/hooks/useWatchlistController";
-import { formatTemplate, i18n } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
+import { useWatchlistGroups } from "@/hooks/useWatchlistGroups";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate, i18n } from "@/i18n";
+import { searchWatchlist } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { WatchlistCategory, WatchlistMarket, WatchlistItem, WatchlistSearchResult } from "@/types/app";
+import { filterWatchlist, quoteNumber, reorderVisibleItems, type WatchlistGroupFilter, type WatchlistSort } from "@/lib/watchlist-view";
+import type { WatchlistCategory, WatchlistItem, WatchlistMarket, WatchlistSearchResult } from "@/types/app";
 
 type NameParts = Pick<WatchlistItem, "name" | "name_cn" | "name_hk" | "name_en">;
 

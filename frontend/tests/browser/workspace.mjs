@@ -17,7 +17,10 @@ const config = {
   telegram_enabled: false, telegram_chat_id: "", mcp_servers: {}, product_analytics_enabled: false, tracing_enabled: false,
   debug: false, log_level: "INFO", auth_max_devices_per_user: 5,
 };
-const marketConfig = { refresh_interval: 60, indices: [], stocks: [], use_watchlist: true };
+const marketConfig = { refresh_interval: 60, indices: Array.from({ length: 8 }, (_, i) => ({ symbol: `FIXTURE${i + 1}.US`, name: `Fixture index ${i + 1}`, enabled: true })) };
+const marketWrites = [], configWrites = [];
+let marketSaveGate = null;
+const marketModule = () => ({ available: true, error: null, stale: false, source: "live", fetched_at: "2026-09-30", indices: marketConfig.indices.filter((item) => item.enabled).map((item) => ({ ...item, last_done: "100", change_rate: "1" })) });
 const symbol = "AAPL.US";
 const position = { id: 1, symbol, name: "Apple", market: "US", shares: "12", cost_price: "100", currency: "USD", current_price: "110", stock_value: "1320", note: "", change_rate: "1%", valuation_price_source: "live" };
 const session = { id: "session", title: "Fixture chat", created_at: "2026-09-30T00:00:00Z", updated_at: "2026-09-30T00:00:00Z", messages: [], inputs: [], message_count: 0, active_run: null };
@@ -40,11 +43,25 @@ await context.route("**/*", async (route) => {
   if (path === "/api/v1/auth/setup/status") return json({ setup_required: false });
   if (path === "/api/v1/auth/me") return json(user);
   if (path === "/api/v1/auth/device/heartbeat") return json({ status: "ok" });
-  if (path === "/api/v1/config") return json(config);
+  if (path === "/api/v1/config") {
+    if (request.method() === "PATCH" || request.method() === "PUT") {
+      configWrites.push(request.postDataJSON());
+      Object.assign(config, request.postDataJSON());
+    }
+    return json(config);
+  }
   if (path === "/api/v1/tools") return json({ tools: [], total: 0 });
   if (path === "/api/v1/config/readiness") return json({ ready: true, checks: [] });
   if (path === "/api/v1/config/longbridge/oauth/status") return json({ auth_mode: "apikey", status: "disconnected", client_id: "", error: null });
-  if (path === "/api/v1/market/config") return json(marketConfig);
+  if (path === "/api/v1/market/config") {
+    if (request.method() === "PUT") {
+      const submitted = request.postDataJSON();
+      marketWrites.push(submitted);
+      if (marketSaveGate) await marketSaveGate;
+      Object.assign(marketConfig, submitted);
+    }
+    return json(marketConfig);
+  }
   if (path === "/api/v1/agent/sessions") return json({ sessions: [session], total: 1 });
   if (path === "/api/v1/agent/sessions/session") return json(session);
   if (path === "/api/v1/agent/stream") {
@@ -65,11 +82,11 @@ await context.route("**/*", async (route) => {
   if (path === "/api/v1/scheduler/tasks") return json({ tasks: [], total: 0 });
   if (path === "/api/v1/market/temperature") return json({ market: url.searchParams.get("market"), temperature: 50, sentiment: 50, description: "Fixture", updated_at: 1780000000 });
   if (path === "/api/v1/dashboard") return json({
-    market: { status: "ok", indices: [] },
+    market: marketModule(),
     watchlist: { status: "ok", items: [], views: { movers: [], gainers: [], losers: [], active: [] }, total: 0, counts_by_category: {} },
     portfolio: { status: "ok", markets: [] },
   });
-  if (path === "/api/v1/dashboard/market") return json({ status: "ok", indices: [], fetched_at: "2026-09-30" });
+  if (path === "/api/v1/dashboard/market") return json(marketModule());
   if (path === "/api/v1/dashboard/watchlist") return json({ status: "ok", items: [], views: { movers: [], gainers: [], losers: [], active: [] }, total: 0, counts_by_category: {} });
   if (path === "/api/v1/dashboard/portfolio") return json({ status: "ok", markets: [] });
   failures.push(`${request.method()} ${path}`); return json({ detail: "Unexpected request" }, 500);
@@ -78,6 +95,58 @@ const page = await context.newPage();
 page.setDefaultTimeout(10000);
 page.on("pageerror", (error) => errors.push(error.message));
 page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+async function navigate(href) {
+  await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  await page.locator(`a[href="${href}"]`).first().click();
+}
+async function checkMarketConfigSaves() {
+  await page.goto(`${origin}/market/config`);
+  const interval = page.getByRole("spinbutton", { name: "自动刷新间隔（秒）" });
+  await interval.waitFor();
+  assert.equal(await page.locator(".app-toast, .config-toast").count(), 0, "Loading settings must not announce a save");
+  let releaseSave;
+  marketSaveGate = new Promise((resolve) => { releaseSave = resolve; });
+  await page.getByPlaceholder("输入名称、代码或关键词搜索指数，如 恒生、SPX、上证...").fill("HSTECH");
+  await page.getByRole("button", { name: /恒生科技指数.*HSTECH.HK/ }).click();
+  await page.getByRole("button", { name: "保存中", exact: true }).last().waitFor();
+  await page.getByRole("tab", { name: "模型", exact: true }).click();
+  await page.getByRole("tab", { name: "行情", exact: true }).click();
+  await page.getByText("HSTECH.HK", { exact: true }).waitFor();
+  await navigate("/dashboard");
+  await page.locator(".finance-index-item").first().waitFor();
+  releaseSave();
+  marketSaveGate = null;
+  await page.locator(".finance-index-item").filter({ hasText: "HSTECH.HK" }).waitFor();
+  assert.equal(await page.locator(".finance-index-item").count(), 9, "All configured indices must be rendered, including the ninth");
+  await page.locator(".app-toast").filter({ hasText: "行情配置" }).getByText("已保存", { exact: true }).waitFor();
+  assert.equal(marketWrites.length, 1, "One add must produce one write under StrictMode");
+  await navigate("/settings");
+  await page.getByRole("tab", { name: "行情", exact: true }).click();
+  await page.getByText("HSTECH.HK", { exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole("tab", { name: "行情", exact: true }).click();
+  await page.getByText("HSTECH.HK", { exact: true }).waitFor();
+  await interval.fill("90");
+  await page.waitForResponse((response) => response.url().endsWith("/market/config") && response.request().method() === "PUT");
+  await page.locator(".app-toast").getByText("已保存", { exact: true }).waitFor();
+  assert.equal(marketConfig.refresh_interval, 90);
+  await page.locator(".app-toast").getByRole("button", { name: "Close" }).click();
+  await interval.fill("120");
+  await page.getByRole("button", { name: "立即保存", exact: true }).click();
+  await page.locator(".app-toast").getByText("已保存", { exact: true }).waitFor();
+  assert.equal(marketConfig.refresh_interval, 120, "Header save must also flush market settings");
+  await page.getByRole("tab", { name: "模型", exact: true }).click();
+  await page.getByRole("textbox", { name: "LLM Model", exact: true }).fill("auto-model");
+  await page.locator(".app-toast").filter({ hasText: "配置管理" }).getByText("已保存", { exact: true }).waitFor();
+  assert.equal(config.llm_model, "auto-model");
+  await page.locator(".app-toast").filter({ hasText: "配置管理" }).getByRole("button", { name: "Close" }).click();
+  await page.locator(".app-toast").filter({ hasText: "配置管理" }).waitFor({ state: "detached" });
+  await page.getByRole("textbox", { name: "LLM Model", exact: true }).fill("manual-model");
+  await page.getByRole("button", { name: "立即保存", exact: true }).click();
+  await page.locator(".app-toast").filter({ hasText: "配置管理" }).getByText("已保存", { exact: true }).waitFor();
+  assert.equal(config.llm_model, "manual-model");
+  assert.equal(configWrites.length, 2);
+}
 async function absentRemovedUI() {
   assert.equal(await page.getByRole("button", { name: /^(AI 研究|Thesis|估值|Guardian|实验室|保存为证据|保存证据)$/i }).count(), 0);
   assert.equal(await page.locator('a[href="/labs"],a[href$="/thesis"],a[href$="/ai-research"]').count(), 0);
@@ -167,6 +236,7 @@ async function checkThemePreferences() {
   assert.equal((await readTheme()).color, "blue", "Invalid saved colors must recover to the default");
 }
 try {
+  await checkMarketConfigSaves();
   await page.goto(`${origin}/security/${symbol}`);
   await page.getByRole("button", { name: "MA250", exact: true }).waitFor();
   await page.waitForFunction(() => (document.querySelector(".technical-native-chart canvas")?.width ?? 0) > 300);
@@ -195,6 +265,24 @@ try {
   await absentRemovedUI();
   assert.doesNotMatch(await page.locator("body").innerText(), /Guardian|快速问答/);
   await checkThemePreferences();
+  // Language selection uses the registry and persists through the existing account autosave.
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/v1/config") && response.request().method() === "PATCH"),
+    page.getByRole("button", { name: "English", exact: true }).click(),
+  ]);
+  await page.waitForFunction(() => document.documentElement.lang === "en-US");
+  await page.getByRole("tab", { name: "Preferences & features", exact: true }).waitFor();
+  assert.equal(config.app_language, "en");
+  assert.equal(await page.locator("html").getAttribute("dir"), "ltr");
+  await page.reload();
+  await page.getByRole("tab", { name: "Preferences & features", exact: true }).click();
+  assert.equal(await page.locator("html").getAttribute("lang"), "en-US");
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/v1/config") && response.request().method() === "PATCH"),
+    page.getByRole("button", { name: "简体中文", exact: true }).click(),
+  ]);
+  await page.waitForFunction(() => document.documentElement.lang === "zh-CN");
+  assert.equal(config.app_language, "zh");
   await page.goto(`${origin}/dashboard`);
   await page.locator("textarea").first().fill("Hello fixture");
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -204,7 +292,7 @@ try {
   assert.equal(calls.filter((path) => /^\/api\/v1\/(research|labs|alerts)(\/|$)|\/guardian\//.test(path)).length, 0);
   assert.deepEqual(failures, []);
   assert.deepEqual(errors, []);
-  console.log("PASS: company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; theme colors, contrast, keyboard selection, persistence, mobile layout and fallback; no retired feature requests or page errors.");
+  console.log("PASS: market autosave, tab/page navigation and reload persistence, ninth index, manual/automatic save toasts; company chart/position/news/financials, navigation, knowledge, scheduler, settings and general AI chat; theme colors, contrast, keyboard selection, persistence, mobile layout and fallback; locale switching and persistence; no retired feature requests or page errors.");
 } catch (error) {
   await page.screenshot({ path: "/tmp/stocks-workspace-removal-failure.png", fullPage: true });
   console.error({ failures, errors });

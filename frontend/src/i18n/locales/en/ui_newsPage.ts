@@ -1,0 +1,21 @@
+export default {
+  "title": "News",
+  "subtitle": "Longbridge Security News",
+  "securityNewsTab": "Security News",
+  "sourceWatchlist": "Watchlist",
+  "sourceSymbol": "Symbol",
+  "selectFromWatchlist": "Watchlist",
+  "manualSymbol": "Symbol",
+  "symbolPlaceholder": "AAPL.US / 700.HK / 600519.SH",
+  "loadNews": "Load News",
+  "latestNews": "Latest News",
+  "emptyWatchlist": "No symbols in this watchlist category",
+  "emptyNews": "No news",
+  "selectSymbol": "Select or enter a symbol",
+  "loadFailed": "Failed to load news",
+  "openSource": "Open source",
+  "likes": "Likes",
+  "comments": "Comments",
+  "shares": "Shares",
+  "selected": "Selected"
+};

@@ -1,6 +1,6 @@
-import { RequestScope } from "@/lib/request-scope";
 import { applyEntityOrder, restoreEntity } from "@/lib/optimistic-list";
-import type { WatchlistMarket, WatchlistItem, WatchlistListResponse, WatchlistOverviewResponse, WatchlistSearchResult } from "@/types/app";
+import { RequestScope } from "@/lib/request-scope";
+import type { WatchlistItem, WatchlistListResponse, WatchlistMarket, WatchlistOverviewResponse, WatchlistSearchResult } from "@/types/app";
 
 type Dependencies = {
   list: (category: WatchlistMarket, init: RequestInit) => Promise<WatchlistListResponse>;
@@ -75,8 +75,10 @@ export class WatchlistController {
       // A failed quote refresh is not evidence that a holding vanished or its last price is zero.
       const items = failed && this.state.items.length ? this.state.items.map((old) => {
         const next = byId.get(old.id);
-        return next ? { ...next, last_done: next.last_done ?? old.last_done,
-          change_value: next.change_value ?? old.change_value, change_rate: next.change_rate ?? old.change_rate } : old;
+        return next ? {
+          ...next, last_done: next.last_done ?? old.last_done,
+          change_value: next.change_value ?? old.change_value, change_rate: next.change_rate ?? old.change_rate
+        } : old;
       }) : incoming;
       this.patch({ items });
       if (result.quote_error || result.error) this.patch({ error: result.quote_error || result.error || "Request failed" });

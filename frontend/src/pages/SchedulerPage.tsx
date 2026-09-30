@@ -1,117 +1,27 @@
+import { catalogsFor } from "@/i18n";
+import { Clock, History, Loader2, Pencil, Play, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Clock, History, Loader2, Pencil, Play, Plus, RefreshCw, Save, Send, Trash2 } from "lucide-react";
 
-import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
+import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
-import { ToggleRow } from "@/components/common/ToggleRow";
 import { TelegramPhotoField } from "@/components/common/TelegramPhotoField";
 import { useErrorToast } from "@/components/common/Toast";
+import { ToggleRow } from "@/components/common/ToggleRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate, i18n } from "@/i18n";
 import { createSchedulerTask, deleteSchedulerTask, listSchedulerTaskRuns, listSchedulerTasks, runSchedulerTaskNow, toggleSchedulerTask, updateSchedulerTask } from "@/lib/api";
-import { formatTemplate, i18n } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
 import { MAX_TELEGRAM_PHOTOS, parseTelegramPhotos } from "@/lib/telegram";
 import { cn } from "@/lib/utils";
 import type { SchedulerTask, SchedulerTaskRun } from "@/types/app";
 
 // ── Scheduler Page ──────────────────────────────────────────────────────────
 
-const schedulerPageCopy = {
-  zh: {
-    cronTemplates: ["每分钟", "每5分钟", "每30分钟", "每小时", "每天 9:00", "工作日 9:00", "每天 18:00", "每天 22:00"],
-    title: "定时任务",
-    subtitle: "Cron / 间隔 / 一次性调度",
-    taskCount: "{count} tasks",
-    refresh: "Refresh",
-    addTask: "Add Task",
-    editTask: "编辑定时任务",
-    createTask: "创建定时任务",
-    name: "任务名称",
-    namePlaceholder: "每日开盘简报",
-    cron: "Cron 表达式",
-    prompt: "执行提示词",
-    promptPlaceholder: "总结今天美股开盘信号，关注 AAPL、MSFT、NVDA 的异动",
-    enableTask: "启用任务",
-    enableAfterCreate: "创建后启用",
-    notifyTelegram: "执行后发送 Telegram",
-    telegramHint: "需要先在配置页启用 Telegram 并保存 Bot Token / Chat ID。",
-    cancel: "取消",
-    save: "保存",
-    create: "Create",
-    on: "ON",
-    off: "OFF",
-    last: "Last: {time}",
-    runs: "Runs: {count}",
-    run: "Run",
-    history: "History",
-    disable: "Disable",
-    enable: "Enable",
-    records: "执行记录",
-    manual: "manual",
-    schedule: "schedule",
-    noOutput: "无输出",
-    noRecords: "暂无执行记录",
-    emptyTitle: "暂无定时任务",
-    emptyHint: "点击 Add Task 创建 Cron 或间隔调度。",
-    loadFailed: "加载失败",
-    updateFailed: "更新失败",
-    createFailed: "创建失败",
-    loadRunsFailed: "加载执行记录失败",
-    runFailed: "手动执行失败",
-    toggleFailed: "切换失败",
-    deleteConfirm: "确定删除该任务？",
-    deleteFailed: "删除失败",
-  },
-  en: {
-    cronTemplates: ["Every minute", "Every 5 minutes", "Every 30 minutes", "Hourly", "Daily 9:00", "Weekdays 9:00", "Daily 18:00", "Daily 22:00"],
-    title: "Scheduled Tasks",
-    subtitle: "Cron / interval / one-time scheduling",
-    taskCount: "{count} tasks",
-    refresh: "Refresh",
-    addTask: "Add Task",
-    editTask: "Edit Scheduled Task",
-    createTask: "Create Scheduled Task",
-    name: "Task name",
-    namePlaceholder: "Daily market brief",
-    cron: "Cron expression",
-    prompt: "Execution prompt",
-    promptPlaceholder: "Summarize today's US market open signals, focusing on AAPL, MSFT, and NVDA moves",
-    enableTask: "Enable task",
-    enableAfterCreate: "Enable after creation",
-    notifyTelegram: "Send Telegram after run",
-    telegramHint: "Enable Telegram in Config and save Bot Token / Chat ID first.",
-    cancel: "Cancel",
-    save: "Save",
-    create: "Create",
-    on: "ON",
-    off: "OFF",
-    last: "Last: {time}",
-    runs: "Runs: {count}",
-    run: "Run",
-    history: "History",
-    disable: "Disable",
-    enable: "Enable",
-    records: "Run History",
-    manual: "manual",
-    schedule: "schedule",
-    noOutput: "No output",
-    noRecords: "No run history",
-    emptyTitle: "No scheduled tasks",
-    emptyHint: "Click Add Task to create a Cron or interval schedule.",
-    loadFailed: "Failed to load",
-    updateFailed: "Update failed",
-    createFailed: "Create failed",
-    loadRunsFailed: "Failed to load run history",
-    runFailed: "Manual run failed",
-    toggleFailed: "Toggle failed",
-    deleteConfirm: "Delete this task?",
-    deleteFailed: "Delete failed",
-  },
-} as const;
+const schedulerPageCopy = catalogsFor("scheduler");
 
 const cronTemplateValues = ["* * * * *", "*/5 * * * *", "*/30 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5", "0 18 * * *", "0 22 * * *"];
 
@@ -247,11 +157,11 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
         prev.map((item) =>
           item.id === task.id
             ? {
-                ...item,
-                last_run: run.started_at,
-                run_count: item.run_count + 1,
-                last_error: run.error ?? null,
-              }
+              ...item,
+              last_run: run.started_at,
+              run_count: item.run_count + 1,
+              last_error: run.error ?? null,
+            }
             : item,
         ),
       );
@@ -308,23 +218,23 @@ export function SchedulerPage({ confirmAction, language, telegramEnabled }: { co
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-          <Badge variant="outline">{formatTemplate(copy.taskCount, { count: tasks.length })}</Badge>
-          <Button variant="outline" size="sm" onClick={loadTasks} disabled={isLoading}>
-            {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {copy.refresh}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditingId(null);
-              setForm(defaultSchedulerForm(telegramEnabled));
-              setShowForm(true);
-            }}
-            disabled={showForm}
-          >
-            <Plus />
-            {copy.addTask}
-          </Button>
+        <Badge variant="outline">{formatTemplate(copy.taskCount, { count: tasks.length })}</Badge>
+        <Button variant="outline" size="sm" onClick={loadTasks} disabled={isLoading}>
+          {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {copy.refresh}
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => {
+            setEditingId(null);
+            setForm(defaultSchedulerForm(telegramEnabled));
+            setShowForm(true);
+          }}
+          disabled={showForm}
+        >
+          <Plus />
+          {copy.addTask}
+        </Button>
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">

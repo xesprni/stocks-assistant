@@ -1,12 +1,12 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ExternalLink, Loader2, MessageCircle, Newspaper, Search, Share2, Star, ThumbsUp } from "lucide-react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { i18n, localeFor, type AppLanguage } from "@/i18n";
 import { getSecurityNews, listWatchlist } from "@/lib/api";
-import { i18n, localeFor, type AppLanguage } from "@/lib/i18n";
 import { readStoredText, readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
 import type { SecurityNewsItem, WatchlistCategory, WatchlistItem } from "@/types/app";

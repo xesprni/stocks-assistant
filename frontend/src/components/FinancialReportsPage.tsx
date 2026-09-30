@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { formatTemplate } from "@/i18n";
+import { catalogsFor, type AppLanguage } from "@/i18n";
 import {
   Building2,
   ChevronDown,
   Database,
-  FileText,
   Loader2,
   RefreshCw,
   Search,
-  Table2,
+  Table2
 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useErrorToast } from "@/components/common/Toast";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -28,72 +29,7 @@ import type {
   WatchlistItem,
 } from "@/types/app";
 
-type AppLanguage = "zh" | "en";
-
-const financialReportsCopy = {
-  zh: {
-    title: "财报",
-    subtitle: "利润表、资产负债表、现金流量表",
-    allStatements: "三张表",
-    incomeStatement: "利润表",
-    balanceSheet: "资产负债表",
-    cashFlow: "现金流量表",
-    quarterly: "季度",
-    annual: "年度",
-    semiAnnual: "半年度",
-    threeQ: "前三季度",
-    defaultPeriod: "默认",
-    latest: "最新",
-    subject: "科目",
-    noMatchedRows: "没有匹配的科目",
-    loadFailed: "财报加载失败",
-    loadingWatchlist: "加载自选股...",
-    selectWatchlist: "选择自选股",
-    searchWatchlist: "搜索代码 / 名称",
-    noWatchlistMatches: "没有匹配的自选股",
-    symbolPlaceholder: "股票代码 / Symbol",
-    refresh: "刷新",
-    statements: "报表",
-    reportPeriod: "报告期间",
-    rows: "科目",
-    source: "来源",
-    searchRows: "搜索科目",
-    periods: "{count} 期",
-    empty: "暂无财报数据",
-    initialEmpty: "请选择自选股或输入股票代码查询财报",
-  },
-  en: {
-    title: "Financials",
-    subtitle: "Income statement, balance sheet, and cash flow",
-    allStatements: "All statements",
-    incomeStatement: "Income",
-    balanceSheet: "Balance sheet",
-    cashFlow: "Cash flow",
-    quarterly: "Quarterly",
-    annual: "Annual",
-    semiAnnual: "Semiannual",
-    threeQ: "First three quarters",
-    defaultPeriod: "Default",
-    latest: "Latest",
-    subject: "Line item",
-    noMatchedRows: "No matching line items",
-    loadFailed: "Failed to load financial reports",
-    loadingWatchlist: "Loading watchlist...",
-    selectWatchlist: "Select watchlist",
-    searchWatchlist: "Search symbol / name",
-    noWatchlistMatches: "No matching watchlist symbols",
-    symbolPlaceholder: "Symbol",
-    refresh: "Refresh",
-    statements: "Statements",
-    reportPeriod: "Report period",
-    rows: "Rows",
-    source: "Source",
-    searchRows: "Search line items",
-    periods: "{count} periods",
-    empty: "No financial data",
-    initialEmpty: "Select a watchlist symbol or enter a symbol to query financials",
-  },
-} as const;
+const financialReportsCopy = catalogsFor("financialReports");
 
 type FinancialReportsCopy = (typeof financialReportsCopy)[AppLanguage];
 
@@ -119,10 +55,6 @@ function getPeriodOptions(language: AppLanguage): Array<{ value: FinancialReport
     { value: "ThreeQ", label: copy.threeQ },
     { value: "", label: copy.defaultPeriod },
   ];
-}
-
-function formatTemplate(text: string, values: Record<string, string | number>) {
-  return text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
 }
 
 const WATCHLIST_CATEGORIES: WatchlistCategory[] = ["US", "A", "H"];

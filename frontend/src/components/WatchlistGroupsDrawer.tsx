@@ -1,14 +1,14 @@
-import { useEffect, useState } from "react";
-import { FolderPlus, Pencil, Trash2 } from "lucide-react";
-import { SideDrawer } from "@/components/common/SideDrawer";
 import { useConfirmDialog } from "@/components/common/ConfirmDialog";
+import { SideDrawer } from "@/components/common/SideDrawer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { matchesCompany } from "@/lib/watchlist-view";
-import { i18n, type AppLanguage } from "@/lib/i18n";
+import { i18n, type AppLanguage } from "@/i18n";
 import type { WatchlistGroupsController } from "@/lib/watchlist-groups-controller";
+import { matchesCompany } from "@/lib/watchlist-view";
 import type { WatchlistGroup, WatchlistItem } from "@/types/app";
+import { FolderPlus, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export function WatchlistGroupsDrawer({ open, onClose, language, items, groups, controller, saving, initialGroup }: {
   open: boolean; onClose: () => void; language: AppLanguage; items: WatchlistItem[];
@@ -31,8 +31,10 @@ export function WatchlistGroupsDrawer({ open, onClose, language, items, groups, 
     }
   }
   async function remove() {
-    if (!selected || !await confirm({ title: copy.deleteGroup, description: copy.deleteGroupHint,
-      cancelText: common.cancel, confirmText: common.delete, destructive: true })) return;
+    if (!selected || !await confirm({
+      title: copy.deleteGroup, description: copy.deleteGroupHint,
+      cancelText: common.cancel, confirmText: common.delete, destructive: true
+    })) return;
     if (await controller.remove(selected.id)) setSelectedId(controller.snapshot().groups[0]?.id ?? null);
   }
   return <>

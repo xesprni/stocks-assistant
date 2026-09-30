@@ -1,9 +1,9 @@
-import { useEffect, useId, useMemo, useState, type PointerEvent } from "react";
+import { chipCopy, formatTemplate, localeFor, type AppLanguage } from "@/i18n";
 import { calcChipDistribution, type ChipInputBar } from "@/lib/chip-distribution";
 import { useChartColors } from "@/lib/color-scheme";
-import { chipCopy, formatTemplate, type AppLanguage } from "@/lib/i18n";
 import { readStoredValue, writeStoredValue } from "@/lib/local-storage";
 import { cn } from "@/lib/utils";
+import { useEffect, useId, useMemo, useState, type PointerEvent } from "react";
 
 const LOOKBACKS = ["60", "120", "250"] as const;
 const STORAGE_KEY = "stocks-assistant.chart-chip-lookback";
@@ -25,7 +25,7 @@ export function ChipDistributionPanel({ bars, period, language, loading, visible
   useEffect(() => { writeStoredValue(STORAGE_KEY, lookback); }, [lookback]);
   useEffect(() => { setSelectedIndex(null); }, [result, follow, visibleRange]);
 
-  const formatPrice = (price: number | null) => price == null ? "—" : price.toLocaleString(language === "zh" ? "zh-CN" : "en-US", {
+  const formatPrice = (price: number | null) => price == null ? "—" : price.toLocaleString(localeFor(language), {
     ...(price < 0.01 ? { maximumSignificantDigits: 4 } : { minimumFractionDigits: 2, maximumFractionDigits: price < 1 ? 4 : 2 }),
   });
   const rangeText = (range: [number, number] | null) => range ? `${formatPrice(range[0])} – ${formatPrice(range[1])}` : "—";

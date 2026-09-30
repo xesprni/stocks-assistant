@@ -1,0 +1,21 @@
+export default {
+  "title": "新闻",
+  "subtitle": "Longbridge Security News",
+  "securityNewsTab": "标的新闻",
+  "sourceWatchlist": "Watchlist",
+  "sourceSymbol": "Symbol",
+  "selectFromWatchlist": "自选股",
+  "manualSymbol": "输入 Symbol",
+  "symbolPlaceholder": "AAPL.US / 700.HK / 600519.SH",
+  "loadNews": "加载新闻",
+  "latestNews": "Latest News",
+  "emptyWatchlist": "当前分类暂无自选股",
+  "emptyNews": "暂无新闻",
+  "selectSymbol": "请选择或输入标的",
+  "loadFailed": "新闻加载失败",
+  "openSource": "打开来源",
+  "likes": "Likes",
+  "comments": "Comments",
+  "shares": "Shares",
+  "selected": "Selected"
+};

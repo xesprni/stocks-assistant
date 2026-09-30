@@ -1,17 +1,17 @@
-import { useId, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, ChartNoAxesCombined } from "lucide-react";
-import type { PortfolioItem } from "@/types/app";
+import { formatTemplate, getMessages, type AppLanguage } from "@/i18n";
 import { cn } from "@/lib/utils";
+import type { PortfolioItem } from "@/types/app";
+import { ArrowDownRight, ArrowUpRight, ChartNoAxesCombined } from "lucide-react";
+import { useId, useState } from "react";
 import { formatMoney, holdingPnl, type PortfolioPieSegment, type PortfolioTrendPoint } from "./model";
 
-type Language = "zh" | "en";
+type Language = AppLanguage;
 
 export function PortfolioTrendChart({ hideSensitive, points, language, currency }: {
   hideSensitive: boolean; points: PortfolioTrendPoint[]; language: Language; currency: string;
 }) {
   const gradientId = useId();
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const zh = language === "zh";
   const activeIndex = Math.min(hoveredIndex ?? points.length - 1, points.length - 1);
   const active = points[activeIndex];
   const first = points[0];
@@ -40,7 +40,7 @@ export function PortfolioTrendChart({ hideSensitive, points, language, currency 
     <div className="min-w-0">
       <div className="mb-5 flex min-h-14 flex-wrap items-end justify-between gap-3">
         <div aria-live="polite" aria-atomic="true">
-          <p className="text-xs text-muted-foreground">{active?.date ?? (zh ? "等待资产快照" : "Waiting for snapshots")}</p>
+          <p className="text-xs text-muted-foreground">{active?.date ?? (getMessages(language).portfolioCharts.waitingForSnapshots)}</p>
           <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">{hideSensitive ? "***" : formatMoney(active?.value)} <span className="text-xs font-normal tracking-normal text-muted-foreground">{currency}</span></p>
         </div>
         {change != null && points.length > 1 ? (
@@ -49,14 +49,14 @@ export function PortfolioTrendChart({ hideSensitive, points, language, currency 
               {change >= 0 ? <ArrowUpRight className="size-4" /> : <ArrowDownRight className="size-4" />}
               {hideSensitive ? "***" : `${change > 0 ? "+" : ""}${formatMoney(change)}`}
             </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{zh ? "较本区间首个快照" : "From first snapshot in view"}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{getMessages(language).portfolioCharts.sinceFirstSnapshot}</p>
           </div>
         ) : null}
       </div>
       {points.length === 0 ? (
         <div className="grid min-h-56 place-content-center gap-3 rounded-xl bg-muted/20 text-center text-sm text-muted-foreground">
           <ChartNoAxesCombined className="mx-auto size-7 opacity-50" />
-          {zh ? "完整行情加载后开始记录资产快照" : "Snapshots begin when complete quotes are available"}
+          {getMessages(language).portfolioCharts.snapshotsHint}
         </div>
       ) : (
         <div className="flex gap-3">
@@ -67,7 +67,7 @@ export function PortfolioTrendChart({ hideSensitive, points, language, currency 
             className="relative min-w-0 flex-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             tabIndex={0}
             role="group"
-            aria-label={zh ? "资产快照图，左右方向键查看各日期" : "Asset snapshots. Use arrow keys to inspect dates"}
+            aria-label={getMessages(language).portfolioCharts.snapshotsAriaLabel}
             onKeyDown={(event) => {
               if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                 event.preventDefault();
@@ -96,8 +96,8 @@ export function PortfolioTrendChart({ hideSensitive, points, language, currency 
         <span>{first.date}</span><span>{points.length > 2 ? points[Math.floor(points.length / 2)].label : ""}</span><span>{points.length > 1 ? points[points.length - 1].date : ""}</span>
       </div> : null}
       <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
-        {points.length === 1 ? (zh ? "已记录 1 个快照，后续访问会逐日积累。" : "One snapshot recorded. Future visits build your history. ") : ""}
-        {zh ? "仅记录此账户在当前浏览器的完整估值；每日本地时间保留最后一次记录。资产变化包含出入金和持仓调整，不代表投资收益。" : "Stored in this browser for this account, using the last complete valuation each local day. Changes include cash flows and position adjustments, and do not represent investment returns."}
+        {points.length === 1 ? (getMessages(language).portfolioCharts.firstSnapshotHint) : ""}
+        {getMessages(language).portfolioCharts.storageHint}
       </p>
     </div>
   );
@@ -126,7 +126,7 @@ export function PortfolioPieChart({ emptyLabel, hideSensitive, segments, languag
           })}
         </svg>
         <div className="pointer-events-none max-w-[125px] text-center">
-          <p className="truncate text-[11px] text-muted-foreground">{active?.label ?? (language === "zh" ? "合计" : "Total")}</p>
+          <p className="truncate text-[11px] text-muted-foreground">{active?.label ?? (getMessages(language).portfolioCharts.total)}</p>
           <p className="mt-1 text-lg font-semibold tabular-nums">{active ? `${(active.value / total * 100).toFixed(1)}%` : hideSensitive ? "***" : formatMoney(total)}</p>
           <p className="mt-1 text-[10px] text-muted-foreground">{currency}</p>
         </div>
@@ -136,7 +136,7 @@ export function PortfolioPieChart({ emptyLabel, hideSensitive, segments, languag
           type="button" key={segment.label} onFocus={() => setHoveredLabel(segment.label)} onBlur={() => setHoveredLabel(null)} onPointerEnter={() => setHoveredLabel(segment.label)}
           onClick={() => { setHoveredLabel(segment.label); onSelect?.(segment.label); }}
           className={cn("w-full rounded-lg px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary", hoveredLabel === segment.label ? "bg-muted/65" : "hover:bg-muted/35")}
-          aria-label={`${segment.label} ${(segment.value / total * 100).toFixed(2)}%${onSelect ? (language === "zh" ? "，查看持仓详情" : ", open holding details") : ""}`}
+          aria-label={`${segment.label} ${(segment.value / total * 100).toFixed(2)}%${onSelect ? (getMessages(language).portfolioCharts.openHoldingDetails) : ""}`}
         >
           <div className="flex items-center gap-2 text-xs"><span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} /><span className="min-w-0 flex-1 truncate font-medium">{segment.label}</span><span className="shrink-0 tabular-nums">{(segment.value / total * 100).toFixed(1)}%</span></div>
           <div className="mt-1.5 flex items-center gap-3 pl-4"><div className="h-1 flex-1 overflow-hidden rounded-full bg-muted/50"><div className="h-full rounded-full" style={{ width: `${segment.value / total * 100}%`, backgroundColor: segment.color }} /></div><span className="text-[10px] tabular-nums text-muted-foreground">{hideSensitive ? "***" : segment.displayValue}</span></div>
@@ -157,11 +157,10 @@ export function PortfolioPnlChart({ items, hideSensitive, language, currency, on
   }).filter((point): point is { item: PortfolioItem; value: number } => point.value != null)
     .sort((a, b) => b.value - a.value);
   const max = Math.max(1, ...points.map((point) => Math.abs(point.value)));
-  const zh = language === "zh";
   return <div>
     <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
-      <div><h3 className="text-sm font-semibold">{zh ? "持仓盈亏贡献" : "Holding P&L"}</h3><p className="mt-1 text-[11px] text-muted-foreground">{zh ? "点击标的查看持仓详情" : "Select a holding to view details"}</p></div>
-      <div className="flex rounded-lg bg-muted/45 p-1">{(["amount", "ratio"] as const).map((value) => <button type="button" key={value} aria-pressed={mode === value} aria-label={value === "amount" ? (zh ? `按盈亏金额显示，${currency}` : `Show P&L amount in ${currency}`) : (zh ? "按盈亏比例显示" : "Show P&L percentage")} className={cn("rounded-md px-2.5 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background", mode === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground")} onClick={() => setMode(value)}>{value === "amount" ? currency : "%"}</button>)}</div>
+      <div><h3 className="text-sm font-semibold">{getMessages(language).portfolioCharts.holdingPnl}</h3><p className="mt-1 text-[11px] text-muted-foreground">{getMessages(language).portfolioCharts.selectHolding}</p></div>
+      <div className="flex rounded-lg bg-muted/45 p-1">{(["amount", "ratio"] as const).map((value) => <button type="button" key={value} aria-pressed={mode === value} aria-label={value === "amount" ? (formatTemplate(getMessages(language).portfolioCharts.showPnlAmount, { currency: currency })) : (getMessages(language).portfolioCharts.showPnlPercentage)} className={cn("rounded-md px-2.5 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background", mode === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground")} onClick={() => setMode(value)}>{value === "amount" ? currency : "%"}</button>)}</div>
     </div>
     {points.length ? <div className="max-h-80 space-y-1 overflow-y-auto">
       {points.map(({ item, value }) => <button key={item.id} type="button" onClick={() => onSelect(item)} className="grid w-full grid-cols-[80px_minmax(0,1fr)_80px] items-center gap-3 rounded-lg px-2 py-3 text-xs hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:grid-cols-[100px_minmax(0,1fr)_110px]">
@@ -169,7 +168,7 @@ export function PortfolioPnlChart({ items, hideSensitive, language, currency, on
         <div className="relative h-5"><span className="absolute inset-y-0 left-1/2 w-px bg-border" /><span className="absolute top-1 h-3 rounded-sm opacity-80" style={{ left: `${value < 0 ? 50 - Math.abs(value) / max * 48 : 50}%`, width: `${Math.abs(value) / max * 48}%`, backgroundColor: value >= 0 ? "var(--color-up)" : "var(--color-down)" }} /></div>
         <span className={cn("text-right font-medium tabular-nums", value >= 0 ? "text-[var(--color-up)]" : "text-[var(--color-down)]")}>{hideSensitive && mode === "amount" ? "***" : `${value > 0 ? "+" : ""}${formatMoney(value)}${mode === "ratio" ? "%" : ""}`}</span>
       </button>)}
-    </div> : <p className="rounded-lg bg-muted/20 px-4 py-10 text-center text-xs text-muted-foreground">{zh ? "补充股数、成本和有效行情后显示盈亏" : "Add shares, cost basis, and live quotes to view P&L"}</p>}
-    <p className="mt-4 text-[11px] text-muted-foreground">{zh ? "仅包含股数、成本及现价完整的持仓，未计入费用和已实现盈亏。" : "Includes holdings with shares, cost, and current quotes. Excludes fees and realized P&L."}</p>
+    </div> : <p className="rounded-lg bg-muted/20 px-4 py-10 text-center text-xs text-muted-foreground">{getMessages(language).portfolioCharts.noPnlData}</p>}
+    <p className="mt-4 text-[11px] text-muted-foreground">{getMessages(language).portfolioCharts.pnlScopeHint}</p>
   </div>;
 }

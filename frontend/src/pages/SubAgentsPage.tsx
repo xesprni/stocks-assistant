@@ -1,17 +1,17 @@
+import { Check, ChevronDown, Copy, Loader2, Plug, Plus, Save, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Check, ChevronDown, Copy, Loader2, Plus, Plug, Save, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 
-import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
-import { ToggleRow } from "@/components/common/ToggleRow";
+import { Field } from "@/components/common/Field";
 import { useErrorToast } from "@/components/common/Toast";
+import { ToggleRow } from "@/components/common/ToggleRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate, i18n } from "@/i18n";
 import { listTools, saveConfig } from "@/lib/api";
-import { formatTemplate, i18n } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { AppConfig, SubAgentRoleConfig, ToolInfo } from "@/types/app";
 
@@ -273,7 +273,7 @@ export function SubAgentsPage({
   const visibleTools = tools.length
     ? tools
     : Array.from(new Set([...form.tool_allowlist, ...dangerousTools, "web_fetch", "read_file", "read_skill", "memory_search", "memory_get", "get_financial_reports"]))
-        .map((name) => ({ name, description: "", parameters: {} }));
+      .map((name) => ({ name, description: "", parameters: {} }));
   const builtinTools = visibleTools.filter((tool) => !isMcpToolName(tool.name));
   const mcpToolGroups = useMemo(() => {
     const groups: Record<string, ToolInfo[]> = {};
@@ -292,11 +292,11 @@ export function SubAgentsPage({
   return (
     <section className="panel flex min-h-0 flex-1 flex-col">
       <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-          <Badge variant={enabled ? "default" : "muted"}>{enabled ? copy.enabledState : copy.disabledState}</Badge>
-          <Button size="sm" variant="outline" onClick={onOpenConfig}>
-            <Settings2 />
-            {copy.config}
-          </Button>
+        <Badge variant={enabled ? "default" : "muted"}>{enabled ? copy.enabledState : copy.disabledState}</Badge>
+        <Button size="sm" variant="outline" onClick={onOpenConfig}>
+          <Settings2 />
+          {copy.config}
+        </Button>
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-auto">

@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/common/Toast";
-import { ApiHttpError, cancelChatRun, cancelChatInput, submitChatInput, resumeChatInputQueue, getChatSession, resumeChatStream, streamChat, trackProductEvent } from "@/lib/api";
-import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
-import { ChatStreamHttpError } from "@/lib/chat-stream";
+import type { ChatHistoryState } from "@/hooks/useConversations";
+import { formatTemplate, getMessages, i18n, localeFor, type AppLanguage } from "@/i18n";
+import { ApiHttpError, cancelChatInput, cancelChatRun, getChatSession, resumeChatInputQueue, resumeChatStream, streamChat, submitChatInput, trackProductEvent } from "@/lib/api";
 import { chatInputDraftKey, hasPendingChatQueue, prepareChatInputRequest } from "@/lib/chat-inputs";
 import { chatRunReducer, initialChatRunState } from "@/lib/chat-run-reducer";
-import { formatTemplate, i18n, localeFor, type AppLanguage } from "@/lib/i18n";
-import type { ChatHistoryState } from "@/hooks/useConversations";
-import type { ChatMessage, ChatInput, ChatInputMode, ChatInputRequest, ChatRunSummary, ChatStreamEvent } from "@/types/app";
+import { ChatStreamHttpError } from "@/lib/chat-stream";
+import { resetChatThinkingEnabled } from "@/lib/chat-thinking";
+import type { ChatInput, ChatInputMode, ChatInputRequest, ChatMessage, ChatRunSummary, ChatStreamEvent } from "@/types/app";
+import { useEffect, useRef, useState } from "react";
 
 function chatTime(language: AppLanguage = "zh") {
   return new Date().toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit" });
@@ -24,7 +24,7 @@ function isNetworkLoadError(error: unknown): boolean {
 
 function chatFailureMessage(error: unknown, language: AppLanguage): string {
   if (isNetworkLoadError(error)) return i18n[language].chat.networkLoadFailed;
-  return error instanceof Error ? error.message : (language === "en" ? "Chat request failed" : "对话请求失败");
+  return error instanceof Error ? error.message : (getMessages(language).chatController.requestFailed);
 }
 
 
@@ -257,7 +257,7 @@ export function useChatRunController({ chatHistory, language, productAnalyticsEn
       }
       if (convId) chatHistory.updateRun(convId, null);
       const msg = chatFailureMessage(caught, language);
-      showToast({ kind: "error", message: msg, title: language === "en" ? "Chat" : "对话" });
+      showToast({ kind: "error", message: msg, title: getMessages(language).chatController.chat });
       if (convId) {
         // 请求已终止时停止未完成条目的动画，已完成轮次和工具保留原状态。
         view.trace = view.trace.map((item) => item.status === "running" ? { ...item, status: "error" } : item);
@@ -390,12 +390,13 @@ export function useChatRunController({ chatHistory, language, productAnalyticsEn
     } catch (error) {
       if (streamAbortRef.current !== controller || streamRunRef.current !== runId) return;
       stopRequestedRef.current = false;
-      showToast({ kind: "error", message: chatFailureMessage(error, language), title: language === "en" ? "Stop generation" : "停止生成" });
+      showToast({ kind: "error", message: chatFailureMessage(error, language), title: getMessages(language).chatController.stopGeneration });
     }
   }
 
 
-  return { prompt, setPrompt, activeIsSending, canSteer, handleSend, handleStopStreaming, handleCancelInput, handleResumeInputQueue,
+  return {
+    prompt, setPrompt, activeIsSending, canSteer, handleSend, handleStopStreaming, handleCancelInput, handleResumeInputQueue,
     isInputBusy: activeConvId != null && inputBusySessions.includes(activeConvId),
     inputError: activeConvId ? inputErrors[activeConvId] : undefined,
     inputRetryMode: activeConvId && inputRequestsRef.current.get(activeConvId)?.message === prompt.trim()

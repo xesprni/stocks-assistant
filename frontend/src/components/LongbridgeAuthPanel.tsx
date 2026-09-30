@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { localeFor } from "@/i18n";
 import { ArrowUpRight, ExternalLink, KeyRound, Link2, Loader2, RefreshCw, Unplug } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { ConfigChoiceCard, ConfigField as Field } from "@/components/config/ConfigForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { i18n, type AppLanguage } from "@/i18n";
 import { disconnectLongbridgeOAuth, getLongbridgeOAuthStatus, startLongbridgeOAuth } from "@/lib/api";
-import { i18n, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { ConfigDraft, LongbridgeOAuthStatus } from "@/types/app";
 
@@ -122,7 +123,7 @@ export function LongbridgeAuthPanel({ draft, language, patchDraft, onAuthChanged
           <p className="text-sm leading-6 text-muted-foreground">{pending ? copy.pendingHint : connected ? copy.savedHint : copy.oauthHint}</p>
           {!connected ? <p className="text-xs leading-5 text-muted-foreground">{copy.localHint}</p> : null}
           {pending && status?.callback_url ? <p className="break-all text-xs leading-5 text-muted-foreground">{copy.callback}：<code>{status.callback_url}</code></p> : null}
-          {pending && status?.expires_at ? <p className="text-xs text-muted-foreground">{copy.expires} {new Date(status.expires_at).toLocaleTimeString(language === "zh" ? "zh-CN" : "en-US")}</p> : null}
+          {pending && status?.expires_at ? <p className="text-xs text-muted-foreground">{copy.expires} {new Date(status.expires_at).toLocaleTimeString(localeFor(language))}</p> : null}
           <div className="flex flex-wrap gap-2">
             {pending && status?.authorization_url ? (
               <Button asChild><a href={status.authorization_url} rel="noopener noreferrer" target="_blank">{copy.openAuthorization}<ArrowUpRight className="size-4" /></a></Button>

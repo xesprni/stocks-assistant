@@ -1,6 +1,6 @@
-import { Check } from "lucide-react";
-import { i18n, type AppLanguage } from "@/lib/i18n";
+import { i18n, type AppLanguage } from "@/i18n";
 import { THEME_COLORS, useThemeColor } from "@/lib/theme-color";
+import { Check } from "lucide-react";
 
 export function ThemeColorPicker({ language }: { language: AppLanguage }) {
   const { themeColor, setThemeColor } = useThemeColor();

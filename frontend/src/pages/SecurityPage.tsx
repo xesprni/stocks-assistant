@@ -1,5 +1,6 @@
+import { localeFor } from "@/i18n";
+import { ArrowUpRight, CheckCircle2, ChevronRight, CircleAlert, Clock3, Globe2, History, KeyRound, Laptop, Loader2, LogOut, RefreshCw, Search, ShieldCheck, Smartphone, Tablet, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, CheckCircle2, ChevronRight, CircleAlert, Clock3, Globe2, History, KeyRound, Laptop, Loader2, LogOut, Search, ShieldCheck, Smartphone, Tablet, Trash2, Users, X, RefreshCw } from "lucide-react";
 
 import type { ConfirmDialogOptions, ConfirmFn } from "@/components/common/ConfirmDialog";
 import { SideDrawer } from "@/components/common/SideDrawer";
@@ -11,9 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { securityCopy, type AppLanguage } from "@/i18n";
 import { deleteLoginDevice, deleteLoginRecord, listLoginSessions, revokeLoginSession, revokeOtherLoginDevices } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { securityCopy, type AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { LoginRecord, LoginSession, LoginSessionListResponse } from "@/types/app";
 
@@ -221,7 +222,7 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
           </div>
           <div className="flex items-center gap-3">
             {updatedAt > 0 && <span className="hidden text-xs text-muted-foreground sm:inline">
-              {t.updated} {new Date(updatedAt).toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" })}
+              {t.updated} {new Date(updatedAt).toLocaleTimeString(localeFor(language), { hour: "2-digit", minute: "2-digit" })}
             </span>}
             <Button
               variant="outline"

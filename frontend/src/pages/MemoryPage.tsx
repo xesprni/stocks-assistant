@@ -1,8 +1,9 @@
+import { catalogsFor } from "@/i18n";
+import { BrainCircuit, ChevronDown, ChevronRight, Cpu, Database, FileText, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { BrainCircuit, ChevronDown, ChevronRight, Cpu, Database, FileText, Loader2, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
 
-import { Field } from "@/components/common/Field";
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
+import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { StatusTile } from "@/components/common/StatusTile";
 import { useErrorToast } from "@/components/common/Toast";
@@ -10,90 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate, i18n } from "@/i18n";
 import { addMemory, clearMemory, deleteMemoryFile, deleteMemoryIndex, getMemoryFile, getMemoryStatus, listMemoryFiles, searchMemory, syncMemory } from "@/lib/api";
-import { formatTemplate, i18n } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { MemoryFile, MemorySearchResult, MemoryStatus } from "@/types/app";
 
 // ── Memory Page ──────────────────────────────────────────────────────────────
 
-const memoryPageCopy = {
-  zh: {
-    title: "长期记忆",
-    subtitle: "混合搜索 · 向量 + FTS5 关键词",
-    sync: "Sync",
-    add: "Add",
-    chunks: "Chunks",
-    files: "Files",
-    dirty: "Dirty",
-    yes: "Yes",
-    no: "No",
-    provider: "Provider",
-    addMemory: "添加记忆",
-    content: "记忆内容",
-    contentPlaceholder: "输入需要记住的内容...",
-    cancel: "取消",
-    save: "保存",
-    searchPlaceholder: "搜索记忆...",
-    search: "Search",
-    results: "{count} results",
-    score: "score: {score}",
-    memoryFiles: "{count} memory files",
-    indexed: "Indexed",
-    deleteMemory: "删除记忆",
-    clearMemory: "清除记忆",
-    clearMemoryConfirm: "确定清除当前账号的全部长期记忆？这会删除记忆文件并移除长期记忆索引。",
-    loading: "Loading...",
-    emptyTitle: "暂无记忆文件",
-    emptyHint: "通过对话或手动添加积累记忆。",
-    searchFailed: "搜索失败",
-    syncFailed: "同步失败",
-    loadFailed: "加载失败",
-    addFailed: "添加失败",
-    deleteIndexConfirm: "确定删除该索引记忆？这会从长期记忆搜索中移除。",
-    deleteFileConfirm: "确定删除该记忆文件及其索引？",
-    deleteFailed: "删除失败",
-    clearFailed: "清除失败",
-  },
-  en: {
-    title: "Long-term Memory",
-    subtitle: "Hybrid search · vectors + FTS5 keywords",
-    sync: "Sync",
-    add: "Add",
-    chunks: "Chunks",
-    files: "Files",
-    dirty: "Dirty",
-    yes: "Yes",
-    no: "No",
-    provider: "Provider",
-    addMemory: "Add Memory",
-    content: "Memory content",
-    contentPlaceholder: "Enter the content to remember...",
-    cancel: "Cancel",
-    save: "Save",
-    searchPlaceholder: "Search memory...",
-    search: "Search",
-    results: "{count} results",
-    score: "score: {score}",
-    memoryFiles: "{count} memory files",
-    indexed: "Indexed",
-    deleteMemory: "Delete memory",
-    clearMemory: "Clear memory",
-    clearMemoryConfirm: "Clear all long-term memory for the current account? This deletes memory files and removes long-term memory indexes.",
-    loading: "Loading...",
-    emptyTitle: "No memory files",
-    emptyHint: "Build memory through conversations or manual additions.",
-    searchFailed: "Search failed",
-    syncFailed: "Sync failed",
-    loadFailed: "Load failed",
-    addFailed: "Add failed",
-    deleteIndexConfirm: "Delete this indexed memory? This removes it from long-term memory search.",
-    deleteFileConfirm: "Delete this memory file and its index?",
-    deleteFailed: "Delete failed",
-    clearFailed: "Clear failed",
-  },
-} as const;
+const memoryPageCopy = catalogsFor("memory");
 
 export function MemoryPage({ confirmAction, language }: { confirmAction: ConfirmFn; language: AppLanguage }) {
   const common = i18n[language].common;
@@ -241,18 +167,18 @@ export function MemoryPage({ confirmAction, language }: { confirmAction: Confirm
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={handleSync} disabled={isSyncing}>
-            {isSyncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {copy.sync}
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleClearMemory} disabled={isClearing}>
-            {isClearing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            {copy.clearMemory}
-          </Button>
-          <Button size="sm" onClick={() => setShowAddForm(true)} disabled={showAddForm}>
-            <Plus />
-            {copy.add}
-          </Button>
+        <Button variant="outline" size="sm" onClick={handleSync} disabled={isSyncing}>
+          {isSyncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {copy.sync}
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleClearMemory} disabled={isClearing}>
+          {isClearing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+          {copy.clearMemory}
+        </Button>
+        <Button size="sm" onClick={() => setShowAddForm(true)} disabled={showAddForm}>
+          <Plus />
+          {copy.add}
+        </Button>
       </div>
 
       {status ? (

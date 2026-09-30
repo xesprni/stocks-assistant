@@ -1,21 +1,22 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { getMessages } from "@/i18n";
 import { BarChart3, BookOpen, BriefcaseBusiness, Building2, Loader2, ScrollText } from "lucide-react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { FinancialReportsPage } from "@/components/FinancialReportsPage";
 import TechnicalAnalysis from "@/components/TechnicalAnalysis";
 import { Button } from "@/components/ui/button";
+import type { AppLanguage } from "@/i18n";
 import { listPortfolio } from "@/lib/api";
-import type { AppLanguage } from "@/lib/i18n";
-import { NewsPage } from "@/pages/NewsPage";
 import { CompanyPositionController } from "@/lib/company-position-controller";
+import { NewsPage } from "@/pages/NewsPage";
 
 export type CompanyTab = "chart" | "financials" | "news" | "position";
 
 const tabs = [
-  { id: "chart", icon: BarChart3, zh: "图表", en: "Chart" },
-  { id: "financials", icon: ScrollText, zh: "财务", en: "Financials" },
-  { id: "news", icon: BookOpen, zh: "新闻", en: "News" },
-  { id: "position", icon: BriefcaseBusiness, zh: "持仓", en: "Position" },
+  { id: "chart", icon: BarChart3 },
+  { id: "financials", icon: ScrollText },
+  { id: "news", icon: BookOpen },
+  { id: "position", icon: BriefcaseBusiness },
 ] as const;
 
 export function CompanyWorkspacePage({ language, onNavigateTab, onOpenPortfolio, onSymbolChange, symbol, tab }: {
@@ -33,9 +34,9 @@ export function CompanyWorkspacePage({ language, onNavigateTab, onOpenPortfolio,
         <h1 className="text-base font-semibold">{symbol}</h1>
       </div>
       <div className="flex flex-wrap gap-1 border-b border-border/70 px-3 py-2">
-        {tabs.map(({ id, icon: Icon, ...label }) => (
+        {tabs.map(({ id, icon: Icon }) => (
           <Button key={id} onClick={() => onNavigateTab(id)} size="sm" variant={tab === id ? "secondary" : "ghost"}>
-            <Icon />{label[language]}
+            <Icon />{getMessages(language).company.tabs[id]}
           </Button>
         ))}
       </div>
@@ -56,17 +57,17 @@ function PositionTab({ language, onOpenPortfolio, symbol }: { language: AppLangu
 
   return (
     <div className="max-w-2xl rounded-md border border-border/80 bg-background/60 p-4">
-      <h2 className="font-semibold">{symbol} · {language === "en" ? "Position" : "持仓"}</h2>
+      <h2 className="font-semibold">{symbol} · {getMessages(language).company.position}</h2>
       {loading ? <Loader2 className="mt-3 size-5 animate-spin" /> : error ? <p className="mt-3 text-sm text-destructive">{error}</p> : position ? (
         <dl className="mt-3 grid gap-3 sm:grid-cols-3">
           {[
-            [language === "en" ? "Market" : "市场", position.market],
-            [language === "en" ? "Shares" : "股数", position.shares],
-            [language === "en" ? "Cost" : "成本", position.cost_price],
+            [getMessages(language).company.market, position.market],
+            [getMessages(language).company.shares, position.shares],
+            [getMessages(language).company.cost, position.cost_price],
           ].map(([label, value]) => <div className="rounded-md border border-border/70 bg-muted/15 p-2" key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 font-semibold">{value ?? "—"}</dd></div>)}
         </dl>
-      ) : <p className="mt-3 text-sm text-muted-foreground">{language === "en" ? "This symbol is not in the local portfolio." : "本地组合中暂无该标的。"}</p>}
-      <Button className="mt-4" onClick={onOpenPortfolio} variant="outline"><BriefcaseBusiness />{language === "en" ? "Open portfolio" : "打开组合"}</Button>
+      ) : <p className="mt-3 text-sm text-muted-foreground">{getMessages(language).company.noPosition}</p>}
+      <Button className="mt-4" onClick={onOpenPortfolio} variant="outline"><BriefcaseBusiness />{getMessages(language).company.openPortfolio}</Button>
     </div>
   );
 }

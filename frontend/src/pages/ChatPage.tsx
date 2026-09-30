@@ -1,15 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, RefObject } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatSources } from "@/components/chat/ChatSources";
+import { ChatTraceList } from "@/components/chat/ChatTraceList";
+import { CopyButton } from "@/components/chat/CopyButton";
+import { parseFinanceChart } from "@/components/chat/finance-chart-model";
+import { FinanceChartBlock } from "@/components/chat/FinanceChartBlock";
+import { formatRelativeDate } from "@/components/chat/history-format";
+import type { ConfirmFn } from "@/components/common/ConfirmDialog";
+import { RenderImagePreview } from "@/components/RenderImagePreview";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import type { ChatHistoryState } from "@/hooks/useConversations";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate, getMessages, i18n } from "@/i18n";
+import { hasPendingChatQueue, visibleChatInputs } from "@/lib/chat-inputs";
+import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
+import { cn } from "@/lib/utils";
+import type { ChatInput, ChatInputMode, ChatMessage, Conversation } from "@/types/app";
 import {
+  Bot,
   BrainCircuit,
   BriefcaseBusiness,
-  Bot,
-  Check,
-  CircleDot,
-  Copy,
-  ExternalLink,
   History,
   Loader2,
   Maximize2,
@@ -20,447 +29,12 @@ import {
   Send,
   Square,
   Trash2,
-  X,
+  X
 } from "lucide-react";
-
-import type { ConfirmFn } from "@/components/common/ConfirmDialog";
-import { RenderImagePreview } from "@/components/RenderImagePreview";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { persistChatThinkingEnabled, readChatThinkingEnabled, resetChatThinkingEnabled } from "@/lib/chat-thinking";
-import { hasPendingChatQueue, visibleChatInputs } from "@/lib/chat-inputs";
-import { formatTemplate, i18n } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
-import type { ChatHistoryState } from "@/hooks/useConversations";
-import type { ChatInput, ChatInputMode, ChatMessage, ChatTraceEvent, Conversation } from "@/types/app";
-
-function ChatSources({ message, language }: { message: ChatMessage; language: AppLanguage }) {
-  if (!message.sources?.length) return null;
-  return (
-    <div className="not-prose mt-3 border-t border-border/60 pt-2.5">
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {language === "en" ? "Sources" : "来源"}
-      </p>
-      <div className="flex flex-wrap gap-1.5">
-        {message.sources.map((source) => {
-          const content = (
-            <>
-              <span className="max-w-[260px] truncate">{source.title}</span>
-              {source.locator ? <span className="text-muted-foreground">· {source.locator}</span> : null}
-              {source.stale ? <span className="text-amber-600 dark:text-amber-300">STALE</span> : null}
-              {source.url ? <ExternalLink className="size-3" /> : null}
-            </>
-          );
-          const className = "inline-flex min-h-7 items-center gap-1 rounded-md border border-border/75 bg-background/70 px-2 py-1 text-[11px] text-foreground transition-colors hover:border-primary/45 hover:bg-primary/5";
-          return (
-            <span className="inline-flex items-center gap-1" key={source.id}>
-              {source.url ? (
-                <a className={className} href={source.url} rel="noreferrer" target="_blank" title={`${source.provider} · ${source.as_of || source.fetched_at}`}>{content}</a>
-              ) : (
-                <span className={className} title={`${source.provider} · ${source.as_of || source.fetched_at}`}>{content}</span>
-              )}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function CopyButton({ text, className }: { text: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  // copied 变为 true 后 1.5s 自动复位；组件卸载或再次复制时清理旧定时器。
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
-  async function handleCopy(e: ReactMouseEvent) {
-    e.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      // clipboard API not available
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      className={cn(
-        "shrink-0 rounded-md p-1 text-current/60 transition-colors hover:bg-foreground/10 hover:text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        className,
-      )}
-      onClick={handleCopy}
-      title={copied ? "已复制" : "复制"}
-    >
-      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-    </button>
-  );
-}
-
-function formatRelativeDate(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  if (msgDate.getTime() === today.getTime()) return "今天";
-  if (msgDate.getTime() === yesterday.getTime()) return "昨天";
-  return "更早";
-}
-
-type FinanceChartMarker = "circle" | "square" | "triangle" | "pentagon";
-
-type FinanceChartPoint = {
-  label: string;
-  value: number;
-};
-
-type FinanceChartSeries = {
-  symbol: string;
-  name?: string;
-  color?: string;
-  marker?: FinanceChartMarker;
-  points: FinanceChartPoint[];
-};
-
-type FinanceChartRow = {
-  symbol: string;
-  name?: string;
-  price?: string;
-  change?: string;
-  changeRate?: string;
-  previousClose?: string;
-  color?: string;
-  marker?: FinanceChartMarker;
-};
-
-type FinanceChartPayload = {
-  title?: string;
-  subtitle?: string;
-  unit?: string;
-  activeRange?: string;
-  ranges?: string[];
-  series: FinanceChartSeries[];
-  rows?: FinanceChartRow[];
-};
-
-const FINANCE_CHART_COLORS = ["#5b7cfa", "#ffb45c", "#9db7ff", "#f97316", "#f8efe6", "#22c55e"];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function toText(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return undefined;
-}
-
-function toNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const normalized = value.replace(/[%,$]/g, "").trim();
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function normalizeMarker(value: unknown): FinanceChartMarker | undefined {
-  if (value === "circle" || value === "square" || value === "triangle" || value === "pentagon") {
-    return value;
-  }
-  return undefined;
-}
-
-function normalizePoint(value: unknown): FinanceChartPoint | null {
-  if (Array.isArray(value)) {
-    const numberValue = toNumber(value[1]);
-    if (numberValue === null) return null;
-    return { label: toText(value[0]) ?? "", value: numberValue };
-  }
-  if (!isRecord(value)) return null;
-  const numberValue = toNumber(value.value ?? value.close ?? value.change_rate ?? value.changeRate);
-  if (numberValue === null) return null;
-  return {
-    label: toText(value.label ?? value.date ?? value.time) ?? "",
-    value: numberValue,
-  };
-}
-
-function parseFinanceChart(raw: string): FinanceChartPayload | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || !Array.isArray(parsed.series)) return null;
-
-    const series = parsed.series
-      .map((item, index): FinanceChartSeries | null => {
-        if (!isRecord(item)) return null;
-        const symbol = toText(item.symbol ?? item.name) ?? `Series ${index + 1}`;
-        const rawPoints = Array.isArray(item.points) ? item.points : Array.isArray(item.data) ? item.data : [];
-        const points = rawPoints.map(normalizePoint).filter((point): point is FinanceChartPoint => Boolean(point));
-        if (!points.length) return null;
-        return {
-          symbol,
-          name: toText(item.name),
-          color: toText(item.color),
-          marker: normalizeMarker(item.marker),
-          points,
-        };
-      })
-      .filter((item): item is FinanceChartSeries => Boolean(item));
-
-    if (!series.length) return null;
-
-    const rows = Array.isArray(parsed.rows)
-      ? parsed.rows
-          .map((item): FinanceChartRow | null => {
-            if (!isRecord(item)) return null;
-            const symbol = toText(item.symbol ?? item.name);
-            if (!symbol) return null;
-            return {
-              symbol,
-              name: toText(item.name),
-              price: toText(item.price),
-              change: toText(item.change ?? item.changeValue),
-              changeRate: toText(item.changeRate ?? item.change_rate),
-              previousClose: toText(item.previousClose ?? item.previous_close),
-              color: toText(item.color),
-              marker: normalizeMarker(item.marker),
-            };
-          })
-          .filter((item): item is FinanceChartRow => Boolean(item))
-      : undefined;
-
-    return {
-      title: toText(parsed.title),
-      subtitle: toText(parsed.subtitle),
-      unit: toText(parsed.unit) ?? "%",
-      activeRange: toText(parsed.activeRange ?? parsed.active_range),
-      ranges: Array.isArray(parsed.ranges)
-        ? parsed.ranges.map(toText).filter((item): item is string => Boolean(item))
-        : undefined,
-      series,
-      rows,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function formatAxisLabel(value: number, unit: string): string {
-  const rounded = Math.abs(value) >= 100 ? Math.round(value) : Number(value.toFixed(1));
-  return unit ? `${rounded}${unit}` : String(rounded);
-}
-
-function pointLabel(point: FinanceChartPoint, index: number): string {
-  return point.label || String(index + 1);
-}
-
-function buildLinePath(points: FinanceChartPoint[], min: number, max: number, width: number, height: number, left: number, top: number) {
-  const range = max - min || 1;
-  const step = points.length > 1 ? width / (points.length - 1) : 0;
-  return points
-    .map((point, index) => {
-      const x = left + step * index;
-      const y = top + (1 - (point.value - min) / range) * height;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-function markerStyle(marker: FinanceChartMarker | undefined, color: string): CSSProperties {
-  const base: CSSProperties = { backgroundColor: color };
-  if (marker === "circle") return { ...base, borderRadius: "999px" };
-  if (marker === "triangle") return { ...base, clipPath: "polygon(50% 0, 0 100%, 100% 100%)" };
-  if (marker === "pentagon") return { ...base, clipPath: "polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%)" };
-  return { ...base, borderRadius: "4px" };
-}
-
-function rowToneClass(row: FinanceChartRow): string {
-  const value = `${row.change ?? ""} ${row.changeRate ?? ""}`.trim();
-  if (value.startsWith("-") || value.includes("↓")) return "text-[var(--color-down)]";
-  if (value.startsWith("+") || value.includes("↑")) return "text-[var(--color-up)]";
-  return "text-foreground";
-}
-
-function FinanceChartBlock({ chart, language }: { chart: FinanceChartPayload; language: AppLanguage }) {
-  const allValues = chart.series.flatMap((series) => series.points.map((point) => point.value));
-  const rawMin = Math.min(...allValues, 0);
-  const rawMax = Math.max(...allValues, 0);
-  const padding = Math.max((rawMax - rawMin) * 0.08, chart.unit === "%" ? 12 : 1);
-  const min = rawMin - padding;
-  const max = rawMax + padding;
-  const svgWidth = 900;
-  const svgHeight = 292;
-  const left = 58;
-  const right = 24;
-  const top = 24;
-  const bottom = 52;
-  const plotWidth = svgWidth - left - right;
-  const plotHeight = svgHeight - top - bottom;
-  const labels = language === "en"
-    ? { symbol: "Symbol", price: "Price", change: "Change", rate: "Change %", prev: "Previous close" }
-    : { symbol: "股票代码", price: "价格", change: "涨跌额", rate: "涨跌幅", prev: "昨收盘" };
-  const firstSeries = chart.series[0];
-  const tickIndexes = firstSeries.points.length > 1
-    ? Array.from(new Set([0, Math.floor((firstSeries.points.length - 1) / 4), Math.floor((firstSeries.points.length - 1) / 2), Math.floor(((firstSeries.points.length - 1) * 3) / 4), firstSeries.points.length - 1]))
-    : [0];
-  const yTicks = Array.from({ length: 5 }, (_, index) => max - ((max - min) * index) / 4);
-  const ranges = chart.ranges?.length ? chart.ranges : ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"];
-  const activeRange = chart.activeRange ?? ranges[Math.min(5, ranges.length - 1)];
-
-  return (
-    <div className="not-prose my-3 overflow-hidden rounded-2xl bg-muted/30 text-foreground ring-1 ring-border/45">
-      <div className="space-y-1 px-4 pb-2 pt-4">
-        {chart.title ? <p className="text-sm font-semibold">{chart.title}</p> : null}
-        {chart.subtitle ? <p className="text-xs text-muted-foreground">{chart.subtitle}</p> : null}
-        <div className="flex flex-wrap gap-2 pt-2">
-          {chart.series.map((series, index) => {
-            const color = series.color ?? FINANCE_CHART_COLORS[index % FINANCE_CHART_COLORS.length];
-            return (
-              <span
-                className="inline-flex h-8 items-center gap-2 rounded-full border border-border/75 bg-background/55 px-3 text-xs font-semibold text-foreground"
-                key={`${series.symbol}-${index}`}
-              >
-                <span className="size-3 shrink-0" style={markerStyle(series.marker, color)} />
-                <span className="max-w-28 truncate">{series.symbol}</span>
-              </span>
-            );
-          })}
-        </div>
-      </div>
-      <div className="overflow-x-auto px-2 pb-1">
-        <svg className="h-[280px] min-w-[760px] text-muted-foreground" role="img" viewBox={`0 0 ${svgWidth} ${svgHeight}`}>
-          {yTicks.map((tick) => {
-            const y = top + (1 - (tick - min) / (max - min || 1)) * plotHeight;
-            return (
-              <g key={tick.toFixed(4)}>
-                <line stroke="currentColor" strokeOpacity="0.14" x1={left} x2={svgWidth - right} y1={y} y2={y} />
-                <text fill="currentColor" fontSize="15" x={left - 10} y={y + 5} textAnchor="end">
-                  {formatAxisLabel(tick, chart.unit ?? "")}
-                </text>
-              </g>
-            );
-          })}
-          {tickIndexes.map((pointIndex) => {
-            const x = left + (firstSeries.points.length > 1 ? (plotWidth * pointIndex) / (firstSeries.points.length - 1) : 0);
-            return (
-              <g key={`${pointIndex}-${pointLabel(firstSeries.points[pointIndex], pointIndex)}`}>
-                <line stroke="currentColor" strokeOpacity="0.16" x1={x} x2={x} y1={top} y2={top + plotHeight} />
-                <text fill="currentColor" fontSize="15" x={x} y={svgHeight - 18} textAnchor="middle">
-                  {pointLabel(firstSeries.points[pointIndex], pointIndex)}
-                </text>
-              </g>
-            );
-          })}
-          <line stroke="currentColor" strokeDasharray="3 8" strokeOpacity="0.5" x1={left} x2={svgWidth - right} y1={top + (1 - (0 - min) / (max - min || 1)) * plotHeight} y2={top + (1 - (0 - min) / (max - min || 1)) * plotHeight} />
-          {chart.series.map((series, index) => {
-            const color = series.color ?? FINANCE_CHART_COLORS[index % FINANCE_CHART_COLORS.length];
-            const path = buildLinePath(series.points, min, max, plotWidth, plotHeight, left, top);
-            const last = series.points[series.points.length - 1];
-            const lastX = left + (series.points.length > 1 ? plotWidth : 0);
-            const lastY = top + (1 - (last.value - min) / (max - min || 1)) * plotHeight;
-            return (
-              <g key={`${series.symbol}-line-${index}`}>
-                <path d={path} fill="none" stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
-                <circle cx={lastX} cy={lastY} fill={color} r="5.5" />
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div className="flex overflow-x-auto border-t border-border/45 px-4 py-2 text-sm text-muted-foreground">
-        {ranges.map((range) => (
-          <span
-            className={cn(
-              "mr-2 shrink-0 rounded-full px-3 py-1.5 font-medium",
-              range === activeRange ? "bg-background/80 text-foreground shadow-sm" : "text-muted-foreground",
-            )}
-            key={range}
-          >
-            {range}
-          </span>
-        ))}
-      </div>
-      {chart.rows?.length ? (
-        <div className="overflow-x-auto border-t border-border/45">
-          <table className="w-full min-w-[680px] border-collapse text-sm">
-            <thead className="text-muted-foreground">
-              <tr className="border-b border-border/45">
-                <th className="px-4 py-3 text-left font-medium">{labels.symbol}</th>
-                <th className="px-4 py-3 text-right font-medium">{labels.price}</th>
-                <th className="px-4 py-3 text-right font-medium">{labels.change}</th>
-                <th className="px-4 py-3 text-right font-medium">{labels.rate}</th>
-                <th className="px-4 py-3 text-right font-medium">{labels.prev}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {chart.rows.map((row, index) => {
-                const matchedSeries = chart.series.find((series) => series.symbol === row.symbol);
-                const color = row.color ?? matchedSeries?.color ?? FINANCE_CHART_COLORS[index % FINANCE_CHART_COLORS.length];
-                return (
-                  <tr className="border-b border-border/35 last:border-0" key={`${row.symbol}-${index}`}>
-                    <td className="px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="size-3 shrink-0" style={markerStyle(row.marker ?? matchedSeries?.marker, color)} />
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold text-foreground">{row.symbol}</p>
-                          {row.name ? <p className="truncate text-xs text-muted-foreground">{row.name}</p> : null}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{row.price ?? "-"}</td>
-                    <td className={cn("px-4 py-3 text-right tabular-nums font-semibold", rowToneClass(row))}>{row.change ?? "-"}</td>
-                    <td className={cn("px-4 py-3 text-right tabular-nums font-semibold", rowToneClass(row))}>{row.changeRate ?? "-"}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{row.previousClose ?? "-"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function TraceIcon({ status }: { status: ChatTraceEvent["status"] }) {
-  if (status === "running") return <Loader2 className="size-3 animate-spin text-primary" />;
-  if (status === "done") return <Check className="size-3 text-emerald-500" />;
-  if (status === "error") return <X className="size-3 text-destructive" />;
-  return <CircleDot className="size-3 text-muted-foreground" />;
-}
-
-function ChatTraceList({ trace }: { trace?: ChatTraceEvent[] }) {
-  if (!trace?.length) return null;
-
-  return (
-    <div className="mb-3 space-y-1 rounded-md border border-border/80 bg-background/70 px-2.5 py-2 text-xs text-muted-foreground shadow-sm">
-      {trace.map((item) => (
-        <div className="flex min-w-0 items-start gap-2" key={item.id}>
-          <span className="mt-1 shrink-0">
-            <TraceIcon status={item.status} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="font-medium text-foreground/85">{item.label}</span>
-              <span className="text-[10px] text-muted-foreground/80">{item.createdAt}</span>
-            </div>
-            {item.detail ? <p className="mt-0.5 break-words text-[11px] leading-4">{item.detail}</p> : null}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
+import type { FormEvent, RefObject } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export function ChatPage({
   chatScrollRef,
@@ -530,14 +104,15 @@ export function ChatPage({
   const [thinkingEnabled, setThinkingEnabled] = useState(readChatThinkingEnabled);
   const [inputMode, setInputMode] = useState<ChatInputMode>("queue");
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
-  const openComposerLabel = language === "en" ? "Open question input" : "打开提问输入框";
-  const closeComposerLabel = language === "en" ? "Close input" : "关闭输入框";
+  const openComposerLabel = getMessages(language).chat.openComposerLabel;
+  const closeComposerLabel = getMessages(language).chat.closeComposerLabel;
   const expandLabel = expanded
-    ? (language === "en" ? "Collapse chat" : "收起对话")
-    : (language === "en" ? "Expand chat" : "展开对话");
-  const thinkingLabel = language === "en"
-    ? `Thinking mode ${thinkingEnabled ? "on" : "off"}`
-    : `思考模式${thinkingEnabled ? "开启" : "关闭"}`;
+    ? (getMessages(language).chat.collapseChat)
+    : (getMessages(language).chat.expandChat);
+  const composerCopy = getMessages(language).chat;
+  const thinkingLabel = formatTemplate(composerCopy.thinkingLabel, {
+    state: thinkingEnabled ? composerCopy.thinkingOn : composerCopy.thinkingOff,
+  });
   const isHistoryLoading = chatHistory.isLoading;
   const inputs = visibleChatInputs(chatHistory.activeConversation?.inputs ?? []);
   const hasPendingQueue = hasPendingChatQueue(inputs);
@@ -558,7 +133,7 @@ export function ChatPage({
     {
       icon: <BriefcaseBusiness className="size-5" />,
       label: uiCopy.explorePortfolio,
-      prompt: language === "en" ? "Analyze my portfolio positions" : "分析我的持仓列表",
+      prompt: getMessages(language).chat.analyzePortfolio,
     },
   ];
   const markdownComponents = useMemo<Components>(
@@ -594,11 +169,11 @@ export function ChatPage({
   const grouped = useMemo(() => {
     const groups: Record<string, Conversation[]> = {};
     for (const c of conversations) {
-      const label = formatRelativeDate(c.updatedAt);
+      const label = formatRelativeDate(c.updatedAt, language);
       (groups[label] ??= []).push(c);
     }
     return groups;
-  }, [conversations]);
+  }, [conversations, language]);
 
   useEffect(() => {
     function closeFloatingPanels(event: globalThis.MouseEvent) {
@@ -734,12 +309,12 @@ export function ChatPage({
           )}
         >
           <div className="flex min-h-0 flex-1 items-start gap-2">
-              <Textarea
-                className={cn(
-                  "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
-                  largeComposer ? "min-h-[78px]" : "min-h-8 text-[15px] leading-6 sm:min-h-10",
-                  embedded && "text-[14px] leading-6",
-                )}
+            <Textarea
+              className={cn(
+                "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
+                largeComposer ? "min-h-[78px]" : "min-h-8 text-[15px] leading-6 sm:min-h-10",
+                embedded && "text-[14px] leading-6",
+              )}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -833,7 +408,7 @@ export function ChatPage({
             <h1 className={cn("truncate font-semibold tracking-normal", embedded ? "text-base sm:text-lg" : "text-3xl sm:text-4xl")}>{uiCopy.title}</h1>
             <div className="flex shrink-0 items-center gap-2">
               <Button
-                aria-label="新建对话"
+                aria-label={common.newChat}
                 aria-busy={isCreatingConversation}
                 className="h-11 w-11 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground sm:h-12 sm:w-12"
                 disabled={isSending || isCreatingConversation || isNewConversation}

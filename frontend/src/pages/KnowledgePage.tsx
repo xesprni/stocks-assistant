@@ -1,5 +1,6 @@
+import { catalogsFor } from "@/i18n";
+import { BookOpen, ChevronDown, ChevronRight, FileText, Loader2, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, FileText, Loader2, Plus, Save } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
@@ -7,78 +8,15 @@ import { useErrorToast } from "@/components/common/Toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate } from "@/i18n";
 import { getKnowledgeFile, getKnowledgeGraph, getKnowledgeTree, saveKnowledgeUrl, uploadKnowledgeFile } from "@/lib/api";
-import { formatTemplate } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { KnowledgeDir, KnowledgeGraph, KnowledgeTree } from "@/types/app";
 
 // ── Knowledge Page ───────────────────────────────────────────────────────────
 
-const knowledgePageCopy = {
-  zh: {
-    title: "知识库",
-    subtitle: "Markdown 知识文件 · 目录浏览与搜索",
-    pagesBadge: "{pages} pages · {size}KB",
-    add: "Add",
-    files: "文件",
-    graph: "图谱 ({count})",
-    addTitle: "添加知识文件",
-    addSubtitle: "上传本地文本文件，或读取 URL 内容保存为 Markdown。",
-    targetDir: "保存目录",
-    targetDirPlaceholder: "可选，例如 research/2026",
-    uploadFile: "上传文件",
-    upload: "Upload",
-    urlPlaceholder: "https://example.com/article.md 或网页 URL",
-    saveUrl: "Save URL",
-    cancel: "取消",
-    save: "保存",
-    nodes: "{count} nodes",
-    links: "{count} links",
-    emptyGraphTitle: "暂无知识图谱",
-    emptyGraphHint: "在 knowledge/ 目录下添加含内部链接的 Markdown 文件。",
-    searchFiles: "搜索文件...",
-    emptyFiles: "暂无知识文件",
-    selectFileTitle: "选择文件查看内容",
-    selectFileHint: "点击左侧文件树中的文件。",
-    loadFailed: "加载失败",
-    libraryLoadFailed: "知识库加载失败",
-    savedTo: "已保存到 {path}",
-    uploadFailed: "上传失败",
-    urlSaveFailed: "URL 保存失败",
-  },
-  en: {
-    title: "Knowledge",
-    subtitle: "Markdown knowledge files · directory browsing and search",
-    pagesBadge: "{pages} pages · {size}KB",
-    add: "Add",
-    files: "Files",
-    graph: "Graph ({count})",
-    addTitle: "Add Knowledge File",
-    addSubtitle: "Upload a local text file, or fetch a URL and save it as Markdown.",
-    targetDir: "Save directory",
-    targetDirPlaceholder: "Optional, e.g. research/2026",
-    uploadFile: "Upload file",
-    upload: "Upload",
-    urlPlaceholder: "https://example.com/article.md or a web URL",
-    saveUrl: "Save URL",
-    cancel: "Cancel",
-    save: "Save",
-    nodes: "{count} nodes",
-    links: "{count} links",
-    emptyGraphTitle: "No knowledge graph",
-    emptyGraphHint: "Add Markdown files with internal links under the knowledge/ directory.",
-    searchFiles: "Search files...",
-    emptyFiles: "No knowledge files",
-    selectFileTitle: "Select a file to view content",
-    selectFileHint: "Click a file in the tree on the left.",
-    loadFailed: "Load failed",
-    libraryLoadFailed: "Failed to load knowledge base",
-    savedTo: "Saved to {path}",
-    uploadFailed: "Upload failed",
-    urlSaveFailed: "Failed to save URL",
-  },
-} as const;
+const knowledgePageCopy = catalogsFor("knowledge");
 
 export function KnowledgePage({ language }: { language: AppLanguage }) {
   const copy = knowledgePageCopy[language];
@@ -260,25 +198,25 @@ export function KnowledgePage({ language }: { language: AppLanguage }) {
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-          {tree ? <Badge variant="outline">{formatTemplate(copy.pagesBadge, { pages: tree.stats.pages, size: (tree.stats.size / 1024).toFixed(0) })}</Badge> : null}
-          <Button size="sm" onClick={() => setShowImportPanel(true)} disabled={showImportPanel}>
-            <Plus />
-            {copy.add}
-          </Button>
-          <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
-            <button
-              className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "tree" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
-              onClick={() => setViewMode("tree")} type="button"
-            >
-              {copy.files}
-            </button>
-            <button
-              className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "graph" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
-              onClick={() => setViewMode("graph")} type="button"
-            >
-              {formatTemplate(copy.graph, { count: totalNodes })}
-            </button>
-          </div>
+        {tree ? <Badge variant="outline">{formatTemplate(copy.pagesBadge, { pages: tree.stats.pages, size: (tree.stats.size / 1024).toFixed(0) })}</Badge> : null}
+        <Button size="sm" onClick={() => setShowImportPanel(true)} disabled={showImportPanel}>
+          <Plus />
+          {copy.add}
+        </Button>
+        <div className="flex rounded-md border border-border/80 bg-muted/40 p-1">
+          <button
+            className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "tree" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+            onClick={() => setViewMode("tree")} type="button"
+          >
+            {copy.files}
+          </button>
+          <button
+            className={cn("h-7 rounded-sm px-3 text-xs font-medium transition-all", viewMode === "graph" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+            onClick={() => setViewMode("graph")} type="button"
+          >
+            {formatTemplate(copy.graph, { count: totalNodes })}
+          </button>
+        </div>
       </div>
 
       {notice ? (

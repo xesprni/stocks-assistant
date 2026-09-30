@@ -1,6 +1,6 @@
 import { Field } from "@/components/common/Field";
 import { Textarea } from "@/components/ui/textarea";
-import { i18n, type AppLanguage } from "@/lib/i18n";
+import { i18n, type AppLanguage } from "@/i18n";
 import { MAX_TELEGRAM_PHOTOS, parseTelegramPhotos } from "@/lib/telegram";
 
 export function TelegramPhotoField({

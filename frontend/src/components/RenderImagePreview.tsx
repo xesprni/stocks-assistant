@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
 import { Download, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { i18n, type AppLanguage } from "@/i18n";
 import { getRenderedImage } from "@/lib/api";
-import { i18n, type AppLanguage } from "@/lib/i18n";
 import type { RenderedImage, RenderedImageFile } from "@/types/app";
 
 function useImageUrl(artifactId: string, filename: RenderedImageFile | null) {

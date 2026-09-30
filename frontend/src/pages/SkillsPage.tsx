@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Download, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, Trash2, X, Zap } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { useErrorToast } from "@/components/common/Toast";
@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import type { AppLanguage } from "@/i18n";
+import { formatTemplate, i18n } from "@/i18n";
 import {
   deleteSkill,
   getClawHubSkill,
@@ -16,8 +18,6 @@ import {
   searchClawHubSkills,
   toggleSkill,
 } from "@/lib/api";
-import { formatTemplate, i18n } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
 import type { ClawHubSearchResult, ClawHubSkillDetail, SkillInfo } from "@/types/app";
 
 type SkillsPageProps = {
@@ -198,11 +198,11 @@ export function SkillsPage({ confirmAction, language }: SkillsPageProps) {
   return (
     <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
       <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-          <Badge variant="outline">{formatTemplate(copy.count, { count: skills.length })}</Badge>
-          <Button variant="outline" size="sm" onClick={loadSkills} disabled={isLoading}>
-            {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {copy.refresh}
-          </Button>
+        <Badge variant="outline">{formatTemplate(copy.count, { count: skills.length })}</Badge>
+        <Button variant="outline" size="sm" onClick={loadSkills} disabled={isLoading}>
+          {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {copy.refresh}
+        </Button>
       </div>
 
       <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">

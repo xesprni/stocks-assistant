@@ -1,5 +1,6 @@
+import { catalogsFor } from "@/i18n";
+import { ArrowLeft, ListChecks, Loader2, Plus, RefreshCw, Save, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowLeft, ListChecks, Loader2, Plus, RefreshCw, Save, ShieldCheck, UserCog, UserPlus, Users } from "lucide-react";
 
 import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
@@ -9,9 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import type { AppLanguage } from "@/i18n";
 import { createUser, listRoles, listUsers, savePagePermission, saveRole, updateUser } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { AppLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { AuthUser, RoleInfo } from "@/types/app";
 
@@ -33,112 +34,7 @@ type RoleForm = {
 
 type ManagementView = "roles" | "users" | "permissions";
 
-const copy = {
-  zh: {
-    title: "用户管理",
-    subtitle: "账号、角色与权限",
-    users: "用户",
-    roles: "角色",
-    roleCatalog: "角色列表",
-    roleCatalogHint: "默认视图只展示角色与权限概览，具体管理进入下一级。",
-    manageUsers: "管理用户",
-    userManagement: "用户管理",
-    userManagementHint: "编辑账号状态、显示名称、密码和角色绑定。",
-    manageRolePermissions: "角色权限管理",
-    rolePermissionManagement: "角色权限管理",
-    rolePermissionHint: "创建自定义角色，调整权限点授权。",
-    pagePermissionManagement: "页面权限关联",
-    pagePermissionHint: "控制导航页面需要哪个权限；后端接口仍需在路由上声明对应权限。",
-    backToRoles: "返回角色列表",
-    newRole: "新建角色",
-    refresh: "刷新",
-    createUser: "新建用户",
-    createUserHint: "创建账号并分配初始角色。",
-    cancel: "取消",
-    username: "用户名",
-    password: "密码",
-    resetPassword: "重置密码",
-    displayName: "显示名称",
-    active: "启用",
-    disabled: "停用",
-    role: "角色",
-    save: "保存",
-    create: "创建",
-    editRole: "编辑角色",
-    createRole: "创建角色",
-    roleName: "角色名",
-    description: "描述",
-    permissions: "权限",
-    builtin: "内置",
-    custom: "自定义",
-    current: "当前账号",
-    noUsers: "暂无用户",
-    noRoles: "暂无角色",
-    loading: "正在加载...",
-    loadFailed: "加载失败",
-    createFailed: "创建失败",
-    updateFailed: "保存失败",
-    roleSaveFailed: "角色保存失败",
-    saved: "已保存",
-    userCreated: "用户已创建",
-    roleSaved: "角色已保存",
-    pagePermissionSaved: "页面权限关联已保存",
-    pagePermissionSaveFailed: "页面权限关联保存失败",
-    passwordHint: "留空则不修改密码",
-  },
-  en: {
-    title: "User Management",
-    subtitle: "Accounts, roles, and permissions",
-    users: "Users",
-    roles: "Roles",
-    roleCatalog: "Role List",
-    roleCatalogHint: "The default view shows role and permission summaries. Management actions live one level deeper.",
-    manageUsers: "Manage Users",
-    userManagement: "User Management",
-    userManagementHint: "Edit account state, display names, passwords, and role bindings.",
-    manageRolePermissions: "Role Permissions",
-    rolePermissionManagement: "Role Permission Management",
-    rolePermissionHint: "Create custom roles and adjust permission grants.",
-    pagePermissionManagement: "Page Permission Mapping",
-    pagePermissionHint: "Controls which permission is required to show each page. API routes must still declare matching backend permissions.",
-    backToRoles: "Back to Roles",
-    newRole: "New Role",
-    refresh: "Refresh",
-    createUser: "Create User",
-    createUserHint: "Create an account and assign its initial roles.",
-    cancel: "Cancel",
-    username: "Username",
-    password: "Password",
-    resetPassword: "Reset password",
-    displayName: "Display name",
-    active: "Active",
-    disabled: "Disabled",
-    role: "Role",
-    save: "Save",
-    create: "Create",
-    editRole: "Edit Role",
-    createRole: "Create Role",
-    roleName: "Role name",
-    description: "Description",
-    permissions: "Permissions",
-    builtin: "Built-in",
-    custom: "Custom",
-    current: "Current account",
-    noUsers: "No users",
-    noRoles: "No roles",
-    loading: "Loading...",
-    loadFailed: "Failed to load",
-    createFailed: "Create failed",
-    updateFailed: "Save failed",
-    roleSaveFailed: "Role save failed",
-    saved: "Saved",
-    userCreated: "User created",
-    roleSaved: "Role saved",
-    pagePermissionSaved: "Page permission mapping saved",
-    pagePermissionSaveFailed: "Failed to save page permission mapping",
-    passwordHint: "Leave blank to keep password",
-  },
-} as const;
+const copy = catalogsFor("users");
 
 function defaultUserForm(defaultRole: string): UserForm {
   return {
@@ -351,22 +247,22 @@ export function UsersPage({ language }: { language: AppLanguage }) {
     <>
       <section className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col rounded-md lg:h-full">
         <div className="page-toolbar flex flex-wrap items-center justify-end gap-2">
-            <Badge variant="outline">{users.length} {t.users}</Badge>
-            <Badge variant="outline">{roles.length} {t.roles}</Badge>
-            {view !== "roles" ? (
-              <Button variant="outline" size="sm" onClick={() => setView("roles")}>
-                <ArrowLeft />
-                {t.backToRoles}
-              </Button>
-            ) : null}
-            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-              {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              {t.refresh}
+          <Badge variant="outline">{users.length} {t.users}</Badge>
+          <Badge variant="outline">{roles.length} {t.roles}</Badge>
+          {view !== "roles" ? (
+            <Button variant="outline" size="sm" onClick={() => setView("roles")}>
+              <ArrowLeft />
+              {t.backToRoles}
             </Button>
-            <Button size="sm" onClick={() => setCreateUserOpen(true)}>
-              <UserPlus />
-              {t.createUser}
-            </Button>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {t.refresh}
+          </Button>
+          <Button size="sm" onClick={() => setCreateUserOpen(true)}>
+            <UserPlus />
+            {t.createUser}
+          </Button>
         </div>
 
         <div className="panel-body min-h-0 flex-1 lg:overflow-y-auto">
