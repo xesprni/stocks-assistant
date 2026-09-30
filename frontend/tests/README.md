@@ -38,4 +38,6 @@ The same Playwright environment variables apply. Screenshots are saved as `/tmp/
 
 The workspace check also verifies market configuration autosave, switching settings tabs and pages while a save is pending, persistence after reload, rendering more than eight dashboard indices, and success toasts for both automatic and explicit saves of market and general settings.
 
+Mobile scroll regressions cover all settings tabs at 390×844, 320×568, 844×390 and 768×1024, actual vertical/horizontal touch gestures, and desktop pane scrolling. They also check password/task drawers in landscape, memory/knowledge/portfolio pages, and long MCP tool/skill preview dialogs in portrait, landscape and desktop viewports. Content reachability is checked without locator auto-scrolling, which can conceal `overflow: hidden` clipping. All data is supplied by fixtures. Screenshots include `/tmp/stocks-settings-scroll-mobile.png` and `/tmp/stocks-skill-scroll-{width}.png`.
+
 Portfolio chart checks use saved closing snapshots from the API, retain history when current quotes are missing, and verify that page visits leave legacy browser snapshots untouched.

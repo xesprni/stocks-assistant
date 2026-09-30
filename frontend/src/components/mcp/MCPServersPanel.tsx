@@ -1,3 +1,6 @@
+import { useId, useRef } from "react";
+import { createPortal } from "react-dom";
+
 import { Field } from "@/components/common/Field";
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { type MCPServersPanelProps } from "@/components/mcp/model";
@@ -7,7 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { formatTemplate } from "@/i18n";
+import { useI18n } from "@/i18n/react";
 import { parseJsonObject } from "@/lib/json";
 import { cn } from "@/lib/utils";
 import {
@@ -37,6 +42,11 @@ export function MCPServersPanel(props: MCPServersPanelProps) {
     handleViewTools, openEditServerDrawer, handleDeleteServer, showToolsFor, setShowToolsFor,
     toolsData, isLoadingTools, setShowRawJson, showRawJson, validateMcpServersConfig,
   } = useMCPServers(props);
+  const { messages } = useI18n();
+  const toolsDialogRef = useRef<HTMLDivElement | null>(null);
+  const toolsCloseRef = useRef<HTMLButtonElement | null>(null);
+  const toolsTitleId = useId();
+  useDialogFocus(Boolean(showToolsFor), toolsDialogRef, () => setShowToolsFor(null), toolsCloseRef);
 
   return (
     <div className="space-y-3">
@@ -397,23 +407,28 @@ export function MCPServersPanel(props: MCPServersPanelProps) {
         </div>
       )}
 
-      {/* Tools dialog overlay */}
-      {showToolsFor ? (
-        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50" onClick={() => setShowToolsFor(null)}>
+      {/* 脱离页面动画的定位上下文；列表高度由弹窗剩余空间决定，不假定标题只有一行。 */}
+      {showToolsFor ? createPortal(
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 p-4" onClick={() => setShowToolsFor(null)}>
           <div
-            className="mx-4 max-h-[70vh] w-full max-w-xl overflow-hidden rounded-lg border border-border bg-card shadow-xl"
+            ref={toolsDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={toolsTitleId}
+            tabIndex={-1}
+            className="flex max-h-[min(80dvh,calc(100dvh-2rem))] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-border/80 p-4">
-              <div>
-                <p className="font-semibold">{formatTemplate(copy.toolsTitle, { server: showToolsFor })}</p>
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/80 p-4">
+              <div className="min-w-0">
+                <p id={toolsTitleId} className="break-words font-semibold">{formatTemplate(copy.toolsTitle, { server: showToolsFor })}</p>
                 <p className="text-xs text-muted-foreground">{formatTemplate(copy.toolsAvailable, { count: toolsData.length })}</p>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowToolsFor(null)}>
+              <Button ref={toolsCloseRef} aria-label={messages.ui.common.close} variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setShowToolsFor(null)}>
                 <X className="size-4" />
               </Button>
             </div>
-            <div className="max-h-[calc(70vh-60px)] overflow-y-auto p-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
               {isLoadingTools ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -423,8 +438,8 @@ export function MCPServersPanel(props: MCPServersPanelProps) {
                   {toolsData.map((tool) => (
                     <div key={tool.name} className="rounded-md border border-border/80 bg-background/50 p-3">
                       <div className="flex items-center gap-2">
-                        <TerminalSquare className="size-3.5 text-primary" />
-                        <span className="text-sm font-semibold">{tool.name}</span>
+                        <TerminalSquare className="size-3.5 shrink-0 text-primary" />
+                        <span className="min-w-0 break-words text-sm font-semibold">{tool.name}</span>
                       </div>
                       {tool.description ? (
                         <p className="mt-1 text-xs text-muted-foreground">{tool.description}</p>
@@ -459,7 +474,8 @@ export function MCPServersPanel(props: MCPServersPanelProps) {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
 
       {/* Collapsible raw JSON */}

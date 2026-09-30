@@ -2,6 +2,7 @@
 // Every request uses fixtures. No real account, backend or external service is contacted.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { checkMobileScroll } from "./mobile-scroll.mjs";
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE_PATH || "playwright");
 const dist = new URL("../../dist/", import.meta.url);
 const origin = "http://127.0.0.1:4178";
@@ -140,6 +141,7 @@ async function checkMarketConfigSaves() {
   await page.locator(".app-toast").getByText("已保存", { exact: true }).waitFor();
   assert.equal(marketConfig.refresh_interval, 90);
   await page.locator(".app-toast").getByRole("button", { name: "Close" }).click();
+  await page.locator(".app-toast").waitFor({ state: "detached" });
   await interval.fill("120");
   await page.getByRole("button", { name: "立即保存", exact: true }).click();
   await page.locator(".app-toast").getByText("已保存", { exact: true }).waitFor();
@@ -268,6 +270,7 @@ async function checkThemePreferences() {
   assert.equal((await readTheme()).color, "blue", "Invalid saved colors must recover to the default");
 }
 try {
+  await checkMobileScroll(page, { origin, config });
   await checkMarketConfigSaves();
   await checkClosingSnapshots();
   await page.goto(`${origin}/security/${symbol}`);

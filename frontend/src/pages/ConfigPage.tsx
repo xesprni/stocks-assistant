@@ -33,10 +33,11 @@ export function ConfigPage(props: ConfigPageProps) {
     telegramTestResult, isPasswordDialogOpen,
   } = useSettings(props);
 
+  // 移动端由主页面滚动，面板按内容展开；桌面才约束高度并在分栏内滚动。
   return (
     <section
       id="config-form"
-      className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl lg:h-full"
+      className="panel motion-panel page-enter flex min-h-0 min-w-0 flex-none flex-col rounded-xl lg:h-full lg:flex-1 lg:overflow-hidden"
       onBlurCapture={(event) => {
         if (!(event.target instanceof Element) || !event.target.matches("input, textarea, select")) return;
         if (event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-config-reset]")) return;

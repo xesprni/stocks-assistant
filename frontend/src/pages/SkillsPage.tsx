@@ -1,5 +1,6 @@
 import { Download, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, Trash2, X, Zap } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 
 import type { ConfirmFn } from "@/components/common/ConfirmDialog";
 import { useErrorToast } from "@/components/common/Toast";
@@ -7,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import type { AppLanguage } from "@/i18n";
 import { formatTemplate, i18n } from "@/i18n";
 import {
@@ -397,16 +399,28 @@ function SkillPreviewDialog({
   onClose: () => void;
   onInstall: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const titleId = useId();
+  useDialogFocus(true, dialogRef, onClose, closeRef);
   const scanText = detail?.scan && Object.keys(detail.scan).length > 0 ? JSON.stringify(detail.scan, null, 2) : "";
 
-  return (
+  // 弹窗脱离页面动画的 transform，始终以视口定位，避免长列表滚动后移出屏幕。
+  return createPortal(
     <div className="fixed inset-0 z-[1100] flex items-center justify-center px-4 py-6">
       <button aria-label={commonClose} className="absolute inset-0 bg-background/65 backdrop-blur-[2px]" onClick={onClose} type="button" />
-      <div className="relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 px-4 py-3">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="relative flex max-h-[min(88dvh,calc(100dvh-3rem))] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+      >
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/80 px-4 py-3">
           <div className="flex items-center gap-2">
             <FileText className="size-4 text-primary" />
-            <p className="text-sm font-semibold">{copy.previewTitle}</p>
+            <p id={titleId} className="text-sm font-semibold">{copy.previewTitle}</p>
           </div>
           <div className="flex items-center gap-2">
             {detail?.canonical_url ? (
@@ -423,13 +437,13 @@ function SkillPreviewDialog({
                 {installed ? copy.installed : installing ? copy.installing : copy.install}
               </Button>
             ) : null}
-            <Button aria-label={commonClose} size="icon" variant="ghost" onClick={onClose}>
+            <Button ref={closeRef} aria-label={commonClose} size="icon" variant="ghost" onClick={onClose}>
               <X />
             </Button>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
           {isLoading ? (
             <div className="grid min-h-64 place-items-center">
               <Loader2 className="size-6 animate-spin text-muted-foreground" />
@@ -483,7 +497,8 @@ function SkillPreviewDialog({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
