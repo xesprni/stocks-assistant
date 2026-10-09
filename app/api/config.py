@@ -241,7 +241,7 @@ async def _persist_config_update(update: ConfigUpdate, current: CurrentUser) -> 
         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(
-            status_code=HTTPStatus.UNPROCESSABLE_CONTENT, detail=exc.errors()
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=exc.errors()
         ) from exc
     return _settings_to_response(
         settings,

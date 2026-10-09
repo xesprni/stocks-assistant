@@ -71,7 +71,7 @@ def create_task(
             telegram_photos=request.telegram_photos,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=HTTPStatus.UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     task = {
         "id": task_id,
@@ -146,7 +146,7 @@ def update_task(
             )
         except ValueError as exc:
             raise HTTPException(
-                status_code=HTTPStatus.UNPROCESSABLE_CONTENT, detail=str(exc)
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
 
     if "schedule" in updates or "enabled" in updates:
