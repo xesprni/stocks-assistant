@@ -3,6 +3,7 @@
 import re
 
 AUTH_TIMEOUT = 300
+TOKEN_EXPIRED_CODE = 401003
 
 REGISTER_URL = "https://openapi.longbridge.com/oauth2/register"
 

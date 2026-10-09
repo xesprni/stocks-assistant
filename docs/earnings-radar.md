@@ -32,9 +32,11 @@ HTML 是含内嵌样式和历史图的独立暗色报告，可离线打开。导
 
 固定响应由 `app/schemas/earnings.py` 定义。日期采用 `America/New_York`，抓取时间为 UTC；金额、行权价和跨式成本保留字符串精度，百分比为数值。凭据来自当前用户的有效配置，不读取其他用户的清单。
 
-SDK 4.1 的 `CalendarContext.finance_calendar(CalendarCategory.Report, start, end, "US")` 不支持 symbol 参数，因此按 30 天分段获取市场日历，再为本次清单筛选，共用全部分段请求。`CalendarDataKv.value_type` 用于识别预期/实际数据，不依赖中文事件标题。内容 Context 按凭据和语言隔离，报价连接复用既有 QuoteContext。股价和前复权日线复用 MarketService。
+SDK 4.1 的 `CalendarContext.finance_calendar(CalendarCategory.Report, start, end, "US")` 不支持 symbol 参数，因此按 30 天分段获取市场日历，再为本次清单筛选，共用全部分段请求。先读取未来窗口，再从最近的历史回溯。`CalendarDataKv.value_type` 用于识别预期/实际数据，不依赖中文事件标题；披露时段优先读取 `financial_market_time` 的 `before` / `after`，无法识别时再使用 `date_type` 的 `Pre` / `Post`、盘前/盘后等标签，`during` 和未知值仍排除。字段格式已对照[长桥公开财报日历](https://longbridge.com/calendar/report)核验。内容 Context 按凭据和语言隔离，报价连接复用既有 QuoteContext。股价和前复权日线复用 MarketService。
 
-日历连续 3 段失败会停止继续读取，并明确标记历史和未来日历可能不完整。单板块失败保留其余数据并返回问题代码；无权限、停牌、无期权或数据不足不会被补为零。连接创建失败返回经过脱敏的 503，前端提供设置入口。扫描不保存独立数据缓存，避免配置改变后复用旧账户结果。
+历史、未来日历分别计算连续失败次数，各自连续 3 段失败后停止该窗口并标记缺口；历史请求失败不会阻止未来财报查询，反之亦然。单板块失败保留其余数据并返回问题代码；无权限、停牌、无期权或数据不足不会被补为零。全部标的均无可用数据时返回脱敏的 503，前端显示错误和设置入口，不再展示成功扫描的空卡片。
+
+长桥凭据过期（`401003`）会立即停止扫描并明确提示重新连接或更新 Access Token；即使错误发生在已缓存连接的后续日历、行情或期权请求中也一样。此处使用 503 区分长桥认证失效与应用登录过期。连接创建失败也返回脱敏的 503。日历失败日志只记录日期范围、异常类型和错误码，不记录原始 SDK 错误或凭据。扫描不保存独立数据缓存，避免配置改变后复用旧账户结果。
 
 ## 验证
 

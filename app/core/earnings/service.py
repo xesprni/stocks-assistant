@@ -8,7 +8,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.constants.earnings import (
+    RADAR_AFTER_CODES,
     RADAR_AFTER_LABELS,
+    RADAR_BEFORE_CODES,
     RADAR_BEFORE_LABELS,
     RADAR_CALENDAR_CHUNK_DAYS,
     RADAR_CALENDAR_FAILURE_LIMIT,
@@ -27,7 +29,11 @@ from app.core.earnings.calculations import (
     ratio_valuation,
     realized_moves,
 )
-from app.core.market.errors import LongbridgeUnavailableError
+from app.core.market.errors import (
+    LongbridgeUnavailableError,
+    longbridge_error_code,
+    raise_if_token_expired,
+)
 from app.core.market.longbridge_context import get_cached_context
 from app.core.market.service import MarketService
 from app.schemas.earnings import (
@@ -50,10 +56,11 @@ def _event_date(value: str) -> date | None:
 
 
 def _timing(value: str) -> EarningsTiming:
-    label = value.lower()
-    if any(part in label for part in RADAR_BEFORE_LABELS):
+    # 长桥独立字段使用 before/after，英文展示标签则为 Pre/Post，不能只匹配长文案。
+    label = " ".join(value.strip().lower().replace("_", " ").replace("-", " ").split())
+    if label in RADAR_BEFORE_CODES or any(part in label for part in RADAR_BEFORE_LABELS):
         return "before_open"
-    if any(part in label for part in RADAR_AFTER_LABELS):
+    if label in RADAR_AFTER_CODES or any(part in label for part in RADAR_AFTER_LABELS):
         return "after_close"
     return "unknown"
 
@@ -88,6 +95,7 @@ class EarningsRadarService:
             calendar = get_cached_context("CalendarContext", settings=settings)
             quote = get_cached_context("QuoteContext", settings=settings)
         except Exception as exc:
+            raise_if_token_expired(exc)
             raise LongbridgeUnavailableError("Longbridge connection unavailable") from exc
         events, names, calendar_issues = self._calendar(
             calendar, request.symbols, start, end, today
@@ -106,6 +114,9 @@ class EarningsRadarService:
             )
             for symbol in request.symbols
         ]
+        # 全部板块失败时不能以“成功扫描”的空卡片掩盖连接或行情权限问题。
+        if all(item.status == "unavailable" for item in items):
+            raise LongbridgeUnavailableError("No earnings radar data available")
         return EarningsRadarResponse(
             as_of=now.isoformat(),
             window_start=today,
@@ -127,55 +138,78 @@ class EarningsRadarService:
         events: dict[str, list[EarningsEvent]] = {symbol: [] for symbol in symbols}
         names: dict[str, str] = {}
         issues: list[str] = []
-        cursor = start
-        consecutive_failures = 0
-        # SDK 4.1 仅支持按市场筛选。分段读取，所有标的共用日历，避免逐股扫描全市场。
-        while cursor <= end:
-            chunk_end = min(cursor + timedelta(days=RADAR_CALENDAR_CHUNK_DAYS - 1), end)
-            try:
-                response = ctx.finance_calendar(
-                    CalendarCategory.Report, cursor.isoformat(), chunk_end.isoformat(), "US"
+        # 先取未来，再从最近历史回溯；两个窗口分别熔断，旧日历不可用不影响未来财报。
+        windows = [
+            (max(start, today), end, "upcoming_calendar_unavailable"),
+            (start, min(end, today - timedelta(days=1)), "history_calendar_unavailable"),
+        ]
+        for window_start, window_end, issue in windows:
+            ranges = [
+                (
+                    window_start + timedelta(days=offset),
+                    min(
+                        window_start + timedelta(days=offset + RADAR_CALENDAR_CHUNK_DAYS - 1),
+                        window_end,
+                    ),
                 )
-                for group in response.list:
-                    for info in group.infos:
-                        symbol = info.symbol.upper()
-                        if symbol not in events:
-                            continue
-                        event_date = _event_date(info.date) or _event_date(group.date)
-                        if event_date is None or not cursor <= event_date <= chunk_end:
-                            continue
-                        values = {item.value_type: item.value for item in info.data_kv}
-                        names[symbol] = info.counter_name
-                        event = EarningsEvent(
-                            date=event_date,
-                            timing=_timing(info.date_type),
-                            period=info.content,
-                            currency=info.currency,
-                            eps_estimate=values.get("estimate_eps"),
-                            revenue_estimate=values.get("estimate_revenue"),
-                            reported=any(
-                                _present(values.get(key, ""))
-                                for key in ("actual_eps", "actual_revenue")
-                            ),
-                        )
-                        if not any(
-                            (e.date, e.period) == (event.date, event.period) for e in events[symbol]
-                        ):
-                            events[symbol].append(event)
-                consecutive_failures = 0
-            except Exception:
-                logger.warning("Earnings calendar segment unavailable: %s to %s", cursor, chunk_end)
-                issues.append(
-                    "history_calendar_unavailable"
-                    if chunk_end < today
-                    else "upcoming_calendar_unavailable"
+                for offset in range(
+                    0, (window_end - window_start).days + 1, RADAR_CALENDAR_CHUNK_DAYS
                 )
-                consecutive_failures += 1
-                # 持续的权限/网络失败不应反复请求三年日历；保留已取结果并明确标记缺口。
-                if consecutive_failures >= RADAR_CALENDAR_FAILURE_LIMIT:
-                    issues.extend(["history_calendar_unavailable", "upcoming_calendar_unavailable"])
-                    break
-            cursor = chunk_end + timedelta(days=1)
+            ]
+            if window_end < today:
+                ranges.reverse()
+            consecutive_failures = 0
+            # SDK 4.1 仅支持按市场筛选，所有标的共用分段请求。
+            for cursor, chunk_end in ranges:
+                try:
+                    response = ctx.finance_calendar(
+                        CalendarCategory.Report, cursor.isoformat(), chunk_end.isoformat(), "US"
+                    )
+                    for group in response.list:
+                        for info in group.infos:
+                            symbol = info.symbol.upper()
+                            if symbol not in events:
+                                continue
+                            event_date = _event_date(info.date) or _event_date(group.date)
+                            if event_date is None or not cursor <= event_date <= chunk_end:
+                                continue
+                            values = {item.value_type: item.value for item in info.data_kv}
+                            names[symbol] = info.counter_name
+                            # SDK 提供独立披露时段字段；日期标签为空时仍可识别盘前/盘后。
+                            timing = _timing(getattr(info, "financial_market_time", ""))
+                            if timing == "unknown":
+                                timing = _timing(info.date_type)
+                            event = EarningsEvent(
+                                date=event_date,
+                                timing=timing,
+                                period=info.content,
+                                currency=info.currency,
+                                eps_estimate=values.get("estimate_eps"),
+                                revenue_estimate=values.get("estimate_revenue"),
+                                reported=any(
+                                    _present(values.get(key, ""))
+                                    for key in ("actual_eps", "actual_revenue")
+                                ),
+                            )
+                            if not any(
+                                (e.date, e.period) == (event.date, event.period)
+                                for e in events[symbol]
+                            ):
+                                events[symbol].append(event)
+                    consecutive_failures = 0
+                except Exception as exc:
+                    raise_if_token_expired(exc)
+                    logger.warning(
+                        "Earnings calendar segment unavailable: %s to %s (%s, code=%s)",
+                        cursor,
+                        chunk_end,
+                        type(exc).__name__,
+                        longbridge_error_code(exc),
+                    )
+                    issues.append(issue)
+                    consecutive_failures += 1
+                    if consecutive_failures >= RADAR_CALENDAR_FAILURE_LIMIT:
+                        break
         return events, names, list(dict.fromkeys(issues))
 
     def _analyze(
@@ -216,7 +250,8 @@ class EarningsRadarService:
                     item.issues.append("stale_quote")
             else:
                 item.issues.append("quote_unavailable")
-        except Exception:
+        except Exception as exc:
+            raise_if_token_expired(exc)
             item.issues.append("quote_unavailable")
         try:
             response = self.market.get_history_candlesticks(
@@ -243,7 +278,8 @@ class EarningsRadarService:
                 item.historical_median_pct = median(abs(move.move_pct) for move in item.history)
             if any(event.timing == "unknown" for event in past):
                 item.issues.append("unknown_history_timing")
-        except Exception:
+        except Exception as exc:
+            raise_if_token_expired(exc)
             item.issues.append("history_prices_unavailable")
         if item.sample_count < RADAR_HISTORY_SAMPLES:
             item.issues.append("insufficient_history")
@@ -253,7 +289,8 @@ class EarningsRadarService:
         if item.next_event and spot is not None:
             try:
                 item.option = self._options(quote, symbol, spot, item.next_event.date, today)
-            except Exception:
+            except Exception as exc:
+                raise_if_token_expired(exc)
                 item.option = None
             if item.option is None:
                 item.issues.append("options_unavailable")
@@ -324,6 +361,7 @@ class EarningsRadarService:
                     if call_iv and put_iv
                     else None,
                 )
-            except Exception:
+            except Exception as exc:
+                raise_if_token_expired(exc)
                 continue
         return None

@@ -24,5 +24,15 @@ RADAR_SOURCE = "Longbridge CalendarContext + QuoteContext"
 RADAR_REFERENCE_URL = "https://longbridge.cn/zh-CN/topics/44253984"
 RADAR_SYMBOL_PATTERN = re.compile(r"[A-Z][A-Z0-9.-]*\.US\Z")
 RADAR_MISSING_VALUES = frozenset({"", "-", "--", "待公布", "待公佈", "n/a", "none", "pending"})
-RADAR_BEFORE_LABELS = ("盘前", "盤前", "before market", "before open", "pre-market", "bmo")
-RADAR_AFTER_LABELS = ("盘后", "盤後", "after market", "after close", "post-market", "amc")
+RADAR_BEFORE_CODES = frozenset({"before", "pre", "bmo"})
+RADAR_AFTER_CODES = frozenset({"after", "post", "amc"})
+RADAR_BEFORE_LABELS = ("盘前", "盤前", "before market", "before open", "pre market", "premarket")
+RADAR_AFTER_LABELS = (
+    "盘后",
+    "盤後",
+    "after market",
+    "after close",
+    "post market",
+    "postmarket",
+    "after hours",
+)

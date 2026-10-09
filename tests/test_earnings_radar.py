@@ -19,7 +19,8 @@ from app.core.earnings.calculations import (
     realized_moves,
 )
 from app.core.earnings.service import EarningsRadarService
-from app.core.market.errors import LongbridgeUnavailableError
+from app.core.market.errors import LongbridgeTokenExpiredError, LongbridgeUnavailableError
+from app.core.market.service import MarketService
 from app.core.security import CurrentUser, get_current_user
 from app.schemas.earnings import EarningsEvent, EarningsRadarRequest, EarningsRadarResponse
 
@@ -224,13 +225,18 @@ def test_scan_reuses_contexts_with_effective_settings_and_eastern_date(monkeypat
     get_context = Mock(return_value=context)
     monkeypatch.setattr(module, "get_cached_context", get_context)
     market = Mock()
-    market.get_realtime_quotes.side_effect = RuntimeError("not entitled")
+    market.get_realtime_quotes.return_value = NS(
+        quotes=[NS(symbol="AAPL.US", last_done="100", timestamp=None)]
+    )
     market.get_history_candlesticks.side_effect = RuntimeError("not entitled")
     settings = object()
     result = EarningsRadarService(market).scan(EarningsRadarRequest(symbols=["AAPL"]), settings)
     assert result.window_start == date(2026, 10, 9)
-    assert result.items[0].status == "unavailable"
+    assert result.items[0].status == "partial"
     assert all(call.kwargs["settings"] is settings for call in get_context.call_args_list)
+    market.get_realtime_quotes.side_effect = RuntimeError("not entitled")
+    with pytest.raises(LongbridgeUnavailableError, match="No earnings radar data"):
+        EarningsRadarService(market).scan(EarningsRadarRequest(symbols=["AAPL"]), settings)
     get_context.side_effect = RuntimeError("secret")
     with pytest.raises(LongbridgeUnavailableError, match="connection unavailable"):
         EarningsRadarService(market).scan(EarningsRadarRequest(symbols=["AAPL"]), settings)
@@ -269,5 +275,199 @@ def test_api_permission_validation_user_settings_and_safe_failure(monkeypatch):
         service.scan.side_effect = LongbridgeUnavailableError("secret token")
         failed = client.post("/earnings-radar", json={"symbols": ["AAPL"]})
         assert failed.status_code == 503 and "secret" not in failed.text
+        service.scan.side_effect = LongbridgeTokenExpiredError("secret token")
+        failed = client.post("/earnings-radar", json={"symbols": ["AAPL"]})
+        assert failed.status_code == 503
+        assert "凭据已过期" in failed.json()["detail"] and "secret" not in failed.text
+        load_settings.return_value = NS(app_language="en")
+        failed = client.post("/earnings-radar", json={"symbols": ["AAPL"]})
+        assert "Longbridge token expired" in failed.json()["detail"]
         user.permissions.clear()
         assert client.post("/earnings-radar", json={"symbols": ["AAPL"]}).status_code == 403
+
+
+def calendar_info(day, **kwargs):
+    return NS(
+        symbol="AAPL.US",
+        date=day,
+        date_type="",
+        financial_market_time="after",
+        counter_name="Apple",
+        content="Quarterly results",
+        currency="USD",
+        data_kv=[],
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize(
+    "session,label,expected",
+    [
+        ("before", "Pre", "before_open"),
+        ("after", "Post", "after_close"),
+        ("", "Pre", "before_open"),
+        ("", "Post", "after_close"),
+        ("", "BMO", "before_open"),
+        ("", "AMC", "after_close"),
+        ("", "盘前", "before_open"),
+        ("", "盤後", "after_close"),
+        ("before_open", "", "before_open"),
+        ("after-close", "", "after_close"),
+        ("", "Pre-market", "before_open"),
+        ("", "After Hours", "after_close"),
+        ("during", "", "unknown"),
+        ("", "", "unknown"),
+        ("unknown", "TBD", "unknown"),
+        ("after", "Pre", "after_close"),
+    ],
+)
+def test_calendar_recognizes_longbridge_session_codes_and_localized_labels(
+    session, label, expected
+):
+    # 使用长桥公开财报日历返回的 before/after 和 Pre/Post，覆盖此前全被排除的事件。
+    info = calendar_info("2026-10-08")
+    info.financial_market_time = session
+    info.date_type = label
+    ctx = Mock()
+    ctx.finance_calendar.return_value = NS(list=[NS(date=info.date, infos=[info])])
+    events, _, issues = EarningsRadarService._calendar(
+        ctx, ["AAPL.US"], date(2026, 10, 8), date(2026, 10, 8), date(2026, 10, 9)
+    )
+    assert events["AAPL.US"][0].timing == expected
+    assert issues == []
+
+
+@pytest.mark.parametrize("failed_window", ["history", "upcoming"])
+def test_calendar_failure_does_not_skip_other_window(failed_window):
+    today = date(2026, 10, 9)
+    calls = []
+
+    def finance_calendar(category, start, end, market):
+        calls.append((date.fromisoformat(start), date.fromisoformat(end)))
+        history = date.fromisoformat(end) < today
+        if history == (failed_window == "history"):
+            raise RuntimeError("private upstream error")
+        info = calendar_info("2026-10-08" if history else "2026-10-12")
+        return NS(list=[NS(date=info.date, infos=[info])])
+
+    ctx = NS(finance_calendar=finance_calendar)
+    events, _, issues = EarningsRadarService._calendar(
+        ctx, ["AAPL.US"], date(2023, 10, 9), date(2027, 1, 7), today
+    )
+    expected_date = date(2026, 10, 12) if failed_window == "history" else date(2026, 10, 8)
+    assert [event.date for event in events["AAPL.US"]] == [expected_date]
+    assert events["AAPL.US"][0].timing == "after_close"
+    assert issues == [f"{failed_window}_calendar_unavailable"]
+    assert calls[0][0] == today
+    history_calls = [(start, end) for start, end in calls if end < today]
+    assert history_calls[0][1] == today - timedelta(days=1)
+    assert all(start <= end and (end - start).days < 30 for start, end in calls)
+    failed_calls = [call for call in calls if (call[1] < today) == (failed_window == "history")]
+    assert len(failed_calls) == 3
+
+
+def expired_token():
+    from longbridge.openapi import ErrorKind, OpenApiException
+
+    return OpenApiException(
+        ErrorKind.OpenApi, 401003, "test-trace", "private upstream token must not be exposed"
+    )
+
+
+def test_calendar_expired_token_stops_immediately():
+    ctx = Mock()
+    ctx.finance_calendar.side_effect = expired_token()
+    with pytest.raises(LongbridgeTokenExpiredError, match="Longbridge token expired"):
+        EarningsRadarService._calendar(
+            ctx, ["AAPL.US"], date(2023, 10, 9), date(2026, 11, 30), date(2026, 10, 9)
+        )
+    assert ctx.finance_calendar.call_count == 1
+
+
+@pytest.mark.parametrize("stage", ["context", "quote", "history", "expiry", "chain", "option"])
+def test_scan_propagates_expired_tokens_instead_of_returning_empty_cards(
+    monkeypatch, tmp_path, stage
+):
+    import app.core.earnings.service as module
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 9, 15, tzinfo=UTC)
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    ctx = Mock()
+    ctx.finance_calendar.return_value = NS(
+        list=[NS(date="2026-10-09", infos=[calendar_info("2026-10-12")])]
+    )
+    ctx.quote.return_value = [NS(symbol="AAPL.US", last_done=Decimal("100"), timestamp=None)]
+    ctx.history_candlesticks_by_date.return_value = []
+    ctx.option_chain_expiry_date_list.return_value = [date(2026, 10, 16)]
+    ctx.option_chain_info_by_date.return_value = [
+        NS(price=Decimal("100"), standard=True, call_symbol="C", put_symbol="P")
+    ]
+    get_context = Mock(return_value=ctx)
+    monkeypatch.setattr(module, "get_cached_context", get_context)
+    market = MarketService(str(tmp_path))
+    monkeypatch.setattr(market, "_quote_context", lambda settings=None: ctx)
+    method = {
+        "context": get_context,
+        "quote": ctx.quote,
+        "history": ctx.history_candlesticks_by_date,
+        "expiry": ctx.option_chain_expiry_date_list,
+        "chain": ctx.option_chain_info_by_date,
+        "option": ctx.option_quote,
+    }[stage]
+    method.side_effect = expired_token()
+    with pytest.raises(LongbridgeTokenExpiredError):
+        EarningsRadarService(market).scan(EarningsRadarRequest(symbols=["AAPL"]), object())
+
+
+@pytest.mark.parametrize("upcoming_day", ["2026-10-12", "2026-11-30"])
+def test_scan_from_sdk_fields_preserves_history_with_or_without_upcoming_earnings(
+    monkeypatch, tmp_path, upcoming_day
+):
+    import app.core.earnings.service as module
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 9, 15, tzinfo=UTC)
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    ctx = Mock()
+    ctx.finance_calendar.return_value = NS(
+        list=[NS(date=day, infos=[calendar_info(day)]) for day in ("2026-10-05", upcoming_day)]
+    )
+    monkeypatch.setattr(module, "get_cached_context", lambda *args, **kwargs: ctx)
+    ctx.quote.return_value = [NS(symbol="AAPL.US", last_done=Decimal("100"), timestamp=Clock.now())]
+    ctx.history_candlesticks_by_date.return_value = [
+        NS(timestamp=datetime(2026, 10, day, 14, tzinfo=UTC), close=Decimal(price))
+        for day, price in [(5, "100"), (6, "110")]
+    ]
+    ctx.option_chain_expiry_date_list.return_value = [date(2026, 10, 16)]
+    ctx.option_chain_info_by_date.return_value = [
+        NS(price=Decimal("100"), standard=True, call_symbol="C", put_symbol="P")
+    ]
+    ctx.option_quote.return_value = [option_quote("C", "4"), option_quote("P", "6")]
+    market = MarketService(str(tmp_path))
+    monkeypatch.setattr(market, "_quote_context", lambda settings=None: ctx)
+    result = EarningsRadarService(market).scan(EarningsRadarRequest(symbols=["AAPL"]), object())
+    item = result.items[0]
+    assert item.spot == "100"
+    assert item.sample_count == 1
+    assert item.historical_median_pct == 10
+    assert "unknown_history_timing" not in item.issues
+    if upcoming_day == "2026-10-12":
+        assert item.next_event.date == date(2026, 10, 12)
+        assert item.next_event.timing == "after_close"
+        assert item.option.implied_move_pct == 10
+        assert item.ratio == 1
+        assert item.valuation == "normal"
+    else:
+        # 对应截图：45 天内没有下一次财报，也必须显示已知时段的历史波动。
+        assert item.next_event is None
+        assert item.option is None
+        assert item.ratio is None
+        assert "no_upcoming_event" in item.issues
+        ctx.option_chain_expiry_date_list.assert_not_called()

@@ -49,6 +49,5 @@ export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLan
       items={state.watchlistItems} loading={state.importing} error={state.watchlistError}
       initialSymbols={parseRadarSymbols(symbols)} onClose={() => setWatchlistOpen(false)}
       onConfirm={(selected) => { setSymbols(selected.join(", ")); setMessage(""); setWatchlistOpen(false); }} />}
-    <details className="rounded-lg border border-border p-4 text-xs leading-6 text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy.methodology}</summary><p className="mt-3">{copy.method}</p><p className="mt-2">{copy.thresholds}</p><p className="mt-2">{copy.caveat}</p><a className="mt-2 inline-block text-primary underline" href="https://longbridge.cn/zh-CN/topics/44253984" target="_blank" rel="noreferrer">{copy.reference}</a></details>
   </section>;
 }
