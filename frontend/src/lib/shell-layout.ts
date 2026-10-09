@@ -4,8 +4,8 @@ export function isTheme(value: string | null): value is Theme {
   return value === "system" || value === "dark" || value === "light";
 }
 
-export function isMobileShellViewport(): boolean {
-  return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
+export function isCompactChatViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
 }
 
 export function systemTheme(): EffectiveTheme {

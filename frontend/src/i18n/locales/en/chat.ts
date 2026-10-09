@@ -1,6 +1,7 @@
 export default {
   history: {"today":"Today","yesterday":"Yesterday","earlier":"Earlier"},
   copy: "Copy",
+  draft: "Draft",
   copied: "Copied",
   "sources": "Sources",
   "chart": {
@@ -11,7 +12,7 @@ export default {
     "prev": "Previous close"
   },
   "openComposerLabel": "Open question input",
-  "closeComposerLabel": "Close input",
+  "closeComposerLabel": "Collapse input",
   "collapseChat": "Collapse chat",
   "expandChat": "Expand chat",
   "thinkingLabel": "Thinking mode {state}",

@@ -22,7 +22,7 @@ import { CONFIG_PAYLOAD_KEYS_BY_DRAFT_KEY, PERSONAL_CONFIG_PAYLOAD_KEYS } from "
 import { parseJsonObject } from "@/lib/json";
 import { readStoredText, readStoredValue, writeStoredBoolean, writeStoredValue } from "@/lib/local-storage";
 import { companyRouteFromPath, configTabFromPath, DEFAULT_PAGE_PERMISSION, normalizeRoutePath, pageFromPath, pathForCompany, pathForPage } from "@/lib/routes";
-import { effectiveTheme, isMobileShellViewport, isTheme, systemTheme } from "@/lib/shell-layout";
+import { effectiveTheme, isCompactChatViewport, isTheme, systemTheme } from "@/lib/shell-layout";
 import { useThemeColor } from "@/lib/theme-color";
 import { cn } from "@/lib/utils";
 import type { CompanyTab } from "@/pages/CompanyWorkspacePage";
@@ -128,7 +128,7 @@ function ConsoleApp() {
     if (stored === "true" || stored === "false") return stored === "true";
     return readStoredText(LEGACY_MOBILE_CHROME_HIDDEN_KEY, "") !== "true";
   });
-  const [isMobileViewport, setIsMobileViewport] = useState(() => isMobileShellViewport());
+  const [isMobileViewport, setIsMobileViewport] = useState(() => isCompactChatViewport());
   const [dashboardChatExpanded, setDashboardChatExpanded] = useState(false);
   const [dashboardChatDrawerOpen, setDashboardChatDrawerOpen] = useState(false);
   const [dashboardChatFullscreen, setDashboardChatFullscreen] = useState(false);
@@ -217,7 +217,7 @@ function ConsoleApp() {
   }, [page]);
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 1023px)");
+    const media = window.matchMedia("(max-width: 1279px)");
     const handleChange = () => {
       setIsMobileViewport(media.matches);
       if (!media.matches) {
@@ -530,7 +530,7 @@ function ConsoleApp() {
     return true;
   }
 
-  const dashboardChatPanel = (
+  const renderDashboardChatPanel = (onClose?: () => void) => (
     <ChatPage
       chatScrollRef={chatScrollRef}
       confirmAction={confirmDialog.confirm}
@@ -550,7 +550,7 @@ function ConsoleApp() {
       handleResumeInputQueue={handleResumeInputQueue}
       language={language}
       messages={messages}
-      mobileNavVisible={false}
+      onClose={onClose}
       onToggleExpanded={() => {
         if (isMobileViewport) {
           setDashboardChatFullscreen((current) => !current);
@@ -630,7 +630,7 @@ function ConsoleApp() {
                   <DashboardPage
                     canPermission={auth.can}
                     chatExpanded={dashboardChatExpanded}
-                    chatPanel={dashboardChatPanel}
+                    chatPanel={renderDashboardChatPanel()}
                     isMobileViewport={isMobileViewport}
                     language={language}
                     onOpenChart={(symbol) => {
@@ -741,7 +741,7 @@ function ConsoleApp() {
           </div>
           {activePage === "overview" && isMobileViewport && auth.can("chat:read") ? (
             <DashboardMobileChatDock
-              chatPanel={dashboardChatPanel}
+              chatPanel={renderDashboardChatPanel}
               fullscreen={dashboardChatFullscreen}
               isOpen={dashboardChatDrawerOpen}
               language={language}

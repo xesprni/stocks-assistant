@@ -1,6 +1,7 @@
 export default {
   history: {"today":"今天","yesterday":"昨天","earlier":"更早"},
   copy: "复制",
+  draft: "草稿",
   copied: "已复制",
   "sources": "来源",
   "chart": {
@@ -11,7 +12,7 @@ export default {
     "prev": "昨收盘"
   },
   "openComposerLabel": "打开提问输入框",
-  "closeComposerLabel": "关闭输入框",
+  "closeComposerLabel": "收起输入框",
   "collapseChat": "收起对话",
   "expandChat": "展开对话",
   "thinkingLabel": "思考模式{state}",

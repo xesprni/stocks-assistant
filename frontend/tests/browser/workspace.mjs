@@ -2,6 +2,7 @@
 // Every request uses fixtures. No real account, backend or external service is contacted.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { checkMobileChat } from "./mobile-chat.mjs";
 import { checkMobileScroll } from "./mobile-scroll.mjs";
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE_PATH || "playwright");
 const dist = new URL("../../dist/", import.meta.url);
@@ -331,6 +332,7 @@ async function checkThemeAccounts() {
   assert.ok(await page.getByRole("radio", { name: "橙色", exact: true }).isChecked());
 }
 try {
+  await checkMobileChat(page, { origin, session });
   await checkMobileScroll(page, { origin, config });
   await checkMarketConfigSaves();
   await checkClosingSnapshots();

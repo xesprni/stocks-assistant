@@ -18,6 +18,7 @@ import type { ChatInput, ChatInputMode, ChatMessage, Conversation } from "@/type
 import {
   Bot,
   BrainCircuit,
+  ChevronDown,
   BriefcaseBusiness,
   History,
   Loader2,
@@ -32,7 +33,8 @@ import {
   X
 } from "lucide-react";
 import type { FormEvent, RefObject } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -55,8 +57,8 @@ export function ChatPage({
   language,
   displayName,
   onToggleExpanded,
+  onClose,
   messages,
-  mobileNavVisible = true,
   prompt,
   chatHistory,
   setPrompt,
@@ -79,8 +81,8 @@ export function ChatPage({
   language: AppLanguage;
   displayName?: string;
   onToggleExpanded?: () => void;
+  onClose?: () => void;
   messages: ChatMessage[];
-  mobileNavVisible?: boolean;
   prompt: string;
   chatHistory: ChatHistoryState;
   setPrompt: (value: string) => void;
@@ -103,6 +105,8 @@ export function ChatPage({
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(readChatThinkingEnabled);
   const [inputMode, setInputMode] = useState<ChatInputMode>("queue");
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const openComposerLabel = getMessages(language).chat.openComposerLabel;
   const closeComposerLabel = getMessages(language).chat.closeComposerLabel;
@@ -194,6 +198,12 @@ export function ChatPage({
     }
   }, [prompt]);
 
+  useLayoutEffect(() => {
+    // 抽屉重新挂载时先定位当前会话末尾，后续流式滚动仍由外层控制器管理。
+    const element = chatScrollRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [chatScrollRef]);
+
   useEffect(() => {
     persistChatThinkingEnabled(thinkingEnabled);
   }, [thinkingEnabled]);
@@ -230,6 +240,16 @@ export function ChatPage({
 
   function closeMobileComposer() {
     setMobileComposerOpen(false);
+    if (window.matchMedia("(max-width: 1279px)").matches) {
+      composerRef.current?.blur();
+      requestAnimationFrame(() => composerTriggerRef.current?.focus({ preventScroll: true }));
+    }
+  }
+
+  function openMobileComposer() {
+    // 同一点击内显示并聚焦，保留移动浏览器唤起软键盘所需的用户手势。
+    flushSync(() => setMobileComposerOpen(true));
+    composerRef.current?.focus({ preventScroll: true });
   }
 
   function toggleThinkingEnabled() {
@@ -288,28 +308,27 @@ export function ChatPage({
     closeMobileComposer();
   }
 
-  function renderComposer(mode: "desktop" | "mobile") {
-    const isMobile = mode === "mobile";
+  function renderComposer() {
     const largeComposer = isNewConversation && !embedded;
 
     return (
       <form
-        className={cn(
-          isMobile
-            ? "absolute inset-x-2 rounded-[30px] border border-border/80 bg-card/95 p-2.5 shadow-2xl backdrop-blur"
-            : cn("bg-transparent px-2 pb-2 pt-1 sm:px-3 sm:pb-4", embedded ? "block" : "hidden lg:block"),
-          isMobile && (mobileNavVisible ? "bottom-[calc(4.75rem+env(safe-area-inset-bottom))]" : "bottom-[calc(0.75rem+env(safe-area-inset-bottom))]"),
-        )}
+        className="chat-composer shrink-0 bg-transparent px-2 pb-2 pt-1 sm:px-3 sm:pb-4"
+        data-mobile-open={mobileComposerOpen}
+        id="chat-composer"
         onSubmit={handleComposerSubmit}
       >
         <div
           className={cn(
-            "mr-auto flex w-full flex-col rounded-[30px] border border-border/80 bg-background/95 px-3 py-2 shadow-[var(--control-shadow)] transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/15 sm:px-4 sm:py-3",
+            "chat-composer-surface mr-auto flex w-full flex-col rounded-[30px] border border-border/80 bg-background/95 px-3 py-2 shadow-[var(--control-shadow)] transition-all focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/15 sm:px-4 sm:py-3",
             largeComposer ? "min-h-[150px]" : "min-h-[48px] sm:min-h-[60px]",
           )}
         >
-          <div className="flex min-h-0 flex-1 items-start gap-2">
+          <div className="chat-composer-input flex min-h-0 flex-1 items-start gap-2">
             <Textarea
+              aria-label={openComposerLabel}
+              ref={composerRef}
+              rows={2}
               className={cn(
                 "max-h-[180px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[18px] leading-7 shadow-none focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
                 largeComposer ? "min-h-[78px]" : "min-h-8 text-[15px] leading-6 sm:min-h-10",
@@ -317,6 +336,12 @@ export function ChatPage({
               )}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
+                if (event.key === "Escape" && window.matchMedia("(max-width: 1279px)").matches) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeMobileComposer();
+                  return;
+                }
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                   event.preventDefault();
                   if (!canSubmit) return;
@@ -329,8 +354,19 @@ export function ChatPage({
               placeholder={uiCopy.promptPlaceholder}
               value={prompt}
             />
+            <Button
+              aria-label={closeComposerLabel}
+              className="chat-composer-collapse size-11 shrink-0 rounded-full xl:hidden"
+              onClick={closeMobileComposer}
+              size="icon"
+              title={closeComposerLabel}
+              type="button"
+              variant="ghost"
+            >
+              <ChevronDown className="size-5" />
+            </Button>
           </div>
-          <div className="mt-1 flex items-end justify-between gap-2 sm:mt-2 sm:gap-3">
+          <div className="chat-composer-actions mt-1 flex items-end justify-between gap-2 sm:mt-2 sm:gap-3">
             <div className="flex shrink-0 items-center gap-1">
               <Button
                 aria-label={common.newChat}
@@ -376,7 +412,7 @@ export function ChatPage({
             </div>
           </div>
           {isSending || inputRetryMode ? (
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/50 pt-2">
+            <div className="chat-composer-mode mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/50 pt-2">
               <select
                 aria-label={chatCopy.inputMode}
                 className="h-8 max-w-full rounded-lg border border-border bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
@@ -401,12 +437,12 @@ export function ChatPage({
   }
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-1 overflow-hidden", embedded && "min-h-0 rounded-none")}>
+    <div className={cn("chat-page flex h-full min-h-0 flex-1 overflow-hidden", embedded && "min-h-0 rounded-none")}>
       <section className="finance-flat-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent">
-        <div className={cn("shrink-0 border-b border-border/60 px-3 py-3 sm:px-4", embedded && "py-2.5")}>
+        <div className={cn("chat-header shrink-0 border-b border-border/60 px-3 py-3 sm:px-4", embedded && "py-2.5")}>
           <div className="flex items-center justify-between gap-3">
             <h1 className={cn("truncate font-semibold tracking-normal", embedded ? "text-base sm:text-lg" : "text-3xl sm:text-4xl")}>{uiCopy.title}</h1>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="chat-header-actions flex shrink-0 items-center gap-2">
               <Button
                 aria-label={common.newChat}
                 aria-busy={isCreatingConversation}
@@ -437,7 +473,7 @@ export function ChatPage({
                 {historyOpen ? (
                   <div
                     className={cn(
-                      "absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(520px,72dvh)] w-[calc(100vw-1.5rem)] max-w-[22rem] overflow-hidden rounded-xl border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur lg:right-0 lg:max-h-none lg:w-[320px] lg:max-w-[calc(100vw-2rem)] lg:rounded-lg",
+                      "chat-history-menu absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(520px,72dvh)] w-[calc(100vw-1.5rem)] max-w-[22rem] overflow-hidden rounded-xl border border-border/90 bg-popover/95 p-2 shadow-2xl backdrop-blur lg:right-0 lg:max-h-none lg:w-[320px] lg:max-w-[calc(100vw-2rem)] lg:rounded-lg",
                       embedded ? "right-[-2.75rem]" : "right-[-3.25rem] sm:right-[-3.5rem]",
                     )}
                   >
@@ -532,15 +568,17 @@ export function ChatPage({
               >
                 {embedded && expanded ? <Minimize2 className="size-4" /> : <Maximize2 className={embedded ? "size-4" : "size-5"} />}
               </Button>
+              {onClose ? (
+                <Button aria-label={getMessages(language).shell.closeMobileChatLabel} className="size-11 shrink-0 rounded-full" onClick={onClose} size="icon" title={getMessages(language).shell.closeMobileChatLabel} type="button" variant="ghost">
+                  <X className="size-5" />
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>
 
         <div
-          className={cn(
-            "min-h-0 flex-1 overflow-y-auto px-3 pt-4 sm:px-4 sm:pt-5 lg:pb-3",
-            embedded ? "pb-4 sm:pb-4" : mobileNavVisible ? "pb-20 sm:pb-24" : "pb-14 sm:pb-16",
-          )}
+          className="chat-messages min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-4 sm:px-4 sm:pt-5"
           onScroll={handleChatScroll}
           ref={chatScrollRef}
         >
@@ -632,70 +670,66 @@ export function ChatPage({
                 </div>
               </div>
             ))}
-            <div ref={endRef} />
           </div>
-        </div>
 
-        {inputs.length > 0 ? (
-          <div className="shrink-0 border-t border-border/50 px-3 py-2 sm:px-4">
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <p className="text-xs font-medium text-muted-foreground">{chatCopy.inputList} · {inputs.length}</p>
-              {!isSending && hasPendingQueue ? (
-                <Button className="h-7 px-2 text-xs" disabled={isInputBusy || isActiveConversationLoading} onClick={handleResumeInputQueue} type="button" variant="outline">
-                  {isInputBusy ? <Loader2 className="size-3 animate-spin" /> : null}{chatCopy.inputResume}
-                </Button>
-              ) : null}
-            </div>
-            {inputQueuePaused && hasPendingQueue ? <p className="mb-1.5 text-[11px] text-muted-foreground">{chatCopy.inputPaused}</p> : null}
-            <ul aria-label={chatCopy.inputList} aria-live="polite" className="max-h-36 space-y-1.5 overflow-y-auto">
-              {inputs.map((input) => (
-                <li className="flex items-start gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs" key={input.id}>
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-                      <span>{input.mode === "steer" ? chatCopy.inputSteer : chatCopy.inputQueue}</span>
-                      <span className={cn(input.status === "failed" && "text-destructive")}>
-                        {input.status === "pending" ? input.mode === "steer" ? chatCopy.inputPendingSteer : chatCopy.inputPendingQueue
-                          : input.status === "running" ? chatCopy.inputRunning : input.status === "applied" ? chatCopy.inputApplied : chatCopy.inputFailed}
-                      </span>
+          {inputs.length > 0 ? (
+            <div className="shrink-0 border-t border-border/50 px-3 py-2 sm:px-4">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-muted-foreground">{chatCopy.inputList} · {inputs.length}</p>
+                {!isSending && hasPendingQueue ? (
+                  <Button className="h-7 px-2 text-xs" disabled={isInputBusy || isActiveConversationLoading} onClick={handleResumeInputQueue} type="button" variant="outline">
+                    {isInputBusy ? <Loader2 className="size-3 animate-spin" /> : null}{chatCopy.inputResume}
+                  </Button>
+                ) : null}
+              </div>
+              {inputQueuePaused && hasPendingQueue ? <p className="mb-1.5 text-[11px] text-muted-foreground">{chatCopy.inputPaused}</p> : null}
+              <ul aria-label={chatCopy.inputList} aria-live="polite" className="max-h-36 space-y-1.5 overflow-y-auto">
+                {inputs.map((input) => (
+                  <li className="flex items-start gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs" key={input.id}>
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-0.5 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                        <span>{input.mode === "steer" ? chatCopy.inputSteer : chatCopy.inputQueue}</span>
+                        <span className={cn(input.status === "failed" && "text-destructive")}>
+                          {input.status === "pending" ? input.mode === "steer" ? chatCopy.inputPendingSteer : chatCopy.inputPendingQueue
+                            : input.status === "running" ? chatCopy.inputRunning : input.status === "applied" ? chatCopy.inputApplied : chatCopy.inputFailed}
+                        </span>
+                      </div>
+                      <p className="line-clamp-2 whitespace-pre-wrap break-words" title={input.message}>{input.message}</p>
+                      {input.error ? <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-destructive" title={input.error}>{input.error}</p> : null}
                     </div>
-                    <p className="line-clamp-2 whitespace-pre-wrap break-words" title={input.message}>{input.message}</p>
-                    {input.error ? <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-destructive" title={input.error}>{input.error}</p> : null}
-                  </div>
-                  {input.status === "pending" || input.status === "failed" ? (
-                    <Button aria-label={chatCopy.inputRemove} className="size-7 shrink-0" disabled={isInputBusy} onClick={() => handleCancelInput(input)} size="icon" title={chatCopy.inputRemove} type="button" variant="ghost"><X className="size-3.5" /></Button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        {renderComposer("desktop")}
-      </section>
-      {!embedded && mobileComposerOpen ? (
-        <div className="fixed inset-0 z-[1000] lg:hidden">
-          <button
-            aria-label={closeComposerLabel}
-            className="absolute inset-0 bg-background/35 backdrop-blur-[1px]"
-            onClick={closeMobileComposer}
-            type="button"
-          />
-          {renderComposer("mobile")}
+                    {input.status === "pending" || input.status === "failed" ? (
+                      <Button aria-label={chatCopy.inputRemove} className="size-7 shrink-0" disabled={isInputBusy} onClick={() => handleCancelInput(input)} size="icon" title={chatCopy.inputRemove} type="button" variant="ghost"><X className="size-3.5" /></Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div ref={endRef} />
         </div>
-      ) : !embedded ? (
-        <button
-          aria-label={openComposerLabel}
-          className={cn(
-            "fixed right-3 z-30 grid size-12 place-items-center rounded-full border border-primary/35 bg-primary text-primary-foreground shadow-[0_14px_34px_hsl(var(--primary)_/_0.28)] transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden",
-            mobileNavVisible ? "bottom-[calc(4.75rem+env(safe-area-inset-bottom))]" : "bottom-[calc(0.75rem+env(safe-area-inset-bottom))]",
-          )}
-          onClick={() => setMobileComposerOpen(true)}
-          title={openComposerLabel}
-          type="button"
-        >
-          {isSending ? <Loader2 className="size-5 animate-spin" /> : <MessageSquareText className="size-5" />}
-          {prompt.trim() ? <span className="absolute right-1 top-1 size-2.5 rounded-full bg-secondary ring-2 ring-background" /> : null}
-        </button>
-      ) : null}
+        {renderComposer()}
+        <div className={cn("chat-composer-launcher shrink-0 px-3 pb-2 pt-1 xl:hidden", mobileComposerOpen && "hidden")}>
+          <div className="flex items-center gap-2">
+          <button
+            aria-controls="chat-composer"
+            aria-expanded={mobileComposerOpen}
+            aria-label={openComposerLabel}
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-2xl border border-border/80 bg-card px-3 text-left text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={openMobileComposer}
+            ref={composerTriggerRef}
+            type="button"
+          >
+            {isSending ? <Loader2 className="size-4 shrink-0 animate-spin" /> : <MessageSquareText className="size-4 shrink-0" />}
+            <span className="min-w-0 flex-1 truncate">{prompt.trim() || uiCopy.promptPlaceholder}</span>
+            {prompt.trim() ? <span className="text-xs text-primary">{composerCopy.draft}</span> : null}
+          </button>
+          {isSending ? (
+            <Button className="h-11 shrink-0 rounded-2xl" onClick={handleStopStreaming} type="button" variant="destructive"><Square className="size-3 fill-current" />{chatCopy.stop}</Button>
+          ) : null}
+          </div>
+          {inputError ? <p className="mt-1 text-xs text-destructive" role="alert">{inputError}</p> : null}
+        </div>
+      </section>
     </div>
   );
 }
