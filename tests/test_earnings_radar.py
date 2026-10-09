@@ -123,6 +123,7 @@ def test_calendar_uses_sdk_value_type_language_independent_data_and_deduplicates
         symbol="AAPL.US",
         date="2026.10.09",
         date_type="Before Market Open",
+        financial_market_time="",
         counter_name="Apple",
         content="Q3 results",
         currency="USD",
@@ -132,7 +133,7 @@ def test_calendar_uses_sdk_value_type_language_independent_data_and_deduplicates
         ],
     )
     ctx = Mock()
-    ctx.finance_calendar.return_value = NS(list=[NS(date="2026-10-09", infos=[info, info])])
+    ctx.pages.return_value = [NS(groups=[NS(date="2026-10-09", infos=[info, info])])]
     events, names, issues = EarningsRadarService._calendar(
         ctx, ["AAPL.US"], date(2026, 10, 1), date(2026, 10, 10), date(2026, 10, 9)
     )
@@ -142,7 +143,7 @@ def test_calendar_uses_sdk_value_type_language_independent_data_and_deduplicates
     assert events["AAPL.US"][0].eps_estimate == "1.25"
     assert names["AAPL.US"] == "Apple"
     assert issues == []
-    ctx.finance_calendar.side_effect = RuntimeError("private token must not be exposed")
+    ctx.pages.side_effect = RuntimeError("private token must not be exposed")
     _, _, issues = EarningsRadarService._calendar(
         ctx, ["AAPL.US"], date(2026, 8, 1), date(2026, 10, 10), date(2026, 10, 9)
     )
@@ -221,7 +222,8 @@ def test_scan_reuses_contexts_with_effective_settings_and_eastern_date(monkeypat
 
     monkeypatch.setattr(module, "datetime", Clock)
     context = Mock()
-    context.finance_calendar.return_value = NS(list=[])
+    context.pages.return_value = [NS(groups=[])]
+    monkeypatch.setattr(module, "EarningsCalendarClient", lambda *args: context)
     get_context = Mock(return_value=context)
     monkeypatch.setattr(module, "get_cached_context", get_context)
     market = Mock()
@@ -329,7 +331,7 @@ def test_calendar_recognizes_longbridge_session_codes_and_localized_labels(
     info.financial_market_time = session
     info.date_type = label
     ctx = Mock()
-    ctx.finance_calendar.return_value = NS(list=[NS(date=info.date, infos=[info])])
+    ctx.pages.return_value = [NS(groups=[NS(date=info.date, infos=[info])])]
     events, _, issues = EarningsRadarService._calendar(
         ctx, ["AAPL.US"], date(2026, 10, 8), date(2026, 10, 8), date(2026, 10, 9)
     )
@@ -342,15 +344,15 @@ def test_calendar_failure_does_not_skip_other_window(failed_window):
     today = date(2026, 10, 9)
     calls = []
 
-    def finance_calendar(category, start, end, market):
-        calls.append((date.fromisoformat(start), date.fromisoformat(end)))
-        history = date.fromisoformat(end) < today
+    def calendar_pages(start, end):
+        calls.append((start, end))
+        history = end < today
         if history == (failed_window == "history"):
             raise RuntimeError("private upstream error")
         info = calendar_info("2026-10-08" if history else "2026-10-12")
-        return NS(list=[NS(date=info.date, infos=[info])])
+        return [NS(groups=[NS(date=info.date, infos=[info])])]
 
-    ctx = NS(finance_calendar=finance_calendar)
+    ctx = NS(pages=calendar_pages)
     events, _, issues = EarningsRadarService._calendar(
         ctx, ["AAPL.US"], date(2023, 10, 9), date(2027, 1, 7), today
     )
@@ -376,12 +378,12 @@ def expired_token():
 
 def test_calendar_expired_token_stops_immediately():
     ctx = Mock()
-    ctx.finance_calendar.side_effect = expired_token()
+    ctx.pages.side_effect = expired_token()
     with pytest.raises(LongbridgeTokenExpiredError, match="Longbridge token expired"):
         EarningsRadarService._calendar(
             ctx, ["AAPL.US"], date(2023, 10, 9), date(2026, 11, 30), date(2026, 10, 9)
         )
-    assert ctx.finance_calendar.call_count == 1
+    assert ctx.pages.call_count == 1
 
 
 @pytest.mark.parametrize("stage", ["context", "quote", "history", "expiry", "chain", "option"])
@@ -397,15 +399,16 @@ def test_scan_propagates_expired_tokens_instead_of_returning_empty_cards(
 
     monkeypatch.setattr(module, "datetime", Clock)
     ctx = Mock()
-    ctx.finance_calendar.return_value = NS(
-        list=[NS(date="2026-10-09", infos=[calendar_info("2026-10-12")])]
-    )
+    ctx.pages.return_value = [
+        NS(groups=[NS(date="2026-10-09", infos=[calendar_info("2026-10-12")])])
+    ]
     ctx.quote.return_value = [NS(symbol="AAPL.US", last_done=Decimal("100"), timestamp=None)]
     ctx.history_candlesticks_by_date.return_value = []
     ctx.option_chain_expiry_date_list.return_value = [date(2026, 10, 16)]
     ctx.option_chain_info_by_date.return_value = [
         NS(price=Decimal("100"), standard=True, call_symbol="C", put_symbol="P")
     ]
+    monkeypatch.setattr(module, "EarningsCalendarClient", lambda *args: ctx)
     get_context = Mock(return_value=ctx)
     monkeypatch.setattr(module, "get_cached_context", get_context)
     market = MarketService(str(tmp_path))
@@ -436,9 +439,14 @@ def test_scan_from_sdk_fields_preserves_history_with_or_without_upcoming_earning
 
     monkeypatch.setattr(module, "datetime", Clock)
     ctx = Mock()
-    ctx.finance_calendar.return_value = NS(
-        list=[NS(date=day, infos=[calendar_info(day)]) for day in ("2026-10-05", upcoming_day)]
-    )
+    ctx.pages.return_value = [
+        NS(
+            groups=[
+                NS(date=day, infos=[calendar_info(day)]) for day in ("2026-10-05", upcoming_day)
+            ]
+        )
+    ]
+    monkeypatch.setattr(module, "EarningsCalendarClient", lambda *args: ctx)
     monkeypatch.setattr(module, "get_cached_context", lambda *args, **kwargs: ctx)
     ctx.quote.return_value = [NS(symbol="AAPL.US", last_done=Decimal("100"), timestamp=Clock.now())]
     ctx.history_candlesticks_by_date.return_value = [

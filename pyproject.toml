@@ -16,7 +16,7 @@ dependencies = [
     "SQLAlchemy>=2.0",
     "croniter>=2.0.0",
     "mcp>=1.0.0",
-    "longbridge==4.1.0",
+    "longbridge==5.2.0",
 ]
 
 [project.optional-dependencies]
@@ -56,6 +56,7 @@ files = [
     "app/schemas/",
     "app/core/serialization.py",
     "app/core/earnings/calculations.py",
+    "app/core/earnings/calendar.py",
     "app/core/html_text.py",
     "app/core/market/errors.py",
     "app/core/memory/search_filters.py",

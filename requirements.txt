@@ -10,4 +10,4 @@ cryptography>=42.0.0
 SQLAlchemy>=2.0
 croniter>=2.0.0
 mcp>=1.0.0
-longbridge==4.1.0
+longbridge==5.2.0

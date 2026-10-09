@@ -1,5 +1,7 @@
 # Longbridge Developers Documentation
 
+项目当前固定使用 Python SDK **5.2.0**（2026-10-09 核对 [PyPI](https://pypi.org/project/longbridge/5.2.0/) 与[官方发布](https://github.com/longbridge/openapi/releases/tag/v5.2.0)）。`pyproject.toml`、`requirements.txt` 和 `uv.lock` 保持一致，使用 `uv sync --locked` 同步后重启后端。此版本的财报日历支持 `count`、`offset`、`next` 参数；但实测 Python 安装包的 `CalendarEventsResponse` 未暴露类型说明中列出的 `next_date`。财报雷达因此通过同一 SDK 的 `HttpClient` 获取原始响应游标并遍历分页，不能仅按日期分段后读取第一页。
+
 Longbridge Developers provides programmatic quote trading interfaces for investors with research and development capabilities and assists them to build trading or quote strategy analysis tools based on their own investment strategies. The functions fall into the following categories:
 
 - **Trading** - Create, amend, cancel orders, query today's/past orders and transaction details, etc.
@@ -334,14 +336,14 @@ openapi-trade.longbridge.com
   `GET /api/v1/config/longbridge/oauth/status`；取消/断开：
   `DELETE /api/v1/config/longbridge/oauth/disconnect`。均要求登录及 `config:read`，
   系统配置写入额外遵循管理员权限。Token、授权码和原始 SDK 错误不会返回前端。
-- SDK 4.1 回调固定使用 `http://localhost:<随机端口>/callback`，仅监听后端本机。
+- SDK 5.2 回调固定使用 `http://localhost:<端口>/callback`，仅监听后端本机；应用注册客户端时选择可用端口并通过 `callback_port` 传入。
   浏览器与后端需运行在同一台电脑；远程部署需自行转发显示的回调端口，不能直接
   使用远程浏览器本地地址完成授权。授权等待最多 5 分钟，最终以配置页状态为准。
   SSH 部署可在授权页显示端口后使用
   `ssh -N -L <回调端口>:127.0.0.1:<回调端口> user@server`，保持转发后再打开授权
   链接；两端端口需相同，且应在授权超时前完成。
 - SDK 自动刷新并将 Token 缓存在
-  `~/.longbridge/openapi/tokens/<应用独立注册的 client_id>`。Python 4.1 未开放
+  `~/.longbridge/openapi/tokens/<应用独立注册的 client_id>`。Python 5.2 未开放
   自定义 TokenStorage，这是应用 SQLite 加密配置以外的 **SDK 文件缓存例外**。
   应用创建目录为 `0700`、Token 文件为 `0600`，验证客户端绑定并拒绝符号链接；
   SDK 覆写刷新时保留权限。SQLite 仅保存认证方式和客户端 ID，不保存 Token。
@@ -351,11 +353,12 @@ openapi-trade.longbridge.com
   保留，可手工切回。此操作不等同于长桥服务端撤销授权，如需撤销，应在长桥账户
   中管理应用授权。
   取消仍在等待的授权仅清理本次尝试，保留之前有效的 API Key / OAuth 连接。
-- 已核对 SDK v4.1.0 的 state 校验与 300 秒超时实现；该版本原生浏览器流程未
+- 已核对 SDK v5.2.0 的 state 校验与 300 秒超时实现；该版本原生浏览器流程未
   实现 PKCE。原生 Future 直接取消会遗留监听器，因此应用通过独占的本机回调
   发送拒绝信号，让 SDK 正常结束并清理监听器。
 
 依据：[官方认证文档](https://open.longbridge.com/zh-CN/docs/getting-started#认证方式)、
-[v4.1.0 OAuthBuilder](https://github.com/longbridge/openapi/blob/v4.1.0/rust/crates/oauth/src/builder.rs)、
-[v4.1.0 Token 缓存](https://github.com/longbridge/openapi/blob/v4.1.0/rust/crates/oauth/src/token.rs)、
-[v4.1.0 本机回调](https://github.com/longbridge/openapi/blob/v4.1.0/rust/crates/oauth/src/callback.rs)。
+[v5.2.0 授权与 state 校验](https://github.com/longbridge/openapi/blob/v5.2.0/rust/crates/oauth/src/client.rs)、
+[v5.2.0 OAuthBuilder](https://github.com/longbridge/openapi/blob/v5.2.0/rust/crates/oauth/src/builder.rs)、
+[v5.2.0 Token 缓存](https://github.com/longbridge/openapi/blob/v5.2.0/rust/crates/oauth/src/token.rs)、
+[v5.2.0 本机回调](https://github.com/longbridge/openapi/blob/v5.2.0/rust/crates/oauth/src/callback.rs)。

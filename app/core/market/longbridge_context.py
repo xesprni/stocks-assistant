@@ -10,12 +10,15 @@ import contextlib
 import hashlib
 import os
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.constants.longbridge import (
     _CONTEXT_CLASSES as _CONTEXT_CLASSES,
 )
 from app.core.market.errors import LongbridgeUnavailableError
+
+if TYPE_CHECKING:
+    from longbridge.openapi import HttpClient
 
 # context_type -> credential_sig (HTTP Context 附加语言) -> context_instance
 _context_cache: dict[str, dict[str, Any]] = {}
@@ -116,6 +119,39 @@ def credential_signature(settings: Any = None) -> str:
         )
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def create_http_client(settings: Any = None) -> HttpClient:
+    """复用应用认证方式访问 SDK 未完整暴露的 HTTP 字段，不创建行情连接。"""
+    try:
+        from longbridge.openapi import HttpClient
+    except ImportError as exc:
+        raise LongbridgeUnavailableError("Longbridge SDK is not installed") from exc
+
+    from app.config import get_settings
+
+    settings = settings or get_settings()
+    if getattr(settings, "longbridge_auth_mode", "apikey") == "oauth":
+        from app.core.market.longbridge_oauth import get_oauth
+
+        return HttpClient.from_oauth(
+            get_oauth(settings), http_url=settings.longbridge_http_url or None
+        )
+    if (
+        settings.longbridge_app_key
+        and settings.longbridge_app_secret
+        and settings.longbridge_access_token
+    ):
+        return HttpClient.from_apikey(
+            settings.longbridge_app_key,
+            settings.longbridge_app_secret,
+            settings.longbridge_access_token,
+            http_url=settings.longbridge_http_url or None,
+        )
+    try:
+        return HttpClient.from_apikey_env()
+    except Exception as exc:
+        raise LongbridgeUnavailableError("Longbridge credentials are not configured") from exc
 
 
 def get_cached_context(context_type: str, settings: Any = None):

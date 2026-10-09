@@ -32,7 +32,7 @@ HTML 是含内嵌样式和历史图的独立暗色报告，可离线打开。导
 
 固定响应由 `app/schemas/earnings.py` 定义。日期采用 `America/New_York`，抓取时间为 UTC；金额、行权价和跨式成本保留字符串精度，百分比为数值。凭据来自当前用户的有效配置，不读取其他用户的清单。
 
-SDK 4.1 的 `CalendarContext.finance_calendar(CalendarCategory.Report, start, end, "US")` 不支持 symbol 参数，因此按 30 天分段获取市场日历，再为本次清单筛选，共用全部分段请求。先读取未来窗口，再从最近的历史回溯。`CalendarDataKv.value_type` 用于识别预期/实际数据，不依赖中文事件标题；披露时段优先读取 `financial_market_time` 的 `before` / `after`，无法识别时再使用 `date_type` 的 `Pre` / `Post`、盘前/盘后等标签，`during` 和未知值仍排除。字段格式已对照[长桥公开财报日历](https://longbridge.com/calendar/report)核验。内容 Context 按凭据和语言隔离，报价连接复用既有 QuoteContext。股价和前复权日线复用 MarketService。
+SDK 5.2 的 `CalendarContext.finance_calendar` 仍不支持 symbol 参数，且 Python 安装包的响应对象未暴露 `next_date`（虽已列在 `.pyi`）。财报雷达通过 SDK `HttpClient` 查询同一 `/v1/quote/finance_calendar` 接口，保留原始游标；按 30 天分段，每页 `count=100`、`next=later`，沿 `next_date` 读取完整分页，再为本次清单筛选。同日续页通过 `offset` 前进，所有标的共用分页结果。旧实现未读取后续页，导致全市场首批事件之外的财报遗漏。先读取未来窗口，再从最近的历史回溯。重复/倒退游标、数据截断或每段超过 100 页时标记缺口；后续页失败仍保留之前取得的事件。日期兼容 `Today 2026.10.09 (EST)` 等本地化标签。HTTP `data_kv[].type` 在边界规范为 `value_type`，用于识别预期/实际数据，不依赖中文事件标题；披露时段优先读取 `financial_market_time` 的 `before` / `after`，无法识别时再使用 `date_type` 的 `Pre` / `Post`、盘前/盘后等标签，`during` 和未知值仍排除。字段格式已对照[长桥公开财报日历](https://longbridge.com/calendar/report)核验。HTTP 请求复用当前用户的 API Key 或 OAuth 句柄，并显式传入内容语言；与[官方 MCP 分页实现](https://github.com/longportapp/longport-mcp/blob/main/src/tools/calendar.rs)一致，每页创建 HTTP 客户端以规避服务端关闭连接后的复用错误。报价连接复用既有 QuoteContext。股价和前复权日线复用 MarketService。
 
 历史、未来日历分别计算连续失败次数，各自连续 3 段失败后停止该窗口并标记缺口；历史请求失败不会阻止未来财报查询，反之亦然。单板块失败保留其余数据并返回问题代码；无权限、停牌、无期权或数据不足不会被补为零。全部标的均无可用数据时返回脱敏的 503，前端显示错误和设置入口，不再展示成功扫描的空卡片。
 
@@ -40,7 +40,8 @@ SDK 4.1 的 `CalendarContext.finance_calendar(CalendarCategory.Report, start, en
 
 ## 验证
 
-- 后端计算、SDK 替身、权限与用户配置：`uv run pytest tests/test_earnings_radar.py tests/test_longbridge_context.py`。
+- 回归覆盖全市场第一页不含目标股票、同日续页、异常游标、截断和后续页失败，以及从后续页计算最近 12 次历史反应。
+- 后端计算、SDK 替身、权限与用户配置：`uv run pytest tests/test_earnings_radar.py tests/test_earnings_calendar.py tests/test_longbridge_context.py`。
 - 完整质量检查：`bash scripts/check_backend.sh`。
 - 前端请求竞态、取消、错误重试与导出防注入：`cd frontend && npm test && npm run build`。
 - 页面测试使用独立临时服务中的演示数据，检查导入、扫描、缺失/错误状态、HTML 下载与手机布局；真实账户的行情权限及供应商返回数据需在部署环境中验证。

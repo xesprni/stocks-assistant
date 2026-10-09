@@ -14,6 +14,7 @@ from app.constants.earnings import (
     RADAR_BEFORE_LABELS,
     RADAR_CALENDAR_CHUNK_DAYS,
     RADAR_CALENDAR_FAILURE_LIMIT,
+    RADAR_EVENT_DATE_PATTERN,
     RADAR_EXPIRY_PROBES,
     RADAR_HISTORY_DAYS,
     RADAR_HISTORY_SAMPLES,
@@ -29,12 +30,17 @@ from app.core.earnings.calculations import (
     ratio_valuation,
     realized_moves,
 )
+from app.core.earnings.calendar import EarningsCalendarClient
 from app.core.market.errors import (
     LongbridgeUnavailableError,
     longbridge_error_code,
     raise_if_token_expired,
 )
-from app.core.market.longbridge_context import get_cached_context
+from app.core.market.longbridge_context import (
+    content_language,
+    create_http_client,
+    get_cached_context,
+)
 from app.core.market.service import MarketService
 from app.schemas.earnings import (
     EarningsEvent,
@@ -49,8 +55,11 @@ logger = logging.getLogger("stocks-assistant.earnings")
 
 
 def _event_date(value: str) -> date | None:
+    match = RADAR_EVENT_DATE_PATTERN.search(value)
+    if match is None:
+        return None
     try:
-        return date.fromisoformat(value.strip().replace(".", "-")[:10])
+        return date(*(int(part) for part in match.groups()))
     except ValueError:
         return None
 
@@ -92,7 +101,9 @@ class EarningsRadarService:
         end = today + timedelta(days=request.days_ahead)
         # 凭据与内容语言隔离沿用共享 Context；不创建第二条行情长连接。
         try:
-            calendar = get_cached_context("CalendarContext", settings=settings)
+            calendar = EarningsCalendarClient(
+                lambda: create_http_client(settings=settings), content_language(settings)
+            )
             quote = get_cached_context("QuoteContext", settings=settings)
         except Exception as exc:
             raise_if_token_expired(exc)
@@ -127,14 +138,12 @@ class EarningsRadarService:
 
     @staticmethod
     def _calendar(
-        ctx: Any,
+        ctx: EarningsCalendarClient,
         symbols: list[str],
         start: date,
         end: date,
         today: date,
     ) -> tuple[dict[str, list[EarningsEvent]], dict[str, str], list[str]]:
-        from longbridge.openapi import CalendarCategory
-
         events: dict[str, list[EarningsEvent]] = {symbol: [] for symbol in symbols}
         names: dict[str, str] = {}
         issues: list[str] = []
@@ -159,43 +168,41 @@ class EarningsRadarService:
             if window_end < today:
                 ranges.reverse()
             consecutive_failures = 0
-            # SDK 4.1 仅支持按市场筛选，所有标的共用分段请求。
+            # 所有标的共用每段完整分页，不能将全市场第一页当作整个月的数据。
             for cursor, chunk_end in ranges:
                 try:
-                    response = ctx.finance_calendar(
-                        CalendarCategory.Report, cursor.isoformat(), chunk_end.isoformat(), "US"
-                    )
-                    for group in response.list:
-                        for info in group.infos:
-                            symbol = info.symbol.upper()
-                            if symbol not in events:
-                                continue
-                            event_date = _event_date(info.date) or _event_date(group.date)
-                            if event_date is None or not cursor <= event_date <= chunk_end:
-                                continue
-                            values = {item.value_type: item.value for item in info.data_kv}
-                            names[symbol] = info.counter_name
-                            # SDK 提供独立披露时段字段；日期标签为空时仍可识别盘前/盘后。
-                            timing = _timing(getattr(info, "financial_market_time", ""))
-                            if timing == "unknown":
-                                timing = _timing(info.date_type)
-                            event = EarningsEvent(
-                                date=event_date,
-                                timing=timing,
-                                period=info.content,
-                                currency=info.currency,
-                                eps_estimate=values.get("estimate_eps"),
-                                revenue_estimate=values.get("estimate_revenue"),
-                                reported=any(
-                                    _present(values.get(key, ""))
-                                    for key in ("actual_eps", "actual_revenue")
-                                ),
-                            )
-                            if not any(
-                                (e.date, e.period) == (event.date, event.period)
-                                for e in events[symbol]
-                            ):
-                                events[symbol].append(event)
+                    for response in ctx.pages(cursor, chunk_end):
+                        for group in response.groups:
+                            for info in group.infos:
+                                symbol = info.symbol.upper()
+                                if symbol not in events:
+                                    continue
+                                event_date = _event_date(info.date) or _event_date(group.date)
+                                if event_date is None or not cursor <= event_date <= chunk_end:
+                                    continue
+                                values = {item.value_type: item.value for item in info.data_kv}
+                                names[symbol] = info.counter_name
+                                # SDK 提供独立披露时段字段；日期标签为空时仍可识别盘前/盘后。
+                                timing = _timing(info.financial_market_time)
+                                if timing == "unknown":
+                                    timing = _timing(info.date_type)
+                                event = EarningsEvent(
+                                    date=event_date,
+                                    timing=timing,
+                                    period=info.content,
+                                    currency=info.currency,
+                                    eps_estimate=values.get("estimate_eps"),
+                                    revenue_estimate=values.get("estimate_revenue"),
+                                    reported=any(
+                                        _present(values.get(key, ""))
+                                        for key in ("actual_eps", "actual_revenue")
+                                    ),
+                                )
+                                if not any(
+                                    (e.date, e.period) == (event.date, event.period)
+                                    for e in events[symbol]
+                                ):
+                                    events[symbol].append(event)
                     consecutive_failures = 0
                 except Exception as exc:
                     raise_if_token_expired(exc)

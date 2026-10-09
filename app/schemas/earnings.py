@@ -3,7 +3,7 @@
 from datetime import date as Date
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 
 from app.constants.earnings import (
     DEFAULT_RADAR_DAYS,
@@ -18,6 +18,50 @@ from app.schemas.base import AppModel
 
 EarningsTiming = Literal["before_open", "after_close", "unknown"]
 RadarValuation = Literal["high", "above", "normal", "below", "unavailable"]
+
+
+class EarningsCalendarValue(AppModel):
+    value_type: str = Field(validation_alias=AliasChoices("value_type", "type"))
+    value: str
+
+
+class EarningsCalendarInfo(AppModel):
+    """在 SDK 适配边界解析日历事件，不透传第三方扩展字段。"""
+
+    symbol: str = Field(validation_alias=AliasChoices("symbol", "counter_id"))
+    id: str = ""
+    date: str = ""
+    date_type: str = ""
+    financial_market_time: str = ""
+    counter_name: str = ""
+    content: str = ""
+    currency: str = ""
+    data_kv: list[EarningsCalendarValue] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        # 原始 HTTP 还可能返回旧式 ST/US/AAPL，SDK 的 symbol 字段已转换。
+        parts = value.strip().upper().split("/")
+        if len(parts) == 3:
+            return f"{parts[2]}.{parts[1]}"
+        return value.strip().upper()
+
+    @field_validator("date_type", "financial_market_time", "currency", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        return "" if value is None else value
+
+
+class EarningsCalendarGroup(AppModel):
+    date: str
+    count: int = 0
+    infos: list[EarningsCalendarInfo]
+
+
+class EarningsCalendarPage(AppModel):
+    groups: list[EarningsCalendarGroup] = Field(validation_alias="list")
+    next_date: str | None = None
 
 
 class EarningsRadarRequest(AppModel):

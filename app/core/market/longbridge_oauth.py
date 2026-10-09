@@ -1,6 +1,6 @@
 """Longbridge 原生 OAuth：按配置作用域注册客户端并管理授权生命周期。
 
-Python SDK 4.1 未暴露自定义 TokenStorage，Token 由 SDK 在用户目录持久化。
+Python SDK 5.2 未暴露自定义 TokenStorage，Token 由 SDK 在用户目录持久化。
 独立注册的 client_id 隔离账户，目录 0700 / 文件 0600 防止其他系统用户读取。
 不接受外部 client_id，避免复用本机其他应用或其他用户的 SDK Token。
 """
@@ -147,7 +147,7 @@ def _available_port() -> int:
 async def _abort_callback(callback_url: str | None) -> None:
     if not callback_url:
         return
-    # v4.1 直接 cancel Future 会遗留监听器；回送拒绝信号让 SDK 执行自身清理。
+    # v5.2 直接 cancel Future 仍会遗留监听器；回送拒绝信号让 SDK 执行自身清理。
     async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
         for attempt in range(3):
             try:
