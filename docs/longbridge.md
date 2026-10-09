@@ -2,6 +2,8 @@
 
 项目当前固定使用 Python SDK **5.2.0**（2026-10-09 核对 [PyPI](https://pypi.org/project/longbridge/5.2.0/) 与[官方发布](https://github.com/longbridge/openapi/releases/tag/v5.2.0)）。`pyproject.toml`、`requirements.txt` 和 `uv.lock` 保持一致，使用 `uv sync --locked` 同步后重启后端。此版本的财报日历支持 `count`、`offset`、`next` 参数；但实测 Python 安装包的 `CalendarEventsResponse` 未暴露类型说明中列出的 `next_date`。财报雷达因此通过同一 SDK 的 `HttpClient` 获取原始响应游标并遍历分页，不能仅按日期分段后读取第一页。日内分页和日期游标需要分别遍历，`count` 不能当作过滤后记录数量。另一个破坏性变更是期权链改为单合约列表：用 `strike_price`、`direction`、`standard_attr` 配对，不再读取旧版的 `price`、`call_symbol`、`put_symbol`、`standard`。
 
+财报雷达使用底层日历接口的 `symbols[]` 按所选股票查询，每批最多 10 个，同时请求 `report` 与 `financial`，与官方 CLI 保持一致。日内分页的合并结果可能重复，应依靠 offset/count 及请求上限终止，不按重复事件提前截断。SDK 5.2 的旧期权链地址返回 `404000` 时，回退到[官方 MCP 查询地址](https://github.com/longbridge/longbridge-mcp/blob/main/src/tools/quote.rs) `POST /quote/options/strikes`；其他错误保持传播，期权报价仍使用共享 QuoteContext。
+
 Longbridge Developers provides programmatic quote trading interfaces for investors with research and development capabilities and assists them to build trading or quote strategy analysis tools based on their own investment strategies. The functions fall into the following categories:
 
 - **Trading** - Create, amend, cancel orders, query today's/past orders and transaction details, etc.

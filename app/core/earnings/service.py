@@ -31,7 +31,7 @@ from app.core.earnings.calculations import (
     realized_moves,
 )
 from app.core.earnings.calendar import EarningsCalendarClient
-from app.core.earnings.options import pair_option_contracts
+from app.core.earnings.options import fetch_option_strikes
 from app.core.market.errors import (
     LongbridgeUnavailableError,
     longbridge_error_code,
@@ -103,7 +103,9 @@ class EarningsRadarService:
         # 凭据与内容语言隔离沿用共享 Context；不创建第二条行情长连接。
         try:
             calendar = EarningsCalendarClient(
-                lambda: create_http_client(settings=settings), content_language(settings)
+                lambda: create_http_client(settings=settings),
+                content_language(settings),
+                request.symbols,
             )
             quote = get_cached_context("QuoteContext", settings=settings)
         except Exception as exc:
@@ -169,7 +171,7 @@ class EarningsRadarService:
             if window_end < today:
                 ranges.reverse()
             consecutive_failures = 0
-            # 所有标的共用每段完整分页，不能将全市场第一页当作整个月的数据。
+            # 标的分批过滤后共用每段分页；仍读取完整游标，不能只取第一页。
             for cursor, chunk_end in ranges:
                 try:
                     for response in ctx.pages(cursor, chunk_end):
@@ -296,7 +298,9 @@ class EarningsRadarService:
         spot = positive_decimal(item.spot)
         if item.next_event and spot is not None:
             try:
-                item.option = self._options(quote, symbol, spot, item.next_event.date, today)
+                item.option = self._options(
+                    quote, symbol, spot, item.next_event.date, today, settings=settings
+                )
             except Exception as exc:
                 raise_if_token_expired(exc)
                 item.option = None
@@ -321,6 +325,7 @@ class EarningsRadarService:
         spot: Decimal,
         earnings_date: date,
         today: date,
+        settings: Any = None,
     ) -> EarningsOptionPricing | None:
         # 严格使用财报日之后的到期日，避免周五盘后事件误选当天已到期合约。
         expiries = sorted(
@@ -328,9 +333,7 @@ class EarningsRadarService:
         )[:RADAR_EXPIRY_PROBES]
         for expiry in expiries:
             try:
-                chain = pair_option_contracts(
-                    ctx.option_chain_info_by_date(symbol, expiry, standard_only=True), expiry
-                )
+                chain = fetch_option_strikes(ctx, symbol, expiry, settings=settings)
                 if not chain:
                     continue
                 # 固定选最近的标准行权价；ATM 缺价就顺延，不拿远价外合约冒充 ATM。

@@ -1,6 +1,7 @@
 """财报雷达的请求、数据适配和固定响应契约。"""
 
 from datetime import date as Date
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import AliasChoices, Field, field_validator
@@ -10,6 +11,7 @@ from app.constants.earnings import (
     MAX_RADAR_DAYS,
     MAX_RADAR_SYMBOL_LENGTH,
     MAX_RADAR_SYMBOLS,
+    RADAR_OPTION_DATE_PATTERN,
     RADAR_SOURCE,
     RADAR_SYMBOL_PATTERN,
     RADAR_TIMEZONE,
@@ -62,6 +64,32 @@ class EarningsCalendarGroup(AppModel):
 class EarningsCalendarPage(AppModel):
     groups: list[EarningsCalendarGroup] = Field(validation_alias=AliasChoices("groups", "list"))
     next_date: str | None = None
+
+
+class EarningsOptionContract(AppModel):
+    """在期权链 HTTP 边界解析单合约；未知方向及调整合约留给配对层过滤。"""
+
+    symbol: str
+    expiry_date: Date
+    strike_price: Decimal
+    direction: str
+    standard_attr: str
+
+    @field_validator("expiry_date", mode="before")
+    @classmethod
+    def parse_expiry_date(cls, value: object) -> Date:
+        if isinstance(value, Date):
+            return value
+        # 上游协议使用 YYYYMMDD，不能让 Pydantic 把数字字符串当作 Unix 时间戳。
+        if not isinstance(value, str) or not RADAR_OPTION_DATE_PATTERN.fullmatch(value):
+            raise ValueError("Option expiry_date must use YYYYMMDD")
+        return Date.fromisoformat(value)
+
+
+class EarningsOptionChain(AppModel):
+    contracts: list[EarningsOptionContract] = Field(
+        validation_alias=AliasChoices("contracts", "list")
+    )
 
 
 class EarningsRadarRequest(AppModel):

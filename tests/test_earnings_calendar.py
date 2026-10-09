@@ -10,7 +10,7 @@ import pytest
 from app.config import Settings
 from app.core.earnings.calendar import EarningsCalendarClient
 from app.core.earnings.service import EarningsRadarService, _event_date
-from app.core.market.errors import LongbridgeUnavailableError
+from app.core.market.errors import LongbridgeTokenExpiredError, LongbridgeUnavailableError
 from app.core.market.longbridge_context import create_http_client
 from app.schemas.earnings import EarningsRadarRequest
 
@@ -63,7 +63,7 @@ def test_calendar_finds_target_after_full_first_page_and_reads_inclusive_end():
         assert query["date_end"] == ["2026-10-12"]
         assert query["count"] == ["100"] and query["offset"] == ["0"]
         assert query["next"] == ["later"] and query["markets[]"] == ["US"]
-        assert query["types[]"] == ["report"]
+        assert query["types[]"] == ["report", "financial"]
         assert call.kwargs == {"headers": {"Accept-Language": "en"}}
 
 
@@ -79,6 +79,53 @@ def test_same_date_pagination_uses_offset_and_combines_group_counts(monkeypatch)
     )
     assert [info.symbol for p in pages for g in p.groups for info in g.infos] == ["A.US", "B.US"]
     assert parse_qs(urlparse(ctx.request.call_args.args[1]).query)["offset"] == ["1"]
+
+
+def test_symbol_batches_keep_filters_on_every_cursor_page():
+    ctx = Mock()
+    symbols = [f"STOCK{i}.US" for i in range(11)]
+    ctx.request.side_effect = [
+        page("2026-10-09", symbols[:10], "2026-10-12"),
+        page("2026-10-12", symbols[:10]),
+        page("2026-10-09", symbols[10:]),
+    ]
+    list(
+        EarningsCalendarClient(lambda: ctx, "en", [*symbols, symbols[0]]).pages(
+            date(2026, 10, 9), date(2026, 10, 12)
+        )
+    )
+    queries = [parse_qs(urlparse(call.args[1]).query) for call in ctx.request.call_args_list]
+    assert [q["symbols[]"] for q in queries] == [symbols[:10], symbols[:10], symbols[10:]]
+    assert [q["date"] for q in queries] == [["2026-10-09"], ["2026-10-12"], ["2026-10-09"]]
+    assert all(q["types[]"] == ["report", "financial"] for q in queries)
+
+
+def test_failed_symbol_batch_preserves_later_batch_results():
+    ctx = Mock()
+    symbols = [f"STOCK{i}.US" for i in range(10)] + ["TSM.US"]
+    ctx.request.side_effect = [RuntimeError("unavailable"), page("2026-10-09", ["TSM.US"])]
+    events, _, issues = EarningsRadarService._calendar(
+        EarningsCalendarClient(lambda: ctx, "en", symbols),
+        symbols,
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+    )
+    assert len(events["TSM.US"]) == 1
+    assert issues == ["upcoming_calendar_unavailable"]
+    assert ctx.request.call_count == 2
+
+
+def test_expired_token_stops_before_the_next_symbol_batch():
+    ctx = Mock()
+    ctx.request.side_effect = LongbridgeTokenExpiredError("expired")
+    with pytest.raises(LongbridgeTokenExpiredError):
+        list(
+            EarningsCalendarClient(lambda: ctx, "en", [f"STOCK{i}.US" for i in range(11)]).pages(
+                date(2026, 10, 9), date(2026, 10, 9)
+            )
+        )
+    assert ctx.request.call_count == 1
 
 
 @pytest.mark.parametrize("next_date", [None, "", "2026-10-11"])
@@ -189,6 +236,30 @@ def test_empty_filtered_day_tail_is_complete():
     assert ctx.request.call_count == 2
 
 
+def test_merged_day_pages_can_repeat_before_a_later_target():
+    ctx = Mock()
+    ctx.request.side_effect = [
+        page("2026-07-23", ["A.US"], "2026-07-24", count=401),
+        page("2026-07-23", ["B.US"], "2026-07-24", count=401),
+        page("2026-07-23", ["A.US", "B.US"], "2026-07-24", count=401),
+        page("2026-07-23", ["B.US"], "2026-07-24", count=401),
+        page("2026-07-23", ["TSM.US"], "2026-07-24", count=401),
+        page("2026-07-24", ["TSM.US"]),
+    ]
+    events, _, issues = EarningsRadarService._calendar(
+        EarningsCalendarClient(lambda: ctx, "en"),
+        ["TSM.US", "A.US", "B.US"],
+        date(2026, 7, 23),
+        date(2026, 7, 24),
+        date(2026, 10, 9),
+    )
+    assert issues == []
+    assert [event.date for event in events["TSM.US"]] == [date(2026, 7, 23), date(2026, 7, 24)]
+    assert len(events["A.US"]) == len(events["B.US"]) == 1
+    queries = [parse_qs(urlparse(call.args[1]).query) for call in ctx.request.call_args_list]
+    assert [q["offset"] for q in queries] == [["0"], ["100"], ["200"], ["300"], ["400"], ["0"]]
+
+
 def test_pagination_limit_does_not_silently_truncate(monkeypatch):
     monkeypatch.setattr("app.core.earnings.calendar.RADAR_CALENDAR_MAX_PAGES", 1)
     ctx = Mock()
@@ -284,6 +355,7 @@ def test_scan_collects_latest_twelve_historical_reactions_from_later_pages(monke
 
     def response(method, path, *, headers):
         query = parse_qs(urlparse(path).query)
+        assert query["symbols[]"] == ["CRDO.US"]
         start, end = (date.fromisoformat(query[key][0]) for key in ("date", "date_end"))
         targets = [day for day in [*past, future] if start <= day <= end]
         if not targets:

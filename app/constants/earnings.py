@@ -11,8 +11,11 @@ RADAR_HISTORY_SAMPLES = 12
 RADAR_CALENDAR_CHUNK_DAYS = 30
 RADAR_CALENDAR_FAILURE_LIMIT = 3
 RADAR_CALENDAR_PAGE_SIZE = 100
+RADAR_CALENDAR_SYMBOL_BATCH_SIZE = 10
 RADAR_CALENDAR_MAX_PAGES = 100
 RADAR_CALENDAR_PATH = "/v1/quote/finance_calendar"
+RADAR_OPTION_CHAIN_PATH = "/quote/options/strikes"
+RADAR_OPTION_API_NOT_FOUND_CODE = 404000
 RADAR_EXPIRY_PROBES = 4
 RADAR_MAX_SESSION_GAP_DAYS = 7
 RADAR_STALE_QUOTE_DAYS = 3
@@ -27,6 +30,7 @@ RADAR_SOURCE = "Longbridge finance_calendar + QuoteContext"
 RADAR_REFERENCE_URL = "https://longbridge.cn/zh-CN/topics/44253984"
 RADAR_SYMBOL_PATTERN = re.compile(r"[A-Z][A-Z0-9.-]*\.US\Z")
 RADAR_EVENT_DATE_PATTERN = re.compile(r"(?<!\d)(\d{4})[.-](\d{2})[.-](\d{2})(?!\d)")
+RADAR_OPTION_DATE_PATTERN = re.compile(r"[0-9]{8}\Z")
 RADAR_MISSING_VALUES = frozenset(
     {"", "-", "--", "待公布", "待公佈", "n/a", "none", "pending", "tba", "tbd"}
 )

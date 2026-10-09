@@ -32,9 +32,13 @@ HTML 是含内嵌样式和历史图的独立暗色报告，可离线打开。导
 
 固定响应由 `app/schemas/earnings.py` 定义。日期采用 `America/New_York`，抓取时间为 UTC；金额、行权价和跨式成本保留字符串精度，百分比为数值。凭据来自当前用户的有效配置，不读取其他用户的清单。
 
-SDK 5.2 的 `CalendarContext.finance_calendar` 仍不支持 symbol 参数，且 Python 安装包的响应对象未暴露 `next_date`（虽已列在 `.pyi`）。财报雷达通过 SDK `HttpClient` 查询同一 `/v1/quote/finance_calendar` 接口，保留原始游标；按 30 天分段，每页 `count=100`、`next=later`，沿 `next_date` 读取完整分页，再为本次清单筛选。当某日 `count > 100` 时，即使 `next_date` 已经跳到翌日，也先用该日和 `offset=100/200/...` 补齐日内分页。`count` 是长桥过滤/合并前的数量，不要求它等于返回的 `infos` 数量；日内末页为空也可能是正常的过滤结果。所有标的共用分页结果。旧实现未读取后续页，导致全市场首批事件之外的财报遗漏。先读取未来窗口，再从最近的历史回溯。重复/倒退游标或每段累计超过 100 个请求时标记缺口；后续页失败仍保留之前取得的事件。日期兼容 `Today 2026.10.09 (EST)` 等本地化标签。HTTP `data_kv[].type` 在边界规范为 `value_type`，用于识别预期/实际数据，不依赖中文事件标题；实际值为 `TBA`、`TBD` 等占位符时仍视为未披露，实际值 `0` 仍表示已披露。披露时段优先读取 `financial_market_time` 的 `before` / `after`，无法识别时再使用 `date_type` 的 `Pre` / `Post`、盘前/盘后等标签，`during` 和未知值仍排除。字段格式已对照[长桥公开财报日历](https://longbridge.com/calendar/report)核验。HTTP 请求复用当前用户的 API Key 或 OAuth 句柄，并显式传入内容语言；与[官方 MCP 分页实现](https://github.com/longportapp/longport-mcp/blob/main/src/tools/calendar.rs)一致，每页创建 HTTP 客户端以规避服务端关闭连接后的复用错误。报价连接复用既有 QuoteContext。股价和前复权日线复用 MarketService。
+SDK 5.2 的 `CalendarContext.finance_calendar` 没有暴露 symbol 参数，Python 响应对象也未暴露 `next_date`（虽已列在 `.pyi`）。底层 `/v1/quote/finance_calendar` 则支持 `symbols[]`：财报雷达通过 SDK `HttpClient` 按所选股票过滤，每批最多 10 个，并按[官方 CLI](https://github.com/longbridge/longbridge-terminal/blob/main/src/cli/fundamental.rs)的财报规则同时请求 `types[]=report` 和 `types[]=financial`。不再遍历三年全市场日历，避免密集月份触及分页上限。
 
-SDK 5.2 的期权链返回 `OptionChainContract` 单合约列表；查询时传入 `standard_only=True`，并按相同到期日、标准属性和行权价配对 Call/Put。最近 ATM 缺少一边时顺延到下一个到期日，不改选更远的行权价。
+日期仍按 30 天分段，每页 `count=100`、`next=later`，沿 `next_date` 继续查询。当某日 `count > 100` 时，即使日期游标已经跳到翌日，也用该日和 `offset=100/200/...` 补取日内分页。`count` 是过滤/合并前的数量，不要求它等于返回的 `infos` 数量；续页为空或完全重复都可能是正常的合并结果，不能据此中断。按递增 offset 读到 count，再在业务层按财报日期和期间去重。每批每段最多 100 个请求，倒退/无进展日期游标仍标记缺口，后续页失败仍保留已取得的数据。
+
+先读取未来窗口，再从最近的历史回溯。日期兼容 `Today 2026.10.09 (EST)` 等本地化标签。HTTP `data_kv[].type` 在边界规范为 `value_type`，用于识别预期/实际数据，不依赖中文事件标题；实际值为 `TBA`、`TBD` 等占位符时仍视为未披露，实际值 `0` 仍表示已披露。披露时段优先读取 `financial_market_time` 的 `before` / `after`，无法识别时再使用 `date_type` 的 `Pre` / `Post`、盘前/盘后等标签，`during` 和未知值仍排除。字段格式已对照[长桥公开财报日历](https://longbridge.com/calendar/report)核验。HTTP 请求复用当前用户的 API Key 或 OAuth 句柄，并显式传入内容语言；每页创建 HTTP 客户端以规避服务端关闭连接后的复用错误。报价连接复用既有 QuoteContext，股价和前复权日线复用 MarketService。
+
+SDK 5.2 的期权链返回 `OptionChainContract` 单合约列表；查询时传入 `standard_only=True`，并按相同到期日、标准属性和行权价配对 Call/Put。SDK 旧期权链地址返回 `404000` 时，通过同一 SDK `HttpClient` 回退到[官方 MCP 使用的查询接口](https://github.com/longbridge/longbridge-mcp/blob/main/src/tools/quote.rs) `POST /quote/options/strikes`，请求体中的 `expiry_date` 为 `YYYYMMDD`。其他错误不触发地址回退；凭据过期仍立即传播。原始合约用具名模型解析，未知标准属性、未知方向及错误到期日不会参与配对。最近 ATM 缺少一边时顺延到下一个到期日，不改选更远的行权价。到期日和期权报价继续复用既有 QuoteContext，不新增行情长连接。
 
 历史、未来日历分别计算连续失败次数，各自连续 3 段失败后停止该窗口并标记缺口；历史请求失败不会阻止未来财报查询，反之亦然。单板块失败保留其余数据并返回问题代码；无权限、停牌、无期权或数据不足不会被补为零。全部标的均无可用数据时返回脱敏的 503，前端显示错误和设置入口，不再展示成功扫描的空卡片。
 
