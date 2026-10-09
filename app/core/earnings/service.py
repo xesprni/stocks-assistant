@@ -31,6 +31,7 @@ from app.core.earnings.calculations import (
     realized_moves,
 )
 from app.core.earnings.calendar import EarningsCalendarClient
+from app.core.earnings.options import pair_option_contracts
 from app.core.market.errors import (
     LongbridgeUnavailableError,
     longbridge_error_code,
@@ -327,18 +328,15 @@ class EarningsRadarService:
         )[:RADAR_EXPIRY_PROBES]
         for expiry in expiries:
             try:
-                chain = [
-                    row
-                    for row in ctx.option_chain_info_by_date(symbol, expiry)
-                    if row.standard
-                    and positive_decimal(row.price) is not None
-                    and row.call_symbol
-                    and row.put_symbol
-                ]
+                chain = pair_option_contracts(
+                    ctx.option_chain_info_by_date(symbol, expiry, standard_only=True), expiry
+                )
                 if not chain:
                     continue
                 # 固定选最近的标准行权价；ATM 缺价就顺延，不拿远价外合约冒充 ATM。
                 strike = min(chain, key=lambda row: (abs(row.price - spot), row.price))
+                if not strike.call_symbol or not strike.put_symbol:
+                    continue
                 quotes = {
                     q.symbol: q for q in ctx.option_quote([strike.call_symbol, strike.put_symbol])
                 }

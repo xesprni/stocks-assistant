@@ -67,7 +67,8 @@ def test_calendar_finds_target_after_full_first_page_and_reads_inclusive_end():
         assert call.kwargs == {"headers": {"Accept-Language": "en"}}
 
 
-def test_same_date_pagination_uses_offset_and_combines_group_counts():
+def test_same_date_pagination_uses_offset_and_combines_group_counts(monkeypatch):
+    monkeypatch.setattr("app.core.earnings.calendar.RADAR_CALENDAR_PAGE_SIZE", 1)
     ctx = Mock()
     ctx.request.side_effect = [
         page("2026-10-09", ["A.US"], "2026-10-09", count=2),
@@ -103,11 +104,9 @@ def test_calendar_stops_at_empty_or_out_of_window_cursor(next_date):
         (page("2026-10-09", ["A.US"], "bad-date"), "Invalid"),
         (page("2026-10-09", ["A.US"], "2026-10-08"), "backwards"),
         (page("2026-10-09", [], "2026-10-09"), "empty"),
-        (page("2026-10-09", ["A.US"], count=2), "incomplete"),
-        (page("2026-10-09", ["A.US"], "2026-10-11", count=2), "incomplete"),
     ],
 )
-def test_bad_cursor_or_truncated_page_is_never_reported_as_complete(response, message):
+def test_bad_cursor_is_never_reported_as_complete(response, message):
     ctx = Mock()
     ctx.request.return_value = response
     pages = EarningsCalendarClient(lambda: ctx, "en").pages(date(2026, 10, 9), date(2026, 10, 10))
@@ -139,6 +138,55 @@ def test_overlapping_boundary_page_can_finish_without_a_false_failure():
     )
     assert len(events["CRDO.US"]) == 1
     assert issues == []
+
+
+def test_per_date_count_is_before_upstream_filtering_and_merging():
+    ctx = Mock()
+    ctx.request.return_value = page("2026-10-09", ["A.US", "TSM.US"], count=4)
+    result = list(
+        EarningsCalendarClient(lambda: ctx, "en").pages(date(2026, 10, 9), date(2026, 10, 9))
+    )
+    assert len(result) == 1
+    ctx.request.assert_called_once()
+
+
+def test_finishes_truncated_day_before_following_next_date():
+    ctx = Mock()
+    ctx.request.side_effect = [
+        page("2026-10-22", [f"OTHER{i}.US" for i in range(100)], "2026-10-23", count=107),
+        # 续页可能带出邻日数据和不同 next_date，不能因此跳过原来的下一页。
+        {
+            "list": page("2026-10-22", ["TSM.US"], count=107)["list"]
+            + page("2026-10-24", ["OUTSIDE.US"])["list"],
+            "next_date": "2026-10-27",
+        },
+        page("2026-10-23", ["AAPL.US"]),
+    ]
+    events, _, issues = EarningsRadarService._calendar(
+        EarningsCalendarClient(lambda: ctx, "en"),
+        ["TSM.US", "AAPL.US"],
+        date(2026, 10, 22),
+        date(2026, 10, 23),
+        date(2026, 10, 22),
+    )
+    assert len(events["TSM.US"]) == len(events["AAPL.US"]) == 1
+    assert issues == []
+    queries = [parse_qs(urlparse(call.args[1]).query) for call in ctx.request.call_args_list]
+    assert [(q["date"], q["offset"]) for q in queries] == [
+        (["2026-10-22"], ["0"]),
+        (["2026-10-22"], ["100"]),
+        (["2026-10-23"], ["0"]),
+    ]
+
+
+def test_empty_filtered_day_tail_is_complete():
+    ctx = Mock()
+    ctx.request.side_effect = [
+        page("2026-07-16", [f"OTHER{i}.US" for i in range(42)], count=106),
+        {"list": [], "next_date": "2026-07-21"},
+    ]
+    list(EarningsCalendarClient(lambda: ctx, "en").pages(date(2026, 7, 16), date(2026, 7, 16)))
+    assert ctx.request.call_count == 2
 
 
 def test_pagination_limit_does_not_silently_truncate(monkeypatch):
@@ -199,6 +247,26 @@ def test_raw_calendar_parses_legacy_symbols_estimates_and_null_optional_fields()
     assert event.currency == event.date_type == ""
     assert event.data_kv[0].value_type == "estimate_eps"
     assert ctx.request.call_args.kwargs["headers"] == {"Accept-Language": "zh-CN"}
+
+
+@pytest.mark.parametrize("actual,reported", [("TBA", False), ("TBD", False), ("0", True)])
+def test_unannounced_actual_values_do_not_hide_future_earnings(actual, reported):
+    ctx = Mock()
+    response = page("2026-10-15", ["TSM.US"])
+    response["list"][0]["infos"][0]["data_kv"] = [
+        {"type": "actual_eps", "value": actual},
+        {"type": "actual_revenue", "value": "TBA"},
+    ]
+    ctx.request.return_value = response
+    events, _, issues = EarningsRadarService._calendar(
+        EarningsCalendarClient(lambda: ctx, "en"),
+        ["TSM.US"],
+        date(2026, 10, 9),
+        date(2026, 10, 20),
+        date(2026, 10, 9),
+    )
+    assert events["TSM.US"][0].reported is reported
+    assert issues == []
 
 
 def test_scan_collects_latest_twelve_historical_reactions_from_later_pages(monkeypatch):

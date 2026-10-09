@@ -27,7 +27,9 @@ RADAR_SOURCE = "Longbridge finance_calendar + QuoteContext"
 RADAR_REFERENCE_URL = "https://longbridge.cn/zh-CN/topics/44253984"
 RADAR_SYMBOL_PATTERN = re.compile(r"[A-Z][A-Z0-9.-]*\.US\Z")
 RADAR_EVENT_DATE_PATTERN = re.compile(r"(?<!\d)(\d{4})[.-](\d{2})[.-](\d{2})(?!\d)")
-RADAR_MISSING_VALUES = frozenset({"", "-", "--", "待公布", "待公佈", "n/a", "none", "pending"})
+RADAR_MISSING_VALUES = frozenset(
+    {"", "-", "--", "待公布", "待公佈", "n/a", "none", "pending", "tba", "tbd"}
+)
 RADAR_BEFORE_CODES = frozenset({"before", "pre", "bmo"})
 RADAR_AFTER_CODES = frozenset({"after", "post", "amc"})
 RADAR_BEFORE_LABELS = ("盘前", "盤前", "before market", "before open", "pre market", "premarket")

@@ -60,7 +60,7 @@ class EarningsCalendarGroup(AppModel):
 
 
 class EarningsCalendarPage(AppModel):
-    groups: list[EarningsCalendarGroup] = Field(validation_alias="list")
+    groups: list[EarningsCalendarGroup] = Field(validation_alias=AliasChoices("groups", "list"))
     next_date: str | None = None
 
 

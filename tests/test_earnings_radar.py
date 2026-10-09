@@ -89,6 +89,26 @@ def option_quote(symbol, price, iv="0.4"):
     )
 
 
+def option_pair(
+    price, call_symbol="C", put_symbol="P", *, expiry=date(2026, 10, 16), standard=True
+):
+    from longbridge.openapi import OptionDirection, OptionStandardAttr
+
+    return [
+        NS(
+            symbol=symbol,
+            strike_price=Decimal(price),
+            expiry_date=expiry,
+            direction=direction,
+            standard_attr=OptionStandardAttr.Normal if standard else OptionStandardAttr.Old,
+        )
+        for symbol, direction in [
+            (call_symbol, OptionDirection.Call),
+            (put_symbol, OptionDirection.Put),
+        ]
+    ]
+
+
 def test_options_skip_same_day_nonstandard_and_missing_atm_then_roll_forward():
     ctx = Mock()
     ctx.option_chain_expiry_date_list.return_value = [
@@ -96,10 +116,10 @@ def test_options_skip_same_day_nonstandard_and_missing_atm_then_roll_forward():
         date(2026, 10, 16),
         date(2026, 10, 23),
     ]
-    ctx.option_chain_info_by_date.return_value = [
-        NS(price=Decimal("100"), standard=False, call_symbol="ADJC", put_symbol="ADJP"),
-        NS(price=Decimal("101"), standard=True, call_symbol="C", put_symbol="P"),
-        NS(price=Decimal("120"), standard=True, call_symbol="OTMC", put_symbol="OTMP"),
+    ctx.option_chain_info_by_date.side_effect = lambda symbol, expiry, **kwargs: [
+        *option_pair("100", "ADJC", "ADJP", expiry=expiry, standard=False),
+        *option_pair("101", expiry=expiry),
+        *option_pair("120", "OTMC", "OTMP", expiry=expiry),
     ]
     ctx.option_quote.side_effect = [
         [option_quote("C", "0"), option_quote("P", "5")],
@@ -116,6 +136,31 @@ def test_options_skip_same_day_nonstandard_and_missing_atm_then_roll_forward():
     assert pricing.dte == 15 and pricing.days_after_earnings == 14
     assert pricing.straddle == "10"
     assert all(call.args == (["C", "P"],) for call in ctx.option_quote.call_args_list)
+    assert all(
+        call.kwargs == {"standard_only": True}
+        for call in ctx.option_chain_info_by_date.call_args_list
+    )
+
+
+def test_options_do_not_pair_different_strikes_or_expiries_or_skip_incomplete_atm():
+    ctx = Mock()
+    first, second = date(2026, 10, 16), date(2026, 10, 23)
+    ctx.option_chain_expiry_date_list.return_value = [first, second]
+    ctx.option_chain_info_by_date.side_effect = [
+        [
+            option_pair("100")[0],
+            option_pair("100", expiry=second)[1],
+            *option_pair("120", "FAR_C", "FAR_P"),
+        ],
+        option_pair("100", expiry=second),
+    ]
+    ctx.option_quote.return_value = [option_quote("C", "4"), option_quote("P", "6")]
+    pricing = EarningsRadarService._options(
+        ctx, "TSM.US", Decimal("100"), date(2026, 10, 15), date(2026, 10, 9)
+    )
+    assert pricing.expiry == second
+    assert pricing.fallback is True
+    ctx.option_quote.assert_called_once_with(["C", "P"])
 
 
 def test_calendar_uses_sdk_value_type_language_independent_data_and_deduplicates():
@@ -405,9 +450,7 @@ def test_scan_propagates_expired_tokens_instead_of_returning_empty_cards(
     ctx.quote.return_value = [NS(symbol="AAPL.US", last_done=Decimal("100"), timestamp=None)]
     ctx.history_candlesticks_by_date.return_value = []
     ctx.option_chain_expiry_date_list.return_value = [date(2026, 10, 16)]
-    ctx.option_chain_info_by_date.return_value = [
-        NS(price=Decimal("100"), standard=True, call_symbol="C", put_symbol="P")
-    ]
+    ctx.option_chain_info_by_date.return_value = option_pair("100")
     monkeypatch.setattr(module, "EarningsCalendarClient", lambda *args: ctx)
     get_context = Mock(return_value=ctx)
     monkeypatch.setattr(module, "get_cached_context", get_context)
@@ -454,9 +497,7 @@ def test_scan_from_sdk_fields_preserves_history_with_or_without_upcoming_earning
         for day, price in [(5, "100"), (6, "110")]
     ]
     ctx.option_chain_expiry_date_list.return_value = [date(2026, 10, 16)]
-    ctx.option_chain_info_by_date.return_value = [
-        NS(price=Decimal("100"), standard=True, call_symbol="C", put_symbol="P")
-    ]
+    ctx.option_chain_info_by_date.return_value = option_pair("100")
     ctx.option_quote.return_value = [option_quote("C", "4"), option_quote("P", "6")]
     market = MarketService(str(tmp_path))
     monkeypatch.setattr(market, "_quote_context", lambda settings=None: ctx)

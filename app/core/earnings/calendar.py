@@ -24,16 +24,17 @@ class EarningsCalendarClient:
         self._language = "en" if language == "en" else "zh-CN"
 
     def pages(self, start: date, end: date) -> Iterator[EarningsCalendarPage]:
-        cursor = start
-        offset = 0
-        seen_events: set[tuple[str, str, str, str]] = set()
-        expected_counts: dict[str, int] = {}
-        seen_by_date: dict[str, set[tuple[str, str, str, str]]] = {}
-        for _ in range(RADAR_CALENDAR_MAX_PAGES):
+        requests = 0
+
+        def read(cursor: date, until: date, offset: int) -> EarningsCalendarPage:
+            nonlocal requests
+            if requests >= RADAR_CALENDAR_MAX_PAGES:
+                raise LongbridgeUnavailableError("Earnings calendar pagination limit reached")
+            requests += 1
             query = urlencode(
                 {
                     "date": cursor.isoformat(),
-                    "date_end": end.isoformat(),
+                    "date_end": until.isoformat(),
                     "types[]": "report",
                     "markets[]": "US",
                     "next": "later",
@@ -42,46 +43,76 @@ class EarningsCalendarClient:
                 }
             )
             # 5.2 的 Python 响应类型仍遗漏 next_date；用 SDK HTTP 客户端保留游标。
-            # 每页新建 HTTP 客户端，与官方 MCP 一致，规避上游关闭连接后的复用失败。
+            # 每页新建 HTTP 客户端，规避上游关闭连接后的复用失败。
             raw = self._client_factory().request(
                 "GET",
                 f"{RADAR_CALENDAR_PATH}?{query}",
                 headers={"Accept-Language": self._language},
             )
-            page = EarningsCalendarPage.model_validate(raw)
-            identities = set()
-            for group in page.groups:
-                group_ids = {
-                    (info.id, info.symbol, group.date, info.content) for info in group.infos
-                }
-                identities.update(group_ids)
-                seen_by_date.setdefault(group.date, set()).update(group_ids)
-                expected_counts[group.date] = max(expected_counts.get(group.date, 0), group.count)
+            return EarningsCalendarPage.model_validate(raw)
+
+        cursor, offset = start, 0
+        seen_events: set[tuple[str, str, str, str]] = set()
+        while cursor <= end:
+            page = read(cursor, end, offset)
+            identities = {
+                (info.id, info.symbol, group.date, info.content)
+                for group in page.groups
+                for info in group.infos
+            }
             if identities and identities <= seen_events and page.next_date == cursor.isoformat():
                 raise LongbridgeUnavailableError("Earnings calendar pagination did not advance")
             seen_events.update(identities)
-            # 边读边交付，后续页失败也保留已成功取得的财报。
+            # 边读边交付，日内续页或后续日期失败也保留已经取得的财报。
             yield page
+
+            for group in page.groups:
+                try:
+                    day = date.fromisoformat(group.date)
+                except ValueError as exc:
+                    raise LongbridgeUnavailableError(
+                        "Invalid earnings calendar group date"
+                    ) from exc
+                if not start <= day <= end or (day == cursor and page.next_date == group.date):
+                    continue
+                # next_date 即使在当日超过 100 条时也会跳到翌日，需独立补取日内分页。
+                # count 是过滤/合并前的数量，不能要求它等于 infos 的去重数量。
+                day_offset = (offset if day == cursor else 0) + RADAR_CALENDAR_PAGE_SIZE
+                total = group.count
+                seen_day = {(info.id, info.symbol, info.content) for info in group.infos}
+                while day_offset < total:
+                    extra = read(day, day, day_offset)
+                    groups = [item for item in extra.groups if item.date == group.date]
+                    new_ids = {
+                        (info.id, info.symbol, info.content)
+                        for item in groups
+                        for info in item.infos
+                    }
+                    if new_ids and new_ids <= seen_day:
+                        raise LongbridgeUnavailableError(
+                            "Earnings calendar pagination did not advance"
+                        )
+                    seen_day.update(new_ids)
+                    for item in groups:
+                        total = max(total, item.count)
+                    # date_end 并非服务端的严格过滤条件，只交付所请求日期的续页。
+                    yield EarningsCalendarPage(groups=groups)
+                    day_offset += RADAR_CALENDAR_PAGE_SIZE
+
             if not page.next_date:
-                break
+                return
             try:
                 next_date = date.fromisoformat(page.next_date)
             except ValueError as exc:
                 raise LongbridgeUnavailableError("Invalid earnings calendar cursor") from exc
             if next_date > end:
-                break
+                return
             if next_date < cursor:
                 raise LongbridgeUnavailableError("Earnings calendar cursor moved backwards")
             if next_date == cursor:
-                # 财报集中在同一天时用 offset 续读；重复页会被上面的身份检查截断。
-                count = sum(len(group.infos) for group in page.groups)
-                if not count:
+                if not identities:
                     raise LongbridgeUnavailableError("Earnings calendar pagination is empty")
-                offset += count
+                # offset 按请求行数推进；infos 在上游合并后可能少于实际消耗的行数。
+                offset += RADAR_CALENDAR_PAGE_SIZE
             else:
                 cursor, offset = next_date, 0
-        else:
-            raise LongbridgeUnavailableError("Earnings calendar pagination limit reached")
-        # 同日事件可能横跨多页；按累计去重数量检查，避免漏页被解释为没有财报。
-        if any(count > len(seen_by_date[day]) for day, count in expected_counts.items()):
-            raise LongbridgeUnavailableError("Earnings calendar page is incomplete")
