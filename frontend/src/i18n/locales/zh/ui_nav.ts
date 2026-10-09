@@ -1,4 +1,5 @@
 export default {
+  "earnings": ["财报雷达", "隐含/历史波动"],
   "overview": [
     "总览",
     "市场首页"

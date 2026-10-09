@@ -139,6 +139,7 @@ PAGE_PERMISSION_REQUIREMENTS: dict[str, str] = {
     "config": Permission.CONFIG_READ,
     "chart": Permission.MARKET_READ,
     "fundamentals": Permission.FUNDAMENTALS_READ,
+    "earnings": Permission.FUNDAMENTALS_READ,
     "skills": Permission.SKILLS_READ,
     "subagents": Permission.CONFIG_WRITE,
     "mcp": Permission.MCP_READ,

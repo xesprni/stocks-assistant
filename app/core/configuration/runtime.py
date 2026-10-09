@@ -74,6 +74,11 @@ def runtime_bindings() -> tuple[RuntimeBinding, ...]:
             lambda user_id: deps.close_mcp_managers(user_id, all_users=user_id is None),
         ),
         RuntimeBinding("longbridge", LONGBRIDGE_KEYS, _invalidate_longbridge),
+        RuntimeBinding(
+            "earnings_workspace",
+            frozenset({"workspace_dir"}),
+            system_only(deps.get_earnings_radar_service),
+        ),
     ]
     # 已由 MEMORY_KEYS 覆盖的 tool_manager 只失效一次。
     bindings.extend(
@@ -92,6 +97,7 @@ def _invalidate_longbridge(user_id: str | None) -> None:
     if user_id is not None:
         clear_dashboard_cache()
         return
+    deps.get_earnings_radar_service.cache_clear()
     if deps.get_fundamental_service.cache_info().currsize:
         deps.get_fundamental_service().clear_cache()
     deps.get_fundamental_service.cache_clear()

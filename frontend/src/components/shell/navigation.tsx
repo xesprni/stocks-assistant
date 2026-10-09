@@ -15,6 +15,7 @@ import {
   Cpu,
   Home,
   Plug,
+  Radar,
   Settings2,
   ShieldCheck,
   Star,
@@ -37,6 +38,7 @@ export function getNavigationGroups(language: AppLanguage): AppNavGroup[] {
       items: [
         navItem(language, "overview", <Home />, primary.today),
         navItem(language, "watchlist", <Star />, primary.companies),
+        navItem(language, "earnings", <Radar />),
         navItem(language, "portfolio", <BriefcaseBusiness />, primary.portfolio),
         navItem(language, "knowledge", <BookOpen />, primary.knowledge),
         navItem(language, "scheduler", <Clock />, primary.alerts),

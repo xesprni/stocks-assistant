@@ -51,6 +51,8 @@ const CompanyWorkspacePage = lazy(() => import("@/pages/CompanyWorkspacePage").t
 
 const SchedulerPage = lazy(() => import("@/pages/SchedulerPage").then((module) => ({ default: module.SchedulerPage })));
 
+const EarningsRadarPage = lazy(() => import("@/pages/EarningsRadarPage").then((module) => ({ default: module.EarningsRadarPage })));
+
 const FinancialReportsPage = lazy(() => import("@/components/FinancialReportsPage").then((module) => ({ default: module.FinancialReportsPage })));
 
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
@@ -684,6 +686,8 @@ function ConsoleApp() {
                     }}
                   />
                 ) : null}
+
+                {activePage === "earnings" ? <EarningsRadarPage language={language} onOpenConfig={() => openConfig()} /> : null}
 
                 {activePage === "fundamentals" ? <FinancialReportsPage language={language} initialSymbol={selectedSymbol || undefined} /> : null}
 

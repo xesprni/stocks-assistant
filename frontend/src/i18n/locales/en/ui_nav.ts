@@ -1,4 +1,5 @@
 export default {
+  "earnings": ["Earnings Radar", "Implied / realized moves"],
   "overview": [
     "Dashboard",
     "Market home"

@@ -100,12 +100,18 @@ class LongbridgeContextCacheTest(unittest.TestCase):
             patch.object(longbridge_context, "longbridge_config", return_value=object()) as config,
             patch.multiple(
                 "longbridge.openapi",
+                CalendarContext=SlowFakeContext,
                 MarketContext=SlowFakeContext,
                 FundamentalContext=SlowFakeContext,
                 ContentContext=SlowFakeContext,
             ),
         ):
-            for context_type in ("MarketContext", "FundamentalContext", "ContentContext"):
+            for context_type in (
+                "MarketContext",
+                "FundamentalContext",
+                "ContentContext",
+                "CalendarContext",
+            ):
                 with self.subTest(context_type=context_type):
                     with ThreadPoolExecutor(max_workers=8) as executor:
                         contexts = list(
@@ -125,8 +131,8 @@ class LongbridgeContextCacheTest(unittest.TestCase):
                         longbridge_context.get_cached_context(context_type, self.settings),
                     )
 
-        self.assertEqual(6, SlowFakeContext.created)
-        self.assertEqual(6, config.call_count)
+        self.assertEqual(8, SlowFakeContext.created)
+        self.assertEqual(8, config.call_count)
         self.assertTrue(all(call.kwargs == {"localize": True} for call in config.call_args_list))
 
 

@@ -1,3 +1,4 @@
+import earnings from "./earnings";
 import capitalFlow from "./capitalFlow";
 import chat from "./chat";
 import chatController from "./chatController";
@@ -36,6 +37,7 @@ import users from "./users";
 
 import type { Messages } from "../../types";
 export const en = {
+  earnings,
   portfolio,
   shell,
   capitalFlow,

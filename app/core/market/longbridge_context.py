@@ -149,6 +149,7 @@ def get_cached_context(context_type: str, settings: Any = None):
         config = longbridge_config(settings, localize=localize)
         try:
             from longbridge.openapi import (
+                CalendarContext,
                 ContentContext,
                 FundamentalContext,
                 MarketContext,
@@ -162,6 +163,7 @@ def get_cached_context(context_type: str, settings: Any = None):
             "MarketContext": MarketContext,
             "FundamentalContext": FundamentalContext,
             "ContentContext": ContentContext,
+            "CalendarContext": CalendarContext,
         }
         new_ctx = cls_map[context_type](config)
         with _context_cache_lock:

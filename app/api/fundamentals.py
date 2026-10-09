@@ -8,7 +8,8 @@ from app.config import get_effective_settings
 from app.constants.security import Permission
 from app.core.market.errors import LongbridgeUnavailableError
 from app.core.security import CurrentUser, require_permissions
-from app.deps import get_fundamental_service
+from app.deps import get_earnings_radar_service, get_fundamental_service
+from app.schemas.earnings import EarningsRadarRequest, EarningsRadarResponse
 from app.schemas.fundamentals import FinancialReportsResponse
 
 router = APIRouter()
@@ -38,3 +39,21 @@ def get_financial_reports(
     except LongbridgeUnavailableError as exc:
         raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return FinancialReportsResponse.model_validate(data)
+
+
+@router.post("/earnings-radar", response_model=EarningsRadarResponse)
+def scan_earnings_radar(
+    body: EarningsRadarRequest,
+    current_user: CurrentUser = Depends(require_permissions(Permission.FUNDAMENTALS_READ)),
+) -> EarningsRadarResponse:
+    """只读扫描；使用当前用户的配置快照，不访问其他用户自选股。"""
+    try:
+        return get_earnings_radar_service().scan(
+            body,
+            settings=get_effective_settings(current_user.id),
+        )
+    except LongbridgeUnavailableError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail="Longbridge unavailable. Check the connection and market data permissions in Settings.",
+        ) from exc

@@ -1,3 +1,4 @@
+import earnings from "./earnings";
 import capitalFlow from "./capitalFlow";
 import chat from "./chat";
 import chatController from "./chatController";
@@ -35,6 +36,7 @@ import ui_watchlist from "./ui_watchlist";
 import users from "./users";
 
 export const zh = {
+  earnings,
   portfolio,
   shell,
   capitalFlow,

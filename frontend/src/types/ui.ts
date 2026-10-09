@@ -8,6 +8,7 @@ export type Page =
   | "news"
   | "config"
   | "fundamentals"
+  | "earnings"
   | "skills"
   | "subagents"
   | "mcp"

@@ -55,6 +55,7 @@ files = [
     "app/constants/",
     "app/schemas/",
     "app/core/serialization.py",
+    "app/core/earnings/calculations.py",
     "app/core/html_text.py",
     "app/core/market/errors.py",
     "app/core/memory/search_filters.py",

@@ -706,3 +706,11 @@ def close_mcp_managers(user_id: str | None = None, *, all_users: bool = True) ->
 # 兼容测试和旧集成中的缓存清理入口，同时确保连接与后台线程被释放。
 get_mcp_manager.cache_clear = close_mcp_managers
 get_mcp_manager_for_user.cache_clear = close_mcp_managers
+
+
+@lru_cache
+def get_earnings_radar_service():
+    """财报雷达复用行情服务及共享长桥连接。"""
+    from app.core.earnings.service import EarningsRadarService
+
+    return EarningsRadarService(get_market_service())

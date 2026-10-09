@@ -14,4 +14,5 @@ _CONTEXT_CLASSES = {
     "MarketContext",
     "FundamentalContext",
     "ContentContext",
+    "CalendarContext",
 }
