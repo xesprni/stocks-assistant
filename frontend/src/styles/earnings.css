@@ -1,0 +1,555 @@
+/* 财报卡按自身宽度重排，单标的和多标的网格共用同一布局。 */
+.earnings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.earnings-page-icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / .09);
+  border: 1px solid hsl(var(--primary) / .12);
+  border-radius: .875rem;
+}
+
+.earnings-scan-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1.5rem;
+  row-gap: .75rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid hsl(var(--border) / .8);
+  border-radius: 1rem;
+  background: hsl(var(--card));
+}
+
+.earnings-input-count {
+  border-radius: .35rem;
+  background: hsl(var(--muted) / .65);
+  padding: .125rem .4rem;
+  font-size: .625rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.earnings-symbol-input {
+  min-height: 4.25rem;
+  resize: vertical;
+  font-size: .8125rem;
+  line-height: 1.5rem;
+  background: hsl(var(--background) / .55);
+}
+
+.earnings-scan-controls {
+  display: flex;
+  gap: .75rem;
+  align-items: flex-end;
+  padding-bottom: .875rem;
+  min-width: 16rem;
+}
+
+.earnings-window {
+  width: 100%;
+  min-height: 2.5rem;
+  appearance: none;
+  border-radius: .625rem;
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background) / .5);
+  padding: .5rem 2.25rem .5rem .75rem;
+  font-size: .8125rem;
+}
+
+.earnings-window:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.earnings-scan-button {
+  min-height: 2.5rem;
+  padding-inline: 1.125rem;
+}
+
+.earnings-input-hint {
+  grid-column: 1 / -1;
+  color: hsl(var(--muted-foreground));
+  font-size: .6875rem;
+  line-height: 1.25rem;
+}
+
+.earnings-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid hsl(var(--border) / .8);
+  border-radius: .875rem;
+  background: hsl(var(--card) / .7);
+}
+
+.earnings-summary-cell {
+  margin-block: 1rem;
+  padding-inline: 1.25rem;
+}
+
+.earnings-summary-cell + .earnings-summary-cell {
+  border-left: 1px solid hsl(var(--border) / .65);
+}
+
+.earnings-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 36rem), 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.earnings-card {
+  container: earnings-card / inline-size;
+  min-width: 0;
+  border: 1px solid hsl(var(--border) / .85);
+  border-radius: 1rem;
+  background: hsl(var(--card));
+  box-shadow: 0 2px 8px hsl(var(--foreground) / .025);
+}
+
+.earnings-card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.earnings-valuation {
+  font-size: .625rem;
+  padding: .15rem .5rem;
+  background: hsl(var(--muted) / .55);
+  color: hsl(var(--muted-foreground));
+}
+
+.earnings-valuation--high, .earnings-valuation--above {
+  background: hsl(38 90% 50% / .1);
+  color: #956008;
+  border-color: hsl(38 80% 50% / .25);
+}
+
+.dark .earnings-valuation--high, .dark .earnings-valuation--above {
+  color: #fbbf24;
+}
+
+.earnings-valuation--normal, .earnings-valuation--below {
+  background: hsl(var(--primary) / .08);
+  color: hsl(var(--primary));
+  border-color: hsl(var(--primary) / .2);
+}
+
+.earnings-event-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-block: 1px solid hsl(var(--border) / .65);
+  background: hsl(var(--muted) / .2);
+}
+
+.earnings-event-date {
+  display: flex;
+  align-items: start;
+  gap: .625rem;
+}
+
+.earnings-estimates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.earnings-card-content {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.earnings-pricing, .earnings-history {
+  min-width: 0;
+}
+
+.earnings-comparison {
+  margin-top: 1rem;
+  border: 1px solid hsl(var(--border) / .5);
+  border-radius: .75rem;
+  background: hsl(var(--muted) / .22);
+}
+
+.earnings-comparison-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto auto auto;
+  column-gap: 1rem;
+  row-gap: .5rem;
+  padding: 1rem;
+}
+
+.earnings-comparison-metrics > div {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 3;
+}
+
+.earnings-comparison-metrics > div + div {
+  padding-left: 1rem;
+  border-left: 1px solid hsl(var(--border) / .65);
+}
+
+.earnings-primary-value {
+  margin-block: .125rem;
+  font-size: clamp(1.5rem, 4.5cqi, 2.125rem);
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -.045em;
+  font-variant-numeric: tabular-nums;
+}
+
+.earnings-ratio {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid hsl(var(--border) / .5);
+  padding: .625rem 1rem;
+}
+
+.earnings-expiry {
+  margin-top: 1rem;
+  padding: .875rem;
+  border-radius: .625rem;
+  border: 1px solid hsl(var(--border) / .5);
+  color: hsl(var(--muted-foreground));
+  font-size: .6875rem;
+}
+
+.earnings-history {
+  padding-top: 1.5rem;
+  border-top: 1px solid hsl(var(--border) / .7);
+}
+
+.earnings-sample-count {
+  border-radius: .35rem;
+  padding: .2rem .45rem;
+  background: hsl(var(--muted) / .6);
+  color: hsl(var(--muted-foreground));
+  font-size: .625rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.earnings-chart {
+  display: flex;
+  flex-direction: column;
+  gap: .375rem;
+  margin-top: .75rem;
+}
+
+.earnings-chart-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) 3.75rem;
+  align-items: center;
+  gap: .625rem;
+  min-height: 1.375rem;
+  font-size: .6875rem;
+}
+
+.earnings-chart-axis {
+  margin-top: .75rem;
+  color: hsl(var(--muted-foreground));
+  font-size: .5625rem;
+}
+
+.earnings-chart-axis + .earnings-chart {
+  margin-top: .25rem;
+}
+
+.earnings-chart-track {
+  position: relative;
+  height: 1.25rem;
+  border-radius: .25rem;
+  background: hsl(var(--muted) / .5);
+}
+
+.earnings-chart-zero {
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  background: hsl(var(--foreground) / .17);
+}
+
+.earnings-chart-bar {
+  position: absolute;
+  top: .1875rem;
+  height: .875rem;
+  border-radius: .2rem;
+}
+
+.earnings-chart-bar--up {
+  background: var(--color-up-chart);
+}
+
+.earnings-chart-bar--down {
+  background: var(--color-down-chart);
+}
+
+.earnings-chart-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.375rem;
+  border: 1px dashed hsl(var(--border) / .75);
+  border-radius: .25rem;
+  padding: .125rem .25rem;
+  color: hsl(var(--muted-foreground));
+  font-size: .625rem;
+  text-align: center;
+  line-height: 1rem;
+}
+
+.earnings-chart-implied {
+  margin-top: .375rem;
+  padding-top: .625rem;
+  border-top: 1px solid hsl(var(--border) / .65);
+}
+
+.earnings-history-empty {
+  display: grid;
+  place-items: center;
+  min-height: 9rem;
+  margin-top: 1rem;
+  border-radius: .75rem;
+  border: 1px dashed hsl(var(--border));
+  padding: 1.5rem;
+  font-size: .75rem;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+.earnings-card-footer {
+  padding: 0 1.5rem;
+}
+
+.earnings-data-notes {
+  margin-top: 1.25rem;
+  border: 1px solid hsl(38 80% 50% / .18);
+  border-radius: .625rem;
+  background: hsl(38 80% 50% / .045);
+}
+
+.earnings-data-notes > summary {
+  display: flex;
+  gap: .625rem;
+  align-items: center;
+  padding: .75rem .875rem;
+}
+
+.earnings-notes-body {
+  padding: 0 .875rem 1rem;
+}
+
+.earnings-details {
+  border-top: 1px solid hsl(var(--border) / .65);
+}
+
+.earnings-details > summary {
+  min-height: 3rem;
+  padding-block: .875rem;
+}
+
+.earnings-page summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: .5rem;
+}
+
+.earnings-page summary::-webkit-details-marker {
+  display: none;
+}
+
+.earnings-page summary:focus-visible, .earnings-history-table:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+}
+
+.earnings-disclosure-icon {
+  transition: transform .18s ease;
+}
+
+.earnings-page details[open] > summary .earnings-disclosure-icon {
+  transform: rotate(180deg);
+}
+
+.earnings-history-table {
+  max-width: 100%;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  border: 1px solid hsl(var(--border) / .6);
+  border-radius: .5rem;
+}
+
+.earnings-history-table table {
+  min-width: 30rem;
+}
+
+.earnings-history-table th {
+  padding: .75rem;
+  background: hsl(var(--muted) / .4);
+  font-size: .6875rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.earnings-history-table td {
+  border-top: 1px solid hsl(var(--border) / .6);
+  padding: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.earnings-empty {
+  border: 1px solid hsl(var(--border) / .7);
+  border-radius: 1rem;
+  padding: 2.75rem 1.5rem;
+  background: hsl(var(--card) / .65);
+  text-align: center;
+}
+
+.earnings-empty-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  max-width: 48rem;
+  margin: 2rem auto 0;
+  padding-top: 2rem;
+  border-top: 1px solid hsl(var(--border) / .6);
+}
+
+.earnings-methodology {
+  padding: 1rem 0;
+  border-top: 1px solid hsl(var(--border) / .65);
+}
+
+@container earnings-card (min-width: 52rem) {
+  .earnings-card-content {
+    grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+    gap: 2rem;
+  }
+
+  .earnings-history {
+    padding: 0 0 0 2rem;
+    border-top: 0;
+    border-left: 1px solid hsl(var(--border) / .65);
+  }
+
+}
+@container earnings-card (max-width: 28rem) {
+  .earnings-card-header {
+    padding: 1rem;
+    gap: .625rem;
+  }
+
+  .earnings-card-header h2 {
+    font-size: 1.125rem;
+  }
+
+  .earnings-event-strip {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 1rem;
+  }
+
+  .earnings-estimates {
+    border-top: 1px solid hsl(var(--border) / .5);
+    padding-top: .875rem;
+  }
+
+  .earnings-card-content {
+    padding: 1rem;
+    gap: 1.25rem;
+  }
+
+  .earnings-card-footer {
+    padding-inline: 1rem;
+  }
+
+  .earnings-comparison-metrics {
+    padding: .875rem .75rem;
+    gap: .5rem;
+  }
+
+  .earnings-comparison-metrics > div + div {
+    padding-left: .75rem;
+  }
+
+  .earnings-chart-row {
+    grid-template-columns: 4.25rem minmax(0, 1fr) 3.5rem;
+    gap: .375rem;
+    font-size: .625rem;
+  }
+
+}
+@media (max-width: 900px) {
+  .earnings-scan-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .earnings-scan-controls {
+    min-width: 0;
+    padding-bottom: 0;
+  }
+
+  .earnings-input-hint {
+    grid-row: 2;
+  }
+
+}
+@media (max-width: 600px) {
+  .earnings-page {
+    gap: 1.25rem;
+    padding: 1rem;
+  }
+
+  .earnings-scan-form {
+    padding: .875rem;
+  }
+
+  .earnings-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .earnings-summary-cell {
+    margin: 0;
+    padding: 1rem;
+  }
+
+  .earnings-summary-cell dt {
+    min-height: 2rem;
+  }
+
+  .earnings-summary-cell:nth-child(3) {
+    border-left: 0;
+  }
+
+  .earnings-summary-cell:nth-child(n + 3) {
+    border-top: 1px solid hsl(var(--border) / .65);
+  }
+
+  .earnings-empty-steps {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+}
+@media (prefers-reduced-motion: reduce) {
+  .earnings-disclosure-icon {
+    transition: none;
+  }
+
+}

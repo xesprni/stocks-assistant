@@ -1,5 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { Download, Loader2, Radar, Search, Star } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
+import { Activity, CalendarDays, ChartNoAxesColumn, ChevronDown, CircleAlert, Download, Info, Loader2, Radar, Search, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EarningsWatchlistDialog } from "@/components/earnings/EarningsWatchlistDialog";
@@ -22,32 +22,111 @@ export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLan
   useEffect(() => () => controller.dispose(), [controller]);
   const report = state.result;
   const items = report?.items ?? [];
-  return <section className="panel page-enter flex min-w-0 flex-1 flex-col gap-5 rounded-md p-4 lg:p-6">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="flex items-center gap-2 text-xl font-semibold"><Radar className="size-6 text-primary" />{copy.title}</h1><p className="mt-1 text-sm text-muted-foreground">{copy.subtitle}</p></div>
-      {report && <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => downloadRadar(report, language)}><Download />{copy.html}</Button></div>}
+  const parsed = parseRadarSymbols(symbols);
+  const busy = state.loading || state.importing;
+  const stats = [
+    { label: copy.count, value: items.length, icon: Radar },
+    { label: copy.upcoming, value: items.filter((item) => item.next_event).length, icon: CalendarDays },
+    { label: copy.priced, value: items.filter((item) => item.ratio != null).length, icon: Activity },
+    { label: copy.partial, value: items.filter((item) => item.status !== "ready").length, icon: CircleAlert },
+  ];
+  function scan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!parsed.length || parsed.length > RADAR_MAX_SYMBOLS || parsed.some((symbol) => !/^[A-Z][A-Z0-9.-]*\.US$/.test(symbol) || symbol.length > 24)) {
+      setMessage(copy.invalid);
+      return;
+    }
+    setMessage("");
+    void controller.run({ symbols: parsed, days_ahead: days });
+  }
+
+  return <section className="earnings-page page-enter min-w-0 flex-1">
+    <header className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center gap-3">
+        <div className="earnings-page-icon"><Radar className="size-6" aria-hidden="true" /></div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">{copy.title}</h1>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.subtitle}</p>
+        </div>
+      </div>
+      {report && <Button variant="outline" size="sm" onClick={() => downloadRadar(report, language)}><Download />{copy.html}</Button>}
     </header>
-    <form className="rounded-lg border border-border bg-card p-4" onSubmit={(event) => {
-      event.preventDefault();
-      const parsed = parseRadarSymbols(symbols);
-      if (!parsed.length || parsed.length > RADAR_MAX_SYMBOLS || parsed.some((symbol) => !/^[A-Z][A-Z0-9.-]*\.US$/.test(symbol) || symbol.length > 24)) { setMessage(copy.invalid); return; }
-      setMessage(""); void controller.run({ symbols: parsed, days_ahead: days });
-    }}>
-      <div className="mb-2 flex items-center justify-between gap-3"><label htmlFor="radar-symbols" className="text-sm font-medium">{copy.symbols}</label>{auth.can("watchlist:read") && <Button type="button" variant="ghost" size="sm" disabled={state.importing || state.loading} onClick={() => setWatchlistOpen(true)}><Star />{copy.importWatchlist}</Button>}</div>
-      <Textarea id="radar-symbols" className="min-h-16" value={symbols} disabled={state.loading || state.importing} onChange={(event) => setSymbols(event.target.value)} placeholder={copy.placeholder} />
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{formatTemplate(copy.limit, { max: RADAR_MAX_SYMBOLS })}</p><div className="flex flex-wrap items-center gap-3"><label htmlFor="radar-window" className="text-xs text-muted-foreground">{copy.window}</label><select id="radar-window" className="rounded-md border border-border bg-background px-2 py-2 text-sm" value={days} disabled={state.loading} onChange={(event) => setDays(Number(event.target.value))}>{RADAR_WINDOWS.map((value) => <option value={value} key={value}>{formatTemplate(copy.days, { days: value })}</option>)}</select><Button type="submit" disabled={state.loading || state.importing || !symbols.trim()}><Search />{copy.scan}</Button></div></div>
+
+    <form className="earnings-scan-form" onSubmit={scan}>
+      <div className="min-w-0">
+        <div className="mb-2 flex min-h-8 flex-wrap items-center justify-between gap-2">
+          <label htmlFor="radar-symbols" className="flex items-center gap-2 text-xs font-semibold">
+            {copy.symbols}<span className={`earnings-input-count ${parsed.length > RADAR_MAX_SYMBOLS ? "text-destructive" : "text-muted-foreground"}`}>{parsed.length} / {RADAR_MAX_SYMBOLS}</span>
+          </label>
+          {auth.can("watchlist:read") && <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setWatchlistOpen(true)}><Star />{copy.importWatchlist}</Button>}
+        </div>
+        <Textarea id="radar-symbols" className="earnings-symbol-input" rows={2} value={symbols} disabled={busy}
+          aria-invalid={!!message} aria-describedby={message ? "radar-validation" : "radar-input-hint"}
+          onChange={(event) => { setSymbols(event.target.value); if (message) setMessage(""); }} placeholder={copy.placeholder} />
+      </div>
+      <div className="earnings-scan-controls">
+        <div className="min-w-0 flex-1">
+          <label htmlFor="radar-window" className="mb-2 block text-xs font-medium text-muted-foreground">{copy.window}</label>
+          <div className="relative">
+            <select id="radar-window" className="earnings-window" value={days} disabled={busy} onChange={(event) => setDays(Number(event.target.value))}>
+              {RADAR_WINDOWS.map((value) => <option value={value} key={value}>{formatTemplate(copy.days, { days: value })}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          </div>
+        </div>
+        <Button type="submit" className="earnings-scan-button" disabled={busy || !symbols.trim()}>
+          {state.loading ? <Loader2 className="animate-spin" /> : <Search />}{copy.scan}
+        </Button>
+      </div>
+      <p id="radar-input-hint" className="earnings-input-hint">{formatTemplate(copy.limit, { max: RADAR_MAX_SYMBOLS })}</p>
+      {message && <p id="radar-validation" role="status" className="col-span-full text-xs text-destructive">{message}</p>}
     </form>
-    {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
-    {state.error && <div role="alert" className="rounded-md border border-destructive/40 p-3 text-sm"><p>{state.error}</p>{auth.can("config:read") && <Button className="mt-2" variant="outline" size="sm" onClick={onOpenConfig}>{getMessages(language).ui.nav.config[0]}</Button>}</div>}
-    {state.loading && <div role="status" className="rounded-lg border border-border p-8 text-center"><Loader2 className="mx-auto mb-3 size-6 animate-spin text-primary" /><p>{copy.scanning}</p><p className="mt-2 text-xs text-muted-foreground">{copy.loadingHint}</p><Button type="button" variant="ghost" className="mt-3" onClick={() => controller.cancel()}>{copy.cancel}</Button></div>}
-    {!report && !state.loading && !state.error && <div className="rounded-lg border border-dashed border-border px-4 py-12 text-center"><Radar className="mx-auto mb-3 size-10 text-muted-foreground" /><h2 className="font-medium">{copy.empty}</h2><p className="mt-2 text-sm text-muted-foreground">{copy.emptyHint}</p></div>}
-    {report && <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[[copy.count, items.length], [copy.upcoming, items.filter((item) => item.next_event).length], [copy.priced, items.filter((item) => item.ratio != null).length], [copy.partial, items.filter((item) => item.status !== "ready").length]].map(([label, value]) => <div className="rounded-lg border border-border bg-card p-3" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p></div>)}</div>
-      <p className="text-xs text-muted-foreground">{report.window_start} → {report.window_end} · {report.timezone}<br />{copy.source}: {report.source} · {copy.asOf}: {new Date(report.as_of).toLocaleString(localeFor(language))}</p>
-      <div className="grid items-start gap-4 xl:grid-cols-2">{items.map((item) => <EarningsRadarCard key={item.symbol} item={item} language={language} />)}</div>
-    </>}
+
+    {state.error && <div role="alert" className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-sm">
+      <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+      <div className="min-w-0 break-words"><p>{state.error}</p>{auth.can("config:read") && <Button className="mt-3" variant="outline" size="sm" onClick={onOpenConfig}>{getMessages(language).ui.nav.config[0]}</Button>}</div>
+    </div>}
+    {state.loading && <div className="earnings-empty">
+      <div role="status"><Loader2 className="mx-auto mb-4 size-7 animate-spin text-primary" /><p className="text-sm font-medium">{copy.scanning}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{copy.loadingHint}</p></div>
+      <Button type="button" variant="outline" size="sm" className="mt-5" onClick={() => controller.cancel()}>{copy.cancel}</Button>
+    </div>}
+    {!report && !state.loading && !state.error && <div className="earnings-empty">
+      <h2 className="text-base font-semibold">{copy.empty}</h2>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">{copy.emptyHint}</p>
+      <div className="earnings-empty-steps">
+        {[
+          { title: copy.calendarStep, description: copy.calendarStepHint, icon: CalendarDays },
+          { title: copy.pricingStep, description: copy.pricingStepHint, icon: Activity },
+          { title: copy.historyStep, description: copy.historyStepHint, icon: ChartNoAxesColumn },
+        ].map(({ title, description, icon: Icon }) => <div className="min-w-0" key={title}>
+          <Icon className="mx-auto mb-3 size-5 text-primary/75" aria-hidden="true" />
+          <p className="text-xs font-medium">{title}</p><p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">{description}</p>
+        </div>)}
+      </div>
+    </div>}
+    {report && <div className="space-y-5">
+      <dl className="earnings-summary">
+        {stats.map(({ label, value, icon: Icon }, index) => <div className="earnings-summary-cell" key={label}>
+          <dt className="flex items-center gap-2 text-xs text-muted-foreground"><Icon className={`size-3.5 shrink-0 ${index === 3 && value > 0 ? "text-amber-600 dark:text-amber-400" : ""}`} aria-hidden="true" />{label}</dt>
+          <dd className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{value}</dd>
+        </div>)}
+      </dl>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">{copy.results}</h2>
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground"><CalendarDays className="size-3.5" aria-hidden="true" /><span className="tabular-nums">{report.window_start} → {report.window_end}</span><span>· {report.timezone}</span></p>
+      </div>
+      <div className="earnings-results">{items.map((item) => <EarningsRadarCard key={item.symbol} item={item} language={language} />)}</div>
+      <p className="flex flex-wrap justify-between gap-x-4 gap-y-1 break-words text-[10px] leading-5 text-muted-foreground">
+        <span>{copy.source}: {report.source}</span><span>{copy.asOf}: {new Date(report.as_of).toLocaleString(localeFor(language))}</span>
+      </p>
+    </div>}
+    <details className="earnings-methodology">
+      <summary className="flex items-center gap-2 text-xs text-muted-foreground"><Info className="size-3.5" aria-hidden="true" /><span className="flex-1">{copy.methodology}</span><ChevronDown className="earnings-disclosure-icon size-4" aria-hidden="true" /></summary>
+      <div className="space-y-3 pb-2 pt-4 text-xs leading-6 text-muted-foreground"><p>{copy.method}</p><p>{copy.thresholds}</p><p>{copy.caveat}</p></div>
+    </details>
     {watchlistOpen && <EarningsWatchlistDialog language={language} controller={controller}
       items={state.watchlistItems} loading={state.importing} error={state.watchlistError}
-      initialSymbols={parseRadarSymbols(symbols)} onClose={() => setWatchlistOpen(false)}
+      initialSymbols={parsed} onClose={() => setWatchlistOpen(false)}
       onConfirm={(selected) => { setSymbols(selected.join(", ")); setMessage(""); setWatchlistOpen(false); }} />}
   </section>;
 }

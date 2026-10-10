@@ -127,7 +127,7 @@ def test_options_skip_same_day_nonstandard_and_missing_atm_then_roll_forward():
     ]
     pricing = EarningsRadarService._options(
         ctx, "AAPL.US", Decimal("100"), date(2026, 10, 9), date(2026, 10, 8)
-    )
+    ).pricing
     assert pricing.expiry == date(2026, 10, 23)
     assert pricing.primary_expiry == date(2026, 10, 16)
     assert pricing.fallback is True
@@ -157,7 +157,7 @@ def test_options_do_not_pair_different_strikes_or_expiries_or_skip_incomplete_at
     ctx.option_quote.return_value = [option_quote("C", "4"), option_quote("P", "6")]
     pricing = EarningsRadarService._options(
         ctx, "TSM.US", Decimal("100"), date(2026, 10, 15), date(2026, 10, 9)
-    )
+    ).pricing
     assert pricing.expiry == second
     assert pricing.fallback is True
     ctx.option_quote.assert_called_once_with(["C", "P"])

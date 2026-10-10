@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EarningsRadarController, parseRadarSymbols } from "../src/lib/earnings-radar-controller";
 import { earningsHtml } from "../src/lib/earnings-radar-export";
+import { optionDiagnosticText, radarHistory } from "../src/lib/earnings-radar-presentation";
 import type { EarningsRadarResponse } from "../src/types/earnings";
 
 function fixture(symbol = "AAPL.US"): EarningsRadarResponse {
@@ -57,6 +58,46 @@ test("calendar failure does not export a false no-upcoming-earnings conclusion",
   const report = fixture();
   report.items[0].issues = ["upcoming_calendar_unavailable"];
   assert.ok(!earningsHtml(report, "en").includes("No upcoming earnings in window"));
+});
+
+test("recent events without release times remain visible in both report languages", () => {
+  const report = fixture("TSM.US");
+  report.items[0].history_events = [
+    { date: "2025-01-14", period: "FY2024 Q4", timing: "after_close", move: null, exclusion_reason: "missing_prices" },
+    { date: "2025-01-16", period: "FY2024 Annual", timing: "after_close", move: null, exclusion_reason: "missing_prices" },
+    { date: "2026-07-15", period: "FY2026 Q2 <script>unsafe</script>", timing: "unknown", move: null, exclusion_reason: "unknown_timing" },
+  ];
+  assert.equal(radarHistory(report.items[0]).length, 3);
+  for (const language of ["en", "zh"] as const) {
+    const html = earningsHtml(report, language);
+    assert.ok(html.includes("2026-07-15"));
+    assert.ok(html.includes("FY2024 Q4") && html.includes("FY2024 Annual"));
+    assert.ok(html.includes("&lt;script&gt;unsafe&lt;/script&gt;"));
+    assert.ok(!html.includes("<script>"));
+    assert.ok(!html.includes("0.00%"));
+    assert.ok(html.includes(language === "en" ? "Release time missing; excluded" : "披露时段缺失，未计入"));
+    assert.ok(html.includes(language === "en" ? "3 dates retrieved; 0 measurable reactions" : "已获取 3 个日期，其中 0 个可计算"));
+  }
+});
+
+test("option error 500 is shown with its stage rather than an unsupported permission claim", () => {
+  const report = fixture();
+  report.items[0].issues = ["options_request_failed"];
+  const diagnostic = { stage: "quote", reason: "upstream_error", expiry: "2026-10-16", error_code: 500 } as const;
+  report.items[0].option_diagnostics = [diagnostic];
+  assert.equal(optionDiagnosticText(diagnostic, "en"), "2026-10-16 · Option quotes · Upstream service error · Error code 500");
+  for (const language of ["en", "zh"] as const) {
+    const html = earningsHtml(report, language);
+    assert.ok(html.includes(language === "en" ? "Error code 500" : "错误码 500"));
+    assert.ok(!html.includes("missing options permissions") && !html.includes("权限不足"));
+  }
+});
+
+test("older scan responses remain renderable without new diagnostic fields", () => {
+  const item = fixture().items[0];
+  const move = { date: "2025-01-16", timing: "after_close", period: "FY2024 Annual", before_date: "2025-01-16", after_date: "2025-01-17", before_close: "100", after_close: "101", move_pct: 1 } as const;
+  item.history = [move];
+  assert.deepEqual(radarHistory(item), [{ date: move.date, timing: move.timing, period: move.period, move, exclusion_reason: null }]);
 });
 
 test("closing and reopening the picker ignores a late watchlist response", async () => {

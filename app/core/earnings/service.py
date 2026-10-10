@@ -19,19 +19,21 @@ from app.constants.earnings import (
     RADAR_HISTORY_DAYS,
     RADAR_HISTORY_SAMPLES,
     RADAR_MISSING_VALUES,
+    RADAR_OPTION_PERMISSION_DENIED_CODE,
+    RADAR_OPTION_TRANSIENT_ERROR_CODES,
     RADAR_PERCENT,
     RADAR_STALE_QUOTE_DAYS,
     RADAR_TIMEZONE,
 )
 from app.core.earnings.calculations import (
     DailyClose,
+    earnings_history,
     historical_volatility,
     positive_decimal,
     ratio_valuation,
-    realized_moves,
 )
 from app.core.earnings.calendar import EarningsCalendarClient
-from app.core.earnings.options import fetch_option_strikes
+from app.core.earnings.options import fetch_option_quotes, fetch_option_strikes
 from app.core.market.errors import (
     LongbridgeUnavailableError,
     longbridge_error_code,
@@ -45,7 +47,10 @@ from app.core.market.longbridge_context import (
 from app.core.market.service import MarketService
 from app.schemas.earnings import (
     EarningsEvent,
+    EarningsOptionDiagnostic,
     EarningsOptionPricing,
+    EarningsOptionScan,
+    EarningsOptionStage,
     EarningsRadarItem,
     EarningsRadarRequest,
     EarningsRadarResponse,
@@ -246,6 +251,9 @@ class EarningsRadarService:
                 item.issues.append("no_upcoming_event")
         elif item.next_event.timing == "unknown":
             item.issues.append("unknown_timing")
+        past = [event for event in events if event.date < today]
+        # 日线失败也要保留日历记录，明确区分“没有事件”与“无法计算反应”。
+        item.history_events = earnings_history([], past)
         try:
             quotes = self.market.get_realtime_quotes([symbol], settings=settings).quotes
             current = next((q for q in quotes if q.symbol == symbol), None)
@@ -280,32 +288,36 @@ class EarningsRadarService:
                 bar_date = datetime.fromtimestamp(bar.timestamp, ZoneInfo(RADAR_TIMEZONE)).date()
                 if start <= bar_date < today:
                     bars.append(DailyClose(bar_date, close))
-            past = [event for event in events if event.date < today]
-            item.history = realized_moves(bars, past)
+            item.history_events = earnings_history(bars, past)
+            item.history = [entry.move for entry in item.history_events if entry.move is not None]
             item.sample_count = len(item.history)
             item.hv30_pct = historical_volatility(bars)
             if item.history:
                 item.historical_median_pct = median(abs(move.move_pct) for move in item.history)
-            if any(event.timing == "unknown" for event in past):
-                item.issues.append("unknown_history_timing")
         except Exception as exc:
             raise_if_token_expired(exc)
             item.issues.append("history_prices_unavailable")
+        if any(entry.exclusion_reason == "unknown_timing" for entry in item.history_events):
+            item.issues.append("unknown_history_timing")
         if item.sample_count < RADAR_HISTORY_SAMPLES:
             item.issues.append("insufficient_history")
         if item.hv30_pct is None:
             item.issues.append("hv_unavailable")
         spot = positive_decimal(item.spot)
         if item.next_event and spot is not None:
-            try:
-                item.option = self._options(
-                    quote, symbol, spot, item.next_event.date, today, settings=settings
-                )
-            except Exception as exc:
-                raise_if_token_expired(exc)
-                item.option = None
+            options = self._options(
+                quote, symbol, spot, item.next_event.date, today, settings=settings
+            )
+            item.option = options.pricing
+            item.option_diagnostics = options.diagnostics
             if item.option is None:
-                item.issues.append("options_unavailable")
+                reasons = {diagnostic.reason for diagnostic in options.diagnostics}
+                if "permission_denied" in reasons:
+                    item.issues.append("options_permission_denied")
+                elif reasons & {"upstream_error", "request_failed"}:
+                    item.issues.append("options_request_failed")
+                else:
+                    item.issues.append("options_unavailable")
             elif _stale(item.option.call_timestamp, now) or _stale(item.option.put_timestamp, now):
                 item.issues.append("stale_option")
         if item.option and item.historical_median_pct:
@@ -314,7 +326,9 @@ class EarningsRadarService:
         item.status = (
             "ready"
             if item.ratio is not None and not item.issues
-            else ("partial" if item.next_event or item.history or item.spot else "unavailable")
+            else (
+                "partial" if item.next_event or item.history_events or item.spot else "unavailable"
+            )
         )
         return item
 
@@ -326,31 +340,90 @@ class EarningsRadarService:
         earnings_date: date,
         today: date,
         settings: Any = None,
-    ) -> EarningsOptionPricing | None:
+    ) -> EarningsOptionScan:
+        result = EarningsOptionScan()
+
+        def record_error(stage: EarningsOptionStage, expiry: date | None, exc: Exception) -> None:
+            raise_if_token_expired(exc)
+            code = longbridge_error_code(exc)
+            result.diagnostics.append(
+                EarningsOptionDiagnostic(
+                    stage=stage,
+                    expiry=expiry,
+                    error_code=code,
+                    reason=(
+                        "permission_denied"
+                        if code == RADAR_OPTION_PERMISSION_DENIED_CODE
+                        else "upstream_error"
+                        if code in RADAR_OPTION_TRANSIENT_ERROR_CODES
+                        else "request_failed"
+                    ),
+                )
+            )
+            # 只记录可审计的阶段、标的和错误码，不能将 SDK 异常文本或凭据返回用户。
+            logger.warning(
+                "Earnings options unavailable: %s stage=%s expiry=%s (%s, code=%s)",
+                symbol,
+                stage,
+                expiry,
+                type(exc).__name__,
+                code,
+            )
+
         # 严格使用财报日之后的到期日，避免周五盘后事件误选当天已到期合约。
-        expiries = sorted(
-            set(e for e in ctx.option_chain_expiry_date_list(symbol) if e > earnings_date)
-        )[:RADAR_EXPIRY_PROBES]
+        try:
+            expiries = sorted(
+                set(e for e in ctx.option_chain_expiry_date_list(symbol) if e > earnings_date)
+            )[:RADAR_EXPIRY_PROBES]
+        except Exception as exc:
+            record_error("expiry", None, exc)
+            return result
+        if not expiries:
+            result.diagnostics.append(EarningsOptionDiagnostic(stage="expiry", reason="no_expiry"))
         for expiry in expiries:
+            stage: EarningsOptionStage = "chain"
             try:
                 chain = fetch_option_strikes(ctx, symbol, expiry, settings=settings)
                 if not chain:
+                    result.diagnostics.append(
+                        EarningsOptionDiagnostic(
+                            stage=stage,
+                            expiry=expiry,
+                            reason="empty_chain",
+                        )
+                    )
                     continue
                 # 固定选最近的标准行权价；ATM 缺价就顺延，不拿远价外合约冒充 ATM。
                 strike = min(chain, key=lambda row: (abs(row.price - spot), row.price))
                 if not strike.call_symbol or not strike.put_symbol:
+                    result.diagnostics.append(
+                        EarningsOptionDiagnostic(
+                            stage=stage,
+                            expiry=expiry,
+                            reason="incomplete_pair",
+                        )
+                    )
                     continue
+                stage = "quote"
                 quotes = {
-                    q.symbol: q for q in ctx.option_quote([strike.call_symbol, strike.put_symbol])
+                    q.symbol: q
+                    for q in fetch_option_quotes(ctx, [strike.call_symbol, strike.put_symbol])
                 }
                 call, put = quotes.get(strike.call_symbol), quotes.get(strike.put_symbol)
                 call_price = positive_decimal(getattr(call, "last_done", None))
                 put_price = positive_decimal(getattr(put, "last_done", None))
                 if call_price is None or put_price is None:
+                    result.diagnostics.append(
+                        EarningsOptionDiagnostic(
+                            stage=stage,
+                            expiry=expiry,
+                            reason="missing_quote",
+                        )
+                    )
                     continue
                 call_iv = positive_decimal(getattr(call, "implied_volatility", None))
                 put_iv = positive_decimal(getattr(put, "implied_volatility", None))
-                return EarningsOptionPricing(
+                result.pricing = EarningsOptionPricing(
                     expiry=expiry,
                     primary_expiry=expiries[0],
                     fallback=expiry != expiries[0],
@@ -369,7 +442,9 @@ class EarningsRadarService:
                     if call_iv and put_iv
                     else None,
                 )
+                return result
             except Exception as exc:
-                raise_if_token_expired(exc)
-                continue
-        return None
+                record_error(stage, expiry, exc)
+                if longbridge_error_code(exc) == RADAR_OPTION_PERMISSION_DENIED_CODE:
+                    break
+        return result

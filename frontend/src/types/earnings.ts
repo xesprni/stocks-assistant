@@ -8,6 +8,15 @@ export interface EarningsMove {
   date: string; timing: EarningsTiming; period: string; before_date: string; after_date: string;
   before_close: string; after_close: string; move_pct: number;
 }
+export interface EarningsHistoryEntry {
+  date: string; timing: EarningsTiming; period: string; move: EarningsMove | null;
+  exclusion_reason: "unknown_timing" | "missing_prices" | null;
+}
+export interface EarningsOptionDiagnostic {
+  stage: "expiry" | "chain" | "quote";
+  reason: "no_expiry" | "empty_chain" | "incomplete_pair" | "missing_quote" | "permission_denied" | "upstream_error" | "request_failed";
+  expiry: string | null; error_code: number | null;
+}
 export interface EarningsOptionPricing {
   expiry: string; primary_expiry: string; fallback: boolean; dte: number; days_after_earnings: number;
   strike: string; call_symbol: string; put_symbol: string; call_price: string; put_price: string;
@@ -18,6 +27,7 @@ export interface EarningsRadarItem {
   symbol: string; name: string; status: "ready" | "partial" | "unavailable";
   spot: string | null; spot_timestamp: string | null; next_event: EarningsEvent | null;
   option: EarningsOptionPricing | null; history: EarningsMove[]; sample_count: number;
+  history_events?: EarningsHistoryEntry[]; option_diagnostics?: EarningsOptionDiagnostic[];
   historical_median_pct: number | null; hv30_pct: number | null; ratio: number | null;
   valuation: RadarValuation; issues: string[];
 }

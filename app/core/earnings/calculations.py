@@ -17,7 +17,13 @@ from app.constants.earnings import (
     RADAR_RATIO_NORMAL,
     RADAR_TRADING_DAYS,
 )
-from app.schemas.earnings import EarningsEvent, EarningsMove, RadarValuation
+from app.schemas.earnings import (
+    EarningsEvent,
+    EarningsHistoryEntry,
+    EarningsMove,
+    EarningsTiming,
+    RadarValuation,
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,45 @@ def realized_moves(bars: list[DailyClose], events: list[EarningsEvent]) -> list[
         )
         seen.add(event.date)
     return result[-RADAR_HISTORY_SAMPLES:]
+
+
+def earnings_history(
+    bars: list[DailyClose], events: list[EarningsEvent]
+) -> list[EarningsHistoryEntry]:
+    by_date: dict[date, list[EarningsEvent]] = {}
+    for event in events:
+        by_date.setdefault(event.date, []).append(event)
+    recent = []
+    # 先确定最近十二个日期，再计算反应；未知时段仍占一个位置，不能被旧样本替换。
+    for day in sorted(by_date)[-RADAR_HISTORY_SAMPLES:]:
+        group = by_date[day]
+        known = {event.timing for event in group if event.timing != "unknown"}
+        timing: EarningsTiming = next(iter(known)) if len(known) == 1 else "unknown"
+        # 同日季度/年度记录只计算一次；冲突时段保守保留未知，期间文案仍全部展示。
+        recent.append(
+            EarningsEvent(
+                date=day,
+                timing=timing,
+                period=" / ".join(dict.fromkeys(event.period for event in group if event.period)),
+            )
+        )
+    moves = {move.date: move for move in realized_moves(bars, recent)}
+    return [
+        EarningsHistoryEntry(
+            date=event.date,
+            timing=event.timing,
+            period=event.period,
+            move=moves.get(event.date),
+            exclusion_reason=(
+                "unknown_timing"
+                if event.timing == "unknown"
+                else "missing_prices"
+                if event.date not in moves
+                else None
+            ),
+        )
+        for event in recent
+    ]
 
 
 def historical_volatility(bars: list[DailyClose]) -> float | None:

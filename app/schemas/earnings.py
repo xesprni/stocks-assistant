@@ -20,6 +20,7 @@ from app.schemas.base import AppModel
 
 EarningsTiming = Literal["before_open", "after_close", "unknown"]
 RadarValuation = Literal["high", "above", "normal", "below", "unavailable"]
+EarningsOptionStage = Literal["expiry", "chain", "quote"]
 
 
 class EarningsCalendarValue(AppModel):
@@ -137,6 +138,31 @@ class EarningsMove(AppModel):
     move_pct: float
 
 
+class EarningsHistoryEntry(AppModel):
+    """保留最近事件及未参与统计的原因，不用更旧的可计算样本填补缺口。"""
+
+    date: Date
+    timing: EarningsTiming
+    period: str
+    move: EarningsMove | None = None
+    exclusion_reason: Literal["unknown_timing", "missing_prices"] | None = None
+
+
+class EarningsOptionDiagnostic(AppModel):
+    stage: EarningsOptionStage
+    reason: Literal[
+        "no_expiry",
+        "empty_chain",
+        "incomplete_pair",
+        "missing_quote",
+        "permission_denied",
+        "upstream_error",
+        "request_failed",
+    ]
+    expiry: Date | None = None
+    error_code: int | None = None
+
+
 class EarningsOptionPricing(AppModel):
     expiry: Date
     primary_expiry: Date
@@ -155,6 +181,11 @@ class EarningsOptionPricing(AppModel):
     iv_pct: float | None
 
 
+class EarningsOptionScan(AppModel):
+    pricing: EarningsOptionPricing | None = None
+    diagnostics: list[EarningsOptionDiagnostic] = Field(default_factory=list)
+
+
 class EarningsRadarItem(AppModel):
     symbol: str
     name: str = ""
@@ -164,6 +195,8 @@ class EarningsRadarItem(AppModel):
     next_event: EarningsEvent | None = None
     option: EarningsOptionPricing | None = None
     history: list[EarningsMove] = Field(default_factory=list)
+    history_events: list[EarningsHistoryEntry] = Field(default_factory=list)
+    option_diagnostics: list[EarningsOptionDiagnostic] = Field(default_factory=list)
     sample_count: int = 0
     historical_median_pct: float | None = None
     hv30_pct: float | None = None

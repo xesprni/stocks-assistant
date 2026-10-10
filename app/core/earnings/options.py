@@ -8,14 +8,23 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from app.constants.earnings import RADAR_OPTION_API_NOT_FOUND_CODE, RADAR_OPTION_CHAIN_PATH
+from app.constants.earnings import (
+    RADAR_OPTION_API_NOT_FOUND_CODE,
+    RADAR_OPTION_CHAIN_PATH,
+    RADAR_OPTION_QUOTE_ATTEMPTS,
+    RADAR_OPTION_TRANSIENT_ERROR_CODES,
+)
 from app.core.earnings.calculations import positive_decimal
-from app.core.market.errors import LongbridgeUnavailableError, longbridge_error_code
+from app.core.market.errors import (
+    LongbridgeUnavailableError,
+    longbridge_error_code,
+    raise_if_token_expired,
+)
 from app.core.market.longbridge_context import create_http_client
 from app.schemas.earnings import EarningsOptionChain, EarningsOptionContract
 
 if TYPE_CHECKING:
-    from longbridge.openapi import OptionChainContract, QuoteContext
+    from longbridge.openapi import OptionChainContract, OptionQuote, QuoteContext
 
     from app.config import Settings
 
@@ -109,3 +118,19 @@ def fetch_option_strikes(
             ) from validation_error
         return _pair_contracts(parsed.contracts, expiry)
     return pair_option_contracts(contracts, expiry)
+
+
+def fetch_option_quotes(ctx: "QuoteContext", symbols: list[str]) -> list["OptionQuote"]:
+    for attempt in range(RADAR_OPTION_QUOTE_ATTEMPTS):
+        try:
+            return ctx.option_quote(symbols)
+        except Exception as exc:
+            raise_if_token_expired(exc)
+            # 短暂服务端错误先重试同一 ATM，避免一次失败就无谓顺延到期日。
+            # 权限及认证错误不重试；仍由共享 QuoteContext 控制行情请求速率。
+            if (
+                longbridge_error_code(exc) not in RADAR_OPTION_TRANSIENT_ERROR_CODES
+                or attempt == RADAR_OPTION_QUOTE_ATTEMPTS - 1
+            ):
+                raise
+    raise AssertionError("Option quote attempts must be positive")
