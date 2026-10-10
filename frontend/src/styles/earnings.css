@@ -1,5 +1,6 @@
 /* 财报卡按自身宽度重排，单标的和多标的网格共用同一布局。 */
 .earnings-page {
+  container: earnings-page / inline-size;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
@@ -21,49 +22,166 @@
 .earnings-scan-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 1.5rem;
-  row-gap: .75rem;
-  padding: 1rem 1.25rem;
+  align-items: start;
+  gap: .625rem .875rem;
+}
+
+.earnings-symbol-field {
+  display: flex;
+  align-items: flex-start;
+  gap: .625rem;
+  min-width: 0;
+  min-height: 2.75rem;
   border: 1px solid hsl(var(--border) / .8);
-  border-radius: 1rem;
+  border-radius: .75rem;
+  padding: .3125rem .75rem;
   background: hsl(var(--card));
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.earnings-symbol-field:focus-within {
+  border-color: hsl(var(--primary) / .55);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / .08);
+}
+
+.earnings-symbol-field[data-invalid="true"] {
+  border-color: hsl(var(--destructive) / .6);
+}
+
+.earnings-symbol-field[data-disabled="true"] {
+  opacity: .55;
+}
+
+.earnings-market-label {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding-right: .625rem;
+  margin-top: .5rem;
+  border-right: 1px solid hsl(var(--border) / .75);
+  color: hsl(var(--muted-foreground));
+  font-size: .625rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: .05em;
+  cursor: text;
+}
+
+.earnings-symbol-tokens {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: .25rem .375rem;
+  min-width: 0;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+.earnings-symbol-token {
+  display: inline-flex;
+  align-items: center;
+  gap: .375rem;
+  max-width: 100%;
+  min-height: 1.875rem;
+  border-radius: .375rem;
+  padding: .125rem .25rem .125rem .625rem;
+  background: hsl(var(--primary) / .08);
+  color: hsl(var(--foreground));
+  font-size: .75rem;
+  font-weight: 500;
+}
+
+.earnings-symbol-token > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.earnings-symbol-token button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: .25rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.earnings-symbol-token button:hover:not(:disabled) {
+  background: hsl(var(--foreground) / .08);
+  color: hsl(var(--foreground));
+}
+
+.earnings-symbol-token button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -1px;
+}
+
+.earnings-symbol-entry {
+  flex: 1 1 6rem;
+  min-width: 4rem;
+  width: 100%;
+  min-height: 2rem;
+  max-width: 100%;
+  background: transparent;
+  padding: .25rem .125rem;
+  border: 0;
+  outline: 0;
+  font-size: .8125rem;
+  line-height: 1.5rem;
+}
+
+.earnings-symbol-entry::placeholder {
+  color: hsl(var(--muted-foreground));
 }
 
 .earnings-input-count {
-  border-radius: .35rem;
-  background: hsl(var(--muted) / .65);
-  padding: .125rem .4rem;
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding-block: .5rem;
+  color: hsl(var(--muted-foreground));
   font-size: .625rem;
-  font-weight: 500;
+  line-height: 1rem;
   font-variant-numeric: tabular-nums;
-}
-
-.earnings-symbol-input {
-  min-height: 4.25rem;
-  resize: vertical;
-  font-size: .8125rem;
-  line-height: 1.5rem;
-  background: hsl(var(--background) / .55);
+  white-space: nowrap;
 }
 
 .earnings-scan-controls {
   display: flex;
-  gap: .75rem;
-  align-items: flex-end;
-  padding-bottom: .875rem;
-  min-width: 16rem;
+  align-items: center;
+  gap: .5rem;
+}
+
+.earnings-watchlist-shortcut {
+  min-height: 2.75rem;
+  padding-inline: .625rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.earnings-window-control {
+  position: relative;
+  flex-shrink: 0;
 }
 
 .earnings-window {
   width: 100%;
-  min-height: 2.5rem;
+  min-height: 2.75rem;
   appearance: none;
   border-radius: .625rem;
-  border: 1px solid hsl(var(--input));
-  background: hsl(var(--background) / .5);
-  padding: .5rem 2.25rem .5rem .75rem;
-  font-size: .8125rem;
+  border: 1px solid hsl(var(--border) / .75);
+  background: hsl(var(--card));
+  padding: .5rem 1.875rem .5rem 2.125rem;
+  font-size: .75rem;
 }
+
+.earnings-window-calendar, .earnings-window-chevron {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+}
+
+.earnings-window-calendar { left: .75rem; }
+.earnings-window-chevron { right: .625rem; }
 
 .earnings-window:focus-visible {
   outline: 2px solid hsl(var(--ring));
@@ -71,15 +189,20 @@
 }
 
 .earnings-scan-button {
-  min-height: 2.5rem;
+  min-height: 2.75rem;
   padding-inline: 1.125rem;
 }
 
 .earnings-input-hint {
-  grid-column: 1 / -1;
-  color: hsl(var(--muted-foreground));
-  font-size: .6875rem;
-  line-height: 1.25rem;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .earnings-summary {
@@ -495,29 +618,34 @@
   }
 
 }
-@media (max-width: 900px) {
+@container earnings-page (max-width: 48rem) {
   .earnings-scan-form {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .earnings-scan-controls {
-    min-width: 0;
-    padding-bottom: 0;
+    justify-content: flex-end;
   }
 
-  .earnings-input-hint {
-    grid-row: 2;
+  .earnings-watchlist-shortcut {
+    margin-right: auto;
   }
-
 }
+
+@container earnings-page (max-width: 23rem) {
+  .earnings-scan-controls { gap: .375rem; }
+  .earnings-watchlist-shortcut { width: 2.5rem; flex-shrink: 0; padding: 0; }
+  .earnings-watchlist-shortcut span { display: none; }
+  .earnings-window-control { flex: 1; min-width: 0; }
+  .earnings-window { padding-left: .625rem; font-size: .6875rem; }
+  .earnings-window-calendar { display: none; }
+  .earnings-scan-button { padding-inline: .75rem; font-size: .75rem; }
+}
+
 @media (max-width: 600px) {
   .earnings-page {
     gap: 1.25rem;
     padding: 1rem;
-  }
-
-  .earnings-scan-form {
-    padding: .875rem;
   }
 
   .earnings-summary {

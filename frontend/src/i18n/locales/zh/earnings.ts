@@ -2,6 +2,8 @@ export default {
   title: "财报雷达", subtitle: "期权给这次财报定价了多少波动？",
   description: "把财报后到期的 ATM 跨式成本，与最近 12 个财报日期中的可计算样本放在一起看。",
   symbols: "美股清单", placeholder: "AAPL, NVDA, MSFT（逗号或空格分隔）",
+  symbolEntry: "输入美股代码，如 MU、NVDA", addSymbol: "添加股票…", removeSymbol: "移除 {symbol}",
+  symbolEntryHint: "回车添加，支持粘贴多个代码；最多 {max} 只美股。", watchlistShortcut: "自选股", nextDays: "未来 {days} 天",
   importWatchlist: "导入美股自选", window: "未来窗口", days: "{days} 天",
   selectWatchlist: "勾选美股自选", selectionHint: "确认后将用已勾选的股票替换当前扫描清单；取消不会改变原输入。",
   watchlistSearch: "搜索自选股", watchlistSearchHint: "搜索代码或公司名称", selectVisible: "选择搜索结果", clearSelection: "清空选择",

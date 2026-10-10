@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EarningsRadarController, parseRadarSymbols } from "../src/lib/earnings-radar-controller";
+import { EarningsRadarController, parseRadarSymbols, resolveRadarSelection } from "../src/lib/earnings-radar-controller";
 import { earningsHtml } from "../src/lib/earnings-radar-export";
 import { optionDiagnosticText, radarHistory } from "../src/lib/earnings-radar-presentation";
 import type { EarningsRadarResponse } from "../src/types/earnings";
@@ -134,4 +134,18 @@ test("watchlist errors are isolated from scan results and can be retried", async
   await controller.loadWatchlist();
   assert.equal(controller.snapshot().watchlistError, "");
   assert.equal(controller.snapshot().importing, false);
+});
+
+test("ticker selection includes the draft, deduplicates pasted lines and enforces US limits", () => {
+  assert.deepEqual(resolveRadarSelection(["MU.US"], "nvda\nMU, brk.b"), {
+    symbols: ["MU.US", "NVDA.US", "BRK.B.US"], valid: true,
+  });
+  assert.deepEqual(resolveRadarSelection([], "MU"), { symbols: ["MU.US"], valid: true });
+  assert.equal(resolveRadarSelection(["MU.US"], "700.HK").valid, false);
+  assert.equal(resolveRadarSelection([], "").valid, false);
+  assert.equal(resolveRadarSelection([], "<script>").valid, false);
+  const full = Array.from({ length: 20 }, (_, i) => `STOCK${i}.US`);
+  assert.equal(resolveRadarSelection(full, "STOCK0").valid, true);
+  assert.equal(resolveRadarSelection(full, "AAPL").valid, false);
+  assert.equal(resolveRadarSelection([], "X".repeat(25)).valid, false);
 });

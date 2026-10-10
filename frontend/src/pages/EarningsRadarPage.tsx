@@ -1,13 +1,13 @@
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { Activity, CalendarDays, ChartNoAxesColumn, ChevronDown, CircleAlert, Download, Info, Loader2, Radar, Search, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { EarningsSymbolInput } from "@/components/earnings/EarningsSymbolInput";
 import { EarningsWatchlistDialog } from "@/components/earnings/EarningsWatchlistDialog";
 import { EarningsRadarCard } from "@/components/earnings/EarningsRadarCard";
 import { getMessages, formatTemplate, localeFor, type AppLanguage } from "@/i18n";
 import { listWatchlist, scanEarningsRadar } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { EarningsRadarController, parseRadarSymbols, RADAR_DEFAULT_DAYS, RADAR_MAX_SYMBOLS, RADAR_WINDOWS } from "@/lib/earnings-radar-controller";
+import { EarningsRadarController, resolveRadarSelection, RADAR_DEFAULT_DAYS, RADAR_MAX_SYMBOLS, RADAR_WINDOWS } from "@/lib/earnings-radar-controller";
 import { downloadRadar } from "@/lib/earnings-radar-export";
 
 export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLanguage; onOpenConfig: () => void }) {
@@ -15,14 +15,16 @@ export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLan
   const auth = useAuth();
   const [controller] = useState(() => new EarningsRadarController(scanEarningsRadar, listWatchlist));
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot);
-  const [symbols, setSymbols] = useState("");
+  const [symbols, setSymbols] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
   const [days, setDays] = useState(RADAR_DEFAULT_DAYS);
   const [message, setMessage] = useState("");
   const [watchlistOpen, setWatchlistOpen] = useState(false);
   useEffect(() => () => controller.dispose(), [controller]);
   const report = state.result;
   const items = report?.items ?? [];
-  const parsed = parseRadarSymbols(symbols);
+  const selection = resolveRadarSelection(symbols, draft);
+  const parsed = selection.symbols;
   const busy = state.loading || state.importing;
   const stats = [
     { label: copy.count, value: items.length, icon: Radar },
@@ -30,12 +32,19 @@ export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLan
     { label: copy.priced, value: items.filter((item) => item.ratio != null).length, icon: Activity },
     { label: copy.partial, value: items.filter((item) => item.status !== "ready").length, icon: CircleAlert },
   ];
+  function commitSymbols(value: string) {
+    const next = resolveRadarSelection(symbols, value);
+    if (!next.valid) { setDraft(value); setMessage(copy.invalid); return; }
+    setSymbols(next.symbols);
+    setDraft("");
+    setMessage("");
+  }
   function scan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!parsed.length || parsed.length > RADAR_MAX_SYMBOLS || parsed.some((symbol) => !/^[A-Z][A-Z0-9.-]*\.US$/.test(symbol) || symbol.length > 24)) {
-      setMessage(copy.invalid);
-      return;
-    }
+    // 点击扫描也包含尚未按回车确认的输入，避免漏掉最后一个标的。
+    if (!selection.valid) { setMessage(copy.invalid); return; }
+    setSymbols(parsed);
+    setDraft("");
     setMessage("");
     void controller.run({ symbols: parsed, days_ahead: days });
   }
@@ -53,32 +62,24 @@ export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLan
     </header>
 
     <form className="earnings-scan-form" onSubmit={scan}>
-      <div className="min-w-0">
-        <div className="mb-2 flex min-h-8 flex-wrap items-center justify-between gap-2">
-          <label htmlFor="radar-symbols" className="flex items-center gap-2 text-xs font-semibold">
-            {copy.symbols}<span className={`earnings-input-count ${parsed.length > RADAR_MAX_SYMBOLS ? "text-destructive" : "text-muted-foreground"}`}>{parsed.length} / {RADAR_MAX_SYMBOLS}</span>
-          </label>
-          {auth.can("watchlist:read") && <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setWatchlistOpen(true)}><Star />{copy.importWatchlist}</Button>}
-        </div>
-        <Textarea id="radar-symbols" className="earnings-symbol-input" rows={2} value={symbols} disabled={busy}
-          aria-invalid={!!message} aria-describedby={message ? "radar-validation" : "radar-input-hint"}
-          onChange={(event) => { setSymbols(event.target.value); if (message) setMessage(""); }} placeholder={copy.placeholder} />
-      </div>
+      <EarningsSymbolInput language={language} symbols={symbols} draft={draft} disabled={busy} invalid={!!message} count={parsed.length}
+        onDraftChange={(value) => { setDraft(value); setMessage(""); }} onCommit={commitSymbols}
+        onRemove={(symbol) => { setSymbols((current) => current.filter((value) => value !== symbol)); setMessage(""); }} />
       <div className="earnings-scan-controls">
-        <div className="min-w-0 flex-1">
-          <label htmlFor="radar-window" className="mb-2 block text-xs font-medium text-muted-foreground">{copy.window}</label>
-          <div className="relative">
-            <select id="radar-window" className="earnings-window" value={days} disabled={busy} onChange={(event) => setDays(Number(event.target.value))}>
-              {RADAR_WINDOWS.map((value) => <option value={value} key={value}>{formatTemplate(copy.days, { days: value })}</option>)}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          </div>
+        {auth.can("watchlist:read") && <Button type="button" variant="ghost" className="earnings-watchlist-shortcut" disabled={busy}
+          title={copy.importWatchlist} aria-label={copy.importWatchlist} onClick={() => setWatchlistOpen(true)}><Star /><span>{copy.watchlistShortcut}</span></Button>}
+        <div className="earnings-window-control">
+          <CalendarDays className="earnings-window-calendar size-3.5" aria-hidden="true" />
+          <select id="radar-window" className="earnings-window" aria-label={copy.window} value={days} disabled={busy} onChange={(event) => setDays(Number(event.target.value))}>
+            {RADAR_WINDOWS.map((value) => <option value={value} key={value}>{formatTemplate(copy.nextDays, { days: value })}</option>)}
+          </select>
+          <ChevronDown className="earnings-window-chevron size-3.5" aria-hidden="true" />
         </div>
-        <Button type="submit" className="earnings-scan-button" disabled={busy || !symbols.trim()}>
+        <Button type="submit" className="earnings-scan-button" disabled={busy || !parsed.length}>
           {state.loading ? <Loader2 className="animate-spin" /> : <Search />}{copy.scan}
         </Button>
       </div>
-      <p id="radar-input-hint" className="earnings-input-hint">{formatTemplate(copy.limit, { max: RADAR_MAX_SYMBOLS })}</p>
+      <p id="radar-input-hint" className="earnings-input-hint">{formatTemplate(copy.symbolEntryHint, { max: RADAR_MAX_SYMBOLS })}</p>
       {message && <p id="radar-validation" role="status" className="col-span-full text-xs text-destructive">{message}</p>}
     </form>
 
@@ -127,6 +128,6 @@ export function EarningsRadarPage({ language, onOpenConfig }: { language: AppLan
     {watchlistOpen && <EarningsWatchlistDialog language={language} controller={controller}
       items={state.watchlistItems} loading={state.importing} error={state.watchlistError}
       initialSymbols={parsed} onClose={() => setWatchlistOpen(false)}
-      onConfirm={(selected) => { setSymbols(selected.join(", ")); setMessage(""); setWatchlistOpen(false); }} />}
+      onConfirm={(selected) => { setSymbols(selected); setDraft(""); setMessage(""); setWatchlistOpen(false); }} />}
   </section>;
 }

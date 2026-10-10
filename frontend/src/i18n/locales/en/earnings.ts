@@ -2,6 +2,8 @@ export default {
   title: "Earnings Radar", subtitle: "How much earnings movement is priced in?",
   description: "Compare an ATM straddle expiring after earnings with measurable reactions from the latest 12 earnings dates.",
   symbols: "US stock list", placeholder: "AAPL, NVDA, MSFT (comma or space separated)",
+  symbolEntry: "US tickers, e.g. MU, NVDA", addSymbol: "Add ticker…", removeSymbol: "Remove {symbol}",
+  symbolEntryHint: "Press Enter to add, or paste multiple tickers. Up to {max} US stocks.", watchlistShortcut: "Watchlist", nextDays: "Next {days} days",
   importWatchlist: "Import US watchlist", window: "Look ahead", days: "{days} days",
   selectWatchlist: "Select US watchlist stocks", selectionHint: "Confirming replaces the scan list with your checked stocks. Cancel keeps the current input.",
   watchlistSearch: "Search watchlist", watchlistSearchHint: "Search ticker or company", selectVisible: "Select search results", clearSelection: "Clear selection",

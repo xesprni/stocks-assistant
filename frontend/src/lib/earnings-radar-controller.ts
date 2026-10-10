@@ -9,6 +9,12 @@ export function parseRadarSymbols(text: string) {
   return [...new Set(text.trim().toUpperCase().split(/[\s,，;；]+/).filter(Boolean)
     .map((symbol) => /\.(US|HK|SH|SZ|CN|SG)$/.test(symbol) ? symbol : `${symbol}.US`))];
 }
+export function resolveRadarSelection(selected: string[], draft: string) {
+  const symbols = parseRadarSymbols([...selected, draft].join(","));
+  const valid = symbols.length > 0 && symbols.length <= RADAR_MAX_SYMBOLS
+    && symbols.every((symbol) => /^[A-Z][A-Z0-9.-]*\.US$/.test(symbol) && symbol.length <= 24);
+  return { symbols, valid };
+}
 type State = { result: EarningsRadarResponse | null; loading: boolean; importing: boolean; error: string; watchlistItems: WatchlistItem[]; watchlistError: string };
 type Scan = (request: EarningsRadarRequest, init: RequestInit) => Promise<EarningsRadarResponse>;
 type Watchlist = (category: "US", init: RequestInit) => Promise<WatchlistListResponse>;
