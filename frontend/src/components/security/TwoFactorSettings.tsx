@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Loader2, ShieldCheck } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/i18n/react";
@@ -75,7 +76,18 @@ export function TwoFactorSettings({ onChanged }: { onChanged?: () => Promise<voi
       </label>
       {setup && <div className="space-y-3">
         <p className="text-sm leading-6 text-muted-foreground">{copy.setupHint}</p>
-        <label className="block space-y-2 text-sm font-medium"><span>{copy.secret}</span><Input readOnly value={setup.secret} className="font-mono text-xs" onFocus={(event) => event.target.select()} /></label>
+        {/* 绑定 URI 含密钥，仅在本地编码为二维码，不发送到外部图片服务。 */}
+        <QRCodeSVG
+          value={setup.provisioning_uri}
+          size={224}
+          level="M"
+          marginSize={4}
+          bgColor="#ffffff"
+          fgColor="#000000"
+          role="img"
+          title={copy.qrCode}
+          className="block h-auto max-w-full rounded-lg border border-border"
+        />
         <p className="text-xs leading-5 text-muted-foreground">{copy.expiryHint}</p>
       </div>}
       {(setup || enabled) && <TwoFactorCodeField value={code} onChange={setCode} disabled={busy} setup={!enabled} autoFocus />}
