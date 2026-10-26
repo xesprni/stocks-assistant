@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -26,6 +26,7 @@ from app.core.orm.models.app import (
     RolePermission,
     User,
     UserRole,
+    UserTwoFactor,
 )
 
 
@@ -142,6 +143,9 @@ class IdentityRepository:
         role_names: list[str] | None = None,
     ) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
+            if password_hash is not None:
+                # 与绑定事务串行，避免管理员改密和启用 2FA 并发时绕过保护。
+                session.execute(text("BEGIN IMMEDIATE"))
             user = session.get(User, user_id)
             if not user:
                 raise KeyError(user_id)
@@ -152,6 +156,12 @@ class IdentityRepository:
             if is_active is not None:
                 user.is_active = int(is_active)
             if password_hash is not None:
+                # 通用管理接口不能绕过账号的 2FA 改密校验，也不能清除已绑定的验证器。
+                factor = session.get(UserTwoFactor, user_id)
+                if factor and factor.secret_encrypted:
+                    raise ValueError(
+                        "Use account security to change a password protected by two-factor authentication"
+                    )
                 user.password_hash = password_hash
             user.updated_at = utc_now()
             if role_names is not None:

@@ -1,3 +1,5 @@
+import auth from "./auth";
+import twoFactor from "./twoFactor";
 import earnings from "./earnings";
 import capitalFlow from "./capitalFlow";
 import chat from "./chat";
@@ -36,6 +38,8 @@ import ui_watchlist from "./ui_watchlist";
 import users from "./users";
 
 export const zh = {
+  auth,
+  twoFactor,
   earnings,
   portfolio,
   shell,

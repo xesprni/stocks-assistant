@@ -24,6 +24,7 @@ from app.core.orm.repositories.identity import IdentityRepository
 from app.core.orm.repositories.integrations import IntegrationRepository
 from app.core.orm.repositories.legacy_app_data import LegacyAppDataMigrator
 from app.core.orm.repositories.login_sessions import LoginSessionRepository
+from app.core.orm.repositories.two_factor import TwoFactorRepository
 
 
 class AppStoreRepository:
@@ -36,6 +37,7 @@ class AppStoreRepository:
         init_app_schema(self.engine)
         self.config = AppConfigRepository(self.session_factory)
         self.identity = IdentityRepository(self.session_factory)
+        self.two_factor = TwoFactorRepository(self.session_factory)
         self.login_sessions = LoginSessionRepository(self.session_factory)
         self.integrations = IntegrationRepository(self.session_factory, self.config)
         self.legacy_data = LegacyAppDataMigrator(self.config, self.integrations)

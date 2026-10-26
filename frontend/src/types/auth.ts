@@ -9,6 +9,7 @@ export interface AuthUser {
   permissions: string[];
   page_permissions?: Partial<Record<Page, string>>;
   is_active: boolean;
+  two_factor_enabled?: boolean;
   created_at?: string | null;
   updated_at?: string | null;
   last_login_at?: string | null;
@@ -37,6 +38,7 @@ export interface UserUpdateRequest {
 export interface ChangePasswordRequest {
   current_password: string;
   new_password: string;
+  two_factor_code?: string;
 }
 
 export interface UserProfileUpdateRequest {
@@ -118,4 +120,10 @@ export interface LoginSessionListResponse {
   max_lifetime_days: number;
   max_devices_per_user: number;
   refresh_token_days: number;
+}
+
+export interface TwoFactorSetupResponse {
+  secret: string;
+  provisioning_uri: string;
+  expires_at: number;
 }

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConfirmDialogOptions, ConfirmFn } from "@/components/common/ConfirmDialog";
 import { SideDrawer } from "@/components/common/SideDrawer";
 import { useToast } from "@/components/common/Toast";
+import { TwoFactorSettings } from "@/components/security/TwoFactorSettings";
 import { ChangePasswordDialog } from "@/components/security/ChangePasswordDialog";
 import { dateValue, deviceInfo, formatSessionDate, hasValidLogin, relativeSessionDate, sessionKey } from "@/components/security/session-utils";
 import { Badge } from "@/components/ui/badge";
@@ -305,6 +306,8 @@ export function SecurityPage({ confirmAction, language }: { confirmAction: Confi
             </div>
           </article>
         </div>
+
+        <TwoFactorSettings onChanged={load} />
 
         <section className="space-y-4" aria-labelledby="security-devices-title">
           <div className="flex flex-wrap items-center justify-between gap-3">

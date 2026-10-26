@@ -45,3 +45,12 @@ Mobile scroll regressions cover all settings tabs at 390×844, 320×568, 844×39
 Portfolio chart checks use saved closing snapshots from the API, retain history when current quotes are missing, and verify that page visits leave legacy browser snapshots untouched.
 
 Mobile chat checks in the workspace suite cover 390×844, 320×568, 844×390, 667×375, 568×320 and 1024×768. They verify the chat entry remains available, input collapse returns space to messages, drafts survive collapse and rotation, Escape only collapses the editor, controls fit within the screen, and fixture-stream submission returns to reading mode. Screenshots use `/tmp/stocks-chat-{width}.png`. Browser viewport checks do not replace on-device testing with iOS/Android software keyboards.
+
+Account 2FA checks mount the real login, account-security, password and reauthentication components in development StrictMode. Fixtures cover the login challenge and retry, required password-change verification, recovery-code disable, enrollment confirmation, one-time recovery-code display, secret-storage checks, and desktop/mobile layouts. No real account or backend is used. Run after building the CSS:
+
+```sh
+npm run build
+npm run test:browser:auth
+```
+
+The same Playwright environment variables apply. Screenshots use `/tmp/stocks-2fa-*.png`. TOTP cryptography, replay, lockout, encryption, account isolation and old-database compatibility are covered by `tests/test_two_factor.py`.

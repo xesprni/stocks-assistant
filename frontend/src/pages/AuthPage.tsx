@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useI18n } from "@/i18n/react";
+import { TwoFactorCodeField } from "@/components/security/TwoFactorCodeField";
+import { requiresTwoFactor, twoFactorError } from "@/components/security/two-factor-utils";
+import { useRef, useState } from "react";
 import { KeyRound, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -7,6 +10,11 @@ import { useAuth } from "@/lib/auth";
 
 export function AuthPage() {
   const auth = useAuth();
+  const { messages } = useI18n();
+  const copy = messages.auth;
+  const pending = useRef(false);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [needsCode, setNeedsCode] = useState(false);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -15,26 +23,27 @@ export function AuthPage() {
   const [error, setError] = useState("");
 
   const isSetup = auth.setupRequired;
-  const title = isSetup ? "Initialize Administrator" : "Sign in to Stocks Assistant";
-  const subtitle = isSetup
-    ? "Create the first administrator to enable JWT authentication."
-    : "Use your account to continue to the console.";
-  const disabled = submitting || !username.trim() || password.length < 8 || (isSetup && password !== confirm);
+  const title = isSetup ? copy.setupTitle : copy.loginTitle;
+  const subtitle = isSetup ? copy.setupHint : copy.loginHint;
+  const disabled = submitting || (!isSetup && needsCode && !twoFactorCode.trim()) || !username.trim() || password.length < 8 || (isSetup && password !== confirm);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (disabled) return;
+    if (disabled || pending.current) return;
+    pending.current = true;
     setSubmitting(true);
     setError("");
     try {
       if (isSetup) {
         await auth.setup({ username: username.trim(), password, display_name: displayName.trim() });
       } else {
-        await auth.login(username.trim(), password);
+        await auth.login(username.trim(), password, twoFactorCode.trim() || undefined);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Authentication failed");
+      if (requiresTwoFactor(caught)) setNeedsCode(true);
+      setError(twoFactorError(caught, messages.twoFactor));
     } finally {
+      pending.current = false;
       setSubmitting(false);
     }
   }
@@ -57,18 +66,19 @@ export function AuthPage() {
 
         <div className="space-y-4">
           <label className="block space-y-2 text-sm font-medium">
-            <span>Username</span>
-            <Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+            <span>{copy.username}</span>
+            <Input value={username} disabled={submitting} onChange={(event) => { setUsername(event.target.value); setNeedsCode(false); setTwoFactorCode(""); setError(""); }} autoComplete="username" />
           </label>
           {isSetup ? (
             <label className="block space-y-2 text-sm font-medium">
-              <span>Display name</span>
+              <span>{copy.displayName}</span>
               <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
             </label>
           ) : null}
           <label className="block space-y-2 text-sm font-medium">
-            <span>Password</span>
+            <span>{copy.password}</span>
             <Input
+              disabled={submitting}
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -77,22 +87,24 @@ export function AuthPage() {
           </label>
           {isSetup ? (
             <label className="block space-y-2 text-sm font-medium">
-              <span>Confirm password</span>
+              <span>{copy.confirm}</span>
               <Input
-                type="password"
+                disabled={submitting}
+              type="password"
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
                 autoComplete="new-password"
               />
             </label>
           ) : null}
+          {!isSetup && needsCode && <TwoFactorCodeField autoFocus value={twoFactorCode} onChange={setTwoFactorCode} disabled={submitting} />}
         </div>
 
-        {error ? <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+        {error ? <p role="alert" className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
 
         <Button className="mt-6 w-full" disabled={disabled} size="lg" type="submit">
           {submitting ? <Loader2 className="animate-spin" /> : <KeyRound />}
-          {isSetup ? "Create administrator" : "Sign in"}
+          {isSetup ? copy.create : copy.login}
         </Button>
       </form>
     </div>

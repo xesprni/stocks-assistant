@@ -1,6 +1,7 @@
 import { API_BASE, authHeaders, authSession, clearAuthTokens, getDeviceId, request } from "@/lib/api/transport";
 import type {
   AuthTokenResponse,
+  TwoFactorSetupResponse,
   AuthUser,
   ChangePasswordRequest,
   LoginDeviceHeartbeatResponse,
@@ -24,7 +25,7 @@ export function setupAdmin(payload: { username: string; password: string; displa
   });
 }
 
-export function login(payload: { username: string; password: string }) {
+export function login(payload: { username: string; password: string; two_factor_code?: string }) {
   return request<AuthTokenResponse>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ ...payload, device_id: getDeviceId() }),
@@ -105,4 +106,22 @@ export async function logout() {
       method: "POST", headers, body: JSON.stringify({ refresh_token: token }),
     }).catch(() => null);
   }
+}
+
+export function startTwoFactorSetup(current_password: string) {
+  return request<TwoFactorSetupResponse>("/api/v1/auth/me/two-factor/setup", {
+    method: "POST", body: JSON.stringify({ current_password }),
+  });
+}
+
+export function enableTwoFactor(current_password: string, code: string) {
+  return request<{ recovery_codes: string[] }>("/api/v1/auth/me/two-factor/enable", {
+    method: "POST", body: JSON.stringify({ current_password, code }),
+  });
+}
+
+export function disableTwoFactor(current_password: string, code: string) {
+  return request<{ status: string }>("/api/v1/auth/me/two-factor/disable", {
+    method: "POST", body: JSON.stringify({ current_password, code }),
+  });
 }

@@ -27,11 +27,12 @@ type AuthState = {
   setupRequired: boolean;
   user: AuthUser | null;
   permissions: Set<string>;
-  login: (username: string, password: string) => Promise<void>;
-  reauthenticate: (password: string) => Promise<void>;
+  login: (username: string, password: string, twoFactorCode?: string) => Promise<void>;
+  reauthenticate: (password: string, twoFactorCode?: string) => Promise<void>;
   setup: (payload: { username: string; password: string; display_name?: string }) => Promise<void>;
   updateProfile: (payload: { display_name?: string; avatar_base64?: string }) => Promise<AuthUser>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   can: (permission: string) => boolean;
 };
 
@@ -185,8 +186,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setupRequired,
     user,
     permissions,
-    async login(username: string, password: string) {
-      const tokens = await apiLogin({ username, password });
+    async login(username: string, password: string, twoFactorCode?: string) {
+      const tokens = await apiLogin({ username, password, two_factor_code: twoFactorCode });
       setAuthTokens(tokens);
       setReauthRequired(false);
       setReauthMessage("");
@@ -194,10 +195,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(tokens.user);
       resolveAuthRecovery();
     },
-    async reauthenticate(password: string) {
+    async reauthenticate(password: string, twoFactorCode?: string) {
       if (!user) throw new Error("Authentication required");
       const generation = getAuthSessionGeneration();
-      const tokens = await apiLogin({ username: user.username, password });
+      const tokens = await apiLogin({ username: user.username, password, two_factor_code: twoFactorCode });
       if (getAuthSessionGeneration() !== generation) throw new DOMException("Authentication session changed", "AbortError");
       if (tokens.user.id !== user.id) {
         clearAuthTokens();
@@ -225,6 +226,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const nextUser = await updateOwnProfile(payload);
       setUser(nextUser);
       return nextUser;
+    },
+    async refreshUser() {
+      setUser(await getMe());
     },
     async logout() {
       const pending = apiLogout();

@@ -236,6 +236,7 @@ def public_user(user: dict[str, Any]) -> UserPublic:
         permissions=user.get("permissions", []),
         page_permissions=store.list_page_permissions(),
         is_active=bool(user.get("is_active")),
+        two_factor_enabled=store.two_factor.is_enabled(user["id"]),
         created_at=user.get("created_at"),
         updated_at=user.get("updated_at"),
         last_login_at=user.get("last_login_at"),
@@ -254,14 +255,13 @@ def to_current_user(user: dict[str, Any], *, session_id: str | None = None) -> C
     )
 
 
-def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
-    user = get_app_store().get_user_by_username(username)
-    if not user or not user.get("is_active"):
-        return None
-    if not verify_password(password, user["password_hash"]):
-        return None
-    get_app_store().touch_login(user["id"])
-    return get_app_store().get_user_by_id(user["id"])
+def authenticate_user(
+    username: str, password: str, two_factor_code: str | None = None
+) -> dict[str, Any] | None:
+    from app.core.two_factor.service import TwoFactorService
+
+    user_id = TwoFactorService().authenticate(username, password, two_factor_code)
+    return get_app_store().get_user_by_id(user_id) if user_id else None
 
 
 def decode_access_token(token: str) -> CurrentUser:
@@ -275,6 +275,8 @@ def decode_access_token(token: str) -> CurrentUser:
     if not user or not user.get("is_active"):
         raise AuthError("User is inactive or missing")
     session_id = str(payload["sid"]) if payload.get("sid") else None
+    if not session_id and get_app_store().two_factor.is_enabled(user["id"]):
+        raise AuthError("Two-factor authentication requires a new login")
     if session_id:
         session = get_app_store().get_login_session(session_id)
         if not session or session.get("user_id") != user["id"]:

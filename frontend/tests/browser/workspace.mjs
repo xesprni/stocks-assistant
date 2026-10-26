@@ -292,16 +292,16 @@ async function checkThemePreferences() {
 }
 
 async function signIn(target, username) {
-  await target.getByLabel("Username", { exact: true }).fill(username);
-  await target.getByLabel("Password", { exact: true }).fill("FixturePassword!");
-  await target.getByRole("button", { name: "Sign in", exact: true }).click();
+  await target.getByLabel(/^(Username|用户名)$/).fill(username);
+  await target.getByLabel(/^(Password|密码)$/).fill("FixturePassword!");
+  await target.getByRole("button", { name: /^(Sign in|登录)$/ }).click();
   await target.getByRole("tab", { name: "偏好与能力", exact: true }).click();
 }
 
 async function signOut() {
   await page.getByRole("button", { name: "打开账号菜单", exact: true }).click();
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
-  await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+  await page.getByRole("button", { name: /^(Sign in|登录)$/ }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.themeColor), undefined, "Signing out must clear the previous account's color");
 }
 

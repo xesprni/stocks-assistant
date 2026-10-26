@@ -4,10 +4,12 @@ import base64
 import binascii
 import os
 import secrets
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.config import get_settings
 from app.constants.security import (
@@ -42,8 +44,8 @@ from app.core.security import (
     refresh_tokens,
     request_ip,
     resolve_device_id,
-    verify_password,
 )
+from app.core.two_factor.service import TwoFactorError, TwoFactorService
 from app.schemas.auth import (
     AuthTokenResponse,
     ChangePasswordRequest,
@@ -61,12 +63,24 @@ from app.schemas.auth import (
     RevokeSessionResponse,
     SetupRequest,
     SetupStatusResponse,
+    TwoFactorEnabledResponse,
+    TwoFactorPasswordRequest,
+    TwoFactorSetupResponse,
+    TwoFactorVerifyRequest,
     UserProfileUpdateRequest,
     UserPublic,
 )
 from app.schemas.common import StatusResponse
 
 router = APIRouter()
+
+
+@contextmanager
+def _two_factor_errors() -> Iterator[None]:
+    try:
+        yield
+    except TwoFactorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 def _env_truthy(name: str) -> bool:
@@ -292,6 +306,11 @@ def dev_login(http_request: Request) -> AuthTokenResponse:
 
     user = store.get_user_by_username(username)
     if user:
+        if store.two_factor.is_enabled(user["id"]):
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail="Two-factor authentication requires a normal login",
+            )
         user = store.update_user(
             user["id"], display_name=display_name, is_active=True, role_names=["admin"]
         )
@@ -313,7 +332,8 @@ def dev_login(http_request: Request) -> AuthTokenResponse:
 
 @router.post("/login", response_model=AuthTokenResponse)
 def login(request: LoginRequest, http_request: Request) -> AuthTokenResponse:
-    user = authenticate_user(request.username, request.password)
+    with _two_factor_errors():
+        user = authenticate_user(request.username, request.password, request.two_factor_code)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
@@ -529,17 +549,37 @@ def update_profile(
 def change_password(
     request: ChangePasswordRequest, current_user=Depends(get_current_user)
 ) -> StatusResponse:
-    store = get_app_store()
-    user = store.get_user_by_id(current_user.id)
-    if not user or not verify_password(request.current_password, user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect"
+    with _two_factor_errors():
+        TwoFactorService().change_password(
+            current_user.id, request.current_password, request.new_password, request.two_factor_code
         )
-    if request.new_password == request.current_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be different from current password",
+    return StatusResponse()
+
+
+@router.post("/me/two-factor/setup", response_model=TwoFactorSetupResponse)
+def start_two_factor_setup(
+    request: TwoFactorPasswordRequest, response: Response, current_user=Depends(get_current_user)
+) -> TwoFactorSetupResponse:
+    response.headers["Cache-Control"] = "no-store"
+    with _two_factor_errors():
+        return TwoFactorService().start_setup(current_user.id, request.current_password)
+
+
+@router.post("/me/two-factor/enable", response_model=TwoFactorEnabledResponse)
+def enable_two_factor(
+    request: TwoFactorVerifyRequest, response: Response, current_user=Depends(get_current_user)
+) -> TwoFactorEnabledResponse:
+    response.headers["Cache-Control"] = "no-store"
+    with _two_factor_errors():
+        return TwoFactorService().enable(
+            current_user.id, request.current_password, request.code, current_user.session_id
         )
-    store.update_user(current_user.id, password_hash=hash_password(request.new_password))
-    store.audit(current_user.id, "auth.password_change", "users")
+
+
+@router.post("/me/two-factor/disable")
+def disable_two_factor(
+    request: TwoFactorVerifyRequest, current_user=Depends(get_current_user)
+) -> StatusResponse:
+    with _two_factor_errors():
+        TwoFactorService().disable(current_user.id, request.current_password, request.code)
     return StatusResponse()

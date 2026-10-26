@@ -1,3 +1,4 @@
+import { TwoFactorSettings } from "@/components/security/TwoFactorSettings";
 import { ConfigField as Field } from "@/components/config/ConfigForm";
 import { ConfigSection } from "@/components/config/ConfigSection";
 import type { ConfigPageState } from "@/components/config/useSettings";
@@ -21,6 +22,7 @@ export function SettingsSecurity({ copy, setIsPasswordDialogOpen, canManageSyste
           {copy.changePassword}
         </Button>
       </div>
+      <TwoFactorSettings />
       {canManageSystem ? (
         <div className="mt-5 grid gap-4 border-t border-border/60 pt-5 sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center">
           <div className="flex items-start gap-2">

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --import ./scripts/register-test-loader.mjs --test tests/*.test.mjs tests/*.test.ts",
+    "test:browser:auth": "node tests/browser/two-factor.mjs",
     "test:browser": "node tests/browser/strict-mode.mjs",
     "test:browser:watchlist": "node tests/browser/watchlist.mjs",
     "test:browser:workspace": "node tests/browser/workspace.mjs"

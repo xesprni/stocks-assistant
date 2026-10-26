@@ -1,3 +1,5 @@
+import auth from "./auth";
+import twoFactor from "./twoFactor";
 import earnings from "./earnings";
 import capitalFlow from "./capitalFlow";
 import chat from "./chat";
@@ -37,6 +39,8 @@ import users from "./users";
 
 import type { Messages } from "../../types";
 export const en = {
+  auth,
+  twoFactor,
   earnings,
   portfolio,
   shell,

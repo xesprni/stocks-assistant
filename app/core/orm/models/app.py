@@ -49,6 +49,23 @@ class User(AppBase):
     last_login_at: Mapped[str | None] = mapped_column(Text)
 
 
+class UserTwoFactor(AppBase):
+    """独立安全表：不进入通用用户配置、列表或导出协议。"""
+
+    __tablename__ = "user_two_factor"
+
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    pending_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    pending_expires_at: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_step: Mapped[int] = mapped_column(Integer, default=-1)
+    recovery_hashes: Mapped[str] = mapped_column(Text, default="[]")
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Role(AppBase):
     __tablename__ = "roles"
 

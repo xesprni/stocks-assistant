@@ -12,6 +12,7 @@ from app.constants.security import (
     MAX_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MAX_PERMISSION_LENGTH,
+    MAX_TWO_FACTOR_CODE_LENGTH,
     MAX_USERNAME_LENGTH,
     MIN_NAME_LENGTH,
     MIN_PASSWORD_LENGTH,
@@ -36,6 +37,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
     device_id: str | None = Field(default=None, max_length=MAX_DEVICE_ID_LENGTH)
+    two_factor_code: str | None = Field(default=None, max_length=MAX_TWO_FACTOR_CODE_LENGTH)
 
 
 class RefreshRequest(BaseModel):
@@ -54,6 +56,25 @@ class DeviceHeartbeatRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=1, max_length=MAX_PASSWORD_LENGTH)
     new_password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    two_factor_code: str | None = Field(default=None, max_length=MAX_TWO_FACTOR_CODE_LENGTH)
+
+
+class TwoFactorPasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+
+
+class TwoFactorVerifyRequest(TwoFactorPasswordRequest):
+    code: str = Field(min_length=1, max_length=MAX_TWO_FACTOR_CODE_LENGTH)
+
+
+class TwoFactorSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    expires_at: int
+
+
+class TwoFactorEnabledResponse(BaseModel):
+    recovery_codes: list[str]
 
 
 class UserProfileUpdateRequest(BaseModel):
@@ -70,6 +91,7 @@ class UserPublic(BaseModel):
     permissions: list[str] = Field(default_factory=list)
     page_permissions: dict[str, str] = Field(default_factory=dict)
     is_active: bool
+    two_factor_enabled: bool = False
     created_at: str | None = None
     updated_at: str | None = None
     last_login_at: str | None = None

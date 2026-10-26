@@ -1,3 +1,6 @@
+import { useI18n } from "@/i18n/react";
+import { TwoFactorCodeField } from "./TwoFactorCodeField";
+import { requiresTwoFactor, twoFactorError } from "./two-factor-utils";
 import { Check, Circle, Eye, EyeOff, Info, KeyRound, Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
@@ -21,6 +24,10 @@ export function ChangePasswordDialog({ open, onClose, language }: {
 }) {
   const copy = passwordCopy[language];
   const auth = useAuth();
+  const { messages } = useI18n();
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [needsCode, setNeedsCode] = useState(false);
+  const showCode = needsCode || Boolean(auth.user?.two_factor_enabled);
   const { showToast } = useToast();
   const id = useId();
   const formId = `${id}-password-form`;
@@ -34,10 +41,12 @@ export function ChangePasswordDialog({ open, onClose, language }: {
   const validLength = nextLength >= 8 && nextLength <= 256;
   const different = Boolean(form.current && form.next && form.current !== form.next);
   const mismatch = Boolean(form.confirm && form.next !== form.confirm);
-  const canSubmit = Boolean(form.current && !currentTooLong && validLength && different && form.confirm && !mismatch);
+  const canSubmit = Boolean((!showCode || twoFactorCode.trim()) && form.current && !currentTooLong && validLength && different && form.confirm && !mismatch);
 
   useEffect(() => {
     if (!open) {
+      setTwoFactorCode("");
+      setNeedsCode(false);
       setForm(EMPTY_FORM);
       setVisible(HIDDEN_FIELDS);
       setError("");
@@ -59,18 +68,21 @@ export function ChangePasswordDialog({ open, onClose, language }: {
     setSaving(true);
     setError("");
     try {
-      await changeOwnPassword({ current_password: form.current, new_password: form.next });
+      await changeOwnPassword({ current_password: form.current, new_password: form.next, two_factor_code: twoFactorCode.trim() || undefined });
+      setTwoFactorCode("");
+      setNeedsCode(false);
       setForm(EMPTY_FORM);
       setVisible(HIDDEN_FIELDS);
       onClose();
       showToast({ kind: "success", message: copy.success });
     } catch (caught) {
+      if (requiresTwoFactor(caught)) setNeedsCode(true);
       const message = caught instanceof Error ? caught.message : "";
       setError(message === "Current password is incorrect"
         ? copy.currentIncorrect
         : message === "New password must be different from current password"
           ? copy.samePassword
-          : message || copy.failure);
+          : twoFactorError(caught, messages.twoFactor) || copy.failure);
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -159,6 +171,7 @@ export function ChangePasswordDialog({ open, onClose, language }: {
           {passwordField("confirm", mismatch ? `${id}-mismatch` : undefined, mismatch)}
           {mismatch ? <p className="text-xs text-destructive" id={`${id}-mismatch`}>{copy.mismatch}</p> : null}
         </div>
+        {showCode && <TwoFactorCodeField value={twoFactorCode} onChange={setTwoFactorCode} disabled={saving} />}
         <div className="flex gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
           <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <p>{copy.sessionHint}</p>
