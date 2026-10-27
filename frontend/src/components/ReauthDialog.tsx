@@ -1,7 +1,7 @@
 import { TwoFactorCodeField } from "@/components/security/TwoFactorCodeField";
-import { requiresTwoFactor, twoFactorError } from "@/components/security/two-factor-utils";
+import { emptyTwoFactorInput, isCompleteTwoFactorInput, requiresTwoFactor, twoFactorError, type TwoFactorInput } from "@/components/security/two-factor-utils";
 import { useI18n } from "@/i18n/react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ export function ReauthDialog() {
   const { messages } = useI18n();
   const copy = messages.shell.reauth;
   const auth = useAuth();
-  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState(emptyTwoFactorInput);
   const [needsCode, setNeedsCode] = useState(false);
   const showCode = needsCode || Boolean(auth.user?.two_factor_enabled);
   const [password, setPassword] = useState("");
@@ -23,7 +23,7 @@ export function ReauthDialog() {
   useEffect(() => {
     if (!auth.reauthRequired) {
       setPassword("");
-      setTwoFactorCode("");
+      setTwoFactorCode(emptyTwoFactorInput());
       setNeedsCode(false);
       setError("");
     }
@@ -31,15 +31,14 @@ export function ReauthDialog() {
 
   if (!auth.reauthRequired || !auth.user) return null;
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!password || pending.current || (showCode && !twoFactorCode.trim())) return;
+  async function authenticate(code: TwoFactorInput = twoFactorCode) {
+    if (!password || pending.current || (showCode && !isCompleteTwoFactorInput(code))) return;
     pending.current = true;
     setSubmitting(true);
     setError("");
     try {
-      await auth.reauthenticate(password, twoFactorCode.trim() || undefined);
-      setTwoFactorCode("");
+      await auth.reauthenticate(password, code.code.trim() || undefined);
+      setTwoFactorCode(emptyTwoFactorInput());
       setNeedsCode(false);
       setPassword("");
     } catch (caught) {
@@ -53,7 +52,7 @@ export function ReauthDialog() {
 
   return (
     <div className="fixed inset-0 z-[1300] overflow-y-auto grid place-items-center bg-background/70 p-4 backdrop-blur-sm">
-      <form className="panel motion-panel w-full max-w-[420px] rounded-md p-5 shadow-2xl" onSubmit={submit}>
+      <form className="panel motion-panel w-full max-w-[420px] rounded-md p-5 shadow-2xl" onSubmit={(event) => { event.preventDefault(); void authenticate(); }}>
         <div className="mb-4 flex items-start gap-3">
           <div className="grid size-10 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary">
             <ShieldCheck className="size-5" />
@@ -88,7 +87,9 @@ export function ReauthDialog() {
               onChange={(event) => setPassword(event.target.value)}
             />
           </label>
-          {showCode && <TwoFactorCodeField value={twoFactorCode} onChange={setTwoFactorCode} disabled={submitting} />}
+          {showCode && <TwoFactorCodeField value={twoFactorCode}
+            onChange={(code) => { if (code.method !== twoFactorCode.method) setError(""); setTwoFactorCode(code); }}
+            onComplete={(code) => { void authenticate(code); }} disabled={submitting} />}
         </div>
 
         {error ? <p role="alert" className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
@@ -98,7 +99,7 @@ export function ReauthDialog() {
             <LogOut />
             {copy.logout}
           </Button>
-          <Button type="submit" disabled={submitting || !password || (showCode && !twoFactorCode.trim())}>
+          <Button type="submit" disabled={submitting || !password || (showCode && !isCompleteTwoFactorInput(twoFactorCode))}>
             {submitting ? <Loader2 className="animate-spin" /> : <KeyRound />}
             {copy.continue}
           </Button>

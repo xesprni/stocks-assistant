@@ -1,6 +1,6 @@
 import { useI18n } from "@/i18n/react";
 import { TwoFactorCodeField } from "@/components/security/TwoFactorCodeField";
-import { requiresTwoFactor, twoFactorError } from "@/components/security/two-factor-utils";
+import { emptyTwoFactorInput, isCompleteTwoFactorInput, requiresTwoFactor, twoFactorError, type TwoFactorInput } from "@/components/security/two-factor-utils";
 import { useRef, useState } from "react";
 import { KeyRound, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 
@@ -13,7 +13,7 @@ export function AuthPage() {
   const { messages } = useI18n();
   const copy = messages.auth;
   const pending = useRef(false);
-  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState(emptyTwoFactorInput);
   const [needsCode, setNeedsCode] = useState(false);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -25,11 +25,11 @@ export function AuthPage() {
   const isSetup = auth.setupRequired;
   const title = isSetup ? copy.setupTitle : copy.loginTitle;
   const subtitle = isSetup ? copy.setupHint : copy.loginHint;
-  const disabled = submitting || (!isSetup && needsCode && !twoFactorCode.trim()) || !username.trim() || password.length < 8 || (isSetup && password !== confirm);
+  const disabled = submitting || (!isSetup && needsCode && !isCompleteTwoFactorInput(twoFactorCode)) || !username.trim() || password.length < 8 || (isSetup && password !== confirm);
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (disabled || pending.current) return;
+  async function authenticate(code: TwoFactorInput = twoFactorCode) {
+    if (pending.current || !username.trim() || password.length < 8 ||
+      (isSetup ? password !== confirm : needsCode && !isCompleteTwoFactorInput(code))) return;
     pending.current = true;
     setSubmitting(true);
     setError("");
@@ -37,7 +37,7 @@ export function AuthPage() {
       if (isSetup) {
         await auth.setup({ username: username.trim(), password, display_name: displayName.trim() });
       } else {
-        await auth.login(username.trim(), password, twoFactorCode.trim() || undefined);
+        await auth.login(username.trim(), password, code.code.trim() || undefined);
       }
     } catch (caught) {
       if (requiresTwoFactor(caught)) setNeedsCode(true);
@@ -52,7 +52,7 @@ export function AuthPage() {
     <div className="auth-fluid-shell console-shell flex h-[100dvh] min-h-0 items-start justify-center overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch]">
       <form
         className="auth-panel panel motion-panel relative z-10 my-auto w-full max-w-[430px] shrink-0 rounded-[1.5rem] p-6 shadow-xl sm:p-8"
-        onSubmit={submit}
+        onSubmit={(event) => { event.preventDefault(); void authenticate(); }}
       >
         <div className="mb-7 flex items-start gap-3.5">
           <div className="grid size-12 shrink-0 place-items-center rounded-[1rem] border border-primary/25 bg-primary text-primary-foreground shadow-[0_10px_28px_hsl(var(--primary)_/_0.22)]">
@@ -67,7 +67,7 @@ export function AuthPage() {
         <div className="space-y-4">
           <label className="block space-y-2 text-sm font-medium">
             <span>{copy.username}</span>
-            <Input value={username} disabled={submitting} onChange={(event) => { setUsername(event.target.value); setNeedsCode(false); setTwoFactorCode(""); setError(""); }} autoComplete="username" />
+            <Input value={username} disabled={submitting} onChange={(event) => { setUsername(event.target.value); setNeedsCode(false); setTwoFactorCode(emptyTwoFactorInput()); setError(""); }} autoComplete="username" />
           </label>
           {isSetup ? (
             <label className="block space-y-2 text-sm font-medium">
@@ -90,14 +90,16 @@ export function AuthPage() {
               <span>{copy.confirm}</span>
               <Input
                 disabled={submitting}
-              type="password"
+                type="password"
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
                 autoComplete="new-password"
               />
             </label>
           ) : null}
-          {!isSetup && needsCode && <TwoFactorCodeField autoFocus value={twoFactorCode} onChange={setTwoFactorCode} disabled={submitting} />}
+          {!isSetup && needsCode && <TwoFactorCodeField autoFocus value={twoFactorCode}
+            onChange={(code) => { if (code.method !== twoFactorCode.method) setError(""); setTwoFactorCode(code); }}
+            onComplete={(code) => { void authenticate(code); }} disabled={submitting} />}
         </div>
 
         {error ? <p role="alert" className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}

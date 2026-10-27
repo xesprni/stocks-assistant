@@ -8,7 +8,7 @@ import { disableTwoFactor, enableTwoFactor, startTwoFactorSetup } from "@/lib/ap
 import { useAuth } from "@/lib/auth";
 import type { TwoFactorSetupResponse } from "@/types/auth";
 import { TwoFactorCodeField } from "./TwoFactorCodeField";
-import { twoFactorError } from "./two-factor-utils";
+import { emptyTwoFactorInput, isCompleteTwoFactorInput, twoFactorError } from "./two-factor-utils";
 
 export function TwoFactorSettings({ onChanged }: { onChanged?: () => Promise<void> }) {
   const auth = useAuth();
@@ -16,7 +16,7 @@ export function TwoFactorSettings({ onChanged }: { onChanged?: () => Promise<voi
   const copy = messages.twoFactor;
   const [editing, setEditing] = useState(false);
   const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(emptyTwoFactorInput);
   const [setup, setSetup] = useState<TwoFactorSetupResponse | null>(null);
   const [codes, setCodes] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
@@ -27,22 +27,22 @@ export function TwoFactorSettings({ onChanged }: { onChanged?: () => Promise<voi
   const enabled = Boolean(auth.user?.two_factor_enabled);
 
   function reset() {
-    setEditing(false); setPassword(""); setCode(""); setSetup(null); setCodes([]); setSaved(false); setError("");
+    setEditing(false); setPassword(""); setCode(emptyTwoFactorInput()); setSetup(null); setCodes([]); setSaved(false); setError("");
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (pending.current) return;
+    if (pending.current || ((setup || enabled) && !isCompleteTwoFactorInput(code))) return;
     pending.current = true; setBusy(true); setError(""); setNotice("");
     try {
       if (enabled) {
-        await disableTwoFactor(password, code.trim());
+        await disableTwoFactor(password, code.code.trim());
         reset(); setNotice(copy.disabledSuccess);
         await auth.refreshUser();
         await onChanged?.();
       } else if (setup) {
-        const result = await enableTwoFactor(password, code.trim());
-        setCodes(result.recovery_codes); setSetup(null); setPassword(""); setCode(""); setEditing(false);
+        const result = await enableTwoFactor(password, code.code.trim());
+        setCodes(result.recovery_codes); setSetup(null); setPassword(""); setCode(emptyTwoFactorInput()); setEditing(false);
         await auth.refreshUser();
         await onChanged?.();
       } else {
@@ -90,10 +90,11 @@ export function TwoFactorSettings({ onChanged }: { onChanged?: () => Promise<voi
         />
         <p className="text-xs leading-5 text-muted-foreground">{copy.expiryHint}</p>
       </div>}
-      {(setup || enabled) && <TwoFactorCodeField value={code} onChange={setCode} disabled={busy} setup={!enabled} autoFocus />}
+      {(setup || enabled) && <TwoFactorCodeField value={code} disabled={busy} setup={!enabled} autoFocus
+        onChange={(next) => { if (next.method !== code.method) setError(""); setCode(next); }} />}
       {!enabled && <p className="text-xs leading-5 text-muted-foreground">{copy.sessionsHint}</p>}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={busy || !password || Boolean((setup || enabled) && !code.trim())}>
+        <Button type="submit" size="sm" disabled={busy || !password || Boolean((setup || enabled) && !isCompleteTwoFactorInput(code))}>
           {busy && <Loader2 className="animate-spin" />}{enabled ? copy.confirmDisable : setup ? copy.confirmEnable : copy.start}
         </Button>
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={reset}>{copy.cancel}</Button>

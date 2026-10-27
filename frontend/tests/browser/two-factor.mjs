@@ -26,6 +26,7 @@ const recovery = "ABCD-EF01-2345-6789";
 let password = "Password123!";
 let provisioningUri = "";
 let setupCount = 0;
+let loginGate = null;
 await page.route("**/*", async (route) => {
   const req = route.request(), url = new URL(req.url());
   assert.equal(url.origin, origin, "No external requests");
@@ -39,6 +40,7 @@ await page.route("**/*", async (route) => {
   if (url.pathname.endsWith("/device/heartbeat")) return json({ status: "ok" });
   if (url.pathname === "/api/v1/auth/me") return json(user);
   if (url.pathname.endsWith("/login")) {
+    if (loginGate && payload.two_factor_code) await loginGate;
     if (payload.password !== password) return json({ detail: "Invalid username or password" }, 401);
     if (user.two_factor_enabled && !payload.two_factor_code) return json({ detail: "Two-factor code required" }, 400);
     if (user.two_factor_enabled && !["123456", recovery].includes(payload.two_factor_code)) return json({ detail: "Invalid or already used two-factor code" }, 400);
@@ -94,47 +96,116 @@ async function assertSetupQrCode() {
   }
 }
 
-try {
-  await page.goto(origin);
+const otpDigits = page.getByRole("group", { name: "六位验证码", exact: true }).getByRole("textbox");
+const loginCalls = () => calls.filter((call) => call.path.endsWith("/login"));
+async function pasteCode(text) {
+  await otpDigits.first().evaluate((input, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    input.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  }, text);
+}
+async function requestLoginChallenge() {
   await page.getByLabel("用户名", { exact: true }).fill("fixture");
   await page.getByLabel("密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByLabel("验证码或恢复码", { exact: true }).waitFor();
+  await otpDigits.first().waitFor();
+  assert.equal(await otpDigits.count(), 6);
+  assert.equal(await page.getByLabel("恢复码", { exact: true }).count(), 0);
+}
+
+try {
+  await page.goto(origin);
+  await requestLoginChallenge();
   assert.equal(await page.evaluate(() => localStorage.getItem("stocks_assistant_access_token")), null);
-  await page.getByLabel("验证码或恢复码", { exact: true }).fill("000000");
-  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await otpDigits.first().focus();
+  await page.keyboard.type("12345");
+  assert.deepEqual(await otpDigits.evaluateAll((inputs) => inputs.map((input) => input.value)), ["1", "2", "3", "4", "5", ""]);
+  assert.equal(await otpDigits.nth(5).evaluate((input) => input === document.activeElement), true);
+  assert.equal(loginCalls().length, 1, "Incomplete OTP must not submit");
+  assert.equal(await page.getByRole("button", { name: "登录", exact: true }).isDisabled(), true);
+  await page.keyboard.press("Backspace");
+  assert.equal(await otpDigits.nth(4).inputValue(), "");
+  await page.keyboard.press("ArrowLeft");
+  assert.equal(await otpDigits.nth(3).evaluate((input) => input === document.activeElement), true);
+  await page.getByRole("button", { name: "使用恢复码", exact: true }).click();
+  assert.equal(await otpDigits.count(), 0);
+  assert.equal(await page.getByRole("alert").count(), 0, "Switching methods clears the previous OTP prompt");
+  assert.equal(await page.getByLabel("恢复码", { exact: true }).inputValue(), "");
+  await page.getByLabel("恢复码", { exact: true }).fill(recovery);
+  assert.equal(loginCalls().length, 1, "Recovery code entry must wait for explicit submission");
+  await page.getByRole("button", { name: "使用动态码", exact: true }).click();
+  assert.deepEqual(await otpDigits.evaluateAll((inputs) => inputs.map((input) => input.value)), Array(6).fill(""));
+  await pasteCode(recovery);
+  assert.deepEqual(await otpDigits.evaluateAll((inputs) => inputs.map((input) => input.value)), Array(6).fill(""), "Pasting a recovery code must not become an OTP");
+  let releaseLogin;
+  loginGate = new Promise((resolve) => { releaseLogin = resolve; });
+  const autoRequest = page.waitForRequest((request) => request.url().endsWith("/login") && request.postDataJSON().two_factor_code === "000000");
+  await pasteCode("000 000");
+  await autoRequest;
+  assert.equal(await page.getByRole("button", { name: "使用恢复码", exact: true }).isDisabled(), true);
+  await page.locator("form").evaluate((form) => form.requestSubmit());
+  assert.equal(loginCalls().length, 2, "Pending automatic login blocks duplicate manual submission");
+  releaseLogin();
+  loginGate = null;
   await page.getByRole("alert").filter({ hasText: "验证码无效" }).waitFor();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: "/tmp/stocks-2fa-login-mobile.png", fullPage: true, animations: "disabled" });
-  await page.getByLabel("验证码或恢复码", { exact: true }).fill("123456");
+  assert.equal(loginCalls().length, 2, "Completing an OTP submits once under StrictMode");
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    for (const dark of [false, true]) {
+      await page.evaluate((dark) => document.documentElement.classList.toggle("dark", dark), dark);
+      await page.screenshot({ path: `/tmp/stocks-2fa-login-${width}${dark ? "-dark" : ""}.png`, fullPage: true, animations: "disabled" });
+    }
+  }
+  await page.evaluate(() => document.documentElement.classList.remove("dark"));
+  // Delete a middle digit without shifting the others, then replace it. Five digits never submit.
+  await otpDigits.nth(2).fill("");
+  assert.deepEqual(await otpDigits.evaluateAll((inputs) => inputs.map((input) => input.value)), ["0", "0", "", "0", "0", "0"]);
+  assert.equal(loginCalls().length, 2);
+  await pasteCode("123456");
+  await page.getByRole("heading", { name: "账号安全", exact: true }).waitFor();
+  assert.equal(loginCalls().length, 3);
+  assert.equal(loginCalls().at(-1).payload.two_factor_code, "123456", "Auto-submit uses all six fresh digits");
+  // A separate sign-in exercises recovery mode through the real AuthProvider.
+  await page.evaluate(() => { localStorage.removeItem("stocks_assistant_access_token"); localStorage.removeItem("stocks_assistant_refresh_token"); });
+  await page.reload();
+  await requestLoginChallenge();
+  await page.getByRole("button", { name: "使用恢复码", exact: true }).click();
+  await page.getByLabel("恢复码", { exact: true }).fill(recovery);
+  assert.equal(loginCalls().length, 4);
+  await page.screenshot({ path: "/tmp/stocks-2fa-recovery-login.png", fullPage: true, animations: "disabled" });
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("heading", { name: "账号安全", exact: true }).waitFor();
+  assert.equal(loginCalls().at(-1).payload.two_factor_code, recovery);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("button", { name: "修改密码", exact: true }).click();
   await page.getByLabel("当前密码", { exact: true }).fill(password);
   await page.getByLabel("新密码", { exact: true }).fill("Changed123!");
   await page.getByLabel("确认新密码", { exact: true }).fill("Changed123!");
   assert.equal(await page.getByRole("button", { name: "更新密码", exact: true }).isDisabled(), true);
-  await page.getByLabel("验证码或恢复码", { exact: true }).fill("000000");
+  await otpDigits.first().fill("000000");
   await page.getByRole("button", { name: "更新密码", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "验证码无效" }).waitFor();
   await page.screenshot({ path: "/tmp/stocks-2fa-password.png", animations: "disabled" });
-  await page.getByLabel("验证码或恢复码", { exact: true }).fill("123456");
+  await otpDigits.first().fill("123456");
   await page.getByRole("button", { name: "更新密码", exact: true }).click();
   await page.getByRole("button", { name: "更新密码", exact: true }).waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "测试重新认证", exact: true }).click();
   await page.locator('input[autocomplete="current-password"]').fill(password);
-  await page.getByLabel("验证码或恢复码", { exact: true }).fill("123456");
-  await page.locator('form button[type="submit"]').click();
-  await page.getByLabel("验证码或恢复码", { exact: true }).waitFor({ state: "hidden" });
+  await otpDigits.first().fill("123456");
+  await otpDigits.first().waitFor({ state: "hidden" });
+  assert.equal(loginCalls().length, 6, "Reauthentication also auto-submits once");
   await page.getByRole("button", { name: "关闭双重验证", exact: true }).click();
   await page.getByLabel("当前密码", { exact: true }).fill(password);
-  await page.getByLabel("验证码或恢复码", { exact: true }).fill(recovery);
+  await page.getByRole("button", { name: "使用恢复码", exact: true }).click();
+  await page.getByLabel("恢复码", { exact: true }).fill(recovery);
   await page.getByRole("button", { name: "验证并关闭", exact: true }).click();
   await page.getByRole("button", { name: "启用双重验证", exact: true }).click();
   await page.getByLabel("当前密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "生成绑定二维码", exact: true }).click();
   await qrCode.waitFor();
+  assert.equal(await page.getByRole("button", { name: "使用恢复码", exact: true }).count(), 0, "Enrollment accepts authenticator codes only");
   await assertSetupQrCode();
   const firstUri = provisioningUri;
   await page.getByRole("button", { name: "取消", exact: true }).click();
@@ -154,7 +225,7 @@ try {
     }
   }
   await page.evaluate(() => document.documentElement.classList.remove("dark"));
-  await page.getByLabel("六位验证码", { exact: true }).fill("123456");
+  await otpDigits.first().fill("123456");
   await page.getByRole("button", { name: "验证并启用", exact: true }).click();
   await page.getByRole("heading", { name: "保存恢复码", exact: true }).waitFor();
   assert.equal(await qrCode.count(), 0, "Successful enrollment removes the setup QR code");
@@ -168,7 +239,7 @@ try {
   assert.equal(calls.filter((call) => call.path.endsWith("/two-factor/enable")).length, 1);
   assert.equal(calls.filter((call) => call.path.endsWith("/me/password")).length, 2);
   assert.deepEqual(errors, []);
-  console.log("PASS: login challenge/retry, password 2FA, reauthentication, local QR decoding, cancel/restart, recovery codes, StrictMode and light/dark desktop/mobile layouts.");
+  console.log("PASS: six-digit auto-submit, paste/keyboard/gap editing, recovery-mode switching and login, password 2FA, automatic reauthentication, local QR decoding, cancel/restart, recovery codes, StrictMode and light/dark desktop/mobile layouts.");
 } catch (error) {
   await page.screenshot({ path: "/tmp/stocks-2fa-failure.png", fullPage: true, animations: "disabled" });
   throw error;
